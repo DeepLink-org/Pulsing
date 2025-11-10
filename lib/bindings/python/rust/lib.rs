@@ -473,7 +473,6 @@ fn register_llm<'p>(
             .map_err(to_pyerr)?;
 
         Ok(())
-        result.map_err(to_pyerr)
     })
 }
 
