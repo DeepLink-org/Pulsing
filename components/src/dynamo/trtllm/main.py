@@ -21,6 +21,7 @@ if "TLLM_LOG_LEVEL" not in os.environ and os.getenv(
     os.environ["TLLM_LOG_LEVEL"] = tllm_level
 import uvloop
 from prometheus_client import REGISTRY
+from tensorrt_llm import __version__ as TRTLLM_VERSION
 from tensorrt_llm.llmapi import (
     BuildConfig,
     CapacitySchedulerPolicy,
@@ -193,6 +194,8 @@ async def init(runtime: DistributedRuntime, config: Config):
         "max_batch_size": config.max_batch_size,
         "return_perf_metrics": config.publish_events_and_metrics,
     }
+    if TRTLLM_VERSION >= "1.2.0":
+        del arg_map["skip_tokenizer_init"]
 
     if config.extra_engine_args != "":
         # TODO: Support extra engine args from json file as well.
@@ -240,8 +243,9 @@ async def init(runtime: DistributedRuntime, config: Config):
     # Populate default sampling params from the model
     tokenizer = tokenizer_factory(arg_map["model"])
     default_sampling_params = SamplingParams()
-    default_sampling_params._setup(tokenizer)
-    default_sampling_params.stop = None
+    if TRTLLM_VERSION < "1.2.0":
+        default_sampling_params._setup(tokenizer)
+        default_sampling_params.stop = None
     model_input = ModelInput.Tokens
 
     # Set model type based on disaggregation mode for unified frontend support
