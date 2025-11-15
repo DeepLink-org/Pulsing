@@ -48,7 +48,7 @@ pub struct BackendOutput {
 
     // Index field for batch requests to match OpenAI format
     pub index: Option<u32>,
-    
+
     /// Disaggregated execution parameters (for prefill/decode separation)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disaggregated_params: Option<serde_json::Value>,
