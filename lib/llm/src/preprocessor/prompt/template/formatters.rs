@@ -9,65 +9,42 @@ use either::Either;
 use minijinja::{Environment, Value};
 use tracing;
 
-/// Replace non-standard Jinja2 block tags with placeholders
+/// Detects whether a chat template requires message content as arrays (multimodal)
+/// or accepts simple strings (standard text-only templates).
 ///
-/// minijinja doesn't expose its tag list publicly - they're hardcoded in a private match statement
-/// in the parser. This list is derived from minijinja v2.12.0's parser.rs implementation.
-/// See: https://github.com/mitsuhiko/minijinja/blob/main/minijinja/src/compiler/parser.rs#L542
-fn replace_non_standard_blocks(template: &str) -> String {
-    use regex::Regex;
+/// This function test-renders the template with both formats:
+/// - Array format: `[{"type": "text", "text": "X"}]`
+/// - String format: `"X"`
+///
+/// If the array format works but string format doesn't produce output,
+/// the template requires arrays (e.g., llava, Qwen-VL multimodal templates).
+fn detect_content_array_usage(env: &Environment) -> bool {
+    use minijinja::context;
+    use serde_json::json;
 
-    // Standard Jinja2/minijinja tags (cannot be queried from minijinja API)
-    let standard_keywords = [
-        "for",
-        "endfor",
-        "if",
-        "elif",
-        "else",
-        "endif",
-        "block",
-        "endblock",
-        "extends",
-        "include",
-        "import",
-        "from",
-        "macro",
-        "endmacro",
-        "call",
-        "endcall",
-        "set",
-        "endset",
-        "with",
-        "endwith",
-        "filter",
-        "endfilter",
-        "autoescape",
-        "endautoescape",
-        "raw",
-        "endraw",
-        "do",
-    ];
+    // Test with array format
+    let test_array = context! {
+        messages => json!([{"role": "user", "content": [{"type": "text", "text": "X"}]}]),
+        add_generation_prompt => false,
+    };
 
-    let re = Regex::new(r"\{%\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*%\}").unwrap();
-    let mut result = template.to_string();
-    let mut replacements = Vec::new();
+    // Test with string format
+    let test_string = context! {
+        messages => json!([{"role": "user", "content": "X"}]),
+        add_generation_prompt => false,
+    };
 
-    for cap in re.captures_iter(template) {
-        let full_match = cap.get(0).unwrap().as_str();
-        let tag_name = cap.get(1).unwrap().as_str();
+    let out_array = env
+        .get_template("default")
+        .and_then(|t| t.render(&test_array))
+        .unwrap_or_default();
+    let out_string = env
+        .get_template("default")
+        .and_then(|t| t.render(&test_string))
+        .unwrap_or_default();
 
-        if !standard_keywords.contains(&tag_name) {
-            // Non-standard tag (e.g., vLLM's {% generation %}) - replace with placeholder
-            let placeholder = format!("__JINJA_BLOCK_{}", tag_name.to_uppercase());
-            replacements.push((full_match.to_string(), placeholder));
-        }
-    }
-
-    for (original, placeholder) in replacements {
-        result = result.replace(&original, &placeholder);
-    }
-
-    result
+    // If array works but string doesn't, template requires arrays
+    out_array.contains("X") && !out_string.contains("X")
 }
 
 impl JinjaEnvironment {
@@ -125,12 +102,8 @@ impl HfTokenizerConfigJsonFormatter {
                     );
                     supports_add_generation_prompt = Some(true);
                 }
-                // Replace non-standard Jinja2 block tags with placeholders for minijinja validation
-                // Standard Jinja2/minijinja blocks: for, if, block, macro, call, filter, set, with, autoescape, trans
-                // Any other {% tag %} blocks are likely backend-specific extensions (like vLLM's {% generation %})
-                let template_for_validation = replace_non_standard_blocks(x);
-                env.add_template_owned("default", template_for_validation.clone())?;
-                env.add_template_owned("tool_use", template_for_validation)?;
+                env.add_template_owned("default", x.to_string())?;
+                env.add_template_owned("tool_use", x.to_string())?;
             }
             Either::Right(map) => {
                 for t in map {
@@ -152,9 +125,7 @@ impl HfTokenizerConfigJsonFormatter {
                         } else {
                             supports_add_generation_prompt = Some(false);
                         }
-                        // Replace non-standard Jinja2 block tags with placeholders for minijinja validation
-                        let template_for_validation = replace_non_standard_blocks(v);
-                        env.add_template_owned(k.to_string(), template_for_validation)?;
+                        env.add_template_owned(k.to_string(), v.to_string())?;
                     }
                 }
                 if env.templates().count() == 0 {
@@ -165,11 +136,20 @@ impl HfTokenizerConfigJsonFormatter {
             }
         }
 
+        // Detect at model load time whether this template requires content arrays
+        let requires_content_arrays = detect_content_array_usage(&env);
+
+        tracing::info!(
+            "Template analysis: requires_content_arrays = {}",
+            requires_content_arrays
+        );
+
         Ok(HfTokenizerConfigJsonFormatter {
             env,
             config,
             mixins: Arc::new(mixins),
             supports_add_generation_prompt: supports_add_generation_prompt.unwrap_or(false),
+            requires_content_arrays,
         })
     }
 }
