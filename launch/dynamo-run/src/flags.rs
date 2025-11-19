@@ -12,10 +12,9 @@ use dynamo_runtime::pipeline::RouterMode as RuntimeRouterMode;
 
 use crate::Output;
 
-/// Required options depend on the in and out choices
+/// Run subcommand for running inference services
 #[derive(clap::Parser, Debug, Clone)]
-#[command(version, about, long_about = None)]
-pub struct Flags {
+pub struct Run {
     /// The model. The options depend on the engine.
     ///
     /// The full list - only mistralrs supports all three currently:
@@ -25,7 +24,7 @@ pub struct Flags {
     #[arg(index = 1)]
     pub model_path_pos: Option<PathBuf>,
 
-    // `--model-path`. The one above is `dynamo-run <positional-model-path>`
+    // `--model-path`. The one above is `pulsing <positional-model-path>`
     #[arg(long = "model-path")]
     pub model_path_flag: Option<PathBuf>,
 
@@ -135,7 +134,7 @@ pub struct Flags {
     pub last: Vec<String>,
 }
 
-impl Flags {
+impl Run {
     /// For each Output variant, check if it would be able to run.
     /// This takes validation out of the main engine creation path.
     pub fn validate(&self, out_opt: &Output) -> anyhow::Result<()> {
@@ -186,7 +185,7 @@ impl Flags {
                 self.use_kv_events,
                 self.router_replica_sync,
                 self.router_track_active_blocks,
-                // defaulting below args (no longer maintaining new flags for dynamo-run)
+                // defaulting below args (no longer maintaining new flags for pulsing)
                 None,
                 None,
             ),
