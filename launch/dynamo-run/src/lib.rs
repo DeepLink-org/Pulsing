@@ -11,16 +11,18 @@ use dynamo_runtime::transports::nats;
 use dynamo_runtime::{DistributedRuntime, Runtime};
 
 mod flags;
-pub use flags::Flags;
+pub use flags::Run;
 mod opt;
 pub use dynamo_llm::request_template::RequestTemplate;
 pub use opt::Output;
+
+pub mod benchmark;
 
 pub async fn run(
     runtime: Runtime,
     in_opt: Input,
     out_opt: Option<Output>,
-    mut flags: Flags,
+    mut flags: Run,
 ) -> anyhow::Result<()> {
     //
     // Download
@@ -116,7 +118,7 @@ pub async fn run(
 /// Note validation happens in Flags::validate. In here assume everything is going to work.
 async fn engine_for(
     out_opt: Output,
-    flags: Flags,
+    flags: Run,
     local_model: LocalModel,
     drt: DistributedRuntime,
 ) -> anyhow::Result<EngineConfig> {
