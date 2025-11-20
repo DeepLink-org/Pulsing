@@ -15,12 +15,13 @@
 
 
 [project]
-name = "ai-dynamo-runtime"
+name = "pulsing"
 version = "0.7.0"
-description = "Dynamo Inference Framework Runtime"
+description = "Distributed Inference Framework"
 readme = "README.md"
 authors = [
     { name = "NVIDIA Inc.", email = "sw-dl-dynamo@nvidia.com" },
+    { name = "Reiase", email = "reiase@gmail.com" }
 ]
 license = { text = "Apache-2.0" }
 license-files = ["LICENSE"]
@@ -28,7 +29,19 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.10.6,<=2.11.7",
     "uvloop>=0.21.0",
+    "pytest>=8.3.4",
+    "types-psutil>=7.0.0.20250218",
+    "kubernetes>=32.0.1,<33.0.0",
+    "fastapi>=0.115.0",
+    "distro",
+    # filelock: required by planner
+    "filelock",
+    "typer",
+    "click<8.2.0",
+    "setuptools",
+    "prometheus_client>=0.23.1,<1.0",
 ]
+
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -57,3 +70,143 @@ build-backend = "maturin"
 
 [tool.uv]
 config-settings = { build-args = '--auditwheel repair --manylinux' }
+
+
+[tool.isort]
+profile = "black"
+use_parentheses = true
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+ensure_newline_before_comments = true
+line_length = 88
+balanced_wrapping = true
+indent = "    "
+skip = ["build"]
+known_first_party = ["dynamo"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+tmp_path_retention_policy = "failed"
+
+# NOTE
+# We ignore model.py explcitly here to avoid mypy errors with duplicate modules
+# pytest overrides the default mypy exclude configuration and so we exclude here as well
+addopts = [
+    "-ra",
+    "--showlocals",
+    "--strict-markers",
+    "--strict-config",
+    "--mypy",
+    "--ignore-glob=*model.py",
+    "--ignore-glob=*vllm_integration*",
+    "--ignore-glob=*trtllm_integration*",
+    "--ignore-glob=*kvbm/python/kvbm*",
+    "--ignore-glob=*_inc.py",
+    "--ignore-glob=*/llm/tensorrtllm*",
+    "--ignore-glob=docs/*",
+    "--ignore-glob=components/src/dynamo/sglang/request_handlers/*",
+    "--ignore-glob=components/src/dynamo/sglang/multimodal_utils/*",
+    "--ignore-glob=components/src/dynamo/vllm/multimodal_utils/*",
+    "--ignore-glob=components/src/dynamo/vllm/multimodal_handlers/*",
+    "--ignore-glob=examples/backends/sglang/slurm_jobs/*",
+    # FIXME: Get relative/generic blob paths to work here
+]
+xfail_strict = true
+log_cli_level = "INFO"
+filterwarnings = [
+    "error",
+    "ignore:.*cuda*:DeprecationWarning", # Need this to avoid deprecation warnings from CUDA in tensorrt_llm.
+    "ignore:.*pkg_resources.*:DeprecationWarning",
+    "ignore:.*pkg_resources.*:UserWarning",
+    "ignore:.*multipart.*:PendingDeprecationWarning",
+    "ignore:.*PyType_Spec.*custom tp_new.*:DeprecationWarning", # Ignore protobuf deprecation warning
+    "ignore:.*unclosed.*socket.*:ResourceWarning", # Ignore unclosed socket warnings
+    "ignore:.*unclosed event loop.*:ResourceWarning", # Ignore unclosed event loop warnings
+    "ignore:.*Exception ignored in.*:pytest.PytestUnraisableExceptionWarning", # Ignore unraisable exception warnings
+    "ignore:The pynvml package is deprecated.*:FutureWarning", # Ignore pynvml deprecation warning, temporary until upstream library updates to nvidia-ml-py
+    # Pydantic V2 deprecation warnings from TRTLLM dependencies (raised at import time during collection)
+    "ignore:Support for class-based `config`.*:pydantic.warnings.PydanticDeprecatedSince20",
+    "ignore:Using extra keyword arguments on `Field`.*:pydantic.warnings.PydanticDeprecatedSince20",
+    "ignore:The `schema` method is deprecated.*:pydantic.warnings.PydanticDeprecatedSince20",
+]
+
+
+# NOTE: Can also manually mark tests with @pytest.mark.asyncio
+asyncio_mode = "auto"
+markers = [
+    "pre_merge: marks tests to run before merging",
+    "nightly: marks tests to run nightly",
+    "weekly: marks tests to run weekly",
+    "gpu_1: marks tests to run on GPU",
+    "gpu_2: marks tests to run on 2GPUs",
+    "gpu_4: marks tests to run on 4GPUs",
+    "gpu_8: marks tests to run on 8GPUs",
+    "e2e: marks tests as end-to-end tests",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "stress: marks tests as stress tests",
+    "vllm: marks tests as requiring vllm",
+    "trtllm: marks tests as requiring trtllm",
+    "trtllm_marker: marks tests as requiring trtllm",
+    "sglang: marks tests as requiring sglang",
+    "slow: marks tests as known to be slow",
+    "h100: marks tests to run on H100",
+    "kvbm: marks tests for KV behavior and model determinism",
+    "kvbm_v2: marks tests using KVBM V2",
+    "model: model id used by a test or parameter",
+    "custom_build: marks tests that require custom builds or special setup (e.g., MoE models)",
+    "k8s: marks tests as requiring Kubernetes",
+    "fault_tolerance: marks tests as fault tolerance tests"
+]
+
+# Linting/formatting
+[tool.ruff]
+# Same as Black.
+line-length = 88
+indent-width = 4
+
+[tool.ruff.lint.extend-per-file-ignores]
+"icp/tests/**/test_*.py" = ["F811", "F401"]
+"*_inc.py" = ["F821"]
+
+[tool.mypy]
+
+# --disable-error-code: WAR large set of errors due to mypy not being run
+#   previously. We can slowly enable sets of errors to fix over time.
+# disable_error_code = []
+
+# --explicit-package-bases: WAR errors about duplicate module names used
+#   throughout the llm examples. For example, the common module in
+#   tensorrt_llm and vllm are both named common.
+explicit_package_bases = true
+
+# --ignore-missing-imports: WAR too many errors when developing outside
+#   of container environment with PYTHONPATH set and packages installed.
+#   NOTE: Can possibly move mypy from pre-commit to a github action run only in
+#   a container with the expected environment and PYTHONPATH setup.
+ignore_missing_imports = true
+
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# Skip mypy analysis on internal dependencies of vllm
+module = ["vllm.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
+[tool.sphinx]
+
+# extra-content-head
+extra_content_head = [
+   '''
+   <script src="https://assets.adobedtm.com/5d4962a43b79/c1061d2c5e7b/launch-191c2462b890.min.js" ></script>
+   ''',
+]
+
+#extra-content-footer
+extra_content_footer = [
+   '''
+   <script type="text/javascript">if (typeof _satellite !== "undefined") {_satellite.pageBottom();}</script>
+   ''',
+]
