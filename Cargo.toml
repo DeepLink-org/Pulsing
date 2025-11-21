@@ -1,0 +1,197 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[workspace]
+members = [
+    "dynamo/launch/dynamo-run",
+    "dynamo/lib/llm",
+    "dynamo/lib/runtime",
+    "dynamo/lib/config",
+    "dynamo/lib/tokens",
+    "dynamo/lib/memory",
+    "dynamo/lib/async-openai",
+    "dynamo/lib/parsers",
+    "dynamo/lib/bindings/c",
+    "dynamo/lib/bindings/python/codegen",
+    "dynamo/lib/engines/*",
+    "dynamo/lib/discovery",
+    "dynamo/lib/config",
+    "dynamo/lib/kvbm-kernels",
+    "pulsing/inference-benchmarker"
+]
+
+default-members = [
+    "dynamo/lib/llm",
+    "dynamo/lib/runtime",
+    "dynamo/lib/config",
+    "dynamo/lib/tokens",
+    "dynamo/lib/async-openai",
+    "dynamo/lib/parsers",
+    "dynamo/lib/bindings/c",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.7.0"
+edition = "2024"
+description = "Dynamo Inference Framework"
+authors = ["NVIDIA Inc. <sw-dl-dynamo@nvidia.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/ai-dynamo/dynamo"
+repository = "https://github.com/ai-dynamo/dynamo.git"
+keywords = ["llm", "genai", "inference", "nvidia", "distributed"]
+
+[workspace.dependencies]
+# Local crates
+dynamo-runtime = { path = "dynamo/lib/runtime", version = "0.7.0" }
+dynamo-llm = { path = "dynamo/lib/llm", version = "0.7.0" }
+dynamo-config = { path = "dynamo/lib/config", version = "0.7.0" }
+dynamo-tokens = { path = "dynamo/lib/tokens", version = "0.7.0" }
+dynamo-async-openai = { path = "dynamo/lib/async-openai", version = "0.7.0", features = [
+    "byot",
+    "rustls",
+] }
+dynamo-parsers = { path = "dynamo/lib/parsers", version = "0.7.0" }
+# External dependencies
+anyhow = { version = "1" }
+async-nats = { version = "0.45.0", features = ["service"] }
+async-stream = { version = "0.3" }
+async-trait = { version = "0.1" }
+async_zmq = { version = "0.4.0" }
+blake3 = { version = "1" }
+bytes = { version = "1" }
+chrono = { version = "0.4", default-features = false, features = [
+    "alloc",
+    "std",
+    "clock",
+    "now",
+    "serde",
+] }
+cudarc = { version = "0.17.8", features = ["cuda-12020"] }
+dashmap = { version = "6.1" }
+derive_builder = { version = "0.20" }
+derive-getters = { version = "0.5" }
+either = { version = "1.13", features = ["serde"] }
+etcd-client = { version = "0.17.0", features = ["tls"] }
+futures = { version = "0.3" }
+hf-hub = { version = "0.4.2", default-features = false, features = [
+    "tokio",
+    "rustls-tls",
+    "ureq",
+] }
+
+# ModelExpress for model downloading
+modelexpress-client = { version = "0.2.0" }
+modelexpress-common = { version = "0.2.0" }
+
+humantime = { version = "2.2.0" }
+libc = { version = "0.2" }
+oneshot = { version = "0.1.11", features = ["std", "async"] }
+parking_lot = "0.12.5"
+prometheus = { version = "0.14" }
+rand = { version = "0.9.2" }
+reqwest = { version = "0.12.24", default-features = false, features = [
+    "json",
+    "stream",
+    "rustls-tls",
+] }
+rmp-serde = { version = "1" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+strum = { version = "0.27", features = ["derive"] }
+tempfile = "3"
+thiserror = { version = "2.0.17" }
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1" }
+tokio-util = { version = "0.7", features = ["codec", "net", "rt"] }
+tower-http = { version = "0.6", features = ["trace"] }
+axum = { version = "=0.8.4", features = ["macros"] }
+axum-core = { version = "0.5.2" }
+hyper = { version = "=1.7.0" }
+hyper-util = { version = "=0.1.17" }
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "local-time",
+    "json",
+] }
+tracing-opentelemetry = { version = "0.32.0" }
+opentelemetry = { version = "0.31.0", features = ["trace"] }
+opentelemetry_sdk = { version = "0.31.0", features = ["trace", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.31.0", features = ["trace", "grpc-tonic"] }
+validator = { version = "0.20.0", features = ["derive"] }
+uuid = { version = "1.18.1", features = ["v4", "serde"] }
+url = { version = "2.5", features = ["serde"] }
+xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3"] }
+
+
+[package]
+name = "dynamo-py3"
+version = "0.7.0"
+edition = "2024"
+authors = ["NVIDIA"]
+license = "Apache-2.0"
+homepage = "https://github.com/ai-dynamo/dynamo"
+repository = "https://github.com/ai-dynamo/dynamo.git"
+
+[lib]
+path = "rust/lib.rs"
+name = "_core"
+# "cdylib" is necessary to produce a shared library for Python to import from.
+# "rlib" is necessary to support doctests.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+
+[dependencies]
+dynamo-llm = { path = "dynamo/lib/llm" }
+dynamo-runtime = { path = "dynamo/lib/runtime" }
+dynamo-parsers = { path = "dynamo/lib/parsers" }
+
+anyhow = { version = "1" }
+dynamo-async-openai = { path = "dynamo/lib/async-openai" }
+async-stream = { version = "0.3" }
+async-trait = { version = "0.1" }
+derive-getters = "0.5"
+either = { version = "1.13", features = ["serde"] }
+futures = { version = "0.3" }
+once_cell = { version = "1.20.3" }
+parking_lot = { version = "0.12.4" }
+serde = { version = "1" }
+serde_json = { version = "1.0.138" }
+thiserror = { version = "2.0" }
+tokio = { version = "1.46.0", features = ["full"] }
+tokio-stream = { version = "0" }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = { version = "0"  }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+uuid = { version = "1.17", features = ["v4", "serde"] }
+
+# "extension-module" tells pyo3 we want to build an extension module (skips linking against libpython.so)
+# "abi3-py310" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.10, which is the minimum version in pyproject.toml
+pyo3 = { version = "0.23.4", default-features = false, features = [
+  "macros",
+  "experimental-async",
+  "experimental-inspect",
+  "extension-module",
+  "py-clone",
+  "abi3-py310"
+] }
+
+pyo3-async-runtimes = { version = "0.23.0", default-features = false, features = [
+  "attributes",
+  "testing",
+  "tokio-runtime",
+  "unstable-streams",
+] }
+
+pythonize = "0.23"
+
+dlpark = { version = "0.5", features = ["pyo3", "half"], optional = true }
+cudarc = { version = "0.17.1", features = ["cuda-12020"], optional = true }
+prometheus = "0.14.0"
+
+
+[dev-dependencies]
+rstest = "0.25"
