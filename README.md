@@ -6,3 +6,37 @@ This repository is an independently maintained fork from the `ai-dynamo/dynamo` 
 
 Acknowledgements: we thank all contributors of the `ai-dynamo/dynamo` project for their high-quality open-source work. This project continues to follow the Apache-2.0 license and preserves the original copyright
 and attribution statements in all derivative distributions.
+
+## Build project
+```shell
+# install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# build wheel
+cd lib/bindings/python
+uv build --wheel --python 3.12
+```
+
+## ABI-friendly binary build
+
+ABI-friendly (manylinux-compatible) wheels are recommended so that
+prebuilt binaries can run reliably across different Linux distributions
+without requiring users to rebuild from source.
+
+### 1. Environment setup
+
+```shell
+pip install maturin  # build tool
+pip install ziglang  # used for ABI-friendly linking
+```
+
+### 2. Build wheel package
+
+Run the following in the `lib/bindings/python` directory:
+
+```shell
+cd lib/bindings/python
+maturin pep517 build-wheel \
+	--auditwheel repair --manylinux \
+	--zig --compatibility manylinux_2_24
+```
