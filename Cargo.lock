@@ -2815,6 +2815,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "prometheus",
+ "pulsing-bench",
  "pyo3",
  "pyo3-async-runtimes",
  "pythonize",
@@ -4723,39 +4724,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
 dependencies = [
  "rustversion",
-]
-
-[[package]]
-name = "inference-benchmarker"
-version = "1.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "clap 4.5.51",
- "colored 2.2.0",
- "env_logger",
- "futures-util",
- "hf-hub",
- "humantime",
- "indicatif",
- "log",
- "mockito",
- "rand 0.9.2",
- "rand_distr 0.5.1",
- "rayon",
- "reqwest 0.12.24",
- "reqwest-eventsource",
- "serde",
- "serde_json",
- "serde_with",
- "strum_macros",
- "sysinfo 0.33.1",
- "tabled",
- "tokenizers",
- "tokio",
- "uuid 1.18.1",
- "vergen-gitcl",
 ]
 
 [[package]]
@@ -8241,43 +8209,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "pulsing-cli"
-version = "0.7.0"
+name = "pulsing-bench"
+version = "1.1.0"
 dependencies = [
  "anyhow",
- "async-stream",
  "async-trait",
  "chrono",
  "clap 4.5.51",
  "colored 2.2.0",
- "dynamo-async-openai",
- "dynamo-engine-mistralrs",
- "dynamo-llm",
- "dynamo-runtime",
- "either",
  "env_logger",
- "futures",
  "futures-util",
  "hf-hub",
  "humantime",
  "indicatif",
- "inference-benchmarker",
- "libc",
  "log",
+ "mockito",
+ "rand 0.9.2",
+ "rand_distr 0.5.1",
  "rayon",
- "regex",
  "reqwest 0.12.24",
  "reqwest-eventsource",
  "serde",
  "serde_json",
+ "serde_with",
+ "strum_macros",
  "sysinfo 0.33.1",
  "tabled",
- "tempfile",
  "tokenizers",
  "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
  "uuid 1.18.1",
  "vergen-gitcl",
 ]

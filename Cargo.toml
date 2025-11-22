@@ -3,7 +3,7 @@
 
 [workspace]
 members = [
-  "dynamo/launch/dynamo-run",
+  # "dynamo/launch/dynamo-run",
   "dynamo/lib/async-openai",
   "dynamo/lib/bindings/c",
   "dynamo/lib/bindings/python/codegen",
@@ -16,7 +16,7 @@ members = [
   "dynamo/lib/parsers",
   "dynamo/lib/runtime",
   "dynamo/lib/tokens",
-  "pulsing/inference-benchmarker",
+  "pulsing/bench",
 ]
 
 default-members = [
@@ -147,6 +147,8 @@ default = []
 dynamo-llm = { path = "dynamo/lib/llm" }
 dynamo-runtime = { path = "dynamo/lib/runtime" }
 dynamo-parsers = { path = "dynamo/lib/parsers" }
+
+pulsing-bench = { path = "pulsing/bench" }
 
 anyhow = { version = "1" }
 dynamo-async-openai = { path = "dynamo/lib/async-openai" }

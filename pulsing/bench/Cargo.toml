@@ -1,5 +1,5 @@
 [package]
-name = "inference-benchmarker"
+name = "pulsing-bench"
 version = "1.1.0"
 edition = "2021"
 authors = ["Hugo Larcher <hugo.larcher@huggingface.co>"]
@@ -40,8 +40,6 @@ uuid = { version = "1.11.0", features = ["v4", "fast-rng"] }
 [build-dependencies]
 vergen-gitcl = { version = "1.0.1" }
 
-[[bin]]
-name = "inference-benchmarker"
-path = "src/main.rs"
-test = false
-bench = false
+[lib]
+name = "pulsing_bench"
+path = "src/lib.rs"

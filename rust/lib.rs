@@ -199,6 +199,14 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     prometheus_metrics::add_to_module(&prometheus_metrics)?;
     m.add_submodule(&prometheus_metrics)?;
 
+    m.add_function(wrap_pyfunction!(benchmark_main, m)?)?;
+
+    Ok(())
+}
+
+#[pyfunction]
+fn benchmark_main(args: Vec<String>) -> PyResult<()> {
+    pulsing_bench::benchmark_main(args);
     Ok(())
 }
 
