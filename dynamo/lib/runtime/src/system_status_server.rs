@@ -140,6 +140,13 @@ pub async fn spawn_system_status_server(
                 move || metadata_handler(state)
             }),
         )
+        .route(
+            "/topology",
+            get({
+                let state = Arc::clone(&server_state);
+                move || topology_handler(state)
+            }),
+        )
         .fallback(|| async {
             tracing::info!("[fallback handler] called");
             (StatusCode::NOT_FOUND, "Route not found").into_response()
@@ -263,6 +270,111 @@ async fn metadata_handler(state: Arc<SystemStatusState>) -> impl IntoResponse {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to serialize metadata".to_string(),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Topology instance information
+#[derive(Debug, Clone, serde::Serialize)]
+struct TopologyInstance {
+    instance_id: u64,
+    address: String,
+    transport: String,
+}
+
+/// Topology handler - returns cluster topology with all roles and addresses
+#[tracing::instrument(skip_all, level = "trace")]
+async fn topology_handler(state: Arc<SystemStatusState>) -> impl IntoResponse {
+    use crate::component::TransportType;
+    use crate::discovery::DiscoveryQuery;
+    use std::collections::HashMap;
+
+    // Get discovery client
+    let discovery = state.drt().discovery();
+
+    // Query all endpoints
+    let discovery_instances = match discovery.list(DiscoveryQuery::AllEndpoints).await {
+        Ok(instances) => instances,
+        Err(e) => {
+            tracing::error!("Failed to list instances from discovery: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "error": "Failed to query discovery",
+                    "message": e.to_string()
+                })
+                .to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    // Save total count before moving instances
+    let total_instances = discovery_instances.len();
+
+    // Organize instances by role (namespace/component/endpoint)
+    let mut topology: HashMap<String, HashMap<String, HashMap<String, Vec<TopologyInstance>>>> =
+        HashMap::new();
+
+    for discovery_instance in discovery_instances {
+        if let crate::discovery::DiscoveryInstance::Endpoint(instance) = discovery_instance {
+            let address = match &instance.transport {
+                TransportType::Nats(subject) => format!("nats://{}", subject),
+                TransportType::Http(url) => url.clone(),
+                TransportType::Tcp(addr) => format!("tcp://{}", addr),
+            };
+
+            let transport_type = match &instance.transport {
+                TransportType::Nats(_) => "nats",
+                TransportType::Http(_) => "http",
+                TransportType::Tcp(_) => "tcp",
+            };
+
+            let topology_instance = TopologyInstance {
+                instance_id: instance.instance_id,
+                address,
+                transport: transport_type.to_string(),
+            };
+
+            topology
+                .entry(instance.namespace.clone())
+                .or_insert_with(HashMap::new)
+                .entry(instance.component.clone())
+                .or_insert_with(HashMap::new)
+                .entry(instance.endpoint.clone())
+                .or_insert_with(Vec::new)
+                .push(topology_instance);
+        }
+    }
+
+    // Convert to response format
+    let response = json!({
+        "topology": topology,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "total_instances": total_instances,
+    });
+
+    match serde_json::to_string_pretty(&response) {
+        Ok(json) => {
+            tracing::trace!("Returning topology: {} instances", total_instances);
+            (
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                json,
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to serialize topology: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "error": "Failed to serialize topology",
+                    "message": e.to_string()
+                })
+                .to_string(),
             )
                 .into_response()
         }

@@ -448,4 +448,3 @@ pub async fn benchmark_main(args: Vec<String>) {
     });
     let _ = main_thread.await;
 }
-

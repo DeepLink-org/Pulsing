@@ -44,8 +44,14 @@ pub struct FileStore {
 
 impl FileStore {
     pub(super) fn new<P: Into<PathBuf>>(root_dir: P) -> Self {
+        let root = root_dir.into();
+        let root_path = root.display().to_string();
+        tracing::info!(
+            path = %root_path,
+            "FileStore: Initializing with root directory"
+        );
         let fs = FileStore {
-            root: root_dir.into(),
+            root,
             connection_id: rand::random::<u64>(),
             active_dirs: Arc::new(Mutex::new(HashMap::new())),
         };
@@ -123,7 +129,16 @@ impl KeyValueStore for FileStore {
             }
         } else {
             // Create
+            let dir_path = p.display().to_string();
+            tracing::debug!(
+                path = %dir_path,
+                "FileStore: Creating directory"
+            );
             fs::create_dir_all(&p).map_err(to_fs_err)?;
+            tracing::info!(
+                path = %dir_path,
+                "FileStore: Directory created successfully"
+            );
         }
         let dir = Directory::new(self.root.clone(), p.clone(), ttl.unwrap_or(DEFAULT_TTL));
         self.active_dirs.lock().insert(p, dir.clone());
@@ -288,11 +303,27 @@ impl KeyValueBucket for Directory {
     ) -> Result<StoreOutcome, StoreError> {
         let safe_key = Key::new(key.as_ref()); // because of from_raw
         let full_path = self.p.join(safe_key.as_ref());
-        self.owned_files.lock().insert(full_path.clone());
         let str_path = full_path.display().to_string();
+
+        // Log file creation
+        tracing::debug!(
+            path = %str_path,
+            key = %key.as_ref(),
+            size = value.len(),
+            "FileStore: Creating file"
+        );
+
+        self.owned_files.lock().insert(full_path.clone());
         fs::write(&full_path, &value)
-            .context(str_path)
+            .context(str_path.clone())
             .map_err(a_to_fs_err)?;
+
+        tracing::info!(
+            path = %str_path,
+            size = value.len(),
+            "FileStore: File created successfully"
+        );
+
         Ok(StoreOutcome::Created(0))
     }
 
@@ -320,11 +351,24 @@ impl KeyValueBucket for Directory {
             return Err(StoreError::MissingKey(str_path));
         }
 
+        tracing::debug!(
+            path = %str_path,
+            key = %key.as_ref(),
+            "FileStore: Deleting file"
+        );
+
         self.owned_files.lock().remove(&full_path);
 
         fs::remove_file(&full_path)
-            .context(str_path)
-            .map_err(a_to_fs_err)
+            .context(str_path.clone())
+            .map_err(a_to_fs_err)?;
+
+        tracing::info!(
+            path = %str_path,
+            "FileStore: File deleted successfully"
+        );
+
+        Ok(())
     }
 
     async fn watch(

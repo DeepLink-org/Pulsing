@@ -114,7 +114,34 @@ impl DistributedRuntime {
             KeyValueStoreSelect::Memory => (None, KeyValueStoreManager::memory()),
         };
 
-        let nats_client = Some(nats_config.clone().connect().await?);
+        // NATS connection is optional when using HTTP or TCP request plane
+        // Only required for NATS request plane or event publishing
+        let nats_client = match request_plane {
+            RequestPlaneMode::Nats => {
+                // NATS mode requires NATS connection
+                Some(nats_config.clone().connect().await.inspect_err(|err|
+                    tracing::error!(%err, "Could not connect to NATS. NATS is required for NATS request plane mode. Start NATS server or use --request-plane http/tcp."))?)
+            }
+            _ => {
+                // HTTP/TCP mode: try to connect but don't fail if unavailable
+                // NATS may still be used for event publishing if available
+                match nats_config.clone().connect().await {
+                    Ok(client) => {
+                        tracing::info!(
+                            "NATS connected (optional for HTTP/TCP request plane, used for events)"
+                        );
+                        Some(client)
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            %err,
+                            "NATS connection failed (optional for HTTP/TCP request plane). Some features like event publishing may be unavailable."
+                        );
+                        None
+                    }
+                }
+            }
+        };
 
         // Start system status server for health and metrics if enabled in configuration
         let config = crate::config::RuntimeConfig::from_settings().unwrap_or_default();
