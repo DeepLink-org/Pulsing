@@ -17,6 +17,7 @@ use crate::{
     storage::key_value_store,
     traits::DistributedRuntimeProvider,
 };
+use parking_lot::Mutex;
 
 #[derive(Educe, Builder, Dissolve)]
 #[educe(Debug)]
@@ -87,21 +88,52 @@ impl EndpointConfigBuilder {
         handler.add_metrics(&endpoint, metrics_labels.as_deref())?;
 
         let registry = endpoint.drt().component_registry().inner.lock().await;
+        let request_plane_mode = endpoint.drt().request_plane();
 
         // Note: NATS service group is no longer needed here as the NetworkManager
         // handles all transport-specific initialization internally
-        let _group = registry
-            .services
-            .get(&service_name)
-            .map(|service| service.group(endpoint.component.service_name()))
-            .ok_or(anyhow::anyhow!("Service not found"))?;
+        // In HTTP/TCP mode, service may not exist if NATS client is unavailable
+        let _group: Option<_> = match request_plane_mode {
+            crate::distributed::RequestPlaneMode::Http | crate::distributed::RequestPlaneMode::Tcp => {
+                // In HTTP/TCP mode, try to get service but don't fail if it doesn't exist
+                // We'll create a dummy stats handler registry if needed
+                registry
+                    .services
+                    .get(&service_name)
+                    .map(|service| service.group(endpoint.component.service_name()))
+            }
+            _ => {
+                // In NATS mode, service must exist
+                Some(registry
+                    .services
+                    .get(&service_name)
+                    .map(|service| service.group(endpoint.component.service_name()))
+                    .ok_or(anyhow::anyhow!("Service not found"))?)
+            }
+        };
 
         // get the stats handler map
-        let handler_map = registry
-            .stats_handlers
-            .get(&service_name)
-            .cloned()
-            .expect("no stats handler registry; this is unexpected");
+        // In HTTP/TCP mode, create a dummy stats handler registry if it doesn't exist
+        let handler_map = match request_plane_mode {
+            crate::distributed::RequestPlaneMode::Http | crate::distributed::RequestPlaneMode::Tcp => {
+                registry
+                    .stats_handlers
+                    .get(&service_name)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        // Create a dummy stats handler registry for HTTP/TCP mode
+                        use std::collections::HashMap;
+                        Arc::new(Mutex::new(HashMap::<String, EndpointStatsHandler>::new()))
+                    })
+            }
+            _ => {
+                registry
+                    .stats_handlers
+                    .get(&service_name)
+                    .cloned()
+                    .expect("no stats handler registry; this is unexpected")
+            }
+        };
 
         drop(registry);
 

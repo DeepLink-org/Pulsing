@@ -58,6 +58,9 @@ classifiers = [
 ]
 keywords = ["llm", "genai", "inference", "nvidia", "distributed", "dynamo"]
 
+[project.scripts]
+pulsing = "pulsing.cli.__main__:main"
+
 [tool.maturin]
 module-name = "dynamo._core"
 manifest-path = "Cargo.toml"
