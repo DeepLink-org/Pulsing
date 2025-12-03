@@ -390,25 +390,80 @@ impl Component {
             anyhow::bail!("Service {service_name} already exists");
         }
 
-        let Some(nats_client) = self.drt.nats_client() else {
-            anyhow::bail!("Cannot create NATS service without NATS.");
-        };
-        let description = None;
-        let (nats_service, stats_reg) =
-            service::build_nats_service(nats_client, self, description).await?;
+        let request_plane_mode = self.drt.request_plane();
+        
+        // In HTTP/TCP mode, we still need to create a service entry in the registry
+        // for serve_endpoint to work, but we don't need an actual NATS service
+        match request_plane_mode {
+            RequestPlaneMode::Nats => {
+                let Some(nats_client) = self.drt.nats_client() else {
+                    anyhow::bail!("Cannot create NATS service without NATS.");
+                };
+                let description = None;
+                let (nats_service, stats_reg) =
+                    service::build_nats_service(nats_client, self, description).await?;
 
-        let mut guard = self.drt.component_registry().inner.lock().await;
-        if !guard.services.contains_key(&service_name) {
-            // Normal case
-            guard.services.insert(service_name.clone(), nats_service);
-            guard.stats_handlers.insert(service_name.clone(), stats_reg);
-            drop(guard);
-        } else {
-            drop(guard);
-            let _ = nats_service.stop().await;
-            return Err(anyhow::anyhow!(
-                "Service create race for {service_name}, now already exists"
-            ));
+                let mut guard = self.drt.component_registry().inner.lock().await;
+                if !guard.services.contains_key(&service_name) {
+                    // Normal case
+                    guard.services.insert(service_name.clone(), nats_service);
+                    guard.stats_handlers.insert(service_name.clone(), stats_reg);
+                    drop(guard);
+                } else {
+                    drop(guard);
+                    let _ = nats_service.stop().await;
+                    return Err(anyhow::anyhow!(
+                        "Service create race for {service_name}, now already exists"
+                    ));
+                }
+            }
+            RequestPlaneMode::Http | RequestPlaneMode::Tcp => {
+                // For HTTP/TCP mode, create a dummy NATS service just for registry purposes
+                // This is needed because serve_endpoint requires a service to exist
+                // We create a minimal service that won't actually be used for NATS communication
+                use async_nats::service::Service;
+                use std::sync::Arc;
+                
+                // Create a dummy NATS service using a minimal NATS client if available
+                // If NATS client is not available, we'll create a placeholder
+                if let Some(nats_client) = self.drt.nats_client() {
+                    let description = None;
+                    let (nats_service, stats_reg) =
+                        service::build_nats_service(nats_client, self, description).await?;
+
+                    let mut guard = self.drt.component_registry().inner.lock().await;
+                    if !guard.services.contains_key(&service_name) {
+                        guard.services.insert(service_name.clone(), nats_service);
+                        guard.stats_handlers.insert(service_name.clone(), stats_reg);
+                        drop(guard);
+                    } else {
+                        drop(guard);
+                        let _ = nats_service.stop().await;
+                        return Err(anyhow::anyhow!(
+                            "Service create race for {service_name}, now already exists"
+                        ));
+                    }
+                } else {
+                    // No NATS client available - this shouldn't happen in practice
+                    // but we'll create empty entries to satisfy serve_endpoint requirements
+                    let mut guard = self.drt.component_registry().inner.lock().await;
+                    if guard.services.contains_key(&service_name) {
+                        drop(guard);
+                        return Err(anyhow::anyhow!(
+                            "Service {service_name} already exists"
+                        ));
+                    }
+                    // Note: We can't create a Service without NATS client
+                    // This is a limitation that needs to be fixed in the Rust code
+                    // For now, we'll return an error to make it clear
+                    anyhow::bail!(
+                        "Cannot create service in {} mode without NATS client. \
+                        This is a known limitation - please use NATS request plane or \
+                        ensure NATS client is available even in HTTP mode.",
+                        request_plane_mode
+                    );
+                }
+            }
         }
 
         // Register metrics callback. CRITICAL: Never fail service creation for metrics issues.
