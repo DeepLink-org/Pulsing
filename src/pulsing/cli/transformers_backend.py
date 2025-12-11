@@ -9,10 +9,14 @@ import uvloop
 from dynamo.runtime import DistributedRuntime
 from dynamo.llm import fetch_llm, register_llm, ModelInput, ModelType
 
+from hyperparameter import auto_param
+
+
 async def graceful_shutdown(runtime):
     """Shutdown dynamo distributed runtime."""
     runtime.shutdown()
 
+@auto_param("transformers.runtime")
 async def run_transformers_worker(
     model: str,
     namespace: Optional[str] = None,
@@ -26,8 +30,63 @@ async def run_transformers_worker(
     block_size: int = 16,
     **kwargs,
 ):
-    """
-    Run a Transformers backend worker.
+    """Run a Transformers backend worker.
+    
+    This function starts a distributed worker that loads a Transformers model and
+    serves it via the Dynamo runtime. The worker can handle text generation requests
+    through HTTP, NATS, or TCP protocols.
+    
+    Args:
+        model: Model name or path. Can be a HuggingFace model identifier (e.g., 
+            "meta-llama/Llama-2-7b-chat-hf") or a local path. If the path doesn't 
+            exist locally, it will be downloaded via fetch_llm.
+        namespace: Namespace for service discovery. If not provided, uses the value 
+            from DYN_NAMESPACE environment variable, or defaults to "dynamo". Used to 
+            organize services in the distributed runtime.
+        component: Component name within the namespace. Defaults to "backend". 
+            This identifies the specific service instance.
+        endpoint: Endpoint name for the service. Defaults to "generate". This is 
+            the endpoint that will handle generation requests.
+        request_plane: Determines how requests are distributed. Options: 
+            - "http": HTTP-based request distribution
+            - "nats": NATS-based message queue distribution
+            - "tcp": TCP-based distribution
+            Defaults to "http".
+        store_kv: Key-value backend for distributed state. Options:
+            - "etcd": etcd backend for production distributed systems
+            - "mem": In-memory backend (for testing/single node)
+            - "file": File-based backend (for local development)
+            Defaults to "file".
+        device: Device to run the model on. Options:
+            - "cuda": NVIDIA GPU (uses float16, device_map="auto")
+            - "cpu": CPU (uses float32)
+            - "mps": Apple Silicon GPU (uses float16)
+            Defaults to "cuda".
+        max_new_tokens: Maximum number of new tokens to generate per request. 
+            This limits the length of the generated text. Defaults to 512.
+        served_model_name: Name to serve the model as in the Dynamo registry. 
+            If not set, uses the model name/path. This is the identifier that 
+            clients will use to route requests to this worker.
+        block_size: KV cache block size for the model. Used for memory management 
+            and scheduling. Defaults to 16. This parameter is passed to register_llm 
+            but Transformers backend doesn't actively manage KV blocks like vLLM.
+        **kwargs: Additional keyword arguments passed through. Currently unused but 
+            reserved for future extensions.
+    
+    Raises:
+        ImportError: If required dependencies (transformers, torch) are not installed.
+        Exception: If service creation fails in NATS mode, or if model loading fails.
+    
+    Note:
+        The worker will:
+        1. Load the model and tokenizer from the specified path
+        2. Register itself with the Dynamo runtime
+        3. Start serving requests on the specified endpoint
+        4. Handle graceful shutdown on SIGTERM/SIGINT signals
+        
+        The worker supports both token-based and text-based input, and can handle
+        chat-style messages. Generation is performed asynchronously to avoid
+        blocking the event loop.
     """
     # Lazy import to avoid loading heavy dependencies until needed
     try:
