@@ -20,10 +20,7 @@ from dynamo.vllm.main import (
 )
 from vllm.engine.arg_utils import AsyncEngineArgs
 
-
-async def graceful_shutdown(runtime):
-    """Shutdown dynamo distributed runtime."""
-    runtime.shutdown()
+from .runtime import create_runtime, setup_signal_handlers
 
 
 async def run_vllm_worker(
@@ -142,14 +139,8 @@ async def run_vllm_worker(
     if config.engine_args.block_size is None:
         config.engine_args.block_size = 16
 
-    loop = asyncio.get_running_loop()
-    runtime = DistributedRuntime(loop, config.store_kv, config.request_plane)
-
-    def signal_handler():
-        asyncio.create_task(graceful_shutdown(runtime))
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, signal_handler)
+    runtime = create_runtime(request_plane=config.request_plane, store_kv=config.store_kv)
+    setup_signal_handlers(runtime)
 
     overwrite_args(config)
 

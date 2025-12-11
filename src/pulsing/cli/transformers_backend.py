@@ -11,12 +11,9 @@ from dynamo.llm import fetch_llm, register_llm, ModelInput, ModelType
 
 from hyperparameter import auto_param
 
+from .runtime import create_runtime, setup_signal_handlers
 
-async def graceful_shutdown(runtime):
-    """Shutdown dynamo distributed runtime."""
-    runtime.shutdown()
-
-@auto_param("transformers.runtime")
+@auto_param("backend.transformers")
 async def run_transformers_worker(
     model: str,
     namespace: Optional[str] = None,
@@ -101,15 +98,9 @@ async def run_transformers_worker(
     # Get namespace from env or default
     namespace = namespace or os.environ.get("DYN_NAMESPACE", "dynamo")
     
-    # Setup runtime
-    loop = asyncio.get_running_loop()
-    runtime = DistributedRuntime(loop, store_kv, request_plane)
-
-    def signal_handler():
-        asyncio.create_task(graceful_shutdown(runtime))
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, signal_handler)
+    runtime = create_runtime(request_plane=request_plane, store_kv=store_kv)
+    
+    setup_signal_handlers(runtime)
 
     # Download/resolve model path
     if not os.path.exists(model):
