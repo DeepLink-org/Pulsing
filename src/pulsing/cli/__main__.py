@@ -195,6 +195,33 @@ def transformers(model: str):
         start_transformers_worker()
 
 
+@auto_param("router")
+def router(endpoint: str, block_size: int = 128):
+    """
+    Start a standalone KV-aware router worker.
+
+    This service provides a standalone KV-aware router for any set of workers
+    in a Dynamo deployment. It can be used for disaggregated serving (e.g., routing
+    to prefill workers) or any other scenario requiring intelligent KV cache-aware
+    routing decisions.
+
+    Args:
+        endpoint: Full endpoint path for workers in format namespace.component.endpoint
+                  (e.g., 'dynamo.prefill.generate')
+        block_size: KV cache block size for routing decisions. Default: 128
+    """
+    try:
+        from ..router import start_router_worker
+    except ImportError as e:
+        raise ImportError(
+            "Router requires Dynamo LLM dependencies. "
+            "Please ensure dynamo.llm is installed."
+        ) from e
+
+    print("Running standalone router worker...")
+    start_router_worker(endpoint=endpoint, block_size=block_size)
+
+
 @auto_param("bench")
 def bench():
     """
