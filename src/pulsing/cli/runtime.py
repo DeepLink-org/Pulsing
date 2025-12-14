@@ -3,8 +3,9 @@
 import asyncio
 import signal
 
-from dynamo.runtime import DistributedRuntime
 from hyperparameter import auto_param
+
+from dynamo.runtime import DistributedRuntime
 
 
 async def graceful_shutdown(runtime: DistributedRuntime):
@@ -19,11 +20,11 @@ def create_runtime(
 ) -> DistributedRuntime:
     """
     Create a DistributedRuntime instance.
-    
+
     Args:
         request_plane: Request distribution method. Options: 'nats', 'http', 'tcp'. Default: 'http'
         store_kv: Key-value backend. Options: 'etcd', 'mem', 'file'. Default: 'file'
-    
+
     Returns:
         DistributedRuntime instance
     """
@@ -34,14 +35,14 @@ def create_runtime(
 def setup_signal_handlers(runtime: DistributedRuntime):
     """
     Setup signal handlers for graceful shutdown.
-    
+
     Args:
         runtime: The DistributedRuntime instance to shutdown on signals
     """
     loop = asyncio.get_running_loop()
-    
+
     def signal_handler():
         asyncio.create_task(graceful_shutdown(runtime))
-    
+
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, signal_handler)

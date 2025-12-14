@@ -21,6 +21,15 @@ from dynamo.llm import (
 from .runtime import create_runtime, setup_signal_handlers
 
 
+def _to_bool(value) -> bool:
+    """Convert value to bool, handling string 'true'/'false'."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "yes")
+    return bool(value)
+
+
 @auto_param("frontend")
 def frontend(
     model_name: Optional[str] = None,
@@ -84,13 +93,13 @@ def frontend(
         if router_mode == "kv":
             router_mode_enum = RouterMode.KV
             kv_router_config = KvRouterConfig(
-                overlap_score_weight=kv_overlap_score_weight,
-                router_temperature=router_temperature,
-                use_kv_events=use_kv_events,
-                router_replica_sync=router_replica_sync,
-                router_snapshot_threshold=router_snapshot_threshold or 1000000,
-                router_reset_states=router_reset_states,
-                router_track_active_blocks=router_track_active_blocks,
+                overlap_score_weight=float(kv_overlap_score_weight),
+                router_temperature=float(router_temperature),
+                use_kv_events=_to_bool(use_kv_events),
+                router_replica_sync=_to_bool(router_replica_sync),
+                router_snapshot_threshold=int(router_snapshot_threshold) if router_snapshot_threshold else 1000000,
+                router_reset_states=_to_bool(router_reset_states),
+                router_track_active_blocks=_to_bool(router_track_active_blocks),
             )
         elif router_mode == "random":
             router_mode_enum = RouterMode.Random
@@ -101,13 +110,13 @@ def frontend(
 
         kwargs = {
             "http_host": http_host or os.environ.get("DYN_HTTP_HOST", "0.0.0.0"),
-            "http_port": http_port or int(os.environ.get("DYN_HTTP_PORT", "8000")),
-            "kv_cache_block_size": kv_cache_block_size,
+            "http_port": int(http_port) if http_port else int(os.environ.get("DYN_HTTP_PORT", "8000")),
+            "kv_cache_block_size": int(kv_cache_block_size) if kv_cache_block_size else 16,
             "router_config": DynamoRouterConfig(
                 router_mode_enum,
                 kv_router_config,
-                busy_threshold,
-                enforce_disagg,
+                float(busy_threshold) if busy_threshold else None,
+                _to_bool(enforce_disagg),
             ),
         }
 
@@ -146,6 +155,8 @@ def vllm(model: str):
     Args:
         model: Model path or HuggingFace model name (e.g., 'Qwen/Qwen3-0.6B')
     """
+    from hyperparameter import param_scope
+    
     try:
         from .vllm_backend import start_vllm_worker
     except ImportError as e:
@@ -155,7 +166,9 @@ def vllm(model: str):
         ) from e
 
     print("Running vLLM backend worker...")
-    start_vllm_worker()
+    # Pass model to vllm.worker namespace
+    with param_scope(**{"vllm.worker.model": model}):
+        start_vllm_worker()
 
 
 @auto_param("transformers")
@@ -166,6 +179,8 @@ def transformers(model: str):
     Args:
         model: Model path or HuggingFace model name (e.g., 'gpt2')
     """
+    from hyperparameter import param_scope
+    
     try:
         from .transformers_backend import start_transformers_worker
     except ImportError as e:
@@ -175,7 +190,9 @@ def transformers(model: str):
         ) from e
 
     print("Running Transformers backend worker...")
-    start_transformers_worker()
+    # Pass model to backend.transformers namespace (matches @auto_param in transformers_backend.py)
+    with param_scope(**{"backend.transformers.model": model}):
+        start_transformers_worker()
 
 
 @auto_param("bench")
