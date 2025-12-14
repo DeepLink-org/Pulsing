@@ -158,7 +158,7 @@ def vllm(model: str):
     from hyperparameter import param_scope
     
     try:
-        from .vllm_backend import start_vllm_worker
+        from ..vllm import start_vllm_worker
     except ImportError as e:
         raise ImportError(
             "vLLM backend requires vLLM dependencies. "
