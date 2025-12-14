@@ -3,7 +3,7 @@
 import os
 
 import uvloop
-from hyperparameter import auto_param, param_scope
+import hyperparameter as hp
 
 from dynamo.llm import fetch_llm
 
@@ -17,7 +17,7 @@ from .init import (
 )
 
 
-@auto_param("vllm.worker")
+@hp.param("vllm.worker")
 async def run_vllm_worker(
     model: str = None,
     is_prefill_worker: bool = False,
@@ -41,14 +41,14 @@ async def run_vllm_worker(
 
     Note:
         Other vLLM parameters (tensor_parallel_size, gpu_memory_utilization, etc.)
-        are automatically read from param_scope by the init functions via @auto_param.
+        are automatically read from param_scope by the init functions via @hp.param.
     """
     # Download the model if necessary
     if not os.path.exists(model):
         model = await fetch_llm(model)
 
     # Update model path in param_scope for init functions to use
-    with param_scope(**{"vllm.worker.model": model}):
+    with hp.scope(**{"vllm.worker.model": model}):
         runtime = create_runtime()
         setup_signal_handlers(runtime)
 
@@ -71,5 +71,5 @@ async def run_vllm_worker(
 
 def start_vllm_worker(**kwargs):
     """Entry point for starting vLLM worker with uvloop."""
-    # Parameters are available in param_scope via @auto_param("vllm") in __main__.py
+    # Parameters are available in param_scope via @hp.param("vllm") in __main__.py
     uvloop.run(run_vllm_worker())

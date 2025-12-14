@@ -4,7 +4,7 @@ import sys
 from typing import Optional
 
 import uvloop
-from hyperparameter import auto_param, run_cli
+import hyperparameter as hp
 
 from dynamo.llm import (
     EngineType,
@@ -30,7 +30,7 @@ def _to_bool(value) -> bool:
     return bool(value)
 
 
-@auto_param("frontend")
+@hp.param("frontend")
 def frontend(
     model_name: Optional[str] = None,
     model_path: Optional[str] = None,
@@ -147,7 +147,7 @@ def frontend(
     uvloop.run(run())
 
 
-@auto_param("vllm")
+@hp.param("vllm")
 def vllm(model: str):
     """
     Start a vLLM backend worker.
@@ -167,11 +167,11 @@ def vllm(model: str):
 
     print("Running vLLM backend worker...")
     # Pass model to vllm.worker namespace
-    with param_scope(**{"vllm.worker.model": model}):
+    with hp.scope(**{"vllm.worker.model": model}):
         start_vllm_worker()
 
 
-@auto_param("transformers")
+@hp.param("transformers")
 def transformers(model: str):
     """
     Start a Transformers backend worker.
@@ -190,12 +190,12 @@ def transformers(model: str):
         ) from e
 
     print("Running Transformers backend worker...")
-    # Pass model to backend.transformers namespace (matches @auto_param in transformers_backend.py)
-    with param_scope(**{"backend.transformers.model": model}):
+    # Pass model to backend.transformers namespace (matches @hp.param in transformers_backend.py)
+    with hp.scope(**{"backend.transformers.model": model}):
         start_transformers_worker()
 
 
-@auto_param("router")
+@hp.param("router")
 def router(endpoint: str, block_size: int = 128):
     """
     Start a standalone KV-aware router worker.
@@ -222,7 +222,7 @@ def router(endpoint: str, block_size: int = 128):
     start_router_worker(endpoint=endpoint, block_size=block_size)
 
 
-@auto_param("bench")
+@hp.param("bench")
 def bench():
     """
     Run benchmarks.
@@ -247,7 +247,7 @@ def bench():
 
 
 def main():
-    run_cli()
+    hp.launch()
 
 
 if __name__ == "__main__":

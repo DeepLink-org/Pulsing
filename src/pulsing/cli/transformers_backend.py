@@ -5,7 +5,7 @@ import os
 from typing import AsyncGenerator, Optional
 
 import uvloop
-from hyperparameter import auto_param
+import hyperparameter as hp
 
 from dynamo.llm import (
     ModelInput,
@@ -18,7 +18,7 @@ from dynamo.llm import (
 from .runtime import create_runtime, setup_signal_handlers
 
 
-@auto_param("backend.transformers")
+@hp.param("backend.transformers")
 async def run_transformers_worker(
     model: str = None,
     component: str = "backend",
@@ -198,5 +198,5 @@ async def run_transformers_worker(
 
 def start_transformers_worker():
     """Entry point for starting transformers worker with uvloop."""
-    # Parameters are available in param_scope via @auto_param("transformers")
+    # Parameters are available in param_scope via @hp.param("transformers")
     uvloop.run(run_transformers_worker())

@@ -8,7 +8,7 @@ import asyncio
 import logging
 
 import uvloop
-from hyperparameter import auto_param
+import hyperparameter as hp
 
 from dynamo.llm import KvRouterConfig
 
@@ -27,7 +27,7 @@ def _to_bool(value) -> bool:
     return bool(value)
 
 
-@auto_param("router.kv")
+@hp.param("router.kv")
 def _build_kv_router_config(
     overlap_score_weight: float = 1.0,
     temperature: float = 0.0,
