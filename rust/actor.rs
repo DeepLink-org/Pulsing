@@ -7,12 +7,15 @@
 //! - Build distributed actor clusters
 
 use pulsing_actor::prelude::*;
+use pulsing_actor::actor::ActorPath;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+
+use crate::python_executor::python_executor;
 
 /// Convert any error to PyErr
 fn to_pyerr<E: std::fmt::Display>(err: E) -> PyErr {
@@ -386,29 +389,42 @@ impl Actor for PythonActorWrapper {
     }
 
     async fn on_start(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
-        Python::with_gil(|py| {
-            if self.handler.getattr(py, "on_start").is_ok() {
-                let actor_id = PyActorId {
-                    inner: self.id.clone(),
-                };
-                // Call on_start if it exists
-                if let Err(e) = self.handler.call_method1(py, "on_start", (actor_id,)) {
-                    tracing::warn!("Python actor on_start error: {:?}", e);
-                }
-            }
-            Ok(())
-        })
+        let handler = self.handler.clone();
+        let actor_id = self.id.clone();
+
+        // Use dedicated Python executor to avoid blocking tokio runtime
+        python_executor()
+            .execute(move || {
+                Python::with_gil(|py| {
+                    if handler.getattr(py, "on_start").is_ok() {
+                        let py_actor_id = PyActorId { inner: actor_id };
+                        // Call on_start if it exists
+                        if let Err(e) = handler.call_method1(py, "on_start", (py_actor_id,)) {
+                            tracing::warn!("Python actor on_start error: {:?}", e);
+                        }
+                    }
+                })
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))
     }
 
     async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
-        Python::with_gil(|py| {
-            if self.handler.getattr(py, "on_stop").is_ok() {
-                if let Err(e) = self.handler.call_method0(py, "on_stop") {
-                    tracing::warn!("Python actor on_stop error: {:?}", e);
-                }
-            }
-            Ok(())
-        })
+        let handler = self.handler.clone();
+
+        // Use dedicated Python executor to avoid blocking tokio runtime
+        python_executor()
+            .execute(move || {
+                Python::with_gil(|py| {
+                    if handler.getattr(py, "on_stop").is_ok() {
+                        if let Err(e) = handler.call_method0(py, "on_stop") {
+                            tracing::warn!("Python actor on_stop error: {:?}", e);
+                        }
+                    }
+                })
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))
     }
 
     async fn receive(
@@ -420,45 +436,51 @@ impl Actor for PythonActorWrapper {
         let event_loop = self.event_loop.clone();
         let py_msg = PyRawMessage { inner: msg };
 
-        // Run the Python handler
-        let result = Python::with_gil(|py| -> PyResult<RawMessage> {
-            // Check if the handler has a 'receive' method
-            let receive_method = handler.getattr(py, "receive")?;
-            
-            // Call the receive method
-            let result = receive_method.call1(py, (py_msg.clone(),))?;
-            
-            // Check if the result is a coroutine (async function)
-            let asyncio = py.import("asyncio")?;
-            let is_coro = asyncio
-                .call_method1("iscoroutine", (&result,))?
-                .extract::<bool>()?;
-            
-            if is_coro {
-                // Run the coroutine in the event loop
-                let run_coroutine_threadsafe = asyncio.getattr("run_coroutine_threadsafe")?;
-                let future = run_coroutine_threadsafe.call1((&result, &event_loop))?;
-                let py_result = future.call_method0("result")?;
-                
-                // Extract the PyRawMessage from result
-                if py_result.is_none() {
-                    Ok(RawMessage::empty())
-                } else {
-                    let response: PyRawMessage = py_result.extract()?;
-                    Ok(response.inner)
-                }
-            } else {
-                // Synchronous result
-                if result.bind(py).is_none() {
-                    Ok(RawMessage::empty())
-                } else {
-                    let response: PyRawMessage = result.extract(py)?;
-                    Ok(response.inner)
-                }
-            }
-        });
+        // Use dedicated Python executor to avoid blocking tokio runtime
+        // This is critical for high-concurrency scenarios where GIL contention
+        // could otherwise cause the tokio runtime to deadlock
+        python_executor()
+            .execute(move || {
+                Python::with_gil(|py| -> PyResult<RawMessage> {
+                    // Check if the handler has a 'receive' method
+                    let receive_method = handler.getattr(py, "receive")?;
 
-        result.map_err(|e| anyhow::anyhow!("Python handler error: {:?}", e))
+                    // Call the receive method
+                    let result = receive_method.call1(py, (py_msg.clone(),))?;
+
+                    // Check if the result is a coroutine (async function)
+                    let asyncio = py.import("asyncio")?;
+                    let is_coro = asyncio
+                        .call_method1("iscoroutine", (&result,))?
+                        .extract::<bool>()?;
+
+                    if is_coro {
+                        // Run the coroutine in the event loop
+                        let run_coroutine_threadsafe = asyncio.getattr("run_coroutine_threadsafe")?;
+                        let future = run_coroutine_threadsafe.call1((&result, &event_loop))?;
+                        let py_result = future.call_method0("result")?;
+
+                        // Extract the PyRawMessage from result
+                        if py_result.is_none() {
+                            Ok(RawMessage::empty())
+                        } else {
+                            let response: PyRawMessage = py_result.extract()?;
+                            Ok(response.inner)
+                        }
+                    } else {
+                        // Synchronous result
+                        if result.bind(py).is_none() {
+                            Ok(RawMessage::empty())
+                        } else {
+                            let response: PyRawMessage = result.extract(py)?;
+                            Ok(response.inner)
+                        }
+                    }
+                })
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))?
+            .map_err(|e| anyhow::anyhow!("Python handler error: {:?}", e))
     }
 }
 
@@ -522,11 +544,13 @@ impl PyActorSystem {
         let event_loop = self.event_loop.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let actor_id = ActorId::local(name);
+            let actor_id = ActorId::local(name.clone());
             let actor = PythonActorWrapper::new(actor_id, handler, event_loop);
             
             let actor_ref = if public {
-                system.spawn_named(actor).await.map_err(to_pyerr)?
+                // Create a path for named actors: "actors/{name}"
+                let path = ActorPath::new(&format!("actors/{}", name)).map_err(to_pyerr)?;
+                system.spawn_named(path, actor).await.map_err(to_pyerr)?
             } else {
                 system.spawn(actor).await.map_err(to_pyerr)?
             };

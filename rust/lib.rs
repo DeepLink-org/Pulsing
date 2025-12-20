@@ -66,6 +66,9 @@ mod llm;
 mod parsers;
 mod planner;
 mod prometheus_metrics;
+mod python_executor;
+
+pub use python_executor::{python_executor, init_python_executor, ExecutorError};
 
 type JsonServerStreamingIngress =
     Ingress<SingleIn<serde_json::Value>, ManyOut<RsAnnotated<serde_json::Value>>>;
