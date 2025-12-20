@@ -1,6 +1,6 @@
 //! Mailbox stress and reliability tests
 
-use pulsing_actor::actor::{Envelope, Mailbox, MailboxSender, DEFAULT_MAILBOX_SIZE};
+use pulsing_actor::actor::{Envelope, Mailbox, MailboxSender, Message, DEFAULT_MAILBOX_SIZE};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,8 +36,14 @@ async fn test_mailbox_send_receive() {
 
     // Receive
     let received = receiver.recv().await.unwrap();
-    assert_eq!(received.msg_type, "test");
-    assert_eq!(received.payload, vec![1, 2, 3]);
+    assert_eq!(received.msg_type(), "test");
+    
+    // Extract payload from message
+    if let Message::Single { data, .. } = received.message {
+        assert_eq!(data, vec![1, 2, 3]);
+    } else {
+        panic!("Expected single message");
+    }
 }
 
 #[tokio::test]
@@ -50,18 +56,23 @@ async fn test_mailbox_ask_pattern() {
     let receiver_task = tokio::spawn(async move {
         if let Some(envelope) = receiver.recv().await {
             assert!(envelope.expects_response());
-            envelope.respond(Ok(vec![42, 43, 44]));
+            // Respond with a Message
+            envelope.respond(Ok(Message::single("", vec![42, 43, 44])));
         }
     });
 
-    // Send ask
+    // Send ask with Message
     let (tx, rx) = oneshot::channel();
-    let envelope = Envelope::ask("query".to_string(), vec![1], tx);
+    let msg = Message::single("query", vec![1]);
+    let envelope = Envelope::ask(msg, tx);
     sender.send(envelope).await.unwrap();
 
-    // Wait for response
+    // Wait for response (now returns Message)
     let response = rx.await.unwrap().unwrap();
-    assert_eq!(response, vec![42, 43, 44]);
+    let Message::Single { data, .. } = response else {
+        panic!("expected single")
+    };
+    assert_eq!(data, vec![42, 43, 44]);
 
     receiver_task.await.unwrap();
 }
@@ -262,14 +273,11 @@ async fn test_mailbox_no_message_loss() {
     let receiver_task = tokio::spawn(async move {
         while let Some(envelope) = receiver.recv().await {
             // Extract ID from payload
-            if envelope.payload.len() >= 4 {
-                let id = u32::from_le_bytes([
-                    envelope.payload[0],
-                    envelope.payload[1],
-                    envelope.payload[2],
-                    envelope.payload[3],
-                ]);
-                received_ids.push(id);
+            if let Message::Single { data, .. } = envelope.message {
+                if data.len() >= 4 {
+                    let id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+                    received_ids.push(id);
+                }
             }
         }
         received_ids
@@ -311,8 +319,10 @@ async fn test_mailbox_response_delivery() {
         while let Some(envelope) = receiver.recv().await {
             if envelope.expects_response() {
                 // Echo back the payload doubled
-                let response: Vec<u8> = envelope.payload.iter().map(|b| b * 2).collect();
-                envelope.respond(Ok(response));
+                if let Message::Single { ref data, .. } = envelope.message {
+                    let response: Vec<u8> = data.iter().map(|b| b * 2).collect();
+                    envelope.respond(Ok(Message::single("", response)));
+                }
             }
         }
     });
@@ -321,11 +331,15 @@ async fn test_mailbox_response_delivery() {
     for i in 0..request_count {
         let (tx, rx) = oneshot::channel();
         let payload = vec![i as u8];
-        let envelope = Envelope::ask("request".to_string(), payload, tx);
+        let msg = Message::single("request", payload);
+        let envelope = Envelope::ask(msg, tx);
         sender.send(envelope).await.unwrap();
 
         let response = rx.await.unwrap().unwrap();
-        assert_eq!(response, vec![(i as u8) * 2]);
+        let Message::Single { data: response_payload, .. } = response else {
+            panic!("expected single")
+        };
+        assert_eq!(response_payload, vec![(i as u8) * 2]);
     }
 
     drop(sender);
@@ -346,8 +360,13 @@ async fn test_mailbox_empty_payload() {
     sender.send(envelope).await.unwrap();
 
     let received = receiver.recv().await.unwrap();
-    assert_eq!(received.msg_type, "empty");
-    assert!(received.payload.is_empty());
+    assert_eq!(received.msg_type(), "empty");
+    
+    if let Message::Single { data, .. } = received.message {
+        assert!(data.is_empty());
+    } else {
+        panic!("Expected single message");
+    }
 }
 
 #[tokio::test]
@@ -362,8 +381,13 @@ async fn test_mailbox_large_payload() {
     sender.send(envelope).await.unwrap();
 
     let received = receiver.recv().await.unwrap();
-    assert_eq!(received.payload.len(), 1_000_000);
-    assert_eq!(received.payload, large_payload);
+    
+    if let Message::Single { data, .. } = received.message {
+        assert_eq!(data.len(), 1_000_000);
+        assert_eq!(data, large_payload);
+    } else {
+        panic!("Expected single message");
+    }
 }
 
 #[tokio::test]

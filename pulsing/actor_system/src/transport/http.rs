@@ -14,7 +14,7 @@
 //! - `POST /cluster/gossip` - Gossip protocol
 //! - `GET /health` - Node health check
 
-use crate::actor::{ActorId, ActorPath, RawMessage};
+use crate::actor::{ActorId, ActorPath, Message, PayloadStream};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -59,7 +59,7 @@ impl Default for HttpTransportConfig {
     }
 }
 
-/// Actor message request
+/// Actor message request (wire format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActorRequest {
     /// Message type
@@ -75,7 +75,7 @@ pub struct ActorRequest {
     pub request_id: u64,
 }
 
-/// Actor message response
+/// Actor message response (wire format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActorResponse {
     /// Request ID for correlation
@@ -103,32 +103,17 @@ pub struct GossipResponse {
 #[async_trait::async_trait]
 pub trait HttpMessageHandler: Send + Sync + 'static {
     /// Handle an actor message with ask pattern (expects response)
-    async fn handle_actor_message(
-        &self,
-        actor_name: &str,
-        msg: RawMessage,
-    ) -> anyhow::Result<Vec<u8>>;
+    async fn handle_actor_message(&self, actor_name: &str, msg: Message) -> anyhow::Result<Message>;
 
     /// Handle an actor message with tell pattern (fire-and-forget)
-    async fn handle_actor_tell(
-        &self,
-        actor_name: &str,
-        msg: RawMessage,
-    ) -> anyhow::Result<()>;
+    async fn handle_actor_tell(&self, actor_name: &str, msg: Message) -> anyhow::Result<()>;
 
     /// Handle a named actor message with ask pattern (expects response)
-    async fn handle_named_actor_message(
-        &self,
-        path: &str,
-        msg: RawMessage,
-    ) -> anyhow::Result<Vec<u8>>;
+    async fn handle_named_actor_message(&self, path: &str, msg: Message)
+        -> anyhow::Result<Message>;
 
     /// Handle a named actor message with tell pattern (fire-and-forget)
-    async fn handle_named_actor_tell(
-        &self,
-        path: &str,
-        msg: RawMessage,
-    ) -> anyhow::Result<()>;
+    async fn handle_named_actor_tell(&self, path: &str, msg: Message) -> anyhow::Result<()>;
 
     /// Handle a gossip message
     async fn handle_gossip_message(&self, payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>>;
@@ -245,14 +230,17 @@ impl HttpTransport {
         &self,
         addr: SocketAddr,
         actor_name: &str,
-        msg: RawMessage,
-    ) -> anyhow::Result<Vec<u8>> {
+        msg: Message,
+    ) -> anyhow::Result<Message> {
         let request_id = self.next_request_id();
         let url = format!("http://{}/actors/{}", addr, actor_name);
 
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming not supported by HTTP/1.1 transport"));
+        };
         let request = ActorRequest {
-            msg_type: msg.msg_type,
-            payload: msg.payload,
+            msg_type,
+            payload: data,
             oneway: false,
             request_id,
         };
@@ -267,26 +255,30 @@ impl HttpTransport {
         }
 
         let actor_response: ActorResponse = response.json().await?;
-        actor_response
+        let response_payload = actor_response
             .result
-            .map_err(|e| anyhow::anyhow!("Actor error: {}", e))
+            .map_err(|e| anyhow::anyhow!("Actor error: {}", e))?;
+
+        Ok(Message::single("", response_payload))
     }
 
     /// Send a one-way message to an actor (fire-and-forget)
-    /// Send a one-way message (tell) using PUT
     pub async fn send_oneway(
         &self,
         addr: SocketAddr,
         actor_name: &str,
-        msg: RawMessage,
+        msg: Message,
     ) -> anyhow::Result<()> {
         let request_id = self.next_request_id();
         let url = format!("http://{}/actors/{}", addr, actor_name);
 
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming not supported by HTTP/1.1 transport"));
+        };
         let request = ActorRequest {
-            msg_type: msg.msg_type,
-            payload: msg.payload,
-            oneway: true, // kept for backward compatibility
+            msg_type,
+            payload: data,
+            oneway: true,
             request_id,
         };
 
@@ -307,14 +299,17 @@ impl HttpTransport {
         &self,
         addr: SocketAddr,
         path: &ActorPath,
-        msg: RawMessage,
-    ) -> anyhow::Result<Vec<u8>> {
+        msg: Message,
+    ) -> anyhow::Result<Message> {
         let request_id = self.next_request_id();
         let url = format!("http://{}/named/{}", addr, path.as_str());
 
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming not supported by HTTP/1.1 transport"));
+        };
         let request = ActorRequest {
-            msg_type: msg.msg_type,
-            payload: msg.payload,
+            msg_type,
+            payload: data,
             oneway: false,
             request_id,
         };
@@ -329,26 +324,30 @@ impl HttpTransport {
         }
 
         let actor_response: ActorResponse = response.json().await?;
-        actor_response
+        let response_payload = actor_response
             .result
-            .map_err(|e| anyhow::anyhow!("Named actor error: {}", e))
+            .map_err(|e| anyhow::anyhow!("Named actor error: {}", e))?;
+
+        Ok(Message::single("", response_payload))
     }
 
     /// Send a one-way message to a named actor (fire-and-forget)
-    /// Send a one-way message (tell) to named actor using PUT
     pub async fn send_named_oneway(
         &self,
         addr: SocketAddr,
         path: &ActorPath,
-        msg: RawMessage,
+        msg: Message,
     ) -> anyhow::Result<()> {
         let request_id = self.next_request_id();
         let url = format!("http://{}/named/{}", addr, path.as_str());
 
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming not supported by HTTP/1.1 transport"));
+        };
         let request = ActorRequest {
-            msg_type: msg.msg_type,
-            payload: msg.payload,
-            oneway: true, // kept for backward compatibility
+            msg_type,
+            payload: data,
+            oneway: true,
             request_id,
         };
 
@@ -436,23 +435,25 @@ impl crate::actor::RemoteTransport for HttpRemoteTransport {
         msg_type: &str,
         payload: Vec<u8>,
     ) -> anyhow::Result<Vec<u8>> {
-        let msg = RawMessage {
-            msg_type: msg_type.to_string(),
-            payload,
-        };
+        let msg = Message::single(msg_type, payload);
 
-        match &self.target {
+        let response = match &self.target {
             RemoteTarget::Actor(name) => {
                 self.transport
                     .send_request(self.remote_addr, name, msg)
-                    .await
+                    .await?
             }
             RemoteTarget::Named(path) => {
                 self.transport
                     .send_named_request(self.remote_addr, path, msg)
-                    .await
+                    .await?
             }
-        }
+        };
+
+        let Message::Single { data, .. } = response else {
+            return Err(anyhow::anyhow!("Unexpected stream response"));
+        };
+        Ok(data)
     }
 
     async fn send(
@@ -461,10 +462,7 @@ impl crate::actor::RemoteTransport for HttpRemoteTransport {
         msg_type: &str,
         payload: Vec<u8>,
     ) -> anyhow::Result<()> {
-        let msg = RawMessage {
-            msg_type: msg_type.to_string(),
-            payload,
-        };
+        let msg = Message::single(msg_type, payload);
 
         match &self.target {
             RemoteTarget::Actor(name) => {
@@ -478,6 +476,19 @@ impl crate::actor::RemoteTransport for HttpRemoteTransport {
                     .await
             }
         }
+    }
+
+    async fn request_stream(
+        &self,
+        _actor_id: &ActorId,
+        _msg_type: &str,
+        _payload: Vec<u8>,
+    ) -> anyhow::Result<PayloadStream> {
+        // HTTP/1.1 transport does not support streaming.
+        // Use HTTP/2 transport for streaming support.
+        Err(anyhow::anyhow!(
+            "Streaming not supported with HTTP/1.1 transport. Use HTTP/2 transport instead."
+        ))
     }
 }
 
@@ -495,19 +506,22 @@ async fn actor_handler(
     Path(name): Path<String>,
     Json(request): Json<ActorRequest>,
 ) -> impl IntoResponse {
-    let msg = RawMessage {
-        msg_type: request.msg_type,
-        payload: request.payload,
-    };
+    let msg = Message::single(request.msg_type, request.payload);
 
     match state.handler.handle_actor_message(&name, msg).await {
-        Ok(result) => (
-            StatusCode::OK,
-            Json(ActorResponse {
-                request_id: request.request_id,
-                result: Ok(result),
-            }),
-        ),
+        Ok(response) => {
+            let payload = match response {
+                Message::Single { data, .. } => data,
+                Message::Stream { .. } => Vec::new(),
+            };
+            (
+                StatusCode::OK,
+                Json(ActorResponse {
+                    request_id: request.request_id,
+                    result: Ok(payload),
+                }),
+            )
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ActorResponse {
@@ -524,10 +538,7 @@ async fn actor_tell_handler(
     Path(name): Path<String>,
     Json(request): Json<ActorRequest>,
 ) -> impl IntoResponse {
-    let msg = RawMessage {
-        msg_type: request.msg_type,
-        payload: request.payload,
-    };
+    let msg = Message::single(request.msg_type, request.payload);
 
     match state.handler.handle_actor_tell(&name, msg).await {
         Ok(()) => StatusCode::ACCEPTED,
@@ -554,19 +565,22 @@ async fn named_actor_handler(
     Path(path): Path<String>,
     Json(request): Json<ActorRequest>,
 ) -> impl IntoResponse {
-    let msg = RawMessage {
-        msg_type: request.msg_type,
-        payload: request.payload,
-    };
+    let msg = Message::single(request.msg_type, request.payload);
 
     match state.handler.handle_named_actor_message(&path, msg).await {
-        Ok(result) => (
-            StatusCode::OK,
-            Json(ActorResponse {
-                request_id: request.request_id,
-                result: Ok(result),
-            }),
-        ),
+        Ok(response) => {
+            let payload = match response {
+                Message::Single { data, .. } => data,
+                Message::Stream { .. } => Vec::new(),
+            };
+            (
+                StatusCode::OK,
+                Json(ActorResponse {
+                    request_id: request.request_id,
+                    result: Ok(payload),
+                }),
+            )
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ActorResponse {
@@ -583,10 +597,7 @@ async fn named_actor_tell_handler(
     Path(path): Path<String>,
     Json(request): Json<ActorRequest>,
 ) -> impl IntoResponse {
-    let msg = RawMessage {
-        msg_type: request.msg_type,
-        payload: request.payload,
-    };
+    let msg = Message::single(request.msg_type, request.payload);
 
     match state.handler.handle_named_actor_tell(&path, msg).await {
         Ok(()) => StatusCode::ACCEPTED,

@@ -5,7 +5,7 @@
 //! - Termination handling (logging, cleanup, notification)
 //! - Cluster broadcast for named actor failures
 
-use crate::actor::{ActorId, ActorPath, Envelope, RawMessage, StopReason, Terminated};
+use crate::actor::{ActorId, ActorPath, Envelope, Message, StopReason, Terminated};
 use crate::cluster::GossipCluster;
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
@@ -189,7 +189,7 @@ impl ActorLifecycle {
             reason,
         };
 
-        let raw_msg = match RawMessage::from_message(&terminated) {
+        let msg = match Message::pack(&terminated) {
             Ok(msg) => msg,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to serialize Terminated message");
@@ -197,10 +197,16 @@ impl ActorLifecycle {
             }
         };
 
+        // Get payload bytes (Terminated is always single message)
+        let (msg_type, payload_bytes) = match msg {
+            Message::Single { msg_type, data } => (msg_type, data),
+            Message::Stream { msg_type, .. } => (msg_type, Vec::new()),
+        };
+
         // Send to all watchers
         for watcher_name in watcher_names {
             if let Some(sender) = get_sender(&watcher_name) {
-                let envelope = Envelope::tell(raw_msg.msg_type.clone(), raw_msg.payload.clone());
+                let envelope = Envelope::tell(msg_type.clone(), payload_bytes.clone());
                 if let Err(e) = sender.try_send(envelope) {
                     tracing::warn!(
                         watcher = watcher_name,

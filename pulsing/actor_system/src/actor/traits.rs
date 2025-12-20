@@ -1,10 +1,13 @@
 //! Core Actor traits and types
 
 use async_trait::async_trait;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use futures::Stream;
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
+use std::pin::Pin;
+use tokio::sync::mpsc;
 
 /// Reason why an actor stopped
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,12 +40,6 @@ pub struct Terminated {
     pub actor_id: ActorId,
     /// Reason for termination
     pub reason: StopReason,
-}
-
-impl Message for Terminated {
-    fn type_id() -> &'static str {
-        "Terminated"
-    }
 }
 
 /// Node identifier in the cluster
@@ -105,158 +102,296 @@ impl fmt::Display for ActorId {
     }
 }
 
-/// Message trait - all messages must be serializable
-pub trait Message: Serialize + DeserializeOwned + Send + Sync + 'static {
-    /// Unique type identifier for routing
-    fn type_id() -> &'static str
-    where
-        Self: Sized;
+// ============================================================================
+// Message - unified message type supporting single and streaming
+// ============================================================================
+
+/// Stream type for payload data
+pub type PayloadStream = Pin<Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send>>;
+
+/// Unified message type for both requests and responses
+///
+/// Message is an enum with two variants:
+/// - `Single`: for traditional request-response with a single data payload
+/// - `Stream`: for streaming scenarios with a payload stream
+///
+/// # Example
+/// ```ignore
+/// // Create a single message with raw bytes
+/// let request = Message::single("Echo", b"hello");
+///
+/// // Pack a serializable struct (uses type_name as msg_type)
+/// let request = Message::pack(&Ping { value: 42 })?;
+///
+/// // Create a streaming response
+/// let (tx, rx) = mpsc::channel(32);
+/// let response = Message::from_channel("", rx);
+///
+/// // Unpack a message to a specific type
+/// let ping: Ping = msg.unpack()?;
+/// ```
+pub enum Message {
+    /// Single data message
+    Single {
+        /// Message type identifier (empty for responses)
+        msg_type: String,
+        /// Message data
+        data: Vec<u8>,
+    },
+    /// Streaming data message
+    Stream {
+        /// Message type identifier (empty for responses)
+        msg_type: String,
+        /// Payload stream
+        stream: PayloadStream,
+    },
 }
 
-/// Raw message for type-erased handling
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RawMessage {
-    /// Message type identifier
-    pub msg_type: String,
-    /// Serialized payload
-    pub payload: Vec<u8>,
-}
+impl Message {
+    /// Create a single message with type and data
+    pub fn single(msg_type: impl Into<String>, data: impl Into<Vec<u8>>) -> Self {
+        Message::Single {
+            msg_type: msg_type.into(),
+            data: data.into(),
+        }
+    }
 
-impl RawMessage {
-    /// Create a new raw message from a typed message
-    pub fn from_message<M: Message>(msg: &M) -> anyhow::Result<Self> {
-        Ok(Self {
-            msg_type: M::type_id().to_string(),
-            payload: bincode::serialize(msg)?,
+    /// Create an empty single message (for responses)
+    pub fn empty() -> Self {
+        Message::Single {
+            msg_type: String::new(),
+            data: Vec::new(),
+        }
+    }
+
+    /// Pack a serializable value into a message
+    ///
+    /// Uses `std::any::type_name` to automatically generate the message type.
+    /// The type name includes the full module path (e.g., "my_crate::Ping").
+    ///
+    /// # Example
+    /// ```ignore
+    /// let msg = Message::pack(&Ping { value: 42 })?;
+    /// assert!(msg.msg_type().ends_with("::Ping"));
+    /// ```
+    pub fn pack<M: Serialize + 'static>(msg: &M) -> anyhow::Result<Self> {
+        Ok(Message::Single {
+            msg_type: std::any::type_name::<M>().to_string(),
+            data: bincode::serialize(msg)?,
         })
     }
 
-    /// Deserialize into a typed message
-    pub fn into_message<M: Message>(self) -> anyhow::Result<M> {
-        Ok(bincode::deserialize(&self.payload)?)
+    /// Unpack (deserialize) the message data into a specific type
+    ///
+    /// Only works for `Single` variant. Does not check the message type -
+    /// the caller is responsible for matching the correct type.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ping: Ping = msg.unpack()?;
+    /// ```
+    pub fn unpack<M: DeserializeOwned>(self) -> anyhow::Result<M> {
+        match self {
+            Message::Single { data, .. } => Ok(bincode::deserialize(&data)?),
+            Message::Stream { .. } => Err(anyhow::anyhow!("Cannot unpack stream message")),
+        }
     }
 
-    /// Create an empty response
-    pub fn empty() -> Self {
-        Self {
-            msg_type: "empty".to_string(),
-            payload: vec![],
+    /// Create a streaming message from a channel receiver
+    pub fn from_channel(
+        msg_type: impl Into<String>,
+        rx: mpsc::Receiver<anyhow::Result<Vec<u8>>>,
+    ) -> Self {
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Message::Stream {
+            msg_type: msg_type.into(),
+            stream: Box::pin(stream),
+        }
+    }
+
+    /// Create a streaming message from a stream
+    pub fn stream<S>(msg_type: impl Into<String>, stream: S) -> Self
+    where
+        S: Stream<Item = anyhow::Result<Vec<u8>>> + Send + 'static,
+    {
+        Message::Stream {
+            msg_type: msg_type.into(),
+            stream: Box::pin(stream),
+        }
+    }
+
+    /// Get message type (works for both variants)
+    pub fn msg_type(&self) -> &str {
+        match self {
+            Message::Single { msg_type, .. } => msg_type,
+            Message::Stream { msg_type, .. } => msg_type,
+        }
+    }
+
+    /// Check if this is a single message
+    pub fn is_single(&self) -> bool {
+        matches!(self, Message::Single { .. })
+    }
+
+    /// Check if this is a streaming message
+    pub fn is_stream(&self) -> bool {
+        matches!(self, Message::Stream { .. })
+    }
+
+    /// Check if this message has a type
+    pub fn has_type(&self) -> bool {
+        !self.msg_type().is_empty()
+    }
+}
+
+impl fmt::Debug for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Message::Single { msg_type, data } => f
+                .debug_struct("Message::Single")
+                .field("msg_type", msg_type)
+                .field("data_len", &data.len())
+                .finish(),
+            Message::Stream { msg_type, .. } => f
+                .debug_struct("Message::Stream")
+                .field("msg_type", msg_type)
+                .finish_non_exhaustive(),
         }
     }
 }
+
+impl Default for Message {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+// Custom Serialize/Deserialize for Message (only supports Single variant)
+impl Serialize for Message {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Message::Single { msg_type, data } => (msg_type, data).serialize(serializer),
+            Message::Stream { .. } => Err(serde::ser::Error::custom(
+                "Cannot serialize streaming message",
+            )),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let (msg_type, data): (String, Vec<u8>) = Deserialize::deserialize(deserializer)?;
+        Ok(Message::Single { msg_type, data })
+    }
+}
+
+impl Clone for Message {
+    fn clone(&self) -> Self {
+        match self {
+            Message::Single { msg_type, data } => Message::Single {
+                msg_type: msg_type.clone(),
+                data: data.clone(),
+            },
+            Message::Stream { .. } => panic!("Cannot clone streaming message"),
+        }
+    }
+}
+
+/// Message stream type (for streaming scenarios)
+pub type MessageStream = Pin<Box<dyn Stream<Item = anyhow::Result<Message>> + Send>>;
+
+/// Create an empty message stream
+pub fn empty_stream() -> MessageStream {
+    Box::pin(futures::stream::empty())
+}
+
+// ============================================================================
+// Actor trait - unified interface
+// ============================================================================
 
 /// Actor context passed to handlers
 pub use super::context::ActorContext;
 
 /// Core Actor trait
+///
+/// Implement this trait to create an actor. The `receive` method handles all messages.
+/// Use `ctx.id()` to get the actor's ID within handlers.
+///
+/// # Example
+/// ```ignore
+/// struct Counter {
+///     count: i32,
+/// }
+///
+/// #[async_trait]
+/// impl Actor for Counter {
+///     async fn receive(
+///         &mut self,
+///         msg: Message,
+///         ctx: &mut ActorContext,
+///     ) -> anyhow::Result<Message> {
+///         if msg.msg_type().ends_with("Increment") {
+///             self.count += 1;
+///             return Message::pack(&self.count);
+///         }
+///         Err(anyhow::anyhow!("Unknown message"))
+///     }
+/// }
+///
+/// // Spawn with a name
+/// let actor_ref = system.spawn("counter", Counter { count: 0 }).await?;
+/// ```
 #[async_trait]
 pub trait Actor: Send + Sync + 'static {
-    /// Get the actor's unique identifier
-    fn id(&self) -> &ActorId;
-
-    /// Get actor metadata for diagnostics.
-    /// Returns a key-value map that can be used by monitoring/debugging tools.
-    /// The transport layer is responsible for serialization.
+    /// Get actor metadata for diagnostics (optional).
     fn metadata(&self) -> HashMap<String, String> {
         HashMap::new()
     }
 
-    /// Called when the actor starts
+    /// Called when the actor starts.
+    /// Use `ctx.id()` to get the actor's assigned ID.
     async fn on_start(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
         Ok(())
     }
 
-    /// Called when the actor stops
+    /// Called when the actor stops.
     async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
         Ok(())
     }
 
-    /// Handle a raw message with request-response semantics (ask pattern)
+    /// Handle a message and produce a response.
     ///
-    /// Override this for messages that require a response.
-    /// Default implementation returns an error.
+    /// This is the unified handler for all message patterns:
+    /// - Single -> Single (traditional RPC)
+    /// - Single -> Stream (server streaming, e.g., LLM generation)
+    /// - Stream -> Single (client streaming)
+    /// - Stream -> Stream (bidirectional streaming)
+    ///
+    /// For "tell" (fire-and-forget) messages, the response is ignored.
     async fn receive(
         &mut self,
-        msg: RawMessage,
-        _ctx: &mut ActorContext,
-    ) -> anyhow::Result<RawMessage> {
+        msg: Message,
+        ctx: &mut ActorContext,
+    ) -> anyhow::Result<Message> {
         Err(anyhow::anyhow!(
             "Actor {} does not handle message type: {}",
-            self.id(),
-            msg.msg_type
+            ctx.id(),
+            msg.msg_type()
         ))
     }
-
-    /// Handle a fire-and-forget message (tell pattern)
-    ///
-    /// Override this for pure tell semantics without response overhead.
-    /// Default implementation calls `receive` and discards the result.
-    ///
-    /// # Example
-    /// ```ignore
-    /// async fn on_tell(&mut self, msg: RawMessage, ctx: &mut ActorContext) -> anyhow::Result<()> {
-    ///     match msg.msg_type.as_str() {
-    ///         "LogEvent" => {
-    ///             let event: LogEvent = msg.into_message()?;
-    ///             self.log(event);
-    ///             Ok(())
-    ///         }
-    ///         _ => self.default_tell(msg, ctx).await
-    ///     }
-    /// }
-    /// ```
-    async fn on_tell(
-        &mut self,
-        msg: RawMessage,
-        ctx: &mut ActorContext,
-    ) -> anyhow::Result<()> {
-        // Default: delegate to receive and discard result
-        let _ = self.receive(msg, ctx).await?;
-        Ok(())
-    }
-}
-
-/// Typed message handler trait
-#[async_trait]
-pub trait Handler<M: Message>: Actor {
-    /// Response type
-    type Response: Message;
-
-    /// Handle the message
-    async fn handle(&mut self, msg: M, ctx: &mut ActorContext) -> Self::Response;
 }
 
 /// Trait for dispatching messages to actors (used by transport layer)
 #[async_trait]
-pub trait MessageHandler: Send + Sync {
+pub trait MessageDispatcher: Send + Sync {
     /// Handle an incoming message for an actor
-    async fn handle_message(
-        &self,
-        actor_id: &ActorId,
-        msg_type: &str,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>>;
-}
-
-/// Unit type message implementation
-impl Message for () {
-    fn type_id() -> &'static str {
-        "unit"
-    }
-}
-
-/// Simple string message
-impl Message for String {
-    fn type_id() -> &'static str {
-        "string"
-    }
-}
-
-/// Bytes message
-impl Message for Vec<u8> {
-    fn type_id() -> &'static str {
-        "bytes"
-    }
+    async fn dispatch(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<Message>;
 }
 
 #[cfg(test)]
@@ -268,20 +403,29 @@ mod tests {
         value: i32,
     }
 
-    impl Message for TestMessage {
-        fn type_id() -> &'static str {
-            "TestMessage"
-        }
+    #[test]
+    fn test_message_serialization() {
+        // Test serialization of single message
+        let msg = Message::single("TestType", b"hello");
+        let serialized = bincode::serialize(&msg).unwrap();
+        let deserialized: Message = bincode::deserialize(&serialized).unwrap();
+
+        assert_eq!(deserialized.msg_type(), "TestType");
+        let Message::Single { data, .. } = deserialized else {
+            panic!("expected single")
+        };
+        assert_eq!(data, b"hello");
     }
 
     #[test]
-    fn test_raw_message_roundtrip() {
-        let msg = TestMessage { value: 42 };
-        let raw = RawMessage::from_message(&msg).unwrap();
-        assert_eq!(raw.msg_type, "TestMessage");
-
-        let decoded: TestMessage = raw.into_message().unwrap();
-        assert_eq!(decoded, msg);
+    fn test_message_clone() {
+        let msg = Message::single("TestType", b"hello");
+        let cloned = msg.clone();
+        assert_eq!(cloned.msg_type(), "TestType");
+        let Message::Single { data, .. } = cloned else {
+            panic!("expected single")
+        };
+        assert_eq!(data, b"hello");
     }
 
     #[test]
@@ -290,5 +434,52 @@ mod tests {
         let id = ActorId::new(node.clone(), "test-actor");
         assert_eq!(id.name, "test-actor");
         assert_eq!(id.node, node);
+    }
+
+    #[test]
+    fn test_message_single() {
+        let msg = Message::single("Echo", b"hello");
+        assert!(msg.is_single());
+        assert!(!msg.is_stream());
+        assert_eq!(msg.msg_type(), "Echo");
+
+        let Message::Single { data, .. } = msg else {
+            panic!("expected single")
+        };
+        assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_message_pack_unpack() {
+        let msg = TestMessage { value: 42 };
+        let message = Message::pack(&msg).unwrap();
+
+        // type_name includes module path
+        assert!(message.msg_type().ends_with("TestMessage"));
+        assert!(message.is_single());
+
+        let decoded: TestMessage = message.unpack().unwrap();
+        assert_eq!(decoded.value, 42);
+    }
+
+    #[test]
+    fn test_message_response() {
+        // Response without type (empty string)
+        let response = Message::single("", b"hello");
+        assert!(!response.has_type());
+        assert!(response.is_single());
+
+        let Message::Single { data, .. } = response else {
+            panic!("expected single")
+        };
+        assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_message_request() {
+        // Request with type
+        let request = Message::single("Echo", b"hello");
+        assert!(request.has_type());
+        assert_eq!(request.msg_type(), "Echo");
     }
 }

@@ -1,7 +1,7 @@
 //! TCP transport for actor communication
 
 use super::codec::{MessageCodec, TransportMessage};
-use crate::actor::{ActorId, MessageHandler, RemoteTransport};
+use crate::actor::{ActorId, PayloadStream, RemoteTransport};
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
@@ -11,6 +11,18 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
+
+/// TCP message handler trait (local to this module)
+#[async_trait::async_trait]
+pub trait TcpMessageHandler: Send + Sync + 'static {
+    /// Handle an incoming message for an actor
+    async fn handle_message(
+        &self,
+        actor_id: &ActorId,
+        msg_type: &str,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<Vec<u8>>;
+}
 
 /// TCP transport configuration
 #[derive(Clone, Debug)]
@@ -51,7 +63,7 @@ pub struct TcpTransport {
     pending: Arc<DashMap<u64, oneshot::Sender<Result<Vec<u8>, String>>>>,
 
     /// Message handler for incoming requests
-    handler: Arc<dyn MessageHandler>,
+    handler: Arc<dyn TcpMessageHandler>,
 
     /// Connection pool (addr -> connection)
     connections: Arc<DashMap<SocketAddr, Arc<Connection>>>,
@@ -70,7 +82,7 @@ impl TcpTransport {
     /// Create a new TCP transport
     pub async fn new(
         bind_addr: SocketAddr,
-        handler: Arc<dyn MessageHandler>,
+        handler: Arc<dyn TcpMessageHandler>,
         config: TcpTransportConfig,
     ) -> anyhow::Result<Arc<Self>> {
         let listener = TcpListener::bind(bind_addr).await?;
@@ -390,6 +402,19 @@ impl RemoteTransport for TcpRemoteTransport {
             .send_one_way(self.remote_addr, actor_id, msg_type, payload)
             .await
     }
+
+    async fn request_stream(
+        &self,
+        _actor_id: &ActorId,
+        _msg_type: &str,
+        _payload: Vec<u8>,
+    ) -> anyhow::Result<PayloadStream> {
+        // TCP transport does not support streaming.
+        // Use HTTP/2 transport for streaming support.
+        Err(anyhow::anyhow!(
+            "Streaming not supported with TCP transport. Use HTTP/2 transport instead."
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -399,7 +424,7 @@ mod tests {
     struct EchoHandler;
 
     #[async_trait::async_trait]
-    impl MessageHandler for EchoHandler {
+    impl TcpMessageHandler for EchoHandler {
         async fn handle_message(
             &self,
             _actor_id: &ActorId,

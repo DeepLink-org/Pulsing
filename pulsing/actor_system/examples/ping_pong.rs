@@ -4,113 +4,57 @@
 
 use pulsing_actor::prelude::*;
 
-// Define messages
+// Messages
 #[derive(Serialize, Deserialize, Debug)]
-struct Ping {
-    value: i32,
-}
-
-impl Message for Ping {
-    fn type_id() -> &'static str {
-        "Ping"
-    }
-}
+struct Ping(i32);
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Pong {
-    result: i32,
-}
+struct Pong(i32);
 
-impl Message for Pong {
-    fn type_id() -> &'static str {
-        "Pong"
-    }
-}
-
-// Define an actor
-struct CounterActor {
-    id: ActorId,
+// Actor - minimal definition!
+struct Counter {
     count: i32,
 }
 
 #[async_trait]
-impl Actor for CounterActor {
-    fn id(&self) -> &ActorId {
-        &self.id
-    }
-
-    async fn on_start(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
-        println!("CounterActor started with initial count: {}", self.count);
+impl Actor for Counter {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+        println!("[{}] started with count: {}", ctx.id().name, self.count);
         Ok(())
     }
 
-    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
-        println!("CounterActor stopped with final count: {}", self.count);
-        Ok(())
-    }
-
-    async fn receive(
-        &mut self,
-        msg: RawMessage,
-        _ctx: &mut ActorContext,
-    ) -> anyhow::Result<RawMessage> {
-        match msg.msg_type.as_str() {
-            "Ping" => {
-                let ping: Ping = msg.into_message()?;
-                self.count += ping.value;
-                println!("Received Ping({}), count is now {}", ping.value, self.count);
-                RawMessage::from_message(&Pong { result: self.count })
-            }
-            _ => Err(anyhow::anyhow!("Unknown message type: {}", msg.msg_type)),
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+        if msg.msg_type().ends_with("Ping") {
+            let Ping(value) = msg.unpack()?;
+            self.count += value;
+            println!("Ping({}) -> count = {}", value, self.count);
+            return Message::pack(&Pong(self.count));
         }
+        Err(anyhow::anyhow!("Unknown message"))
     }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter("info,pulsing_actor=debug")
-        .init();
+    println!("=== Ping-Pong Example ===\n");
 
-    println!("=== Ping-Pong Actor Example ===\n");
+    // Create system and spawn actor
+    let system = ActorSystem::new(SystemConfig::standalone()).await?;
+    let actor = system.spawn("counter", Counter { count: 0 }).await?;
 
-    // Create actor system (standalone mode)
-    let config = SystemConfig::standalone();
-    let system = ActorSystem::new(config).await?;
-
-    println!("Actor system started at {:?}", system.tcp_addr());
-
-    // Spawn counter actor
-    let actor = CounterActor {
-        id: ActorId::local("counter"),
-        count: 0,
-    };
-
-    let actor_ref = system.spawn(actor).await?;
-    println!("Spawned actor: {:?}\n", actor_ref.id());
-
-    // Send some ping messages
+    // Send messages
     for i in 1..=5 {
-        let pong: Pong = actor_ref.ask(Ping { value: i * 10 }).await?;
-        println!("Got Pong with result: {}\n", pong.result);
+        let Pong(result) = actor.ask(Ping(i * 10)).await?;
+        println!("Got Pong({})\n", result);
     }
 
-    // Fire-and-forget message
-    println!("Sending tell (fire-and-forget)...");
-    actor_ref.tell(Ping { value: 100 }).await?;
+    // Fire-and-forget
+    actor.tell(Ping(100)).await?;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    // Give time for the tell to be processed
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    // Check final state
+    let Pong(final_count) = actor.ask(Ping(0)).await?;
+    println!("Final count: {}", final_count);
 
-    // Final ask to see the result
-    let final_pong: Pong = actor_ref.ask(Ping { value: 0 }).await?;
-    println!("Final count: {}", final_pong.result);
-
-    // Shutdown
-    println!("\nShutting down...");
-    system.shutdown().await?;
-
-    println!("Done!");
-    Ok(())
+    system.shutdown().await
 }

@@ -7,9 +7,15 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 /// Context provided to actors during message handling
+///
+/// Provides access to:
+/// - `id()` - The actor's assigned ID
+/// - `actor_ref()` - Get references to other actors
+/// - `watch()`/`unwatch()` - Monitor other actors
+/// - `is_cancelled()` - Check if shutdown was requested
 pub struct ActorContext {
     /// The actor's own ID
-    actor_id: Option<ActorId>,
+    actor_id: ActorId,
 
     /// Local node ID
     node_id: Option<NodeId>,
@@ -41,10 +47,10 @@ pub trait ActorSystemRef: Send + Sync {
 }
 
 impl ActorContext {
-    /// Create a new context
-    pub fn new() -> Self {
+    /// Create a new context (for testing)
+    pub fn new(actor_id: ActorId) -> Self {
         Self {
-            actor_id: None,
+            actor_id,
             node_id: None,
             cancel_token: CancellationToken::new(),
             actor_refs: HashMap::new(),
@@ -53,10 +59,14 @@ impl ActorContext {
     }
 
     /// Create context with system reference
-    pub fn with_system(system: Arc<dyn ActorSystemRef>, cancel_token: CancellationToken) -> Self {
+    pub fn with_system(
+        actor_id: ActorId,
+        system: Arc<dyn ActorSystemRef>,
+        cancel_token: CancellationToken,
+    ) -> Self {
         let node_id = Some(system.node_id().clone());
         Self {
-            actor_id: None,
+            actor_id,
             node_id,
             cancel_token,
             actor_refs: HashMap::new(),
@@ -64,14 +74,9 @@ impl ActorContext {
         }
     }
 
-    /// Set the actor ID
-    pub fn set_actor_id(&mut self, id: ActorId) {
-        self.actor_id = Some(id);
-    }
-
-    /// Get the actor's own ID
-    pub fn actor_id(&self) -> Option<&ActorId> {
-        self.actor_id.as_ref()
+    /// Get the actor's ID
+    pub fn id(&self) -> &ActorId {
+        &self.actor_id
     }
 
     /// Get the local node ID
@@ -114,13 +119,8 @@ impl ActorContext {
 
     /// Watch another actor - will receive Terminated message when it stops
     pub async fn watch(&self, target: &ActorId) -> anyhow::Result<()> {
-        let watcher = self
-            .actor_id
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Actor ID not set in context"))?;
-
         if let Some(ref system) = self.system {
-            system.watch(watcher, target).await
+            system.watch(&self.actor_id, target).await
         } else {
             Err(anyhow::anyhow!("No system reference available"))
         }
@@ -128,22 +128,11 @@ impl ActorContext {
 
     /// Stop watching another actor
     pub async fn unwatch(&self, target: &ActorId) -> anyhow::Result<()> {
-        let watcher = self
-            .actor_id
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Actor ID not set in context"))?;
-
         if let Some(ref system) = self.system {
-            system.unwatch(watcher, target).await
+            system.unwatch(&self.actor_id, target).await
         } else {
             Err(anyhow::anyhow!("No system reference available"))
         }
-    }
-}
-
-impl Default for ActorContext {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -153,14 +142,14 @@ mod tests {
 
     #[test]
     fn test_context_creation() {
-        let ctx = ActorContext::new();
-        assert!(ctx.actor_id().is_none());
+        let ctx = ActorContext::new(ActorId::local("test"));
+        assert_eq!(ctx.id().name, "test");
         assert!(!ctx.is_cancelled());
     }
 
     #[test]
     fn test_context_cancellation() {
-        let ctx = ActorContext::new();
+        let ctx = ActorContext::new(ActorId::local("test"));
         assert!(!ctx.is_cancelled());
         ctx.cancel_token().cancel();
         assert!(ctx.is_cancelled());

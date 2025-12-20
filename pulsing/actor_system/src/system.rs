@@ -2,7 +2,7 @@
 
 use crate::actor::{
     Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Envelope,
-    Mailbox, NodeId, RawMessage, StopReason, LOCALHOST,
+    EnvelopeResponse, Mailbox, Message, NodeId, StopReason, LOCALHOST,
 };
 use crate::cluster::{GossipCluster, GossipConfig, GossipMessage, MemberInfo, NamedActorInfo};
 use crate::transport::{
@@ -236,25 +236,32 @@ impl ActorSystem {
         self.addr
     }
 
-    /// Spawn a new actor (not registered in cluster)
+    /// Spawn a new actor with a name.
     ///
-    /// This creates a local actor that is not broadcast to the cluster.
-    /// Use `spawn_named` for actors that need to be discoverable cluster-wide.
-    pub async fn spawn<A>(self: &Arc<Self>, mut actor: A) -> anyhow::Result<ActorRef>
+    /// # Example
+    /// ```ignore
+    /// let actor_ref = system.spawn("counter", Counter { count: 0 }).await?;
+    /// ```
+    pub async fn spawn<A>(
+        self: &Arc<Self>,
+        name: impl Into<String>,
+        mut actor: A,
+    ) -> anyhow::Result<ActorRef>
     where
         A: Actor,
     {
-        let actor_id = ActorId::new(self.node_id.clone(), actor.id().name.clone());
+        let name = name.into();
+        let actor_id = ActorId::new(self.node_id.clone(), name.clone());
 
         // Create mailbox
         let mailbox = Mailbox::new();
         let sender = mailbox.sender();
         let (_, receiver) = mailbox.split();
 
-        // Create context
+        // Create context with the assigned ID
         let ctx_system: Arc<dyn ActorSystemRef> = self.clone();
-        let mut ctx = ActorContext::with_system(ctx_system, self.cancel_token.clone());
-        ctx.set_actor_id(actor_id.clone());
+        let mut ctx =
+            ActorContext::with_system(actor_id.clone(), ctx_system, self.cancel_token.clone());
 
         // Get metadata before starting (as actor is moved)
         let metadata = actor.metadata();
@@ -271,7 +278,7 @@ impl ActorSystem {
 
         // Spawn actor task
         let cancel = self.cancel_token.clone();
-        let actor_name = actor_id.name.clone();
+        let actor_name = name.clone();
         let loop_stats = stats.clone();
 
         let join_handle = tokio::spawn(async move {
@@ -309,29 +316,26 @@ impl ActorSystem {
         Ok(ActorRef::local(actor_id, sender))
     }
 
-    /// Spawn a named actor with a path (broadcasts location to cluster)
+    /// Spawn a named actor with a path (broadcasts location to cluster).
     ///
     /// Named actors are registered in the cluster registry and can be discovered
-    /// by other nodes using the actor path. Multiple instances can be deployed
-    /// on different nodes.
-    ///
-    /// # Arguments
-    /// * `path` - The actor path (e.g., "services/llm/router")
-    /// * `actor` - The actor implementation
+    /// by other nodes using the actor path.
     ///
     /// # Example
     /// ```ignore
     /// let path = ActorPath::new("services/llm/router")?;
-    /// let actor_ref = system.spawn_named(path, MyActor::new()).await?;
+    /// let actor_ref = system.spawn_named(path, "router", Router::new()).await?;
     /// ```
     pub async fn spawn_named<A>(
         self: &Arc<Self>,
         path: ActorPath,
+        name: impl Into<String>,
         mut actor: A,
     ) -> anyhow::Result<ActorRef>
     where
         A: Actor,
     {
+        let name = name.into();
         let path_key = path.as_str();
 
         // Check if path is already registered locally
@@ -342,17 +346,17 @@ impl ActorSystem {
             ));
         }
 
-        let actor_id = ActorId::new(self.node_id.clone(), actor.id().name.clone());
+        let actor_id = ActorId::new(self.node_id.clone(), name.clone());
 
         // Create mailbox
         let mailbox = Mailbox::new();
         let sender = mailbox.sender();
         let (_, receiver) = mailbox.split();
 
-        // Create context
+        // Create context with the assigned ID
         let ctx_system: Arc<dyn ActorSystemRef> = self.clone();
-        let mut ctx = ActorContext::with_system(ctx_system, self.cancel_token.clone());
-        ctx.set_actor_id(actor_id.clone());
+        let mut ctx =
+            ActorContext::with_system(actor_id.clone(), ctx_system, self.cancel_token.clone());
 
         // Get metadata before starting
         let metadata = actor.metadata();
@@ -817,32 +821,28 @@ async fn run_actor_loop<A: Actor>(
                 match msg {
                     Some(envelope) => {
                         stats.inc_message();
+                        
+                        // Destructure envelope to take ownership of message and respond_to
+                        let Envelope { message, respond_to, .. } = envelope;
 
-                        if envelope.expects_response() {
-                            // Ask pattern: call receive() and send response
-                            let raw = envelope.to_raw_message();
-                            match actor.receive(raw, &mut ctx).await {
-                                Ok(response) => {
-                                    envelope.respond(Ok(response.payload));
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        actor_id = ?ctx.actor_id(),
-                                        error = %e,
-                                        "Actor handler error (ask)"
-                                    );
-                                    envelope.respond(Err(anyhow::anyhow!("Handler error: {}", e)));
+                        // Always call receive() - tell pattern just ignores the response
+                        match actor.receive(message, &mut ctx).await {
+                            Ok(response) => {
+                                // Send response if caller expects one
+                                if let Some(EnvelopeResponse::Unified(tx)) = respond_to {
+                                    let _ = tx.send(Ok(response));
                                 }
                             }
-                        } else {
-                            // Tell pattern: call on_tell() without response overhead
-                            let raw = envelope.to_raw_message();
-                            if let Err(e) = actor.on_tell(raw, &mut ctx).await {
+                            Err(e) => {
                                 tracing::error!(
-                                    actor_id = ?ctx.actor_id(),
+                                    actor_id = ?ctx.id(),
                                     error = %e,
-                                    "Actor handler error (tell)"
+                                    "Actor handler error"
                                 );
+                                // Send error if caller expects response
+                                if let Some(EnvelopeResponse::Unified(tx)) = respond_to {
+                                    let _ = tx.send(Err(anyhow::anyhow!("Handler error: {}", e)));
+                                }
                             }
                         }
                     }
@@ -861,7 +861,7 @@ async fn run_actor_loop<A: Actor>(
     // Cleanup
     stats.inc_stop();
     if let Err(e) = actor.on_stop(&mut ctx).await {
-        tracing::warn!(actor_id = ?ctx.actor_id(), error = %e, "Actor stop error");
+        tracing::warn!(actor_id = ?ctx.id(), error = %e, "Actor stop error");
         // If on_stop fails, mark as failed
         if matches!(stop_reason, StopReason::Normal) {
             return StopReason::Failed(e.to_string());
@@ -870,6 +870,7 @@ async fn run_actor_loop<A: Actor>(
 
     stop_reason
 }
+
 
 /// Unified message handler for HTTP transport
 struct SystemMessageHandler {
@@ -881,18 +882,14 @@ struct SystemMessageHandler {
 
 #[async_trait::async_trait]
 impl HttpMessageHandler for SystemMessageHandler {
-    async fn handle_actor_message(
-        &self,
-        actor_name: &str,
-        msg: RawMessage,
-    ) -> anyhow::Result<Vec<u8>> {
+    async fn handle_actor_message(&self, actor_name: &str, msg: Message) -> anyhow::Result<Message> {
         let handle = self
             .local_actors
             .get(actor_name)
             .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let envelope = Envelope::ask(msg.msg_type, msg.payload, tx);
+        let envelope = Envelope::ask(msg, tx);
 
         handle
             .sender
@@ -903,17 +900,13 @@ impl HttpMessageHandler for SystemMessageHandler {
         rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
     }
 
-    async fn handle_actor_tell(
-        &self,
-        actor_name: &str,
-        msg: RawMessage,
-    ) -> anyhow::Result<()> {
+    async fn handle_actor_tell(&self, actor_name: &str, msg: Message) -> anyhow::Result<()> {
         let handle = self
             .local_actors
             .get(actor_name)
             .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
 
-        let envelope = Envelope::tell(msg.msg_type, msg.payload);
+        let envelope = Envelope::tell_msg(msg);
 
         handle
             .sender
@@ -927,8 +920,8 @@ impl HttpMessageHandler for SystemMessageHandler {
     async fn handle_named_actor_message(
         &self,
         path: &str,
-        msg: RawMessage,
-    ) -> anyhow::Result<Vec<u8>> {
+        msg: Message,
+    ) -> anyhow::Result<Message> {
         // Look up the local actor name for this path
         let actor_name = self
             .named_actor_paths
@@ -942,7 +935,7 @@ impl HttpMessageHandler for SystemMessageHandler {
             .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let envelope = Envelope::ask(msg.msg_type, msg.payload, tx);
+        let envelope = Envelope::ask(msg, tx);
 
         handle
             .sender
@@ -953,11 +946,7 @@ impl HttpMessageHandler for SystemMessageHandler {
         rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
     }
 
-    async fn handle_named_actor_tell(
-        &self,
-        path: &str,
-        msg: RawMessage,
-    ) -> anyhow::Result<()> {
+    async fn handle_named_actor_tell(&self, path: &str, msg: Message) -> anyhow::Result<()> {
         // Look up the local actor name for this path
         let actor_name = self
             .named_actor_paths
@@ -970,7 +959,7 @@ impl HttpMessageHandler for SystemMessageHandler {
             .get(&actor_name)
             .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
 
-        let envelope = Envelope::tell(msg.msg_type, msg.payload);
+        let envelope = Envelope::tell_msg(msg);
 
         handle
             .sender
@@ -1113,7 +1102,6 @@ impl HttpMessageHandler for SystemMessageHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::{Message, RawMessage};
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -1121,48 +1109,28 @@ mod tests {
         value: i32,
     }
 
-    impl Message for Ping {
-        fn type_id() -> &'static str {
-            "Ping"
-        }
-    }
-
     #[derive(Serialize, Deserialize, Debug)]
     struct Pong {
         result: i32,
     }
 
-    impl Message for Pong {
-        fn type_id() -> &'static str {
-            "Pong"
-        }
-    }
-
-    struct CounterActor {
-        id: ActorId,
+    struct Counter {
         count: i32,
     }
 
     #[async_trait::async_trait]
-    impl Actor for CounterActor {
-        fn id(&self) -> &ActorId {
-            &self.id
-        }
-
+    impl Actor for Counter {
         async fn receive(
             &mut self,
-            msg: RawMessage,
+            msg: Message,
             _ctx: &mut ActorContext,
-        ) -> anyhow::Result<RawMessage> {
-            match msg.msg_type.as_str() {
-                "Ping" => {
-                    let ping: Ping = bincode::deserialize(&msg.payload)?;
-                    self.count += ping.value;
-                    let pong = Pong { result: self.count };
-                    RawMessage::from_message(&pong)
-                }
-                _ => Err(anyhow::anyhow!("Unknown message type: {}", msg.msg_type)),
+        ) -> anyhow::Result<Message> {
+            if msg.msg_type().ends_with("Ping") {
+                let ping: Ping = msg.unpack()?;
+                self.count += ping.value;
+                return Message::pack(&Pong { result: self.count });
             }
+            Err(anyhow::anyhow!("Unknown message type: {}", msg.msg_type()))
         }
     }
 
@@ -1171,12 +1139,7 @@ mod tests {
         let config = SystemConfig::standalone();
         let system = ActorSystem::new(config).await.unwrap();
 
-        let actor = CounterActor {
-            id: ActorId::local("counter"),
-            count: 0,
-        };
-
-        let actor_ref = system.spawn(actor).await.unwrap();
+        let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
         assert!(actor_ref.is_local());
 
         // Send message

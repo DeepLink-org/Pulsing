@@ -1,7 +1,7 @@
 //! Integration tests for the complete actor system
 
+use pulsing_actor::actor::{ActorAddress, ActorId, ActorPath, NodeId};
 use pulsing_actor::prelude::*;
-use pulsing_actor::system::SystemConfig;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,21 +15,9 @@ struct Ping {
     value: i32,
 }
 
-impl Message for Ping {
-    fn type_id() -> &'static str {
-        "Ping"
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 struct Pong {
     result: i32,
-}
-
-impl Message for Pong {
-    fn type_id() -> &'static str {
-        "Pong"
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -37,30 +25,12 @@ struct Accumulate {
     amount: i32,
 }
 
-impl Message for Accumulate {
-    fn type_id() -> &'static str {
-        "Accumulate"
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct GetTotal;
-
-impl Message for GetTotal {
-    fn type_id() -> &'static str {
-        "GetTotal"
-    }
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct TotalResponse {
     total: i32,
-}
-
-impl Message for TotalResponse {
-    fn type_id() -> &'static str {
-        "TotalResponse"
-    }
 }
 
 // ============================================================================
@@ -68,77 +38,48 @@ impl Message for TotalResponse {
 // ============================================================================
 
 struct EchoActor {
-    id: ActorId,
     echo_count: Arc<AtomicUsize>,
-}
-
-impl EchoActor {
-    fn new(name: &str, counter: Arc<AtomicUsize>) -> Self {
-        Self {
-            id: ActorId::local(name),
-            echo_count: counter,
-        }
-    }
 }
 
 #[async_trait]
 impl Actor for EchoActor {
-    fn id(&self) -> &ActorId {
-        &self.id
-    }
-
     async fn receive(
         &mut self,
-        msg: RawMessage,
+        msg: Message,
         _ctx: &mut ActorContext,
-    ) -> anyhow::Result<RawMessage> {
-        match msg.msg_type.as_str() {
-            "Ping" => {
-                let ping: Ping = msg.into_message()?;
-                self.echo_count.fetch_add(1, Ordering::SeqCst);
-                RawMessage::from_message(&Pong {
-                    result: ping.value * 2,
-                })
-            }
-            _ => Err(anyhow::anyhow!("Unknown message")),
+    ) -> anyhow::Result<Message> {
+        if msg.msg_type().ends_with("Ping") {
+            let ping: Ping = msg.unpack()?;
+            self.echo_count.fetch_add(1, Ordering::SeqCst);
+            return Message::pack(&Pong {
+                result: ping.value * 2,
+            });
         }
+        Err(anyhow::anyhow!("Unknown message"))
     }
 }
 
-struct AccumulatorActor {
-    id: ActorId,
+struct Accumulator {
     total: i32,
 }
 
-impl AccumulatorActor {
-    fn new(name: &str) -> Self {
-        Self {
-            id: ActorId::local(name),
-            total: 0,
-        }
-    }
-}
-
 #[async_trait]
-impl Actor for AccumulatorActor {
-    fn id(&self) -> &ActorId {
-        &self.id
-    }
-
+impl Actor for Accumulator {
     async fn receive(
         &mut self,
-        msg: RawMessage,
+        msg: Message,
         _ctx: &mut ActorContext,
-    ) -> anyhow::Result<RawMessage> {
-        match msg.msg_type.as_str() {
-            "Accumulate" => {
-                let acc: Accumulate = msg.into_message()?;
-                self.total += acc.amount;
-                RawMessage::from_message(&TotalResponse { total: self.total })
-            }
-            "GetTotal" => RawMessage::from_message(&TotalResponse { total: self.total }),
-            _ => Err(anyhow::anyhow!("Unknown message")),
+    ) -> anyhow::Result<Message> {
+        let msg_type = msg.msg_type();
+        if msg_type.ends_with("Accumulate") {
+            let acc: Accumulate = msg.unpack()?;
+            self.total += acc.amount;
+            return Message::pack(&TotalResponse { total: self.total });
         }
+        if msg_type.ends_with("GetTotal") {
+            return Message::pack(&TotalResponse { total: self.total });
+        }
+        Err(anyhow::anyhow!("Unknown message"))
     }
 }
 
@@ -154,8 +95,8 @@ mod single_node_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = EchoActor::new("echo", counter.clone());
-        let actor_ref = system.spawn(actor).await.unwrap();
+        let actor = EchoActor { echo_count: counter.clone() };
+        let actor_ref = system.spawn("echo", actor).await.unwrap();
 
         let response: Pong = actor_ref.ask(Ping { value: 21 }).await.unwrap();
         assert_eq!(response.result, 42);
@@ -170,8 +111,8 @@ mod single_node_tests {
 
         let mut refs = Vec::new();
         for i in 0..5 {
-            let actor = AccumulatorActor::new(&format!("acc-{}", i));
-            refs.push(system.spawn(actor).await.unwrap());
+            let actor = Accumulator { total: 0 };
+            refs.push(system.spawn(format!("acc-{}", i), actor).await.unwrap());
         }
 
         // Send to all actors concurrently
@@ -210,8 +151,8 @@ mod single_node_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = EchoActor::new("echo", counter.clone());
-        let actor_ref = system.spawn(actor).await.unwrap();
+        let actor = EchoActor { echo_count: counter.clone() };
+        let actor_ref = system.spawn("echo", actor).await.unwrap();
 
         let message_count: usize = 1000;
         let start = std::time::Instant::now();
@@ -238,11 +179,8 @@ mod single_node_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         // Create two accumulators
-        let acc1 = AccumulatorActor::new("acc1");
-        let acc2 = AccumulatorActor::new("acc2");
-
-        let ref1 = system.spawn(acc1).await.unwrap();
-        let ref2 = system.spawn(acc2).await.unwrap();
+        let ref1 = system.spawn("acc1", Accumulator { total: 0 }).await.unwrap();
+        let ref2 = system.spawn("acc2", Accumulator { total: 0 }).await.unwrap();
 
         // Add to acc1
         for i in 1..=5 {
@@ -280,8 +218,8 @@ mod stress_tests {
         let mut refs = Vec::with_capacity(actor_count);
 
         for i in 0..actor_count {
-            let actor = AccumulatorActor::new(&format!("acc-{}", i));
-            refs.push(system.spawn(actor).await.unwrap());
+            let actor = Accumulator { total: 0 };
+            refs.push(system.spawn(format!("acc-{}", i), actor).await.unwrap());
         }
 
         assert_eq!(system.local_actor_names().len(), actor_count);
@@ -302,8 +240,8 @@ mod stress_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = EchoActor::new("echo", counter.clone());
-        let actor_ref = system.spawn(actor).await.unwrap();
+        let actor = EchoActor { echo_count: counter.clone() };
+        let actor_ref = system.spawn("echo", actor).await.unwrap();
 
         let burst_count = 500;
 
@@ -333,8 +271,8 @@ mod stress_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = EchoActor::new("echo", counter.clone());
-        let actor_ref = system.spawn(actor).await.unwrap();
+        let actor = EchoActor { echo_count: counter.clone() };
+        let actor_ref = system.spawn("echo", actor).await.unwrap();
 
         let duration = Duration::from_secs(2);
         let start = std::time::Instant::now();
@@ -367,48 +305,22 @@ mod error_tests {
     #[derive(Serialize, Deserialize, Debug, Clone)]
     struct CrashMessage;
 
-    impl Message for CrashMessage {
-        fn type_id() -> &'static str {
-            "CrashMessage"
-        }
-    }
-
-    struct CrashyActor {
-        id: ActorId,
+    struct Crashy {
         crash_count: Arc<AtomicI32>,
     }
 
-    impl CrashyActor {
-        fn new(name: &str, crash_count: Arc<AtomicI32>) -> Self {
-            Self {
-                id: ActorId::local(name),
-                crash_count,
-            }
-        }
-    }
-
     #[async_trait]
-    impl Actor for CrashyActor {
-        fn id(&self) -> &ActorId {
-            &self.id
-        }
-
-        async fn receive(
-            &mut self,
-            msg: RawMessage,
-            _ctx: &mut ActorContext,
-        ) -> anyhow::Result<RawMessage> {
-            match msg.msg_type.as_str() {
-                "CrashMessage" => {
-                    self.crash_count.fetch_add(1, Ordering::SeqCst);
-                    Err(anyhow::anyhow!("Intentional crash!"))
-                }
-                "Ping" => {
-                    let ping: Ping = msg.into_message()?;
-                    RawMessage::from_message(&Pong { result: ping.value })
-                }
-                _ => Err(anyhow::anyhow!("Unknown message")),
+    impl Actor for Crashy {
+        async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+            if msg.msg_type().ends_with("CrashMessage") {
+                self.crash_count.fetch_add(1, Ordering::SeqCst);
+                return Err(anyhow::anyhow!("Intentional crash!"));
             }
+            if msg.msg_type().ends_with("Ping") {
+                let ping: Ping = msg.unpack()?;
+                return Message::pack(&Pong { result: ping.value });
+            }
+            Err(anyhow::anyhow!("Unknown message"))
         }
     }
 
@@ -417,8 +329,7 @@ mod error_tests {
         let crash_count = Arc::new(AtomicI32::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = CrashyActor::new("crashy", crash_count.clone());
-        let actor_ref = system.spawn(actor).await.unwrap();
+        let actor_ref = system.spawn("crashy", Crashy { crash_count: crash_count.clone() }).await.unwrap();
 
         // Send crash message
         let result: Result<Pong, _> = actor_ref.ask(CrashMessage).await;
@@ -437,8 +348,7 @@ mod error_tests {
         let crash_count = Arc::new(AtomicI32::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = CrashyActor::new("crashy", crash_count.clone());
-        let actor_ref = system.spawn(actor).await.unwrap();
+        let actor_ref = system.spawn("crashy", Crashy { crash_count: crash_count.clone() }).await.unwrap();
 
         // Multiple crash messages
         for _ in 0..5 {
@@ -459,17 +369,10 @@ mod error_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = EchoActor::new("echo", counter);
-        let actor_ref = system.spawn(actor).await.unwrap();
+        let actor_ref = system.spawn("echo", EchoActor { echo_count: counter }).await.unwrap();
 
         #[derive(Serialize, Deserialize, Debug, Clone)]
         struct UnknownMsg;
-
-        impl Message for UnknownMsg {
-            fn type_id() -> &'static str {
-                "UnknownMsg"
-            }
-        }
 
         let result: Result<Pong, _> = actor_ref.ask(UnknownMsg).await;
         assert!(result.is_err());
@@ -486,25 +389,11 @@ mod lifecycle_tests {
     use super::*;
 
     struct LifecycleTracker {
-        id: ActorId,
         events: Arc<tokio::sync::Mutex<Vec<String>>>,
-    }
-
-    impl LifecycleTracker {
-        fn new(name: &str, events: Arc<tokio::sync::Mutex<Vec<String>>>) -> Self {
-            Self {
-                id: ActorId::local(name),
-                events,
-            }
-        }
     }
 
     #[async_trait]
     impl Actor for LifecycleTracker {
-        fn id(&self) -> &ActorId {
-            &self.id
-        }
-
         async fn on_start(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
             self.events.lock().await.push("started".to_string());
             Ok(())
@@ -515,16 +404,9 @@ mod lifecycle_tests {
             Ok(())
         }
 
-        async fn receive(
-            &mut self,
-            msg: RawMessage,
-            _ctx: &mut ActorContext,
-        ) -> anyhow::Result<RawMessage> {
-            self.events
-                .lock()
-                .await
-                .push(format!("received:{}", msg.msg_type));
-            RawMessage::from_message(&Pong { result: 0 })
+        async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+            self.events.lock().await.push(format!("received:{}", msg.msg_type()));
+            Message::pack(&Pong { result: 0 })
         }
     }
 
@@ -533,8 +415,7 @@ mod lifecycle_tests {
         let events = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = LifecycleTracker::new("tracker", events.clone());
-        let actor_ref = system.spawn(actor).await.unwrap();
+        let actor_ref = system.spawn("tracker", LifecycleTracker { events: events.clone() }).await.unwrap();
 
         // Send a message
         let _: Pong = actor_ref.ask(Ping { value: 1 }).await.unwrap();
@@ -548,7 +429,9 @@ mod lifecycle_tests {
         let recorded = events.lock().await;
         assert_eq!(recorded.len(), 2);
         assert_eq!(recorded[0], "started");
-        assert_eq!(recorded[1], "received:Ping");
+        // type_name includes full module path
+        assert!(recorded[1].starts_with("received:"));
+        assert!(recorded[1].ends_with("Ping"));
         // Note: on_stop may not be called due to abort() behavior
     }
 
@@ -558,11 +441,8 @@ mod lifecycle_tests {
         let events2 = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor1 = LifecycleTracker::new("tracker1", events1.clone());
-        let actor2 = LifecycleTracker::new("tracker2", events2.clone());
-
-        let _ = system.spawn(actor1).await.unwrap();
-        let _ = system.spawn(actor2).await.unwrap();
+        let _ = system.spawn("tracker1", LifecycleTracker { events: events1.clone() }).await.unwrap();
+        let _ = system.spawn("tracker2", LifecycleTracker { events: events2.clone() }).await.unwrap();
 
         // Shutdown should stop all
         system.shutdown().await.unwrap();
@@ -587,8 +467,7 @@ mod addressing_tests {
 
         // Create a named actor with path
         let path = ActorPath::new("services/echo").unwrap();
-        let actor = EchoActor::new("echo_impl", counter.clone());
-        let actor_ref = system.spawn_named(path.clone(), actor).await.unwrap();
+        let actor_ref = system.spawn_named(path.clone(), "echo_impl", EchoActor { echo_count: counter.clone() }).await.unwrap();
 
         // Send message via the returned ref
         let response: Pong = actor_ref.ask(Ping { value: 21 }).await.unwrap();
@@ -612,8 +491,7 @@ mod addressing_tests {
 
         // Create a named actor
         let path = ActorPath::new("services/api/handler").unwrap();
-        let actor = EchoActor::new("api_handler", counter.clone());
-        let _actor_ref = system.spawn_named(path.clone(), actor).await.unwrap();
+        let _actor_ref = system.spawn_named(path.clone(), "api_handler", EchoActor { echo_count: counter.clone() }).await.unwrap();
 
         // Resolve by address
         let addr = ActorAddress::parse("actor:///services/api/handler").unwrap();
@@ -632,8 +510,7 @@ mod addressing_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         // Create a regular actor
-        let actor = EchoActor::new("worker", counter.clone());
-        let _actor_ref = system.spawn(actor).await.unwrap();
+        let _actor_ref = system.spawn("worker", EchoActor { echo_count: counter.clone() }).await.unwrap();
 
         // Get the full address
         let node_id = system.node_id().clone();
@@ -653,8 +530,7 @@ mod addressing_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         // Create actor
-        let actor = EchoActor::new("local_worker", counter.clone());
-        let _actor_ref = system.spawn(actor).await.unwrap();
+        let _actor_ref = system.spawn("local_worker", EchoActor { echo_count: counter.clone() }).await.unwrap();
 
         // Resolve using localhost
         let addr = ActorAddress::parse("actor://localhost/local_worker").unwrap();
@@ -674,8 +550,7 @@ mod addressing_tests {
 
         // Create a named actor
         let path = ActorPath::new("services/temp").unwrap();
-        let actor = EchoActor::new("temp_actor", counter.clone());
-        let _actor_ref = system.spawn_named(path.clone(), actor).await.unwrap();
+        let _actor_ref = system.spawn_named(path.clone(), "temp_actor", EchoActor { echo_count: counter.clone() }).await.unwrap();
 
         // Verify it exists
         assert!(system.lookup_named(&path).await.is_some());

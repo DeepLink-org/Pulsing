@@ -1,8 +1,8 @@
 //! Cluster and Gossip protocol tests
 
+use pulsing_actor::actor::{ActorId, NodeId};
 use pulsing_actor::cluster::{GossipConfig, MemberInfo, MemberStatus};
 use pulsing_actor::prelude::*;
-use pulsing_actor::system::SystemConfig;
 use std::net::SocketAddr;
 use std::time::Duration;
 

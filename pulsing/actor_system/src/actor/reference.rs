@@ -1,7 +1,8 @@
 //! Actor reference - location-transparent handle to an actor
 
 use super::mailbox::Envelope;
-use super::traits::{ActorId, Message, RawMessage};
+use super::traits::{ActorId, Message, PayloadStream};
+use serde::{de::DeserializeOwned, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -35,7 +36,7 @@ pub struct RemoteActorRef {
     pub transport: Arc<dyn RemoteTransport>,
 }
 
-/// Trait for remote transport (TCP, etc.)
+/// Trait for remote transport (HTTP/2, TCP, etc.)
 #[async_trait::async_trait]
 pub trait RemoteTransport: Send + Sync {
     /// Send a request and wait for response
@@ -46,13 +47,41 @@ pub trait RemoteTransport: Send + Sync {
         payload: Vec<u8>,
     ) -> anyhow::Result<Vec<u8>>;
 
-    /// Send a one-way message (no response expected)
+    /// Send a one-way message
     async fn send(
         &self,
         actor_id: &ActorId,
         msg_type: &str,
         payload: Vec<u8>,
     ) -> anyhow::Result<()>;
+
+    /// Send a request and receive a stream of responses
+    async fn request_stream(
+        &self,
+        actor_id: &ActorId,
+        msg_type: &str,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<PayloadStream> {
+        let _ = (actor_id, msg_type, payload);
+        Err(anyhow::anyhow!("Streaming not supported by this transport"))
+    }
+
+    /// Send a message and receive response (unified interface)
+    async fn send_message(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming not supported by this transport"));
+        };
+        let response = self.request(actor_id, &msg_type, data).await?;
+        Ok(Message::single("", response))
+    }
+
+    /// Send a one-way message (unified interface)
+    async fn send_oneway(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<()> {
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming not supported by this transport"));
+        };
+        self.send(actor_id, &msg_type, data).await
+    }
 }
 
 impl ActorRef {
@@ -89,117 +118,83 @@ impl ActorRef {
         matches!(self.inner, ActorRefInner::Local(_))
     }
 
-    /// Ask pattern - send a message and wait for response
-    pub async fn ask<M, R>(&self, msg: M) -> anyhow::Result<R>
-    where
-        M: Message,
-        R: Message,
-    {
-        let payload = bincode::serialize(&msg)?;
-        let msg_type = M::type_id();
-
-        let response = match &self.inner {
+    /// Send a message and receive a response (unified interface)
+    ///
+    /// This is the primary method for actor communication. It handles all patterns:
+    /// - Single request -> Single response
+    /// - Single request -> Stream response
+    /// - Stream request -> Single response
+    /// - Stream request -> Stream response
+    pub async fn send(&self, msg: Message) -> anyhow::Result<Message> {
+        match &self.inner {
             ActorRefInner::Local(sender) => {
                 let (tx, rx) = oneshot::channel();
-                let envelope = Envelope::ask(msg_type.to_string(), payload, tx);
+                let envelope = Envelope::ask(msg, tx);
 
                 sender
                     .send(envelope)
                     .await
                     .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
 
-                rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))??
+                rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
             }
             ActorRefInner::Remote(remote) => {
-                remote
-                    .transport
-                    .request(&self.actor_id, msg_type, payload)
-                    .await?
+                remote.transport.send_message(&self.actor_id, msg).await
             }
-        };
+        }
+    }
 
-        Ok(bincode::deserialize(&response)?)
+    /// Send a fire-and-forget message (no response expected)
+    pub async fn fire(&self, msg: Message) -> anyhow::Result<()> {
+        match &self.inner {
+            ActorRefInner::Local(sender) => {
+                let envelope = Envelope::tell_msg(msg);
+
+                sender
+                    .send(envelope)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
+            }
+            ActorRefInner::Remote(remote) => {
+                remote.transport.send_oneway(&self.actor_id, msg).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Ask pattern - send a typed message and wait for typed response
+    ///
+    /// Automatically uses `type_name` to identify the message type.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let pong: Pong = actor_ref.ask(Ping { value: 42 }).await?;
+    /// ```
+    pub async fn ask<M, R>(&self, msg: M) -> anyhow::Result<R>
+    where
+        M: Serialize + 'static,
+        R: DeserializeOwned,
+    {
+        let actor_msg = Message::pack(&msg)?;
+        let response = self.send(actor_msg).await?;
+        response.unpack()
     }
 
     /// Tell pattern - send a message without waiting for response
+    ///
+    /// Automatically uses `type_name` to identify the message type.
+    ///
+    /// # Example
+    /// ```ignore
+    /// actor_ref.tell(Ping { value: 42 }).await?;
+    /// ```
     pub async fn tell<M>(&self, msg: M) -> anyhow::Result<()>
     where
-        M: Message,
+        M: Serialize + 'static,
     {
-        let payload = bincode::serialize(&msg)?;
-        let msg_type = M::type_id();
-
-        match &self.inner {
-            ActorRefInner::Local(sender) => {
-                let envelope = Envelope::tell(msg_type.to_string(), payload);
-
-                sender
-                    .send(envelope)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
-            }
-            ActorRefInner::Remote(remote) => {
-                remote
-                    .transport
-                    .send(&self.actor_id, msg_type, payload)
-                    .await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Send raw message (type-erased)
-    pub async fn send_raw(&self, msg: RawMessage) -> anyhow::Result<RawMessage> {
-        match &self.inner {
-            ActorRefInner::Local(sender) => {
-                let (tx, rx) = oneshot::channel();
-                let envelope = Envelope::ask(msg.msg_type.clone(), msg.payload, tx);
-
-                sender
-                    .send(envelope)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
-
-                let response = rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))??;
-                Ok(RawMessage {
-                    msg_type: "response".to_string(),
-                    payload: response,
-                })
-            }
-            ActorRefInner::Remote(remote) => {
-                let response = remote
-                    .transport
-                    .request(&self.actor_id, &msg.msg_type, msg.payload)
-                    .await?;
-                Ok(RawMessage {
-                    msg_type: "response".to_string(),
-                    payload: response,
-                })
-            }
-        }
-    }
-
-    /// Send raw message without response (fire-and-forget)
-    pub async fn tell_raw(&self, msg: RawMessage) -> anyhow::Result<()> {
-        match &self.inner {
-            ActorRefInner::Local(sender) => {
-                let envelope = Envelope::tell(msg.msg_type, msg.payload);
-
-                sender
-                    .send(envelope)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
-            }
-            ActorRefInner::Remote(remote) => {
-                remote
-                    .transport
-                    .send(&self.actor_id, &msg.msg_type, msg.payload)
-                    .await?;
-            }
-        }
-
-        Ok(())
+        let actor_msg = Message::pack(&msg)?;
+        self.fire(actor_msg).await
     }
 }
 
@@ -224,12 +219,6 @@ mod tests {
         value: i32,
     }
 
-    impl Message for TestMsg {
-        fn type_id() -> &'static str {
-            "TestMsg"
-        }
-    }
-
     #[tokio::test]
     async fn test_local_actor_ref_tell() {
         let (tx, mut rx) = mpsc::channel(16);
@@ -239,9 +228,21 @@ mod tests {
         actor_ref.tell(TestMsg { value: 42 }).await.unwrap();
 
         let envelope = rx.recv().await.unwrap();
-        assert_eq!(envelope.msg_type, "TestMsg");
+        // type_name includes module path
+        assert!(envelope.msg_type().ends_with("TestMsg"));
+    }
 
-        let msg: TestMsg = bincode::deserialize(&envelope.payload).unwrap();
-        assert_eq!(msg.value, 42);
+    #[tokio::test]
+    async fn test_local_actor_ref_fire() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let actor_id = ActorId::local("test");
+        let actor_ref = ActorRef::local(actor_id, tx);
+
+        let msg = Message::single("TestMsg", b"hello");
+        actor_ref.fire(msg).await.unwrap();
+
+        let envelope = rx.recv().await.unwrap();
+        assert_eq!(envelope.msg_type(), "TestMsg");
+        assert!(!envelope.expects_response());
     }
 }

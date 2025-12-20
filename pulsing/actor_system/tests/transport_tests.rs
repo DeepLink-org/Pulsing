@@ -1,6 +1,6 @@
 //! TCP Transport layer tests
 
-use pulsing_actor::prelude::*;
+use pulsing_actor::actor::ActorId;
 use pulsing_actor::transport::TransportMessage;
 
 // ============================================================================

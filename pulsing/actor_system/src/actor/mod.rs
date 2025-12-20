@@ -8,8 +8,9 @@ mod traits;
 
 pub use address::{ActorAddress, ActorPath, AddressParseError, LOCALHOST};
 pub use context::{ActorContext, ActorSystemRef};
-pub use mailbox::{Envelope, Mailbox, MailboxSender, DEFAULT_MAILBOX_SIZE};
+pub use mailbox::{Envelope, EnvelopeResponse, Mailbox, MailboxSender, DEFAULT_MAILBOX_SIZE};
 pub use reference::{ActorRef, ActorRefInner, RemoteActorRef, RemoteTransport};
 pub use traits::{
-    Actor, ActorId, Handler, Message, MessageHandler, NodeId, RawMessage, StopReason, Terminated,
+    Actor, ActorId, Message, MessageDispatcher, MessageStream, NodeId, PayloadStream, StopReason,
+    Terminated, empty_stream,
 };

@@ -1,6 +1,6 @@
 //! Python bindings for the Pulsing Actor System
 
-use pulsing_actor::actor::ActorPath;
+use pulsing_actor::actor::{ActorId, ActorPath, NodeId};
 use pulsing_actor::prelude::*;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
@@ -107,34 +107,30 @@ impl PyActorId {
     }
 }
 
-/// Python wrapper for RawMessage
-#[pyclass(name = "RawMessage")]
+/// Python wrapper for Message
+#[pyclass(name = "Message")]
 #[derive(Clone)]
-pub struct PyRawMessage {
-    inner: RawMessage,
+pub struct PyMessage {
+    msg_type: String,
+    payload: Vec<u8>,
 }
 
 #[pymethods]
-impl PyRawMessage {
+impl PyMessage {
     #[new]
     fn new(msg_type: String, payload: Vec<u8>) -> Self {
-        Self {
-            inner: RawMessage { msg_type, payload },
-        }
+        Self { msg_type, payload }
     }
 
     #[staticmethod]
     fn from_json(py: Python<'_>, msg_type: String, data: PyObject) -> PyResult<Self> {
         let json_value: serde_json::Value = pythonize::depythonize(&data.into_bound(py))?;
         let payload = serde_json::to_vec(&json_value).map_err(to_pyerr)?;
-        Ok(Self {
-            inner: RawMessage { msg_type, payload },
-        })
+        Ok(Self { msg_type, payload })
     }
 
     fn to_json(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let value: serde_json::Value =
-            serde_json::from_slice(&self.inner.payload).map_err(to_pyerr)?;
+        let value: serde_json::Value = serde_json::from_slice(&self.payload).map_err(to_pyerr)?;
         let pyobj = pythonize::pythonize(py, &value)?;
         Ok(pyobj.into())
     }
@@ -142,26 +138,46 @@ impl PyRawMessage {
     #[staticmethod]
     fn empty() -> Self {
         Self {
-            inner: RawMessage::empty(),
+            msg_type: String::new(),
+            payload: Vec::new(),
         }
     }
 
     #[getter]
     fn msg_type(&self) -> String {
-        self.inner.msg_type.clone()
+        self.msg_type.clone()
     }
 
     #[getter]
     fn payload<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(py, &self.inner.payload)
+        PyBytes::new(py, &self.payload)
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "RawMessage(msg_type='{}', payload_len={})",
-            self.inner.msg_type,
-            self.inner.payload.len()
+            "Message(msg_type='{}', payload_len={})",
+            self.msg_type,
+            self.payload.len()
         )
+    }
+}
+
+impl PyMessage {
+    fn to_message(&self) -> Message {
+        Message::single(&self.msg_type, self.payload.clone())
+    }
+
+    fn from_message(msg: Message) -> Self {
+        match msg {
+            Message::Single { msg_type, data } => Self {
+                msg_type,
+                payload: data,
+            },
+            Message::Stream { msg_type, .. } => Self {
+                msg_type,
+                payload: Vec::new(),
+            },
+        }
     }
 }
 
@@ -185,13 +201,13 @@ impl PyActorRef {
         self.inner.is_local()
     }
 
-    fn ask<'py>(&self, py: Python<'py>, msg: PyRawMessage) -> PyResult<Bound<'py, PyAny>> {
+    fn ask<'py>(&self, py: Python<'py>, msg: PyMessage) -> PyResult<Bound<'py, PyAny>> {
         let actor_ref = self.inner.clone();
-        let raw_msg = msg.inner;
+        let actor_msg = msg.to_message();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let response = actor_ref.send_raw(raw_msg).await.map_err(to_pyerr)?;
-            Ok(PyRawMessage { inner: response })
+            let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
+            Ok(PyMessage::from_message(response))
         })
     }
 
@@ -207,24 +223,25 @@ impl PyActorRef {
         let actor_ref = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let raw_msg = RawMessage { msg_type, payload };
-            let response = actor_ref.send_raw(raw_msg).await.map_err(to_pyerr)?;
+            let actor_msg = Message::single(&msg_type, payload);
+            let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
 
             Python::with_gil(|py| -> PyResult<PyObject> {
+                let py_msg = PyMessage::from_message(response);
                 let value: serde_json::Value =
-                    serde_json::from_slice(&response.payload).map_err(to_pyerr)?;
+                    serde_json::from_slice(&py_msg.payload).map_err(to_pyerr)?;
                 let pyobj = pythonize::pythonize(py, &value)?;
                 Ok(pyobj.into())
             })
         })
     }
 
-    fn tell<'py>(&self, py: Python<'py>, msg: PyRawMessage) -> PyResult<Bound<'py, PyAny>> {
+    fn tell<'py>(&self, py: Python<'py>, msg: PyMessage) -> PyResult<Bound<'py, PyAny>> {
         let actor_ref = self.inner.clone();
-        let raw_msg = msg.inner;
+        let actor_msg = msg.to_message();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            actor_ref.tell_raw(raw_msg).await.map_err(to_pyerr)?;
+            actor_ref.fire(actor_msg).await.map_err(to_pyerr)?;
             Ok(())
         })
     }
@@ -241,8 +258,8 @@ impl PyActorRef {
         let actor_ref = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let raw_msg = RawMessage { msg_type, payload };
-            actor_ref.tell_raw(raw_msg).await.map_err(to_pyerr)?;
+            let actor_msg = Message::single(&msg_type, payload);
+            actor_ref.fire(actor_msg).await.map_err(to_pyerr)?;
             Ok(())
         })
     }
@@ -295,15 +312,13 @@ impl PySystemConfig {
 
 /// Python actor wrapper - bridges Python handler to Rust Actor trait
 struct PythonActorWrapper {
-    id: ActorId,
     handler: PyObject,
     event_loop: PyObject,
 }
 
 impl PythonActorWrapper {
-    fn new(id: ActorId, handler: PyObject, event_loop: PyObject) -> Self {
+    fn new(handler: PyObject, event_loop: PyObject) -> Self {
         Self {
-            id,
             handler,
             event_loop,
         }
@@ -312,10 +327,6 @@ impl PythonActorWrapper {
 
 #[async_trait]
 impl Actor for PythonActorWrapper {
-    fn id(&self) -> &ActorId {
-        &self.id
-    }
-
     fn metadata(&self) -> std::collections::HashMap<String, String> {
         Python::with_gil(|py| {
             let mut result = std::collections::HashMap::new();
@@ -340,9 +351,9 @@ impl Actor for PythonActorWrapper {
         })
     }
 
-    async fn on_start(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
         let handler = self.handler.clone();
-        let actor_id = self.id.clone();
+        let actor_id = ctx.id().clone();
 
         python_executor()
             .execute(move || {
@@ -376,18 +387,16 @@ impl Actor for PythonActorWrapper {
             .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))
     }
 
-    async fn receive(
-        &mut self,
-        msg: RawMessage,
-        _ctx: &mut ActorContext,
-    ) -> anyhow::Result<RawMessage> {
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
         let handler = self.handler.clone();
         let event_loop = self.event_loop.clone();
-        let py_msg = PyRawMessage { inner: msg };
 
-        python_executor()
+        // Convert Message to PyMessage for Python
+        let py_msg = PyMessage::from_message(msg);
+
+        let response = python_executor()
             .execute(move || {
-                Python::with_gil(|py| -> PyResult<RawMessage> {
+                Python::with_gil(|py| -> PyResult<PyMessage> {
                     let receive_method = handler.getattr(py, "receive")?;
                     let result = receive_method.call1(py, (py_msg.clone(),))?;
 
@@ -397,30 +406,31 @@ impl Actor for PythonActorWrapper {
                         .extract::<bool>()?;
 
                     if is_coro {
-                        let run_coroutine_threadsafe =
-                            asyncio.getattr("run_coroutine_threadsafe")?;
+                        let run_coroutine_threadsafe = asyncio.getattr("run_coroutine_threadsafe")?;
                         let future = run_coroutine_threadsafe.call1((&result, &event_loop))?;
                         let py_result = future.call_method0("result")?;
 
                         if py_result.is_none() {
-                            Ok(RawMessage::empty())
+                            Ok(PyMessage::empty())
                         } else {
-                            let response: PyRawMessage = py_result.extract()?;
-                            Ok(response.inner)
+                            let response: PyMessage = py_result.extract()?;
+                            Ok(response)
                         }
                     } else {
                         if result.bind(py).is_none() {
-                            Ok(RawMessage::empty())
+                            Ok(PyMessage::empty())
                         } else {
-                            let response: PyRawMessage = result.extract(py)?;
-                            Ok(response.inner)
+                            let response: PyMessage = result.extract(py)?;
+                            Ok(response)
                         }
                     }
                 })
             })
             .await
             .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))?
-            .map_err(|e| anyhow::anyhow!("Python handler error: {:?}", e))
+            .map_err(|e| anyhow::anyhow!("Python handler error: {:?}", e))?;
+
+        Ok(response.to_message())
     }
 }
 
@@ -472,14 +482,16 @@ impl PyActorSystem {
         let event_loop = self.event_loop.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let actor_id = ActorId::local(name.clone());
-            let actor = PythonActorWrapper::new(actor_id, handler, event_loop);
+            let actor = PythonActorWrapper::new(handler, event_loop);
 
             let actor_ref = if public {
                 let path = ActorPath::new(&format!("actors/{}", name)).map_err(to_pyerr)?;
-                system.spawn_named(path, actor).await.map_err(to_pyerr)?
+                system
+                    .spawn_named(path, &name, actor)
+                    .await
+                    .map_err(to_pyerr)?
             } else {
-                system.spawn(actor).await.map_err(to_pyerr)?
+                system.spawn(&name, actor).await.map_err(to_pyerr)?
             };
 
             Ok(PyActorRef { inner: actor_ref })
@@ -549,7 +561,7 @@ impl PyActorSystem {
 pub fn add_to_module(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyNodeId>()?;
     m.add_class::<PyActorId>()?;
-    m.add_class::<PyRawMessage>()?;
+    m.add_class::<PyMessage>()?;
     m.add_class::<PyActorRef>()?;
     m.add_class::<PySystemConfig>()?;
     m.add_class::<PyActorSystem>()?;
