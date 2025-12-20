@@ -5,9 +5,11 @@
 //!
 //! ## Routes
 //!
-//! - `POST /actors/{name}` - Send message to local actor
+//! - `POST /actors/{name}` - Ask: send message and wait for response
+//! - `PUT /actors/{name}` - Tell: fire-and-forget message
 //! - `GET /actors/{name}` - Get actor info
-//! - `POST /named/{path...}` - Send message to named actor
+//! - `POST /named/{path...}` - Ask: send message to named actor
+//! - `PUT /named/{path...}` - Tell: fire-and-forget to named actor
 //! - `GET /named/{path...}` - Get named actor info
 //! - `POST /cluster/gossip` - Gossip protocol
 //! - `GET /health` - Node health check
@@ -100,19 +102,33 @@ pub struct GossipResponse {
 /// Handler trait for processing incoming messages
 #[async_trait::async_trait]
 pub trait HttpMessageHandler: Send + Sync + 'static {
-    /// Handle an actor message (by actor name)
+    /// Handle an actor message with ask pattern (expects response)
     async fn handle_actor_message(
         &self,
         actor_name: &str,
         msg: RawMessage,
     ) -> anyhow::Result<Vec<u8>>;
 
-    /// Handle a named actor message (by path)
+    /// Handle an actor message with tell pattern (fire-and-forget)
+    async fn handle_actor_tell(
+        &self,
+        actor_name: &str,
+        msg: RawMessage,
+    ) -> anyhow::Result<()>;
+
+    /// Handle a named actor message with ask pattern (expects response)
     async fn handle_named_actor_message(
         &self,
         path: &str,
         msg: RawMessage,
     ) -> anyhow::Result<Vec<u8>>;
+
+    /// Handle a named actor message with tell pattern (fire-and-forget)
+    async fn handle_named_actor_tell(
+        &self,
+        path: &str,
+        msg: RawMessage,
+    ) -> anyhow::Result<()>;
 
     /// Handle a gossip message
     async fn handle_gossip_message(&self, payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>>;
@@ -183,12 +199,16 @@ impl HttpTransport {
             .route("/health", get(health_handler))
             .route(
                 "/actors/{name}",
-                post(actor_handler).get(actor_info_handler),
+                post(actor_handler)
+                    .put(actor_tell_handler)
+                    .get(actor_info_handler),
             )
             // Named actor routes - support variable path depth
             .route(
                 "/named/{*path}",
-                post(named_actor_handler).get(named_actor_info_handler),
+                post(named_actor_handler)
+                    .put(named_actor_tell_handler)
+                    .get(named_actor_info_handler),
             )
             .route("/cluster/gossip", post(gossip_handler))
             .route("/cluster/registry", get(registry_handler))
@@ -253,6 +273,7 @@ impl HttpTransport {
     }
 
     /// Send a one-way message to an actor (fire-and-forget)
+    /// Send a one-way message (tell) using PUT
     pub async fn send_oneway(
         &self,
         addr: SocketAddr,
@@ -265,15 +286,15 @@ impl HttpTransport {
         let request = ActorRequest {
             msg_type: msg.msg_type,
             payload: msg.payload,
-            oneway: true,
+            oneway: true, // kept for backward compatibility
             request_id,
         };
 
-        let response = self.client.post(&url).json(&request).send().await?;
+        let response = self.client.put(&url).json(&request).send().await?;
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "Actor request failed: {}",
+                "Actor tell failed: {}",
                 response.status()
             ));
         }
@@ -314,6 +335,7 @@ impl HttpTransport {
     }
 
     /// Send a one-way message to a named actor (fire-and-forget)
+    /// Send a one-way message (tell) to named actor using PUT
     pub async fn send_named_oneway(
         &self,
         addr: SocketAddr,
@@ -326,15 +348,15 @@ impl HttpTransport {
         let request = ActorRequest {
             msg_type: msg.msg_type,
             payload: msg.payload,
-            oneway: true,
+            oneway: true, // kept for backward compatibility
             request_id,
         };
 
-        let response = self.client.post(&url).json(&request).send().await?;
+        let response = self.client.put(&url).json(&request).send().await?;
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
-                "Named actor request failed: {}",
+                "Named actor tell failed: {}",
                 response.status()
             ));
         }
@@ -467,6 +489,7 @@ async fn health_handler(State(state): State<Arc<HttpState>>) -> impl IntoRespons
     Json(state.handler.get_node_info().await)
 }
 
+/// POST /actors/{name} - Ask pattern: request-response
 async fn actor_handler(
     State(state): State<Arc<HttpState>>,
     Path(name): Path<String>,
@@ -478,25 +501,13 @@ async fn actor_handler(
     };
 
     match state.handler.handle_actor_message(&name, msg).await {
-        Ok(result) => {
-            if request.oneway {
-                (
-                    StatusCode::OK,
-                    Json(ActorResponse {
-                        request_id: request.request_id,
-                        result: Ok(vec![]),
-                    }),
-                )
-            } else {
-                (
-                    StatusCode::OK,
-                    Json(ActorResponse {
-                        request_id: request.request_id,
-                        result: Ok(result),
-                    }),
-                )
-            }
-        }
+        Ok(result) => (
+            StatusCode::OK,
+            Json(ActorResponse {
+                request_id: request.request_id,
+                result: Ok(result),
+            }),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ActorResponse {
@@ -504,6 +515,23 @@ async fn actor_handler(
                 result: Err(e.to_string()),
             }),
         ),
+    }
+}
+
+/// PUT /actors/{name} - Tell pattern: fire-and-forget
+async fn actor_tell_handler(
+    State(state): State<Arc<HttpState>>,
+    Path(name): Path<String>,
+    Json(request): Json<ActorRequest>,
+) -> impl IntoResponse {
+    let msg = RawMessage {
+        msg_type: request.msg_type,
+        payload: request.payload,
+    };
+
+    match state.handler.handle_actor_tell(&name, msg).await {
+        Ok(()) => StatusCode::ACCEPTED,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -520,6 +548,7 @@ async fn actor_info_handler(
     }
 }
 
+/// POST /named/{path} - Ask pattern: request-response
 async fn named_actor_handler(
     State(state): State<Arc<HttpState>>,
     Path(path): Path<String>,
@@ -531,25 +560,13 @@ async fn named_actor_handler(
     };
 
     match state.handler.handle_named_actor_message(&path, msg).await {
-        Ok(result) => {
-            if request.oneway {
-                (
-                    StatusCode::OK,
-                    Json(ActorResponse {
-                        request_id: request.request_id,
-                        result: Ok(vec![]),
-                    }),
-                )
-            } else {
-                (
-                    StatusCode::OK,
-                    Json(ActorResponse {
-                        request_id: request.request_id,
-                        result: Ok(result),
-                    }),
-                )
-            }
-        }
+        Ok(result) => (
+            StatusCode::OK,
+            Json(ActorResponse {
+                request_id: request.request_id,
+                result: Ok(result),
+            }),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ActorResponse {
@@ -557,6 +574,23 @@ async fn named_actor_handler(
                 result: Err(e.to_string()),
             }),
         ),
+    }
+}
+
+/// PUT /named/{path} - Tell pattern: fire-and-forget
+async fn named_actor_tell_handler(
+    State(state): State<Arc<HttpState>>,
+    Path(path): Path<String>,
+    Json(request): Json<ActorRequest>,
+) -> impl IntoResponse {
+    let msg = RawMessage {
+        msg_type: request.msg_type,
+        payload: request.payload,
+    };
+
+    match state.handler.handle_named_actor_tell(&path, msg).await {
+        Ok(()) => StatusCode::ACCEPTED,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 

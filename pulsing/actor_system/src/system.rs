@@ -816,20 +816,33 @@ async fn run_actor_loop<A: Actor>(
             msg = receiver.recv() => {
                 match msg {
                     Some(envelope) => {
-                        let raw = envelope.to_raw_message();
-
                         stats.inc_message();
-                        match actor.receive(raw, &mut ctx).await {
-                            Ok(response) => {
-                                envelope.respond(Ok(response.payload));
+
+                        if envelope.expects_response() {
+                            // Ask pattern: call receive() and send response
+                            let raw = envelope.to_raw_message();
+                            match actor.receive(raw, &mut ctx).await {
+                                Ok(response) => {
+                                    envelope.respond(Ok(response.payload));
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        actor_id = ?ctx.actor_id(),
+                                        error = %e,
+                                        "Actor handler error (ask)"
+                                    );
+                                    envelope.respond(Err(anyhow::anyhow!("Handler error: {}", e)));
+                                }
                             }
-                            Err(e) => {
+                        } else {
+                            // Tell pattern: call on_tell() without response overhead
+                            let raw = envelope.to_raw_message();
+                            if let Err(e) = actor.on_tell(raw, &mut ctx).await {
                                 tracing::error!(
                                     actor_id = ?ctx.actor_id(),
                                     error = %e,
-                                    "Actor handler error"
+                                    "Actor handler error (tell)"
                                 );
-                                envelope.respond(Err(anyhow::anyhow!("Handler error: {}", e)));
                             }
                         }
                     }
@@ -890,6 +903,27 @@ impl HttpMessageHandler for SystemMessageHandler {
         rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
     }
 
+    async fn handle_actor_tell(
+        &self,
+        actor_name: &str,
+        msg: RawMessage,
+    ) -> anyhow::Result<()> {
+        let handle = self
+            .local_actors
+            .get(actor_name)
+            .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
+
+        let envelope = Envelope::tell(msg.msg_type, msg.payload);
+
+        handle
+            .sender
+            .send(envelope)
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
+
+        Ok(())
+    }
+
     async fn handle_named_actor_message(
         &self,
         path: &str,
@@ -917,6 +951,34 @@ impl HttpMessageHandler for SystemMessageHandler {
             .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
 
         rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
+    }
+
+    async fn handle_named_actor_tell(
+        &self,
+        path: &str,
+        msg: RawMessage,
+    ) -> anyhow::Result<()> {
+        // Look up the local actor name for this path
+        let actor_name = self
+            .named_actor_paths
+            .get(path)
+            .ok_or_else(|| anyhow::anyhow!("Named actor not found: {}", path))?
+            .clone();
+
+        let handle = self
+            .local_actors
+            .get(&actor_name)
+            .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
+
+        let envelope = Envelope::tell(msg.msg_type, msg.payload);
+
+        handle
+            .sender
+            .send(envelope)
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
+
+        Ok(())
     }
 
     async fn handle_gossip_message(&self, payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {

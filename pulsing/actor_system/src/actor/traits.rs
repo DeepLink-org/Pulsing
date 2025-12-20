@@ -171,8 +171,10 @@ pub trait Actor: Send + Sync + 'static {
         Ok(())
     }
 
-    /// Handle a raw message (for type-erased dispatch)
-    /// Default implementation returns an error - override this or use Handler trait
+    /// Handle a raw message with request-response semantics (ask pattern)
+    ///
+    /// Override this for messages that require a response.
+    /// Default implementation returns an error.
     async fn receive(
         &mut self,
         msg: RawMessage,
@@ -183,6 +185,34 @@ pub trait Actor: Send + Sync + 'static {
             self.id(),
             msg.msg_type
         ))
+    }
+
+    /// Handle a fire-and-forget message (tell pattern)
+    ///
+    /// Override this for pure tell semantics without response overhead.
+    /// Default implementation calls `receive` and discards the result.
+    ///
+    /// # Example
+    /// ```ignore
+    /// async fn on_tell(&mut self, msg: RawMessage, ctx: &mut ActorContext) -> anyhow::Result<()> {
+    ///     match msg.msg_type.as_str() {
+    ///         "LogEvent" => {
+    ///             let event: LogEvent = msg.into_message()?;
+    ///             self.log(event);
+    ///             Ok(())
+    ///         }
+    ///         _ => self.default_tell(msg, ctx).await
+    ///     }
+    /// }
+    /// ```
+    async fn on_tell(
+        &mut self,
+        msg: RawMessage,
+        ctx: &mut ActorContext,
+    ) -> anyhow::Result<()> {
+        // Default: delegate to receive and discard result
+        let _ = self.receive(msg, ctx).await?;
+        Ok(())
     }
 }
 
