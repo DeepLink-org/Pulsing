@@ -506,14 +506,17 @@ impl PyActorSystem {
     /// Args:
     ///     name: Actor name (must be unique within this node)
     ///     handler: Python object with a `receive(msg: RawMessage) -> RawMessage` method
+    ///     public: Whether to broadcast this actor's existence to the cluster (default: False)
     /// 
     /// Returns:
     ///     ActorRef to the spawned actor
+    #[pyo3(signature = (name, handler, public=false))]
     fn spawn<'py>(
         &self,
         py: Python<'py>,
         name: String,
         handler: PyObject,
+        public: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let system = self.inner.clone();
         let event_loop = self.event_loop.clone();
@@ -521,7 +524,13 @@ impl PyActorSystem {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let actor_id = ActorId::local(name);
             let actor = PythonActorWrapper::new(actor_id, handler, event_loop);
-            let actor_ref = system.spawn(actor).await.map_err(to_pyerr)?;
+            
+            let actor_ref = if public {
+                system.spawn_named(actor).await.map_err(to_pyerr)?
+            } else {
+                system.spawn(actor).await.map_err(to_pyerr)?
+            };
+            
             Ok(PyActorRef { inner: actor_ref })
         })
     }

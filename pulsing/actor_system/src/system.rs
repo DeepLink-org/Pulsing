@@ -262,17 +262,28 @@ impl ActorSystem {
             },
         );
 
-        // Register in cluster
-        {
-            let cluster_guard = self.cluster.read().await;
-            if let Some(cluster) = cluster_guard.as_ref() {
-                cluster.register_actor(actor_id.clone()).await;
-            }
-        }
-
         tracing::debug!(actor_id = %actor_id, "Spawned actor");
 
         Ok(ActorRef::local(actor_id, sender))
+    }
+
+    /// Spawn a named actor (broadcasts location to cluster)
+    pub async fn spawn_named<A>(self: &Arc<Self>, actor: A) -> anyhow::Result<ActorRef>
+    where
+        A: Actor,
+    {
+        // 1. Spawn locally (without broadcast)
+        let actor_ref = self.spawn(actor).await?;
+        
+        // 2. Register in cluster (broadcast)
+        {
+            let cluster_guard = self.cluster.read().await;
+            if let Some(cluster) = cluster_guard.as_ref() {
+                cluster.register_actor(actor_ref.id().clone()).await;
+            }
+        }
+        
+        Ok(actor_ref)
     }
 
     /// Get a reference to an actor (local or remote)
@@ -282,11 +293,23 @@ impl ActorSystem {
             if let Some(handle) = self.local_actors.get(&actor_id.name) {
                 return Ok(ActorRef::local(actor_id.clone(), handle.sender.clone()));
             }
+            return Err(anyhow::anyhow!("Local actor not found: {}", actor_id));
         }
 
         // Check cluster
         let cluster_guard = self.cluster.read().await;
         if let Some(cluster) = cluster_guard.as_ref() {
+            // 1. Direct addressing: check if we know the node
+            if let Some(member) = cluster.get_member(&actor_id.node).await {
+                let transport = Arc::new(HttpRemoteTransport::new(
+                    self.transport.clone(),
+                    member.addr,
+                    actor_id.name.clone(),
+                ));
+                return Ok(ActorRef::remote(actor_id.clone(), member.addr, transport));
+            }
+
+            // 2. Fallback: check gossip cache (for legacy or alias support)
             if let Some(member) = cluster.lookup_actor(actor_id).await {
                 let transport = Arc::new(HttpRemoteTransport::new(
                     self.transport.clone(),

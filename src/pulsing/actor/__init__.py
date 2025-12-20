@@ -176,18 +176,20 @@ class ActorSystem:
         """Get the system address."""
         return self._inner.addr
     
-    async def spawn(self, name: str, handler: Actor) -> ActorRef:
+    async def spawn(self, name: str, handler: Actor, public: bool = False) -> ActorRef:
         """
         Spawn a new actor.
         
         Args:
             name: Actor name (must be unique within this node)
             handler: Actor instance with a receive method
+            public: Whether to broadcast this actor's existence to the cluster (default: False).
+                   Set to True only for named services that need to be discoverable by name.
             
         Returns:
             ActorRef to the spawned actor
         """
-        return await self._inner.spawn(name, handler)
+        return await self._inner.spawn(name, handler, public)
     
     async def actor_ref(self, actor_id: ActorId) -> ActorRef:
         """
