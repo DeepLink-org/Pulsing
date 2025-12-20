@@ -24,6 +24,18 @@ pub struct GossipConfig {
     /// Number of nodes to gossip with per round (fanout)
     pub fanout: usize,
 
+    /// Number of times to probe each seed node on startup
+    /// Multiple probes through a load-balanced Service IP can discover different pods
+    pub seed_probe_count: usize,
+
+    /// Delay between seed probes (to allow load balancer to route to different pods)
+    pub seed_probe_interval: Duration,
+
+    /// Interval for periodic seed re-probing after initial join
+    /// This helps discover new nodes and recover from network partitions
+    /// Set to None to disable periodic re-probing
+    pub seed_rejoin_interval: Option<Duration>,
+
     /// SWIM failure detection config
     pub swim: SwimConfig,
 }
@@ -33,6 +45,9 @@ impl Default for GossipConfig {
         Self {
             gossip_interval: Duration::from_millis(200),
             fanout: 3,
+            seed_probe_count: 3,
+            seed_probe_interval: Duration::from_millis(100),
+            seed_rejoin_interval: Some(Duration::from_secs(15)),
             swim: SwimConfig::default(),
         }
     }
@@ -91,6 +106,9 @@ pub struct GossipCluster {
     /// HTTP transport for gossip
     transport: Arc<HttpTransport>,
 
+    /// Seed addresses for periodic re-probing
+    seed_addrs: Arc<RwLock<Vec<SocketAddr>>>,
+
     /// Configuration
     config: GossipConfig,
 
@@ -122,6 +140,7 @@ impl GossipCluster {
             members: Arc::new(RwLock::new(HashMap::new())),
             actors: Arc::new(RwLock::new(HashMap::new())),
             transport,
+            seed_addrs: Arc::new(RwLock::new(Vec::new())),
             swim: SwimDetector::new(local_node, config.swim.clone()),
             config,
             incarnation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -139,10 +158,19 @@ impl GossipCluster {
     }
 
     /// Join an existing cluster via seed nodes
+    /// 
+    /// Probes each seed address multiple times to discover more peers through
+    /// load-balanced endpoints (e.g., Kubernetes Service IP).
     pub async fn join(&self, seed_addrs: Vec<SocketAddr>) -> anyhow::Result<()> {
         if seed_addrs.is_empty() {
             tracing::info!("No seed nodes provided, starting as first node");
             return Ok(());
+        }
+
+        // Store seed addresses for periodic re-probing
+        {
+            let mut stored_seeds = self.seed_addrs.write().await;
+            *stored_seeds = seed_addrs.clone();
         }
 
         let msg = GossipMessage::Join {
@@ -151,21 +179,50 @@ impl GossipCluster {
         };
 
         let payload = bincode::serialize(&msg)?;
+        let probe_count = self.config.seed_probe_count.max(1);
+        let probe_interval = self.config.seed_probe_interval;
 
-        for addr in seed_addrs {
-            tracing::debug!(seed = %addr, "Sending join request");
-            match self.transport.send_gossip(addr, payload.clone()).await {
-                Ok(Some(response_payload)) => {
-                    if let Ok(response) = bincode::deserialize::<GossipMessage>(&response_payload) {
-                        self.handle_gossip(response).await?;
+        tracing::info!(
+            seeds = ?seed_addrs,
+            probe_count = probe_count,
+            "Probing seed nodes to discover cluster"
+        );
+
+        for probe in 0..probe_count {
+            for addr in &seed_addrs {
+                tracing::debug!(seed = %addr, probe = probe + 1, "Sending join request");
+                match self.transport.send_gossip(*addr, payload.clone()).await {
+                    Ok(Some(response_payload)) => {
+                        if let Ok(response) = bincode::deserialize::<GossipMessage>(&response_payload) {
+                            self.handle_gossip(response).await?;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(seed = %addr, error = %e, "Failed to join seed node");
                     }
                 }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!(seed = %addr, error = %e, "Failed to join seed node");
-                }
+            }
+
+            // Check if we've discovered enough peers
+            let member_count = self.members.read().await.len();
+            if member_count >= self.config.fanout {
+                tracing::info!(
+                    members = member_count,
+                    probes = probe + 1,
+                    "Discovered enough peers, stopping seed probing"
+                );
+                break;
+            }
+
+            // Wait before next probe round (allows LB to route to different pods)
+            if probe < probe_count - 1 {
+                tokio::time::sleep(probe_interval).await;
             }
         }
+
+        let final_count = self.members.read().await.len();
+        tracing::info!(members = final_count, "Seed probing complete");
 
         Ok(())
     }
@@ -185,6 +242,15 @@ impl GossipCluster {
         tokio::spawn(async move {
             cluster.swim_loop(cancel).await;
         });
+
+        // Periodic seed re-probe loop (if enabled)
+        if let Some(interval) = self.config.seed_rejoin_interval {
+            let cluster = self.clone_inner();
+            let cancel = cancel_token.clone();
+            tokio::spawn(async move {
+                cluster.seed_rejoin_loop(interval, cancel).await;
+            });
+        }
     }
 
     /// Clone inner state for spawning tasks
@@ -195,6 +261,7 @@ impl GossipCluster {
             members: self.members.clone(),
             actors: self.actors.clone(),
             transport: self.transport.clone(),
+            seed_addrs: self.seed_addrs.clone(),
             config: self.config.clone(),
             swim: self.swim.clone(),
             incarnation: self.incarnation.clone(),
@@ -418,6 +485,7 @@ struct GossipClusterInner {
     members: Arc<RwLock<HashMap<NodeId, MemberInfo>>>,
     actors: Arc<RwLock<HashMap<ActorId, NodeId>>>,
     transport: Arc<HttpTransport>,
+    seed_addrs: Arc<RwLock<Vec<SocketAddr>>>,
     config: GossipConfig,
     swim: SwimDetector,
     #[allow(dead_code)]
@@ -516,6 +584,90 @@ impl GossipClusterInner {
         }
     }
 
+    /// Periodic seed re-probe loop
+    /// 
+    /// Periodically probes seed addresses to:
+    /// - Discover new nodes that joined via the same Service IP
+    /// - Recover from network partitions
+    /// - Maintain cluster connectivity
+    async fn seed_rejoin_loop(&self, interval: Duration, cancel: CancellationToken) {
+        let mut timer = tokio::time::interval(interval);
+        
+        // Skip the first tick (we already probed on startup)
+        timer.tick().await;
+
+        loop {
+            tokio::select! {
+                _ = timer.tick() => {
+                    self.probe_seeds().await;
+                }
+                _ = cancel.cancelled() => {
+                    tracing::info!("Seed rejoin loop shutting down");
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Probe all seed addresses once
+    async fn probe_seeds(&self) {
+        let seeds = self.seed_addrs.read().await.clone();
+        if seeds.is_empty() {
+            return;
+        }
+
+        let msg = GossipMessage::Sync {
+            from: self.local_node.clone(),
+            members: self.members.read().await.values().cloned().collect(),
+            actors: self
+                .actors
+                .read()
+                .await
+                .iter()
+                .map(|(id, node)| ActorLocation::new(id.clone(), node.clone()))
+                .collect(),
+        };
+
+        let payload = match bincode::serialize(&msg) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to serialize sync message for seed probe");
+                return;
+            }
+        };
+
+        let before_count = self.members.read().await.len();
+
+        for addr in &seeds {
+            match self.transport.send_gossip(*addr, payload.clone()).await {
+                Ok(Some(response_payload)) => {
+                    if let Ok(response) = bincode::deserialize::<GossipMessage>(&response_payload) {
+                        // Merge received state
+                        if let GossipMessage::Sync { members, actors, .. } 
+                            | GossipMessage::Welcome { members, actors, .. } = response 
+                        {
+                            self.merge_members(members).await;
+                            self.merge_actors(actors).await;
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::debug!(seed = %addr, error = %e, "Seed probe failed");
+                }
+            }
+        }
+
+        let after_count = self.members.read().await.len();
+        if after_count > before_count {
+            tracing::info!(
+                before = before_count,
+                after = after_count,
+                "Discovered new members via seed probe"
+            );
+        }
+    }
+
     /// Ping a random alive member
     async fn swim_ping_round(&self) {
         let members: Vec<_> = self
@@ -545,6 +697,31 @@ impl GossipClusterInner {
                 self.swim.ping_sent(seq, target.node_id.clone()).await;
                 let _ = self.transport.send_gossip(target.addr, payload).await;
             }
+        }
+    }
+
+    /// Merge received member list with local state
+    async fn merge_members(&self, remote_members: Vec<MemberInfo>) {
+        let mut local = self.members.write().await;
+
+        for remote in remote_members {
+            match local.get(&remote.node_id) {
+                Some(existing) if existing.supersedes(&remote) => {
+                    // Local version is newer, ignore
+                }
+                _ => {
+                    local.insert(remote.node_id.clone(), remote);
+                }
+            }
+        }
+    }
+
+    /// Merge received actor locations with local state
+    async fn merge_actors(&self, remote_actors: Vec<ActorLocation>) {
+        let mut local = self.actors.write().await;
+
+        for loc in remote_actors {
+            local.insert(loc.actor_id, loc.node_id);
         }
     }
 }
