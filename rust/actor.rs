@@ -1,12 +1,14 @@
 //! Python bindings for the Pulsing Actor System
 
-use pulsing_actor::actor::{ActorId, ActorPath, NodeId};
+use futures::StreamExt;
+use pulsing_actor::actor::{ActorId, ActorPath, NodeId, PayloadStream};
 use pulsing_actor::prelude::*;
-use pyo3::exceptions::PyException;
+use pyo3::exceptions::{PyException, PyRuntimeError, PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::python_executor::python_executor;
 
@@ -167,7 +169,7 @@ impl PyMessage {
         Message::single(&self.msg_type, self.payload.clone())
     }
 
-    fn from_message(msg: Message) -> Self {
+    fn from_single(msg: Message) -> Self {
         match msg {
             Message::Single { msg_type, data } => Self {
                 msg_type,
@@ -179,6 +181,413 @@ impl PyMessage {
             },
         }
     }
+}
+
+// ============================================================================
+// PyStreamReader - Async iterator for reading incoming streams
+// ============================================================================
+
+/// Async stream reader for consuming streaming messages from Rust.
+///
+/// Implements Python async iterator protocol for use with `async for`.
+///
+/// Example:
+///     ```python
+///     async for chunk in stream_reader:
+///         data = json.loads(chunk)
+///         process(data)
+///     ```
+#[pyclass(name = "StreamReader")]
+pub struct PyStreamReader {
+    stream: Arc<Mutex<Option<PayloadStream>>>,
+}
+
+impl PyStreamReader {
+    fn new(stream: PayloadStream) -> Self {
+        Self {
+            stream: Arc::new(Mutex::new(Some(stream))),
+        }
+    }
+}
+
+#[pymethods]
+impl PyStreamReader {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let stream = self.stream.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut guard = stream.lock().await;
+            if let Some(ref mut s) = *guard {
+                match s.next().await {
+                    Some(Ok(data)) => Python::with_gil(|py| {
+                        Ok(PyBytes::new(py, &data).into_any().unbind())
+                    }),
+                    Some(Err(e)) => Err(PyRuntimeError::new_err(e.to_string())),
+                    None => {
+                        *guard = None; // Mark as consumed
+                        Err(PyStopAsyncIteration::new_err(""))
+                    }
+                }
+            } else {
+                Err(PyStopAsyncIteration::new_err("Stream already consumed"))
+            }
+        })
+    }
+
+    /// Read next chunk and parse as JSON
+    fn read_json<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let stream = self.stream.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut guard = stream.lock().await;
+            if let Some(ref mut s) = *guard {
+                match s.next().await {
+                    Some(Ok(data)) => Python::with_gil(|py| {
+                        let value: serde_json::Value =
+                            serde_json::from_slice(&data).map_err(to_pyerr)?;
+                        let pyobj = pythonize::pythonize(py, &value)?;
+                        Ok(pyobj.unbind())
+                    }),
+                    Some(Err(e)) => Err(PyRuntimeError::new_err(e.to_string())),
+                    None => {
+                        *guard = None;
+                        Err(PyStopAsyncIteration::new_err(""))
+                    }
+                }
+            } else {
+                Err(PyStopAsyncIteration::new_err("Stream already consumed"))
+            }
+        })
+    }
+
+    /// Cancel the stream (notify sender to stop)
+    fn cancel(&self) {
+        let stream = self.stream.clone();
+        tokio::spawn(async move {
+            let mut guard = stream.lock().await;
+            *guard = None;
+        });
+    }
+
+    fn __repr__(&self) -> String {
+        "StreamReader()".to_string()
+    }
+}
+
+// ============================================================================
+// PyStreamWriter - Write data to outgoing stream
+// ============================================================================
+
+/// Stream writer for producing streaming responses.
+///
+/// Example:
+///     ```python
+///     stream_msg, writer = StreamMessage.create("TokenStream")
+///     
+///     async def produce():
+///         for token in generate_tokens():
+///             await writer.write_json({"text": token})
+///         writer.close()
+///     
+///     asyncio.create_task(produce())
+///     return stream_msg
+///     ```
+#[pyclass(name = "StreamWriter")]
+pub struct PyStreamWriter {
+    sender: Arc<Mutex<Option<mpsc::Sender<anyhow::Result<Vec<u8>>>>>>,
+}
+
+#[pymethods]
+impl PyStreamWriter {
+    /// Write raw bytes to the stream
+    fn write<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+        let sender = self.sender.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let guard = sender.lock().await;
+            if let Some(ref tx) = *guard {
+                tx.send(Ok(data))
+                    .await
+                    .map_err(|_| PyRuntimeError::new_err("Stream closed"))?;
+                Ok(())
+            } else {
+                Err(PyRuntimeError::new_err("Writer already closed"))
+            }
+        })
+    }
+
+    /// Write an object as JSON to the stream
+    fn write_json<'py>(&self, py: Python<'py>, data: PyObject) -> PyResult<Bound<'py, PyAny>> {
+        let json_value: serde_json::Value = pythonize::depythonize(&data.into_bound(py))?;
+        let payload = serde_json::to_vec(&json_value).map_err(to_pyerr)?;
+        let sender = self.sender.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let guard = sender.lock().await;
+            if let Some(ref tx) = *guard {
+                tx.send(Ok(payload))
+                    .await
+                    .map_err(|_| PyRuntimeError::new_err("Stream closed"))?;
+                Ok(())
+            } else {
+                Err(PyRuntimeError::new_err("Writer already closed"))
+            }
+        })
+    }
+
+    /// Close the stream normally
+    fn close(&self) {
+        let sender = self.sender.clone();
+        tokio::spawn(async move {
+            let mut guard = sender.lock().await;
+            *guard = None; // Drop sender to signal end
+        });
+    }
+
+    /// Close the stream with an error
+    fn error(&self, msg: String) {
+        let sender = self.sender.clone();
+        tokio::spawn(async move {
+            let mut guard = sender.lock().await;
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(Err(anyhow::anyhow!(msg))).await;
+            }
+        });
+    }
+
+    fn __repr__(&self) -> String {
+        "StreamWriter()".to_string()
+    }
+}
+
+// ============================================================================
+// PyStreamMessage - Streaming response message
+// ============================================================================
+
+/// Streaming message for returning stream responses from Python actors.
+///
+/// Create using `StreamMessage.create()` which returns both the message
+/// and a writer for producing data.
+///
+/// Example:
+///     ```python
+///     stream_msg, writer = StreamMessage.create("TokenStream")
+///     
+///     async def produce():
+///         for i in range(10):
+///             await writer.write_json({"token": i})
+///         writer.close()
+///     
+///     asyncio.create_task(produce())
+///     return stream_msg
+///     ```
+#[pyclass(name = "StreamMessage")]
+pub struct PyStreamMessage {
+    msg_type: String,
+    receiver: Arc<Mutex<Option<mpsc::Receiver<anyhow::Result<Vec<u8>>>>>>,
+}
+
+#[pymethods]
+impl PyStreamMessage {
+    /// Create a new streaming message with a writer.
+    ///
+    /// Returns (StreamMessage, StreamWriter) tuple.
+    /// Use the writer to produce data, then return the message from receive().
+    #[staticmethod]
+    #[pyo3(signature = (msg_type, buffer_size=32))]
+    fn create(msg_type: String, buffer_size: usize) -> (PyStreamMessage, PyStreamWriter) {
+        let (tx, rx) = mpsc::channel(buffer_size);
+        (
+            PyStreamMessage {
+                msg_type,
+                receiver: Arc::new(Mutex::new(Some(rx))),
+            },
+            PyStreamWriter {
+                sender: Arc::new(Mutex::new(Some(tx))),
+            },
+        )
+    }
+
+    #[getter]
+    fn msg_type(&self) -> String {
+        self.msg_type.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("StreamMessage(msg_type='{}')", self.msg_type)
+    }
+}
+
+impl PyStreamMessage {
+    /// Take the receiver (consumes it, can only be called once)
+    fn take_receiver(&self) -> Option<mpsc::Receiver<anyhow::Result<Vec<u8>>>> {
+        // This is blocking but should be quick
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async {
+            let mut guard = self.receiver.lock().await;
+            guard.take()
+        })
+    }
+}
+
+// ============================================================================
+// PyUnifiedMessage - Unified message type supporting both single and stream
+// ============================================================================
+
+/// Unified message type that can be either single or streaming.
+///
+/// When receiving a message in Python, use `is_stream` to check the type,
+/// then either access payload directly or get a stream reader.
+///
+/// Example:
+///     ```python
+///     async def receive(self, msg: UnifiedMessage) -> UnifiedMessage:
+///         if msg.is_stream:
+///             reader = msg.stream_reader()
+///             async for chunk in reader:
+///                 process(chunk)
+///             return UnifiedMessage.single("Done", b"ok")
+///         else:
+///             # Handle single message
+///             return UnifiedMessage.single("Echo", msg.payload)
+///     ```
+#[pyclass(name = "UnifiedMessage")]
+pub struct PyUnifiedMessage {
+    msg_type: String,
+    payload: Option<Vec<u8>>,
+    stream_reader: Option<Arc<Mutex<Option<PayloadStream>>>>,
+}
+
+#[pymethods]
+impl PyUnifiedMessage {
+    /// Create a single (non-streaming) message
+    #[staticmethod]
+    fn single(msg_type: String, payload: Vec<u8>) -> Self {
+        Self {
+            msg_type,
+            payload: Some(payload),
+            stream_reader: None,
+        }
+    }
+
+    /// Create a single message from JSON data
+    #[staticmethod]
+    fn from_json(py: Python<'_>, msg_type: String, data: PyObject) -> PyResult<Self> {
+        let json_value: serde_json::Value = pythonize::depythonize(&data.into_bound(py))?;
+        let payload = serde_json::to_vec(&json_value).map_err(to_pyerr)?;
+        Ok(Self {
+            msg_type,
+            payload: Some(payload),
+            stream_reader: None,
+        })
+    }
+
+    /// Create an empty message
+    #[staticmethod]
+    fn empty() -> Self {
+        Self {
+            msg_type: String::new(),
+            payload: Some(Vec::new()),
+            stream_reader: None,
+        }
+    }
+
+    #[getter]
+    fn msg_type(&self) -> String {
+        self.msg_type.clone()
+    }
+
+    /// Check if this is a streaming message
+    #[getter]
+    fn is_stream(&self) -> bool {
+        self.stream_reader.is_some()
+    }
+
+    /// Get payload bytes (only for single messages)
+    #[getter]
+    fn payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        match &self.payload {
+            Some(data) => Ok(PyBytes::new(py, data)),
+            None => Err(PyValueError::new_err(
+                "Cannot get payload from stream message, use stream_reader() instead",
+            )),
+        }
+    }
+
+    /// Parse payload as JSON (only for single messages)
+    fn to_json(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match &self.payload {
+            Some(data) => {
+                let value: serde_json::Value = serde_json::from_slice(data).map_err(to_pyerr)?;
+                let pyobj = pythonize::pythonize(py, &value)?;
+                Ok(pyobj.into())
+            }
+            None => Err(PyValueError::new_err(
+                "Cannot parse stream message as JSON, use stream_reader() instead",
+            )),
+        }
+    }
+
+    /// Get stream reader (only for stream messages)
+    fn stream_reader(&self) -> PyResult<PyStreamReader> {
+        match &self.stream_reader {
+            Some(stream) => Ok(PyStreamReader {
+                stream: stream.clone(),
+            }),
+            None => Err(PyValueError::new_err(
+                "This is not a stream message, access payload directly",
+            )),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        if self.is_stream() {
+            format!("UnifiedMessage(msg_type='{}', stream=True)", self.msg_type)
+        } else {
+            format!(
+                "UnifiedMessage(msg_type='{}', payload_len={})",
+                self.msg_type,
+                self.payload.as_ref().map(|p| p.len()).unwrap_or(0)
+            )
+        }
+    }
+}
+
+impl PyUnifiedMessage {
+    fn from_rust_message(msg: Message) -> Self {
+        match msg {
+            Message::Single { msg_type, data } => Self {
+                msg_type,
+                payload: Some(data),
+                stream_reader: None,
+            },
+            Message::Stream { msg_type, stream } => Self {
+                msg_type,
+                payload: None,
+                stream_reader: Some(Arc::new(Mutex::new(Some(stream)))),
+            },
+        }
+    }
+
+    fn to_rust_message(self) -> Message {
+        if let Some(data) = self.payload {
+            Message::single(&self.msg_type, data)
+        } else {
+            // This shouldn't happen - Python should use StreamMessage for streams
+            Message::empty()
+        }
+    }
+}
+
+/// Response type from Python actor - can be single or stream
+enum PyActorResponse {
+    Single(PyMessage),
+    Unified(PyUnifiedMessage),
+    Stream(PyStreamMessage),
 }
 
 /// Python wrapper for ActorRef
@@ -243,6 +652,33 @@ impl PyActorRef {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             actor_ref.fire(actor_msg).await.map_err(to_pyerr)?;
             Ok(())
+        })
+    }
+
+    /// Send a message and get a unified response (can be single or stream)
+    fn send<'py>(&self, py: Python<'py>, msg: PyMessage) -> PyResult<Bound<'py, PyAny>> {
+        let actor_ref = self.inner.clone();
+        let actor_msg = msg.to_message();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
+            Ok(PyUnifiedMessage::from_rust_message(response))
+        })
+    }
+
+    /// Send a message and expect a streaming response
+    fn ask_stream<'py>(&self, py: Python<'py>, msg: PyMessage) -> PyResult<Bound<'py, PyAny>> {
+        let actor_ref = self.inner.clone();
+        let actor_msg = msg.to_message();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
+            match response {
+                Message::Stream { stream, .. } => Ok(PyStreamReader::new(stream)),
+                Message::Single { .. } => Err(PyValueError::new_err(
+                    "Expected stream response but got single message",
+                )),
+            }
         })
     }
 
@@ -391,46 +827,70 @@ impl Actor for PythonActorWrapper {
         let handler = self.handler.clone();
         let event_loop = self.event_loop.clone();
 
-        // Convert Message to PyMessage for Python
-        let py_msg = PyMessage::from_message(msg);
+        // Convert Message to PyUnifiedMessage for Python (supports both single and stream)
+        let py_msg = PyUnifiedMessage::from_rust_message(msg);
 
         let response = python_executor()
             .execute(move || {
-                Python::with_gil(|py| -> PyResult<PyMessage> {
+                Python::with_gil(|py| -> PyResult<PyActorResponse> {
                     let receive_method = handler.getattr(py, "receive")?;
-                    let result = receive_method.call1(py, (py_msg.clone(),))?;
+                    let result = receive_method.call1(py, (py_msg,))?;
 
                     let asyncio = py.import("asyncio")?;
                     let is_coro = asyncio
                         .call_method1("iscoroutine", (&result,))?
                         .extract::<bool>()?;
 
-                    if is_coro {
+                    let py_result = if is_coro {
                         let run_coroutine_threadsafe = asyncio.getattr("run_coroutine_threadsafe")?;
                         let future = run_coroutine_threadsafe.call1((&result, &event_loop))?;
-                        let py_result = future.call_method0("result")?;
-
-                        if py_result.is_none() {
-                            Ok(PyMessage::empty())
-                        } else {
-                            let response: PyMessage = py_result.extract()?;
-                            Ok(response)
-                        }
+                        future.call_method0("result")?
                     } else {
-                        if result.bind(py).is_none() {
-                            Ok(PyMessage::empty())
-                        } else {
-                            let response: PyMessage = result.extract(py)?;
-                            Ok(response)
-                        }
+                        result
+                    };
+
+                    // Check return type and convert appropriately
+                    if py_result.bind(py).is_none() {
+                        return Ok(PyActorResponse::Single(PyMessage::empty()));
                     }
+
+                    // Try to extract as different types
+                    // First check if it's a StreamMessage (for streaming responses)
+                    if let Ok(stream_msg) = py_result.extract::<PyStreamMessage>(py) {
+                        return Ok(PyActorResponse::Stream(stream_msg));
+                    }
+
+                    // Then check if it's a UnifiedMessage
+                    if let Ok(unified_msg) = py_result.extract::<PyUnifiedMessage>(py) {
+                        return Ok(PyActorResponse::Unified(unified_msg));
+                    }
+
+                    // Finally try PyMessage (legacy support)
+                    if let Ok(msg) = py_result.extract::<PyMessage>(py) {
+                        return Ok(PyActorResponse::Single(msg));
+                    }
+
+                    // If none match, return empty
+                    Ok(PyActorResponse::Single(PyMessage::empty()))
                 })
             })
             .await
             .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))?
             .map_err(|e| anyhow::anyhow!("Python handler error: {:?}", e))?;
 
-        Ok(response.to_message())
+        // Convert response to Rust Message
+        match response {
+            PyActorResponse::Single(msg) => Ok(msg.to_message()),
+            PyActorResponse::Unified(msg) => Ok(msg.to_rust_message()),
+            PyActorResponse::Stream(stream_msg) => {
+                // Take the receiver and wrap as Message::Stream
+                if let Some(rx) = stream_msg.take_receiver() {
+                    Ok(Message::from_channel(&stream_msg.msg_type, rx))
+                } else {
+                    Err(anyhow::anyhow!("StreamMessage receiver already consumed"))
+                }
+            }
+        }
     }
 }
 
@@ -565,5 +1025,10 @@ pub fn add_to_module(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyActorRef>()?;
     m.add_class::<PySystemConfig>()?;
     m.add_class::<PyActorSystem>()?;
+    // Streaming support
+    m.add_class::<PyStreamReader>()?;
+    m.add_class::<PyStreamWriter>()?;
+    m.add_class::<PyStreamMessage>()?;
+    m.add_class::<PyUnifiedMessage>()?;
     Ok(())
 }

@@ -462,6 +462,458 @@ pub trait Actor: Send + Sync + 'static {
     ) -> Result<Message>;
 }
 
+## Python Actor 流式支持
+
+### 设计目标
+
+Python Actor 需要支持流式请求和流式响应，同时保持简洁的 API 和与 Python 异步生态的良好集成。
+
+### 核心问题
+
+1. **入站流（接收流式请求）**：Rust 的 `Message::Stream` 如何暴露给 Python？
+2. **出站流（返回流式响应）**：Python 如何返回 `Message::Stream`？
+3. **任务管理**：流式处理应该 offload 到哪里？
+
+### 设计方案
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     Python 流式消息处理                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  入站流 (接收):                                                             │
+│  ───────────────                                                            │
+│  Rust Message::Stream  →  PyStreamReader  →  Python async for              │
+│       (PayloadStream)      (async iterator)                                 │
+│                                                                             │
+│  出站流 (发送):                                                             │
+│  ───────────────                                                            │
+│  Python async generator  →  PyStreamMessage  →  Rust Message::Stream       │
+│       or channel              (wraps channel)    (wraps receiver)          │
+│                                                                             │
+│  任务模型:                                                                  │
+│  ──────────                                                                 │
+│  • receive() 快速返回，不阻塞                                               │
+│  • 流的生产/消费在 Python asyncio task 中进行                               │
+│  • Rust runtime 负责网络传输                                                │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Python 绑定类型
+
+```python
+# ============================================================================
+# 流式读取器（入站流）
+# ============================================================================
+
+class StreamReader:
+    """
+    异步流读取器，用于从 Rust 流中读取数据。
+    
+    实现 Python 异步迭代器协议，可在 async for 中使用。
+    """
+    
+    def __aiter__(self):
+        return self
+    
+    async def __anext__(self) -> bytes:
+        """读取下一个 chunk，流结束时抛出 StopAsyncIteration"""
+        ...
+    
+    async def read_json(self) -> Any:
+        """读取下一个 chunk 并解析为 JSON"""
+        ...
+    
+    def cancel(self) -> None:
+        """取消流（通知发送方停止）"""
+        ...
+
+
+# ============================================================================
+# 流式消息（出站流）
+# ============================================================================
+
+class StreamMessage:
+    """
+    流式响应消息，用于 Python Actor 返回流式数据。
+    
+    两种使用方式：
+    1. 基于 channel: 创建 channel，在 task 中写入
+    2. 基于 async generator: 直接包装 async generator
+    """
+    
+    @staticmethod
+    def from_channel(msg_type: str) -> Tuple['StreamMessage', 'StreamWriter']:
+        """
+        创建基于 channel 的流式消息。
+        
+        Returns:
+            (message, writer): message 用于返回，writer 用于写入数据
+        """
+        ...
+    
+    @staticmethod
+    def from_generator(msg_type: str, gen: AsyncGenerator[bytes, None]) -> 'StreamMessage':
+        """
+        从 async generator 创建流式消息。
+        
+        generator 的执行会被 offload 到 Python task 中。
+        """
+        ...
+
+
+class StreamWriter:
+    """
+    流式写入器，用于向流中写入数据。
+    """
+    
+    async def write(self, data: bytes) -> None:
+        """写入一个 chunk"""
+        ...
+    
+    async def write_json(self, obj: Any) -> None:
+        """将对象序列化为 JSON 并写入"""
+        ...
+    
+    def close(self) -> None:
+        """关闭流（正常结束）"""
+        ...
+    
+    def error(self, msg: str) -> None:
+        """以错误关闭流"""
+        ...
+
+
+# ============================================================================
+# 扩展的 Message 类型
+# ============================================================================
+
+class Message:
+    """统一消息类型，支持单次和流式"""
+    
+    @property
+    def is_stream(self) -> bool:
+        """是否为流式消息"""
+        ...
+    
+    def stream_reader(self) -> StreamReader:
+        """
+        获取流读取器（仅对流式消息有效）
+        
+        Raises:
+            ValueError: 如果是单次消息
+        """
+        ...
+```
+
+### 使用示例
+
+#### 1. 返回流式响应（基于 channel）
+
+```python
+class LLMWorkerActor(Actor):
+    async def receive(self, msg: Message) -> Message:
+        if msg.msg_type == "Generate":
+            req = msg.to_json()
+            
+            # 创建 channel-based 流式响应
+            stream_msg, writer = StreamMessage.from_channel("TokenStream")
+            
+            # 启动生产者 task（offload 到 Python 线程）
+            async def produce():
+                try:
+                    async for token in self.backend.generate(req["prompt"]):
+                        await writer.write_json({"text": token.text})
+                    writer.close()
+                except Exception as e:
+                    writer.error(str(e))
+            
+            asyncio.create_task(produce())
+            
+            # 立即返回，不阻塞
+            return stream_msg
+        
+        return Message.empty()
+```
+
+#### 2. 返回流式响应（基于 async generator）
+
+```python
+class LLMWorkerActor(Actor):
+    async def receive(self, msg: Message) -> Message:
+        if msg.msg_type == "Generate":
+            req = msg.to_json()
+            
+            # 定义 async generator
+            async def token_generator():
+                async for token in self.backend.generate(req["prompt"]):
+                    yield json.dumps({"text": token.text}).encode()
+            
+            # 直接包装为流式消息
+            return StreamMessage.from_generator("TokenStream", token_generator())
+        
+        return Message.empty()
+```
+
+#### 3. 消费流式请求
+
+```python
+class AggregatorActor(Actor):
+    async def receive(self, msg: Message) -> Message:
+        if msg.is_stream:
+            # 获取流读取器
+            reader = msg.stream_reader()
+            
+            # 在 Python task 中消费流
+            results = []
+            async for chunk in reader:
+                data = json.loads(chunk)
+                results.append(data)
+            
+            # 返回聚合结果
+            return Message.from_json("AggregateResult", {"items": results})
+        
+        return Message.empty()
+```
+
+#### 4. 流式请求 + 流式响应（双向流）
+
+```python
+class StreamProcessorActor(Actor):
+    async def receive(self, msg: Message) -> Message:
+        if msg.is_stream:
+            reader = msg.stream_reader()
+            stream_msg, writer = StreamMessage.from_channel("ProcessedStream")
+            
+            # 处理 task：读取输入流，处理后写入输出流
+            async def process():
+                try:
+                    async for chunk in reader:
+                        processed = self.process_chunk(chunk)
+                        await writer.write(processed)
+                    writer.close()
+                except Exception as e:
+                    writer.error(str(e))
+            
+            asyncio.create_task(process())
+            return stream_msg
+        
+        return Message.empty()
+```
+
+### Rust 实现要点
+
+```rust
+// ============================================================================
+// PyStreamReader - 入站流的 Python 包装
+// ============================================================================
+
+#[pyclass]
+pub struct PyStreamReader {
+    receiver: Arc<Mutex<Option<PayloadStream>>>,
+    event_loop: PyObject,
+}
+
+#[pymethods]
+impl PyStreamReader {
+    fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+    
+    fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let receiver = self.receiver.clone();
+        let event_loop = self.event_loop.clone();
+        
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut guard = receiver.lock().await;
+            if let Some(stream) = guard.as_mut() {
+                match stream.next().await {
+                    Some(Ok(data)) => {
+                        Python::with_gil(|py| {
+                            Ok(PyBytes::new(py, &data).into())
+                        })
+                    }
+                    Some(Err(e)) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        e.to_string()
+                    )),
+                    None => Err(PyErr::new::<pyo3::exceptions::PyStopAsyncIteration, _>(
+                        "Stream ended"
+                    )),
+                }
+            } else {
+                Err(PyErr::new::<pyo3::exceptions::PyStopAsyncIteration, _>(
+                    "Stream consumed"
+                ))
+            }
+        })
+    }
+    
+    fn cancel(&self) {
+        // 通过 drop receiver 来取消流
+        let receiver = self.receiver.clone();
+        tokio::spawn(async move {
+            let mut guard = receiver.lock().await;
+            *guard = None;
+        });
+    }
+}
+
+// ============================================================================
+// PyStreamMessage - 出站流的 Python 包装
+// ============================================================================
+
+#[pyclass]
+pub struct PyStreamMessage {
+    msg_type: String,
+    receiver: Option<mpsc::Receiver<anyhow::Result<Vec<u8>>>>,
+}
+
+#[pyclass]
+pub struct PyStreamWriter {
+    sender: Option<mpsc::Sender<anyhow::Result<Vec<u8>>>>,
+}
+
+#[pymethods]
+impl PyStreamWriter {
+    fn write<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+        let sender = self.sender.clone();
+        
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            if let Some(tx) = sender {
+                tx.send(Ok(data)).await
+                    .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "Stream closed"
+                    ))?;
+            }
+            Ok(())
+        })
+    }
+    
+    fn close(&mut self) {
+        self.sender = None;  // Drop sender to signal end
+    }
+    
+    fn error(&mut self, msg: String) {
+        if let Some(tx) = self.sender.take() {
+            let _ = tx.try_send(Err(anyhow::anyhow!(msg)));
+        }
+    }
+}
+
+// ============================================================================
+// PythonActorWrapper 扩展
+// ============================================================================
+
+#[async_trait]
+impl Actor for PythonActorWrapper {
+    async fn receive(&mut self, msg: Message, ctx: &mut ActorContext) -> anyhow::Result<Message> {
+        let handler = self.handler.clone();
+        let event_loop = self.event_loop.clone();
+        
+        // 将 Message 转换为 Python 可用的类型
+        let py_msg = match msg {
+            Message::Single { msg_type, data } => {
+                PyMessage::Single { msg_type, payload: data }
+            }
+            Message::Stream { msg_type, stream } => {
+                // 包装为 PyStreamReader
+                let reader = PyStreamReader::new(stream, event_loop.clone());
+                PyMessage::Stream { msg_type, reader }
+            }
+        };
+        
+        // 调用 Python receive
+        let response = python_executor()
+            .execute(move || {
+                Python::with_gil(|py| -> PyResult<PyMessageResponse> {
+                    let result = handler.call_method1(py, "receive", (py_msg,))?;
+                    
+                    // 处理 coroutine
+                    let asyncio = py.import("asyncio")?;
+                    let is_coro = asyncio.call_method1("iscoroutine", (&result,))?
+                        .extract::<bool>()?;
+                    
+                    let py_result = if is_coro {
+                        let future = asyncio.call_method1(
+                            "run_coroutine_threadsafe", 
+                            (&result, &event_loop)
+                        )?;
+                        future.call_method0("result")?
+                    } else {
+                        result
+                    };
+                    
+                    // 检查返回类型
+                    if py_result.is_instance_of::<PyStreamMessage>(py) {
+                        let stream_msg: PyStreamMessage = py_result.extract(py)?;
+                        Ok(PyMessageResponse::Stream(stream_msg))
+                    } else {
+                        let msg: PyMessage = py_result.extract(py)?;
+                        Ok(PyMessageResponse::Single(msg))
+                    }
+                })
+            })
+            .await??;
+        
+        // 转换回 Rust Message
+        match response {
+            PyMessageResponse::Single(msg) => Ok(msg.to_message()),
+            PyMessageResponse::Stream(stream_msg) => {
+                Ok(Message::from_channel(
+                    stream_msg.msg_type,
+                    stream_msg.receiver.unwrap()
+                ))
+            }
+        }
+    }
+}
+```
+
+### 关键设计决策
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| **入站流暴露方式** | AsyncIterator | 符合 Python 惯用法，易于在 async for 中使用 |
+| **出站流创建方式** | Channel + async generator | 灵活，支持 push 和 pull 两种模式 |
+| **任务执行位置** | Python asyncio | 让 Python 代码在熟悉的环境中执行，便于调试 |
+| **背压机制** | Channel 缓冲区 | 自然的背压，写入时会等待消费者 |
+| **取消机制** | Drop receiver/sender | 惯用的 Rust 模式，自动传播取消 |
+
+### 生命周期与资源管理
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     流式响应生命周期                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. receive() 被调用                                                        │
+│      │                                                                      │
+│  2. Python 创建 StreamMessage + StreamWriter                                │
+│      │                                                                      │
+│  3. Python 启动 asyncio.create_task(produce())                              │
+│      │                                                                      │
+│  4. receive() 返回 StreamMessage                                            │
+│      │                                                                      │
+│  5. Rust 取出 receiver，包装为 Message::Stream                              │
+│      │                                                                      │
+│  6. Rust 开始消费 stream (传输到网络)                                       │
+│      │                           │                                          │
+│  7. Python task 写入 writer ────►│ (channel buffer)                         │
+│      │                           │                                          │
+│  8. Rust 读取 stream ◄───────────┘                                          │
+│      │                                                                      │
+│  9. Python task 调用 writer.close()                                         │
+│      │                                                                      │
+│  10. Rust 读到 None，流结束                                                 │
+│                                                                             │
+│  取消场景:                                                                  │
+│  • 客户端断开 → Rust drop receiver → Python write 失败 → task 退出         │
+│  • Python 出错 → writer.error() → Rust 收到 Err → 传播到客户端             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 ## 元数据同步机制
 
 ### Gossip 协议扩展

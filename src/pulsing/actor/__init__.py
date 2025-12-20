@@ -6,58 +6,101 @@ This module provides a Pythonic interface to the Pulsing Actor System, allowing 
 - Define actors in Python by implementing the receive method
 - Send messages between actors using ask/tell patterns
 - Build distributed actor clusters with gossip-based discovery
+- Handle streaming requests and responses
 
-Example:
+Example - Basic Actor:
     ```python
     import asyncio
-    from pulsing.actor import ActorSystem, SystemConfig, RawMessage, Actor
+    from pulsing.actor import ActorSystem, SystemConfig, Message, Actor
 
     class EchoActor(Actor):
-        async def receive(self, msg: RawMessage) -> RawMessage:
+        async def receive(self, msg: Message) -> Message:
             # Echo back the same message
             return msg
 
     async def main():
-        # Create actor system
         config = SystemConfig.standalone()
         system = await ActorSystem.create(config)
-
-        # Spawn actor
         actor_ref = await system.spawn("echo", EchoActor())
-
-        # Send message
         response = await actor_ref.ask_json("greeting", {"text": "Hello!"})
         print(f"Got response: {response}")
-
         await system.shutdown()
 
     asyncio.run(main())
+    ```
+
+Example - Streaming Response:
+    ```python
+    from pulsing.actor import Actor, Message, StreamMessage
+
+    class StreamingActor(Actor):
+        async def receive(self, msg: Message) -> Message:
+            if msg.msg_type == "Generate":
+                # Create streaming response
+                stream_msg, writer = StreamMessage.create("TokenStream")
+                
+                async def produce():
+                    for i in range(10):
+                        await writer.write_json({"token": f"word_{i}"})
+                    writer.close()
+                
+                asyncio.create_task(produce())
+                return stream_msg
+            
+            return Message.empty()
+    ```
+
+Example - Consuming Stream:
+    ```python
+    class ConsumerActor(Actor):
+        async def receive(self, msg: Message) -> Message:
+            if msg.is_stream:
+                reader = msg.stream_reader()
+                results = []
+                async for chunk in reader:
+                    data = json.loads(chunk)
+                    results.append(data)
+                return Message.from_json("Result", {"items": results})
+            
+            return Message.empty()
     ```
 """
 
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, Union, AsyncIterator, Tuple
 
 # Import native bindings
 from dynamo._core.actor import (
     NodeId,
     ActorId,
-    RawMessage,
+    Message as RawMessage,  # Legacy alias
     ActorRef,
     SystemConfig,
     ActorSystem as _ActorSystem,
+    # Streaming types
+    StreamReader,
+    StreamWriter,
+    StreamMessage,
+    UnifiedMessage as Message,
 )
 
 __all__ = [
+    # Core types
     "NodeId",
     "ActorId",
-    "RawMessage",
     "ActorRef",
     "SystemConfig",
     "ActorSystem",
     "Actor",
+    # Message types
+    "Message",
+    "RawMessage",  # Legacy alias
+    # Streaming types
+    "StreamReader",
+    "StreamWriter", 
+    "StreamMessage",
 ]
 
 
@@ -68,7 +111,16 @@ class Actor(ABC):
     Subclass this and implement the `receive` method to create your own actor.
     The receive method can be either synchronous or asynchronous.
     
-    Example:
+    The `receive` method receives a `Message` which can be either:
+    - Single message: Access payload with `msg.payload` or `msg.to_json()`
+    - Stream message: Check with `msg.is_stream` and use `msg.stream_reader()`
+    
+    You can return:
+    - `Message.single(msg_type, payload)` or `Message.from_json(msg_type, data)` for single response
+    - `StreamMessage.create(msg_type)` for streaming response
+    - `Message.empty()` for no response
+    
+    Example - Basic Actor:
         ```python
         class CounterActor(Actor):
             def __init__(self):
@@ -77,15 +129,47 @@ class Actor(ABC):
             def on_start(self, actor_id: ActorId):
                 print(f"Actor {actor_id} started")
             
-            async def receive(self, msg: RawMessage) -> RawMessage:
+            async def receive(self, msg: Message) -> Message:
                 data = msg.to_json()
                 if msg.msg_type == "increment":
                     self.count += data.get("value", 1)
-                    return RawMessage.from_json("result", {"count": self.count})
+                    return Message.from_json("result", {"count": self.count})
                 elif msg.msg_type == "get":
-                    return RawMessage.from_json("result", {"count": self.count})
+                    return Message.from_json("result", {"count": self.count})
                 else:
-                    return RawMessage.empty()
+                    return Message.empty()
+        ```
+    
+    Example - Streaming Response:
+        ```python
+        class GeneratorActor(Actor):
+            async def receive(self, msg: Message) -> Message:
+                if msg.msg_type == "Generate":
+                    stream_msg, writer = StreamMessage.create("Tokens")
+                    
+                    async def produce():
+                        for i in range(10):
+                            await writer.write_json({"token": i})
+                        writer.close()
+                    
+                    asyncio.create_task(produce())
+                    return stream_msg
+                
+                return Message.empty()
+        ```
+    
+    Example - Consuming Stream:
+        ```python
+        class AggregatorActor(Actor):
+            async def receive(self, msg: Message) -> Message:
+                if msg.is_stream:
+                    reader = msg.stream_reader()
+                    items = []
+                    async for chunk in reader:
+                        items.append(json.loads(chunk))
+                    return Message.from_json("Result", {"items": items})
+                
+                return Message.empty()
         ```
     """
     
@@ -108,17 +192,22 @@ class Actor(ABC):
         return {}
 
     @abstractmethod
-    def receive(self, msg: RawMessage) -> RawMessage:
+    def receive(self, msg: Message) -> Union[Message, StreamMessage]:
         """
         Handle an incoming message.
         
         This method can be either synchronous or asynchronous (async def).
         
         Args:
-            msg: The incoming RawMessage containing msg_type and payload
+            msg: The incoming Message. Check `msg.is_stream` to determine type:
+                - Single: Access `msg.payload` or `msg.to_json()`
+                - Stream: Use `msg.stream_reader()` to get an async iterator
             
         Returns:
-            A RawMessage response. Use RawMessage.empty() for no response.
+            Response message. Can be:
+            - `Message.single(type, data)` or `Message.from_json(type, obj)` for single response
+            - `StreamMessage.create(type)` returns (stream_msg, writer) for streaming
+            - `Message.empty()` for no response
         """
         pass
 
