@@ -113,24 +113,18 @@ async fn main() -> anyhow::Result<()> {
 
     println!("=== Cluster Actor Example - Node {} ===\n", node_num);
 
-    // Configure based on node number
-    let (tcp_port, gossip_port, seed_nodes) = match node_num {
-        1 => (8001, 7001, vec![]),
-        2 => (
-            8002,
-            7002,
-            vec!["127.0.0.1:7001".parse().unwrap()],
-        ),
-        _ => (8000 + node_num as u16, 7000 + node_num as u16, vec![]),
+    // Configure based on node number (single HTTP port per node)
+    let (port, seed_nodes) = match node_num {
+        1 => (8001, vec![]),
+        2 => (8002, vec!["127.0.0.1:8001".parse().unwrap()]),
+        _ => (8000 + node_num as u16, vec![]),
     };
 
-    let tcp_addr = format!("127.0.0.1:{}", tcp_port).parse()?;
-    let gossip_addr = format!("127.0.0.1:{}", gossip_port).parse()?;
-
-    let config = SystemConfig::with_addrs(tcp_addr, gossip_addr).with_seeds(seed_nodes);
+    let addr = format!("127.0.0.1:{}", port).parse()?;
+    let config = SystemConfig::with_addr(addr).with_seeds(seed_nodes);
 
     let system = ActorSystem::new(config).await?;
-    println!("Node {} started at TCP:{}, Gossip:{}", node_num, tcp_port, gossip_port);
+    println!("Node {} started at {}", node_num, system.addr());
 
     // Node 1: Create the shared counter actor
     if node_num == 1 {

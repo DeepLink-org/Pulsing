@@ -1,45 +1,40 @@
 //! Actor System - the main entry point for creating and managing actors
 
 use crate::actor::{
-    Actor, ActorContext, ActorId, ActorRef, ActorSystemRef, Envelope, Mailbox, MessageHandler,
-    NodeId,
+    Actor, ActorContext, ActorId, ActorRef, ActorSystemRef, Envelope, Mailbox, NodeId, RawMessage,
 };
-use crate::cluster::{GossipCluster, GossipConfig, MemberInfo};
-use crate::transport::{TcpRemoteTransport, TcpTransport, TcpTransportConfig};
+use crate::cluster::{GossipCluster, GossipConfig, GossipMessage, MemberInfo};
+use crate::transport::{HttpMessageHandler, HttpRemoteTransport, HttpTransport, HttpTransportConfig};
 use dashmap::DashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 /// Actor System configuration
 #[derive(Clone, Debug)]
 pub struct SystemConfig {
-    /// TCP address for actor communication
-    pub tcp_addr: SocketAddr,
+    /// HTTP address for all communication (actors + gossip)
+    pub addr: SocketAddr,
 
-    /// Gossip address for cluster membership
-    pub gossip_addr: SocketAddr,
-
-    /// Seed nodes to join
+    /// Seed nodes to join (HTTP addresses)
     pub seed_nodes: Vec<SocketAddr>,
 
     /// Gossip configuration
     pub gossip_config: GossipConfig,
 
-    /// TCP transport configuration
-    pub tcp_config: TcpTransportConfig,
+    /// HTTP transport configuration
+    pub http_config: HttpTransportConfig,
 }
 
 impl Default for SystemConfig {
     fn default() -> Self {
         Self {
-            tcp_addr: "0.0.0.0:0".parse().unwrap(),
-            gossip_addr: "0.0.0.0:0".parse().unwrap(),
+            addr: "0.0.0.0:0".parse().unwrap(),
             seed_nodes: Vec::new(),
             gossip_config: GossipConfig::default(),
-            tcp_config: TcpTransportConfig::default(),
+            http_config: HttpTransportConfig::default(),
         }
     }
 }
@@ -50,11 +45,10 @@ impl SystemConfig {
         Self::default()
     }
 
-    /// Create config with specific addresses
-    pub fn with_addrs(tcp_addr: SocketAddr, gossip_addr: SocketAddr) -> Self {
+    /// Create config with specific address
+    pub fn with_addr(addr: SocketAddr) -> Self {
         Self {
-            tcp_addr,
-            gossip_addr,
+            addr,
             ..Default::default()
         }
     }
@@ -80,14 +74,17 @@ pub struct ActorSystem {
     /// Local node ID
     node_id: NodeId,
 
+    /// HTTP address
+    addr: SocketAddr,
+
     /// Local actors
     local_actors: Arc<DashMap<String, LocalActorHandle>>,
 
     /// Gossip cluster (for discovery)
-    cluster: Arc<GossipCluster>,
+    cluster: Arc<RwLock<Option<Arc<GossipCluster>>>>,
 
-    /// TCP transport (for actor communication)
-    transport: Arc<TcpTransport>,
+    /// HTTP transport
+    transport: Arc<HttpTransport>,
 
     /// Cancellation token
     cancel_token: CancellationToken,
@@ -97,32 +94,39 @@ impl ActorSystem {
     /// Create a new actor system
     pub async fn new(config: SystemConfig) -> anyhow::Result<Arc<Self>> {
         let cancel_token = CancellationToken::new();
-
-        // Create cluster first to get node ID
-        let cluster = GossipCluster::new(
-            config.tcp_addr,
-            config.gossip_addr,
-            config.gossip_config,
-        )
-        .await?;
-
-        let node_id = cluster.local_node().clone();
+        let node_id = NodeId::generate();
         let local_actors: Arc<DashMap<String, LocalActorHandle>> = Arc::new(DashMap::new());
+        let cluster_holder: Arc<RwLock<Option<Arc<GossipCluster>>>> = Arc::new(RwLock::new(None));
 
-        // Create message handler
-        let handler = ActorMessageHandler {
+        // Create message handler (needs cluster reference for gossip)
+        let handler = SystemMessageHandler {
+            node_id: node_id.clone(),
             local_actors: local_actors.clone(),
+            cluster: cluster_holder.clone(),
         };
 
-        // Create TCP transport
-        let transport = TcpTransport::new(
-            config.tcp_addr,
+        // Create HTTP transport
+        let (transport, actual_addr) = HttpTransport::new(
+            config.addr,
             Arc::new(handler),
-            config.tcp_config,
+            config.http_config,
+            cancel_token.clone(),
         )
         .await?;
 
+        // Create gossip cluster
+        let cluster = GossipCluster::new(
+            node_id.clone(),
+            actual_addr,
+            transport.clone(),
+            config.gossip_config,
+        );
+
         let cluster = Arc::new(cluster);
+        {
+            let mut holder = cluster_holder.write().await;
+            *holder = Some(cluster.clone());
+        }
 
         // Start cluster gossip
         cluster.start(cancel_token.clone());
@@ -134,15 +138,16 @@ impl ActorSystem {
 
         let system = Arc::new(Self {
             node_id,
+            addr: actual_addr,
             local_actors,
-            cluster,
+            cluster: cluster_holder,
             transport,
             cancel_token,
         });
 
         tracing::info!(
             node_id = %system.node_id,
-            tcp_addr = %system.transport.local_addr(),
+            addr = %system.addr,
             "Actor system started"
         );
 
@@ -154,14 +159,19 @@ impl ActorSystem {
         &self.node_id
     }
 
-    /// Get the TCP address
-    pub fn tcp_addr(&self) -> SocketAddr {
-        self.transport.local_addr()
+    /// Get the HTTP address
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
     }
 
-    /// Get the gossip (UDP) address
+    /// Get the HTTP address (alias for compatibility)
+    pub fn tcp_addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Get the gossip address (same as HTTP address now)
     pub fn gossip_addr(&self) -> SocketAddr {
-        self.cluster.gossip_addr()
+        self.addr
     }
 
     /// Spawn a new actor
@@ -203,7 +213,12 @@ impl ActorSystem {
         );
 
         // Register in cluster
-        self.cluster.register_actor(actor_id.clone()).await;
+        {
+            let cluster_guard = self.cluster.read().await;
+            if let Some(cluster) = cluster_guard.as_ref() {
+                cluster.register_actor(actor_id.clone()).await;
+            }
+        }
 
         tracing::debug!(actor_id = %actor_id, "Spawned actor");
 
@@ -220,12 +235,16 @@ impl ActorSystem {
         }
 
         // Check cluster
-        if let Some(member) = self.cluster.lookup_actor(actor_id).await {
-            let transport = Arc::new(TcpRemoteTransport::new(
-                self.transport.clone(),
-                member.addr,
-            ));
-            return Ok(ActorRef::remote(actor_id.clone(), member.addr, transport));
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            if let Some(member) = cluster.lookup_actor(actor_id).await {
+                let transport = Arc::new(HttpRemoteTransport::new(
+                    self.transport.clone(),
+                    member.addr,
+                    actor_id.name.clone(),
+                ));
+                return Ok(ActorRef::remote(actor_id.clone(), member.addr, transport));
+            }
         }
 
         Err(anyhow::anyhow!("Actor not found: {}", actor_id))
@@ -233,7 +252,12 @@ impl ActorSystem {
 
     /// Get cluster members
     pub async fn members(&self) -> Vec<MemberInfo> {
-        self.cluster.alive_members().await
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            cluster.alive_members().await
+        } else {
+            Vec::new()
+        }
     }
 
     /// Get local actors
@@ -247,7 +271,10 @@ impl ActorSystem {
             handle.join_handle.abort();
 
             let actor_id = ActorId::new(self.node_id.clone(), actor_name.to_string());
-            self.cluster.unregister_actor(&actor_id).await;
+            let cluster_guard = self.cluster.read().await;
+            if let Some(cluster) = cluster_guard.as_ref() {
+                cluster.unregister_actor(&actor_id).await;
+            }
 
             tracing::debug!(actor = actor_name, "Stopped actor");
         }
@@ -262,16 +289,18 @@ impl ActorSystem {
         self.cancel_token.cancel();
 
         // Leave cluster gracefully
-        self.cluster.leave().await?;
+        {
+            let cluster_guard = self.cluster.read().await;
+            if let Some(cluster) = cluster_guard.as_ref() {
+                cluster.leave().await?;
+            }
+        }
 
         // Stop all actors
         for entry in self.local_actors.iter() {
             entry.join_handle.abort();
         }
         self.local_actors.clear();
-
-        // Shutdown transport
-        self.transport.shutdown();
 
         Ok(())
     }
@@ -326,26 +355,27 @@ async fn run_actor_loop<A: Actor>(
     }
 }
 
-/// Message handler for incoming TCP requests
-struct ActorMessageHandler {
+/// Unified message handler for HTTP transport
+struct SystemMessageHandler {
+    node_id: NodeId,
     local_actors: Arc<DashMap<String, LocalActorHandle>>,
+    cluster: Arc<RwLock<Option<Arc<GossipCluster>>>>,
 }
 
 #[async_trait::async_trait]
-impl MessageHandler for ActorMessageHandler {
-    async fn handle_message(
+impl HttpMessageHandler for SystemMessageHandler {
+    async fn handle_actor_message(
         &self,
-        actor_id: &ActorId,
-        msg_type: &str,
-        payload: Vec<u8>,
+        actor_name: &str,
+        msg: RawMessage,
     ) -> anyhow::Result<Vec<u8>> {
         let handle = self
             .local_actors
-            .get(&actor_id.name)
-            .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_id))?;
+            .get(actor_name)
+            .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let envelope = Envelope::ask(msg_type.to_string(), payload, tx);
+        let envelope = Envelope::ask(msg.msg_type, msg.payload, tx);
 
         handle
             .sender
@@ -355,6 +385,28 @@ impl MessageHandler for ActorMessageHandler {
 
         rx.await
             .map_err(|_| anyhow::anyhow!("Actor dropped"))?
+    }
+
+    async fn handle_gossip_message(&self, payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            let msg: GossipMessage = bincode::deserialize(&payload)?;
+            let response = cluster.handle_gossip(msg).await?;
+            if let Some(resp) = response {
+                Ok(Some(bincode::serialize(&resp)?))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_node_info(&self) -> serde_json::Value {
+        serde_json::json!({
+            "node_id": self.node_id.to_string(),
+            "actors": self.local_actors.iter().map(|e| e.key().clone()).collect::<Vec<_>>(),
+        })
     }
 }
 

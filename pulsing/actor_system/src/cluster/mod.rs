@@ -9,7 +9,7 @@ mod gossip;
 mod member;
 pub mod swim;
 
-pub use gossip::{GossipCluster, GossipConfig};
+pub use gossip::{GossipCluster, GossipConfig, GossipMessage};
 pub use member::{ActorLocation, MemberInfo, MemberStatus};
 pub use swim::{SwimConfig, SwimDetector, SwimMessage};
 

@@ -145,12 +145,10 @@ impl Actor for CounterActor {
 // Cluster Setup Helpers
 // ============================================================================
 
-fn create_cluster_config(base_port: u16) -> SystemConfig {
-    SystemConfig {
-        tcp_addr: format!("127.0.0.1:{}", base_port).parse().unwrap(),
-        gossip_addr: format!("127.0.0.1:{}", base_port + 1000).parse().unwrap(),
-        ..Default::default()
-    }
+fn create_cluster_config(_port: u16) -> SystemConfig {
+    // Use port 0 to let the OS assign an available port
+    // This avoids port conflicts when tests run in parallel
+    SystemConfig::with_addr("127.0.0.1:0".parse().unwrap())
 }
 
 // ============================================================================
