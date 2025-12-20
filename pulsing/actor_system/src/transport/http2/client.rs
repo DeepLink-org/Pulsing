@@ -1,8 +1,14 @@
 //! HTTP/2 Client implementation
 //!
-//! Supports h2c (HTTP/2 over cleartext) with connection pooling.
+//! Supports h2c (HTTP/2 over cleartext) with:
+//! - Advanced connection pooling
+//! - Retry strategies with exponential backoff
+//! - Timeout management
+//! - Streaming support
 
 use super::config::Http2Config;
+use super::pool::{ConnectionPool, PoolConfig};
+use super::retry::{RetryConfig, RetryExecutor};
 use super::stream::{StreamFrame, StreamHandle};
 use super::{headers, MessageMode};
 use crate::actor::{Message, MessageStream};
@@ -10,120 +16,95 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
-use hyper::client::conn::http2;
 use hyper::{Method, Request};
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::TcpStream;
-use tokio::sync::{Mutex, RwLock};
+use std::time::Duration;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-/// HTTP/2 connection pool entry
-struct PooledConnection {
-    sender: http2::SendRequest<Full<Bytes>>,
-    #[allow(dead_code)]
-    created_at: std::time::Instant,
-}
-
-/// Connection pool
-struct ConnectionPool {
-    connections: RwLock<HashMap<SocketAddr, Vec<Arc<Mutex<PooledConnection>>>>>,
-    config: Http2Config,
-}
-
-impl ConnectionPool {
-    fn new(config: Http2Config) -> Self {
-        Self {
-            connections: RwLock::new(HashMap::new()),
-            config,
-        }
-    }
-
-    /// Get or create a connection to the given address
-    async fn get_connection(
-        &self,
-        addr: SocketAddr,
-    ) -> anyhow::Result<Arc<Mutex<PooledConnection>>> {
-        // Try to get an existing connection
-        {
-            let connections = self.connections.read().await;
-            if let Some(pool) = connections.get(&addr) {
-                for conn in pool.iter() {
-                    if let Ok(guard) = conn.try_lock() {
-                        if guard.sender.is_ready() {
-                            drop(guard);
-                            return Ok(conn.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Create a new connection
-        let conn = self.create_connection(addr).await?;
-        let conn = Arc::new(Mutex::new(conn));
-
-        // Add to pool
-        {
-            let mut connections = self.connections.write().await;
-            let pool = connections.entry(addr).or_insert_with(Vec::new);
-
-            // Limit pool size
-            if pool.len() < self.config.max_connections_per_host {
-                pool.push(conn.clone());
-            }
-        }
-
-        Ok(conn)
-    }
-
-    /// Create a new HTTP/2 connection
-    async fn create_connection(&self, addr: SocketAddr) -> anyhow::Result<PooledConnection> {
-        let stream = tokio::time::timeout(self.config.connect_timeout, TcpStream::connect(addr))
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection timeout"))?
-            .map_err(|e| anyhow::anyhow!("Connection failed: {}", e))?;
-
-        let io = TokioIo::new(stream);
-
-        // Create HTTP/2 connection with prior knowledge (h2c)
-        let (sender, conn) = http2::handshake(TokioExecutor::new(), io)
-            .await
-            .map_err(|e| anyhow::anyhow!("HTTP/2 handshake failed: {}", e))?;
-
-        // Spawn connection driver
-        tokio::spawn(async move {
-            if let Err(e) = conn.await {
-                tracing::debug!(error = %e, "HTTP/2 connection closed");
-            }
-        });
-
-        Ok(PooledConnection {
-            sender,
-            created_at: std::time::Instant::now(),
-        })
-    }
-}
-
-/// HTTP/2 Client
+/// HTTP/2 Client with connection pooling, retry, and timeout support
 pub struct Http2Client {
+    /// Connection pool
     pool: Arc<ConnectionPool>,
+    /// HTTP/2 configuration
     config: Http2Config,
+    /// Retry configuration
+    retry_config: RetryConfig,
+    /// Global cancellation token
+    cancel: CancellationToken,
 }
 
 impl Http2Client {
-    /// Create a new HTTP/2 client
+    /// Create a new HTTP/2 client with default configuration
     pub fn new(config: Http2Config) -> Self {
         Self {
             pool: Arc::new(ConnectionPool::new(config.clone())),
             config,
+            retry_config: RetryConfig::default(),
+            cancel: CancellationToken::new(),
         }
     }
 
-    /// Send an ask (request-response) message
+    /// Create a new HTTP/2 client with custom configurations
+    pub fn with_configs(
+        http2_config: Http2Config,
+        pool_config: PoolConfig,
+        retry_config: RetryConfig,
+    ) -> Self {
+        Self {
+            pool: Arc::new(ConnectionPool::with_config(http2_config.clone(), pool_config)),
+            config: http2_config,
+            retry_config,
+            cancel: CancellationToken::new(),
+        }
+    }
+
+    /// Create client with retry configuration
+    pub fn with_retry(mut self, retry_config: RetryConfig) -> Self {
+        self.retry_config = retry_config;
+        self
+    }
+
+    /// Get the connection pool (for diagnostics)
+    pub fn pool(&self) -> &Arc<ConnectionPool> {
+        &self.pool
+    }
+
+    /// Get pool statistics
+    pub fn stats(&self) -> &Arc<super::pool::PoolStats> {
+        self.pool.stats()
+    }
+
+    /// Start background maintenance tasks
+    pub fn start_background_tasks(&self) {
+        self.pool.start_cleanup_task(self.cancel.clone());
+    }
+
+    /// Shutdown the client
+    pub fn shutdown(&self) {
+        self.cancel.cancel();
+    }
+
+    /// Send an ask (request-response) message with retry
     pub async fn ask(
+        &self,
+        addr: SocketAddr,
+        path: &str,
+        msg_type: &str,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<Vec<u8>> {
+        let executor = RetryExecutor::new(self.retry_config.clone());
+
+        // ask is idempotent if the message handler is idempotent
+        // We treat read operations as idempotent by default
+        executor
+            .execute(true, || self.ask_once(addr, path, msg_type, payload.clone()))
+            .await
+    }
+
+    /// Send an ask without retry
+    async fn ask_once(
         &self,
         addr: SocketAddr,
         path: &str,
@@ -134,13 +115,18 @@ impl Http2Client {
             .send_request(addr, path, msg_type, payload, MessageMode::Ask)
             .await?;
 
-        // Get status before consuming body
         let status = response.status();
 
-        // Read response body
-        let body = response.collect().await?.to_bytes();
+        // Read response body with timeout
+        let body = tokio::time::timeout(
+            self.config.request_timeout,
+            response.collect(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Response body read timeout"))?
+        .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?
+        .to_bytes();
 
-        // Check status
         if !status.is_success() {
             let error_msg = String::from_utf8_lossy(&body);
             return Err(anyhow::anyhow!(
@@ -153,8 +139,24 @@ impl Http2Client {
         Ok(body.to_vec())
     }
 
-    /// Send a tell (fire-and-forget) message
+    /// Send a tell (fire-and-forget) message with retry
     pub async fn tell(
+        &self,
+        addr: SocketAddr,
+        path: &str,
+        msg_type: &str,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        let executor = RetryExecutor::new(self.retry_config.clone());
+
+        // tell is NOT idempotent by default (could have side effects)
+        executor
+            .execute(false, || self.tell_once(addr, path, msg_type, payload.clone()))
+            .await
+    }
+
+    /// Send a tell without retry
+    async fn tell_once(
         &self,
         addr: SocketAddr,
         path: &str,
@@ -165,10 +167,8 @@ impl Http2Client {
             .send_request(addr, path, msg_type, payload, MessageMode::Tell)
             .await?;
 
-        // Get status before consuming body
         let status = response.status();
 
-        // Check status
         if !status.is_success() {
             let body = response.collect().await?.to_bytes();
             let error_msg = String::from_utf8_lossy(&body);
@@ -183,6 +183,8 @@ impl Http2Client {
     }
 
     /// Send a stream request and receive streaming response as StreamFrame
+    ///
+    /// Note: Streaming requests are NOT retried (they are not idempotent)
     pub async fn ask_stream(
         &self,
         addr: SocketAddr,
@@ -194,10 +196,8 @@ impl Http2Client {
             .send_request(addr, path, msg_type, payload, MessageMode::Stream)
             .await?;
 
-        // Get status before consuming body
         let status = response.status();
 
-        // Check status
         if !status.is_success() {
             let body = response.collect().await?.to_bytes();
             let error_msg = String::from_utf8_lossy(&body);
@@ -211,17 +211,15 @@ impl Http2Client {
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
 
-        // Convert response body to stream of frames
+        // Apply stream timeout
+        let stream_timeout = self.config.stream_timeout;
         let body_stream = response.into_body();
-        let frame_stream = Self::body_to_frame_stream(body_stream, cancel_clone);
+        let frame_stream = Self::body_to_frame_stream(body_stream, cancel_clone, stream_timeout);
 
         Ok(StreamHandle::new(frame_stream, cancel))
     }
 
     /// Send a stream request and receive streaming response as MessageStream
-    ///
-    /// This is a convenience method that wraps `ask_stream` and converts
-    /// StreamFrames to Messages.
     pub async fn ask_stream_raw(
         &self,
         addr: SocketAddr,
@@ -258,18 +256,20 @@ impl Http2Client {
         Ok(Box::pin(msg_stream))
     }
 
-    /// Convert response body to stream of StreamFrames
+    /// Convert response body to stream of StreamFrames with timeout
     fn body_to_frame_stream(
         body: Incoming,
         cancel: CancellationToken,
+        timeout: Duration,
     ) -> impl Stream<Item = anyhow::Result<StreamFrame>> {
-        // Buffer for partial lines
         let buffer = Arc::new(Mutex::new(String::new()));
+        let start = std::time::Instant::now();
 
         http_body_util::BodyStream::new(body)
             .take_while(move |_| {
                 let cancelled = cancel.is_cancelled();
-                async move { !cancelled }
+                let timed_out = start.elapsed() > timeout;
+                async move { !cancelled && !timed_out }
             })
             .map(move |result| {
                 let buffer = buffer.clone();
@@ -309,8 +309,8 @@ impl Http2Client {
         payload: Vec<u8>,
         mode: MessageMode,
     ) -> anyhow::Result<hyper::Response<Incoming>> {
-        let conn = self.pool.get_connection(addr).await?;
-        let mut guard = conn.lock().await;
+        let conn_guard = self.pool.get_connection(addr).await?;
+        let mut conn = conn_guard.get().await;
 
         // Build request
         let uri = format!("http://{}{}", addr, path);
@@ -324,12 +324,11 @@ impl Http2Client {
             .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
 
         // Send request with timeout
-        let send_future = guard.sender.send_request(request);
-        let response: hyper::Response<Incoming> =
-            tokio::time::timeout(self.config.request_timeout, send_future)
-                .await
-                .map_err(|_| anyhow::anyhow!("Request timeout"))?
-                .map_err(|e| anyhow::anyhow!("Request failed: {}", e))?;
+        let send_future = conn.sender.send_request(request);
+        let response = tokio::time::timeout(self.config.request_timeout, send_future)
+            .await
+            .map_err(|_| anyhow::anyhow!("Request timeout"))?
+            .map_err(|e| anyhow::anyhow!("Request failed: {}", e))?;
 
         Ok(response)
     }
@@ -340,7 +339,88 @@ impl Clone for Http2Client {
         Self {
             pool: self.pool.clone(),
             config: self.config.clone(),
+            retry_config: self.retry_config.clone(),
+            cancel: self.cancel.clone(),
         }
+    }
+}
+
+/// Builder for Http2Client
+pub struct Http2ClientBuilder {
+    http2_config: Http2Config,
+    pool_config: Option<PoolConfig>,
+    retry_config: Option<RetryConfig>,
+}
+
+impl Http2ClientBuilder {
+    /// Create a new builder with default HTTP/2 config
+    pub fn new() -> Self {
+        Self {
+            http2_config: Http2Config::default(),
+            pool_config: None,
+            retry_config: None,
+        }
+    }
+
+    /// Set HTTP/2 configuration
+    pub fn http2_config(mut self, config: Http2Config) -> Self {
+        self.http2_config = config;
+        self
+    }
+
+    /// Set pool configuration
+    pub fn pool_config(mut self, config: PoolConfig) -> Self {
+        self.pool_config = Some(config);
+        self
+    }
+
+    /// Set retry configuration
+    pub fn retry_config(mut self, config: RetryConfig) -> Self {
+        self.retry_config = Some(config);
+        self
+    }
+
+    /// Set maximum retries
+    pub fn max_retries(mut self, n: u32) -> Self {
+        self.retry_config = Some(
+            self.retry_config
+                .unwrap_or_default()
+                .max_retries(n),
+        );
+        self
+    }
+
+    /// Set connection timeout
+    pub fn connect_timeout(mut self, timeout: Duration) -> Self {
+        self.http2_config.connect_timeout = timeout;
+        self
+    }
+
+    /// Set request timeout
+    pub fn request_timeout(mut self, timeout: Duration) -> Self {
+        self.http2_config.request_timeout = timeout;
+        self
+    }
+
+    /// Set stream timeout
+    pub fn stream_timeout(mut self, timeout: Duration) -> Self {
+        self.http2_config.stream_timeout = timeout;
+        self
+    }
+
+    /// Build the client
+    pub fn build(self) -> Http2Client {
+        Http2Client::with_configs(
+            self.http2_config,
+            self.pool_config.unwrap_or_default(),
+            self.retry_config.unwrap_or_default(),
+        )
+    }
+}
+
+impl Default for Http2ClientBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -351,8 +431,20 @@ mod tests {
     #[test]
     fn test_client_creation() {
         let client = Http2Client::new(Http2Config::default());
-        // Just test that it compiles and can be created
         let _ = client;
+    }
+
+    #[test]
+    fn test_client_builder() {
+        let client = Http2ClientBuilder::new()
+            .max_retries(5)
+            .connect_timeout(Duration::from_secs(10))
+            .request_timeout(Duration::from_secs(60))
+            .build();
+
+        assert_eq!(client.config.connect_timeout, Duration::from_secs(10));
+        assert_eq!(client.config.request_timeout, Duration::from_secs(60));
+        assert_eq!(client.retry_config.max_retries, 5);
     }
 
     #[test]
@@ -365,5 +457,13 @@ mod tests {
         assert_eq!(MessageMode::from_str("TELL"), Some(MessageMode::Tell));
         assert_eq!(MessageMode::from_str("Stream"), Some(MessageMode::Stream));
         assert_eq!(MessageMode::from_str("invalid"), None);
+    }
+
+    #[test]
+    fn test_client_clone() {
+        let client = Http2Client::new(Http2Config::default());
+        let cloned = client.clone();
+        // Both should share the same pool
+        assert!(Arc::ptr_eq(&client.pool, &cloned.pool));
     }
 }

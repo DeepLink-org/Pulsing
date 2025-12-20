@@ -1,4 +1,9 @@
 //! HTTP/2 Transport Configuration
+//!
+//! Provides comprehensive configuration options for HTTP/2 transport including:
+//! - Server settings (concurrent streams, window sizes, etc.)
+//! - Client settings (timeouts, connection pooling)
+//! - Retry policies
 
 use std::time::Duration;
 
@@ -47,6 +52,19 @@ pub struct Http2Config {
     /// Enable HTTP/2 prior knowledge mode (default: true)
     /// When true, client sends HTTP/2 preface directly without upgrade
     pub http2_prior_knowledge: bool,
+
+    // ========== Retry Configuration ==========
+    /// Maximum number of retry attempts (default: 3)
+    pub max_retries: u32,
+
+    /// Initial retry delay (default: 100ms)
+    pub retry_initial_delay: Duration,
+
+    /// Maximum retry delay (default: 10s)
+    pub retry_max_delay: Duration,
+
+    /// Whether to use jitter in retry delays (default: true)
+    pub retry_use_jitter: bool,
 }
 
 impl Default for Http2Config {
@@ -70,6 +88,12 @@ impl Default for Http2Config {
             keepalive_timeout: Duration::from_secs(10),
             enable_http1_fallback: true,
             http2_prior_knowledge: true,
+
+            // Retry defaults
+            max_retries: 3,
+            retry_initial_delay: Duration::from_millis(100),
+            retry_max_delay: Duration::from_secs(10),
+            retry_use_jitter: true,
         }
     }
 }
@@ -80,6 +104,44 @@ impl Http2Config {
         Self::default()
     }
 
+    /// Create a configuration optimized for low-latency workloads
+    pub fn low_latency() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(2),
+            request_timeout: Duration::from_secs(10),
+            max_retries: 2,
+            retry_initial_delay: Duration::from_millis(50),
+            retry_max_delay: Duration::from_secs(1),
+            keepalive_interval: Some(Duration::from_secs(15)),
+            ..Default::default()
+        }
+    }
+
+    /// Create a configuration optimized for high-throughput workloads
+    pub fn high_throughput() -> Self {
+        Self {
+            max_concurrent_streams: 200,
+            initial_window_size: 256 * 1024,             // 256KB
+            initial_connection_window_size: 4 * 1024 * 1024, // 4MB
+            max_frame_size: 64 * 1024,                   // 64KB
+            max_connections_per_host: 20,
+            ..Default::default()
+        }
+    }
+
+    /// Create a configuration optimized for streaming workloads (e.g., LLM inference)
+    pub fn streaming() -> Self {
+        Self {
+            stream_timeout: Duration::from_secs(600), // 10 minutes
+            max_concurrent_streams: 50,
+            initial_window_size: 128 * 1024, // 128KB
+            keepalive_interval: Some(Duration::from_secs(60)),
+            ..Default::default()
+        }
+    }
+
+    // ========== Builder Methods ==========
+
     /// Set maximum concurrent streams
     pub fn max_concurrent_streams(mut self, n: u32) -> Self {
         self.max_concurrent_streams = n;
@@ -89,6 +151,18 @@ impl Http2Config {
     /// Set initial window size
     pub fn initial_window_size(mut self, size: u32) -> Self {
         self.initial_window_size = size;
+        self
+    }
+
+    /// Set connection-level window size
+    pub fn initial_connection_window_size(mut self, size: u32) -> Self {
+        self.initial_connection_window_size = size;
+        self
+    }
+
+    /// Set maximum frame size
+    pub fn max_frame_size(mut self, size: u32) -> Self {
+        self.max_frame_size = size;
         self
     }
 
@@ -110,6 +184,12 @@ impl Http2Config {
         self
     }
 
+    /// Set maximum connections per host
+    pub fn max_connections_per_host(mut self, n: usize) -> Self {
+        self.max_connections_per_host = n;
+        self
+    }
+
     /// Set keep-alive interval
     pub fn keepalive_interval(mut self, interval: Option<Duration>) -> Self {
         self.keepalive_interval = interval;
@@ -127,6 +207,48 @@ impl Http2Config {
         self.http2_prior_knowledge = false;
         self
     }
+
+    /// Set maximum retry attempts
+    pub fn max_retries(mut self, n: u32) -> Self {
+        self.max_retries = n;
+        self
+    }
+
+    /// Disable retries
+    pub fn no_retries(mut self) -> Self {
+        self.max_retries = 0;
+        self
+    }
+
+    /// Set retry initial delay
+    pub fn retry_initial_delay(mut self, delay: Duration) -> Self {
+        self.retry_initial_delay = delay;
+        self
+    }
+
+    /// Set retry max delay
+    pub fn retry_max_delay(mut self, delay: Duration) -> Self {
+        self.retry_max_delay = delay;
+        self
+    }
+
+    /// Disable retry jitter
+    pub fn disable_retry_jitter(mut self) -> Self {
+        self.retry_use_jitter = false;
+        self
+    }
+
+    /// Convert to retry config
+    pub fn to_retry_config(&self) -> super::retry::RetryConfig {
+        super::retry::RetryConfig {
+            max_retries: self.max_retries,
+            initial_delay: self.retry_initial_delay,
+            max_delay: self.retry_max_delay,
+            backoff_multiplier: 2.0,
+            use_jitter: self.retry_use_jitter,
+            idempotent_only: true,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +262,7 @@ mod tests {
         assert_eq!(config.connect_timeout, Duration::from_secs(5));
         assert!(config.enable_http1_fallback);
         assert!(config.http2_prior_knowledge);
+        assert_eq!(config.max_retries, 3);
     }
 
     #[test]
@@ -147,11 +270,45 @@ mod tests {
         let config = Http2Config::new()
             .max_concurrent_streams(200)
             .connect_timeout(Duration::from_secs(10))
-            .disable_http1_fallback();
+            .disable_http1_fallback()
+            .max_retries(5);
 
         assert_eq!(config.max_concurrent_streams, 200);
         assert_eq!(config.connect_timeout, Duration::from_secs(10));
         assert!(!config.enable_http1_fallback);
+        assert_eq!(config.max_retries, 5);
+    }
+
+    #[test]
+    fn test_low_latency_preset() {
+        let config = Http2Config::low_latency();
+        assert_eq!(config.connect_timeout, Duration::from_secs(2));
+        assert_eq!(config.request_timeout, Duration::from_secs(10));
+        assert_eq!(config.max_retries, 2);
+    }
+
+    #[test]
+    fn test_high_throughput_preset() {
+        let config = Http2Config::high_throughput();
+        assert_eq!(config.max_concurrent_streams, 200);
+        assert_eq!(config.max_connections_per_host, 20);
+    }
+
+    #[test]
+    fn test_streaming_preset() {
+        let config = Http2Config::streaming();
+        assert_eq!(config.stream_timeout, Duration::from_secs(600));
+        assert_eq!(config.max_concurrent_streams, 50);
+    }
+
+    #[test]
+    fn test_to_retry_config() {
+        let http2_config = Http2Config::default()
+            .max_retries(5)
+            .retry_initial_delay(Duration::from_millis(200));
+
+        let retry_config = http2_config.to_retry_config();
+        assert_eq!(retry_config.max_retries, 5);
+        assert_eq!(retry_config.initial_delay, Duration::from_millis(200));
     }
 }
-

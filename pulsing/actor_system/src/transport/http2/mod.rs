@@ -6,7 +6,9 @@
 //!
 //! - HTTP/2 over cleartext (h2c) - no TLS required
 //! - Streaming responses via `ask_stream`
-//! - Connection multiplexing
+//! - Connection multiplexing with advanced pooling
+//! - Retry strategies with exponential backoff
+//! - Timeout management at multiple levels
 //! - Built-in flow control (backpressure)
 //!
 //! ## Protocol
@@ -22,14 +24,41 @@
 //! - `x-message-mode`: ask | tell | stream
 //! - `x-message-type`: Message type identifier
 //! - `x-request-id`: Optional request ID for tracing
+//!
+//! ## Example
+//!
+//! ```rust,ignore
+//! use pulsing_actor::transport::http2::{Http2Client, Http2ClientBuilder, Http2Config};
+//! use std::time::Duration;
+//!
+//! // Create client with custom configuration
+//! let client = Http2ClientBuilder::new()
+//!     .max_retries(3)
+//!     .connect_timeout(Duration::from_secs(5))
+//!     .request_timeout(Duration::from_secs(30))
+//!     .build();
+//!
+//! // Send request
+//! let response = client.ask(addr, "/actors/my_actor", "Ping", payload).await?;
+//!
+//! // Streaming request
+//! let stream = client.ask_stream(addr, "/actors/my_actor", "StreamingRequest", payload).await?;
+//! while let Some(frame) = stream.next().await {
+//!     // Process streaming frames
+//! }
+//! ```
 
 mod client;
 mod config;
+mod pool;
+mod retry;
 mod server;
 mod stream;
 
-pub use client::Http2Client;
+pub use client::{Http2Client, Http2ClientBuilder};
 pub use config::Http2Config;
+pub use pool::{ConnectionPool, PoolConfig, PoolStats};
+pub use retry::{RetryConfig, RetryExecutor, RetryableError};
 pub use server::{Http2Server, Http2ServerHandler};
 pub use stream::{StreamFrame, StreamHandle};
 
@@ -88,6 +117,12 @@ enum Http2RemoteTarget {
 ///
 /// Implements the `RemoteTransport` trait, enabling `ActorRef` to communicate
 /// with remote actors over HTTP/2, including streaming support.
+///
+/// Features:
+/// - Automatic connection pooling and reuse
+/// - Retry with exponential backoff for transient failures
+/// - Configurable timeouts
+/// - Streaming response support
 pub struct Http2RemoteTransport {
     client: Arc<Http2Client>,
     remote_addr: SocketAddr,
@@ -111,6 +146,16 @@ impl Http2RemoteTransport {
             remote_addr,
             target: Http2RemoteTarget::Named(path),
         }
+    }
+
+    /// Get the underlying HTTP/2 client
+    pub fn client(&self) -> &Arc<Http2Client> {
+        &self.client
+    }
+
+    /// Get the remote address
+    pub fn remote_addr(&self) -> SocketAddr {
+        self.remote_addr
     }
 
     /// Get the path for the request
@@ -155,6 +200,7 @@ impl RemoteTransport for Http2RemoteTransport {
             .client
             .ask_stream_raw(self.remote_addr, &path, msg_type, payload)
             .await?;
+        
         // Convert MessageStream to PayloadStream by extracting payload
         let payload_stream = msg_stream.map(|result| {
             result.and_then(|msg| {
@@ -165,5 +211,59 @@ impl RemoteTransport for Http2RemoteTransport {
             })
         });
         Ok(Box::pin(payload_stream))
+    }
+
+    /// Send a message and receive response (unified interface)
+    ///
+    /// This method is the primary way ActorRef communicates with remote actors.
+    /// It automatically handles:
+    /// - Connection pooling
+    /// - Retry logic
+    /// - Timeout management
+    async fn send_message(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
+        let Message::Single { msg_type, data } = msg else {
+            // For streaming requests, we need to use a different approach
+            return Err(anyhow::anyhow!("Streaming requests require request_stream method"));
+        };
+        let response = self.request(actor_id, &msg_type, data).await?;
+        Ok(Message::single("", response))
+    }
+
+    /// Send a one-way message (unified interface)
+    async fn send_oneway(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<()> {
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming not supported for fire-and-forget"));
+        };
+        self.send(actor_id, &msg_type, data).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_mode() {
+        assert_eq!(MessageMode::Ask.as_str(), "ask");
+        assert_eq!(MessageMode::Tell.as_str(), "tell");
+        assert_eq!(MessageMode::Stream.as_str(), "stream");
+
+        assert_eq!(MessageMode::from_str("ask"), Some(MessageMode::Ask));
+        assert_eq!(MessageMode::from_str("TELL"), Some(MessageMode::Tell));
+        assert_eq!(MessageMode::from_str("Stream"), Some(MessageMode::Stream));
+        assert_eq!(MessageMode::from_str("invalid"), None);
+    }
+
+    #[test]
+    fn test_request_path() {
+        let client = Arc::new(Http2Client::new(Http2Config::default()));
+        let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+
+        let transport = Http2RemoteTransport::new(client.clone(), addr, "my_actor".to_string());
+        assert_eq!(transport.request_path(), "/actors/my_actor");
+
+        let path = ActorPath::new("services/llm").unwrap();
+        let transport = Http2RemoteTransport::new_named(client, addr, path);
+        assert_eq!(transport.request_path(), "/named/services/llm");
     }
 }

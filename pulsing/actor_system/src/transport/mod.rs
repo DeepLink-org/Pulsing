@@ -31,6 +31,7 @@ pub use tcp::{TcpRemoteTransport, TcpTransport, TcpTransportConfig};
 
 // HTTP/2 exports
 pub use http2::{
-    Http2Client, Http2Config, Http2RemoteTransport, Http2Server, Http2ServerHandler, MessageMode,
+    Http2Client, Http2ClientBuilder, Http2Config, Http2RemoteTransport, Http2Server,
+    Http2ServerHandler, MessageMode, PoolConfig, PoolStats, RetryConfig, RetryableError,
     StreamFrame, StreamHandle,
 };
