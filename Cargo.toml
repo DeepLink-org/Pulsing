@@ -17,6 +17,7 @@ members = [
   "dynamo/lib/runtime",
   "dynamo/lib/tokens",
   "pulsing/bench",
+  "pulsing/actor_system",
 ]
 
 default-members = [

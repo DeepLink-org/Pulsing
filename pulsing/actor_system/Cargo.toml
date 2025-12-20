@@ -1,0 +1,58 @@
+[package]
+name = "pulsing-actor"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight distributed actor framework for Pulsing"
+authors = ["Pulsing Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/reiase/pulsing"
+keywords = ["actor", "distributed", "cluster", "gossip"]
+
+[features]
+default = []
+# Enable integration tests that require a running cluster
+integration = []
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = "1.3"
+bytes = { workspace = true }
+
+# Async utilities
+async-trait = { workspace = true }
+async-stream = { workspace = true }
+futures = { workspace = true }
+
+# Concurrent data structures
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[example]]
+name = "ping_pong"
+path = "examples/ping_pong.rs"
+
+[[example]]
+name = "cluster"
+path = "examples/cluster.rs"
