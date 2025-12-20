@@ -20,8 +20,8 @@
 | 核心抽象 | DistributedRuntime → Namespace → Component → Endpoint | ActorSystem → SystemActor + 业务 Actors |
 | 服务发现 | etcd KV Store / Kubernetes | Gossip 协议 (SWIM) |
 | 元数据存储 | etcd | Gossip 同步的分布式存储 |
-| 通信模式 | NATS/HTTP/TCP + 流式 | Actor 消息 (ask/tell/ask_stream) |
-| 流式响应 | 外部 Stream 抽象 | Actor 原生支持 |
+| 通信模式 | NATS/HTTP/TCP + 流式 | Actor 消息 (ask/tell) + 统一 Message 类型 |
+| 流式响应 | 外部 Stream 抽象 | Message::Stream 原生支持 |
 
 ## 核心架构
 
@@ -63,9 +63,8 @@
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
 │  │                     Transport Layer (HTTP/2)                          │   │
 │  │                                                                       │   │
-│  │   • ask()        → 单次请求/响应                                      │   │
-│  │   • tell()       → 单向消息                                           │   │
-│  │   • ask_stream() → 流式请求/响应                                      │   │
+│  │   • ask(msg) → Message     请求/响应 (Single 或 Stream)               │   │
+│  │   • tell(msg)              单向消息 (fire-and-forget)                 │   │
 │  │                                                                       │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
@@ -272,137 +271,196 @@ pub struct Ping { pub timestamp: u64 }
 pub struct Pong { pub timestamp: u64, pub node_id: String }
 ```
 
-## 流式响应设计
+## 消息类型与流式响应设计
 
 ### 设计理念
+
+核心思想：**统一的 Message 类型支持单次和流式两种模式**，无需区分 `ask` 和 `ask_stream`。
 
 传统回调模式的问题：
 - 每个 token 一次网络调用，开销大
 - 需要临时 Actor 管理生命周期
 - 背压和取消机制复杂
 
-**解决方案**：在 Actor 层原生支持流式响应
+**解决方案**：使用 `Message` 枚举统一表示单次消息和流式消息
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                     流式响应：原生支持 vs 回调模式                           │
+│                     消息类型：统一的 Message 枚举                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  回调模式 (复杂，已弃用):                                                    │
-│  ─────────────────────────                                                  │
-│  Client → Frontend → Router → Worker                                        │
-│              │                    │                                         │
-│              │  创建 StreamActor  │                                         │
-│              │◄──────────────────│  tell(Token) × N                         │
-│              ▼                                                              │
-│         StreamActor (临时)                                                  │
+│  Message 枚举:                                                              │
+│  ─────────────                                                              │
+│  • Message::Single { msg_type, data }     → 单次请求/响应                   │
+│  • Message::Stream { msg_type, stream }   → 流式请求/响应                   │
 │                                                                             │
-│  原生流式 (简洁，采用):                                                     │
+│  通信模式:                                                                  │
+│  ───────────                                                                │
+│  • Single → Single   传统 RPC (查询、命令)                                  │
+│  • Single → Stream   服务端流式 (LLM 生成)                                  │
+│  • Stream → Single   客户端流式 (上传)                                      │
+│  • Stream → Stream   双向流式                                               │
+│                                                                             │
+│  示例 - LLM 推理流程:                                                       │
 │  ───────────────────────                                                    │
 │  Client → Frontend → Router → Worker                                        │
 │              │                    │                                         │
-│              │  ask_stream(req)   │                                         │
+│              │  ask(Generate)     │     // 发送 Single 请求                 │
 │              │═══════════════════►│                                         │
-│              │◄═══ Stream<Token> ═│                                         │
+│              │◄═══ Message::Stream│     // 返回 Stream 响应                 │
+│              │    (token stream)  │                                         │
 │                                                                             │
 │  优势:                                                                      │
-│  • 无临时 Actor，无需管理生命周期                                           │
+│  • 统一 API：ask() 同时支持单次和流式                                       │
+│  • 类型自描述：响应类型由 Message 变体决定                                  │
 │  • 背压由 Stream 机制自然处理                                               │
 │  • Drop stream = 取消请求                                                   │
-│  • 代码量减少 90%                                                           │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### ActorRef API 扩展
+### Message 类型定义
+
+```rust
+/// 统一消息类型，支持单次和流式两种模式
+pub enum Message {
+    /// 单次数据消息
+    Single {
+        /// 消息类型标识 (用于路由和反序列化)
+        msg_type: String,
+        /// 消息数据 (序列化的 payload)
+        data: Vec<u8>,
+    },
+    /// 流式数据消息
+    Stream {
+        /// 消息类型标识
+        msg_type: String,
+        /// 数据流
+        stream: Pin<Box<dyn Stream<Item = Result<Vec<u8>>> + Send>>,
+    },
+}
+
+impl Message {
+    /// 创建单次消息
+    pub fn single(msg_type: impl Into<String>, data: impl Into<Vec<u8>>) -> Self {
+        Message::Single {
+            msg_type: msg_type.into(),
+            data: data.into(),
+        }
+    }
+    
+    /// 打包可序列化对象为 Single 消息
+    pub fn pack<T: Serialize + 'static>(value: &T) -> Result<Self> {
+        Ok(Message::Single {
+            msg_type: std::any::type_name::<T>().to_string(),
+            data: bincode::serialize(value)?,
+        })
+    }
+    
+    /// 从 Single 消息解包
+    pub fn unpack<T: DeserializeOwned>(self) -> Result<T> {
+        match self {
+            Message::Single { data, .. } => Ok(bincode::deserialize(&data)?),
+            Message::Stream { .. } => Err(anyhow!("Cannot unpack stream message")),
+        }
+    }
+    
+    /// 创建流式消息
+    pub fn stream<S>(msg_type: impl Into<String>, stream: S) -> Self
+    where
+        S: Stream<Item = Result<Vec<u8>>> + Send + 'static,
+    {
+        Message::Stream {
+            msg_type: msg_type.into(),
+            stream: Box::pin(stream),
+        }
+    }
+    
+    /// 检查是否为流式消息
+    pub fn is_stream(&self) -> bool {
+        matches!(self, Message::Stream { .. })
+    }
+    
+    /// 获取消息类型
+    pub fn msg_type(&self) -> &str {
+        match self {
+            Message::Single { msg_type, .. } => msg_type,
+            Message::Stream { msg_type, .. } => msg_type,
+        }
+    }
+}
+```
+
+### ActorRef API
 
 ```rust
 impl ActorRef {
-    /// 请求-响应模式
+    /// 发送消息并等待响应
+    /// 
+    /// 返回的 Message 可以是 Single 或 Stream，调用方根据业务逻辑处理
+    pub async fn send(&self, msg: Message) -> Result<Message>;
+    
+    /// 发送消息，不等待响应 (fire-and-forget)
+    pub async fn fire(&self, msg: Message) -> Result<()>;
+    
+    /// 类型化的请求-响应 (便捷方法)
+    /// 
+    /// 自动将请求序列化为 Single 消息，将响应反序列化
+    /// 如果响应是 Stream，会报错
     pub async fn ask<M, R>(&self, msg: M) -> Result<R>
     where
-        M: Message,
-        R: Message;
+        M: Serialize + 'static,
+        R: DeserializeOwned,
+    {
+        let request = Message::pack(&msg)?;
+        let response = self.send(request).await?;
+        response.unpack()
+    }
     
-    /// 单向消息
+    /// 类型化的单向消息 (便捷方法)
     pub async fn tell<M>(&self, msg: M) -> Result<()>
     where
-        M: Message;
-    
-    /// 流式请求-响应模式
-    pub async fn ask_stream<M, R>(&self, msg: M) -> Result<MessageStream<R>>
-    where
-        M: Message,
-        R: Message;
-}
-```
-
-### MessageStream
-
-```rust
-/// 消息流，支持背压和取消
-pub struct MessageStream<R> {
-    inner: Pin<Box<dyn Stream<Item = Result<R>> + Send>>,
-    cancel: CancellationToken,
-}
-
-impl<R> MessageStream<R> {
-    /// 显式取消流
-    pub fn cancel(&self) {
-        self.cancel.cancel();
-    }
-}
-
-impl<R> Stream for MessageStream<R> {
-    type Item = Result<R>;
-    
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) 
-        -> Poll<Option<Self::Item>> 
+        M: Serialize + 'static,
     {
-        self.inner.as_mut().poll_next(cx)
-    }
-}
-
-impl<R> Drop for MessageStream<R> {
-    fn drop(&mut self) {
-        // Drop 时自动取消
-        self.cancel.cancel();
+        let message = Message::pack(&msg)?;
+        self.fire(message).await
     }
 }
 ```
 
-### Actor Trait 扩展
+### Actor Trait
 
 ```rust
 #[async_trait]
-pub trait Actor: Send + 'static {
-    fn id(&self) -> &ActorId;
+pub trait Actor: Send + Sync + 'static {
+    /// 返回 Actor 元数据 (可选，用于诊断)
+    fn metadata(&self) -> HashMap<String, String> {
+        HashMap::new()
+    }
     
+    /// Actor 启动时调用
     async fn on_start(&mut self, ctx: &mut ActorContext) -> Result<()> {
         Ok(())
     }
     
+    /// Actor 停止时调用
     async fn on_stop(&mut self, ctx: &mut ActorContext) -> Result<()> {
         Ok(())
     }
     
-    /// 处理普通消息
+    /// 处理消息
+    /// 
+    /// 输入和输出都是 Message，可以是 Single 或 Stream：
+    /// - Single → Single: 传统 RPC
+    /// - Single → Stream: 服务端流式 (如 LLM 生成)
+    /// - Stream → Single: 客户端流式
+    /// - Stream → Stream: 双向流式
     async fn receive(
         &mut self,
-        msg: RawMessage,
+        msg: Message,
         ctx: &mut ActorContext,
-    ) -> Result<RawMessage>;
-    
-    /// 处理流式请求
-    async fn receive_stream(
-        &mut self,
-        msg: RawMessage,
-        ctx: &mut ActorContext,
-    ) -> Result<RawMessageStream> {
-        Err(anyhow::anyhow!("Streaming not supported"))
-    }
+    ) -> Result<Message>;
 }
-```
 
 ## 元数据同步机制
 
@@ -486,10 +544,10 @@ impl MetadataStore {
 │  │ services/http/api    │        │ services/llm/router  │                  │
 │  └──────────────────────┘        └──────────────────────┘                  │
 │           │                               │                                 │
-│           │       ask_stream(Generate)    │                                 │
+│           │  send(Generate) → Stream      │                                 │
 │           └──────────────────────────────►│                                 │
 │                                           │                                 │
-│                                           │ ask_stream(Generate)            │
+│                                           │  send(Generate) → Stream        │
 │                                           ▼                                 │
 │  Node C (Worker 节点)            Node D (Worker 节点)                       │
 │  ┌──────────────────────┐        ┌──────────────────────┐                  │
@@ -535,12 +593,16 @@ GET    /system/metadata/{ns}         → ListMetadata (prefix)
 
 业务 Actor 路由:
 ─────────────────────────────────────────────────────────────────────────
-POST /actors/{actor_name}        → 普通 Actor 消息
+POST /actors/{actor_name}        → Actor 消息
 POST /named/{path...}            → Named Actor 消息
 
 Headers:
-  X-Message-Mode: ask | tell | stream
-  X-Message-Type: {message_type}
+  X-Message-Mode: ask | tell        // ask 等待响应，tell 不等待
+  X-Message-Type: {message_type}    // 消息类型标识
+  
+响应可能是:
+  - Single: 普通响应体
+  - Stream: chunked/ndjson 流式响应
 
 Gossip 内部协议:
 ─────────────────────────────────────────────────────────────────────────
@@ -549,24 +611,43 @@ POST /internal/gossip            → Gossip 协议消息
 
 ### 流式响应格式
 
+请求始终使用普通 POST，响应类型由 Actor 的 `receive()` 返回值决定：
+
 ```
 POST /named/services/llm/router
-X-Message-Mode: stream
+X-Message-Mode: ask
 X-Message-Type: Generate
-Content-Type: application/json
+Content-Type: application/octet-stream
 
-{"prompt": "Hello", "params": {...}}
+[bincode serialized Generate request]
 
 ---
 
-HTTP/1.1 200 OK
+HTTP/2 200 OK
+X-Response-Type: stream                      // 标识响应为流式
 Transfer-Encoding: chunked
 Content-Type: application/x-ndjson
 
-{"type":"StreamToken","text":"Hello"}
-{"type":"StreamToken","text":" World"}
-{"type":"StreamToken","text":"!"}
-{"type":"StreamEnd","usage":{"prompt_tokens":1,"completion_tokens":3}}
+{"seq":0,"data":"base64(StreamToken)"}       // 序列化的 token
+{"seq":1,"data":"base64(StreamToken)"}
+{"seq":2,"data":"base64(StreamToken)"}
+{"seq":3,"data":"","end":true}               // 流结束标记
+```
+
+**单次响应格式对比**：
+
+```
+POST /named/services/llm/router
+X-Message-Mode: ask
+X-Message-Type: HealthCheck
+
+---
+
+HTTP/2 200 OK
+X-Response-Type: single                      // 标识响应为单次
+Content-Type: application/octet-stream
+
+[bincode serialized HealthStatus response]
 ```
 
 ## 使用示例
@@ -599,10 +680,10 @@ async fn main() -> Result<()> {
 // 获取 SystemActor 引用
 let sys = system.system_ref();
 
-// 查询集群成员
+// 查询集群成员 (Single → Single)
 let members: MemberList = sys.ask(GetMembers).await?;
 
-// 设置元数据
+// 设置元数据 (fire-and-forget)
 sys.tell(SetMetadata {
     namespace: "models".into(),
     key: "llama-70b".into(),
@@ -610,14 +691,19 @@ sys.tell(SetMetadata {
     ttl: None,
 }).await?;
 
-// 监听元数据变化
-let mut changes = sys.ask_stream::<_, MetadataChanged>(WatchMetadata {
+// 监听元数据变化 (Single → Stream)
+let request = Message::pack(&WatchMetadata {
     namespace: "workers".into(),
     key_prefix: "".into(),
-}).await?;
+})?;
+let response = sys.send(request).await?;
 
-while let Some(change) = changes.next().await {
-    println!("Metadata changed: {:?}", change);
+// 响应是 Stream，迭代处理
+if let Message::Stream { mut stream, .. } = response {
+    while let Some(Ok(data)) = stream.next().await {
+        let change: MetadataChanged = bincode::deserialize(&data)?;
+        println!("Metadata changed: {:?}", change);
+    }
 }
 ```
 
@@ -625,15 +711,12 @@ while let Some(change) = changes.next().await {
 
 ```rust
 pub struct WorkerActor {
-    id: ActorId,
     backend: Box<dyn LLMBackend>,
     model_name: String,
 }
 
 #[async_trait]
 impl Actor for WorkerActor {
-    fn id(&self) -> &ActorId { &self.id }
-    
     async fn on_start(&mut self, ctx: &mut ActorContext) -> Result<()> {
         let sys = ctx.system_ref();
         
@@ -655,26 +738,28 @@ impl Actor for WorkerActor {
         Ok(())
     }
     
-    async fn receive_stream(&mut self, msg: RawMessage, ctx: &mut ActorContext) 
-        -> Result<RawMessageStream> 
-    {
-        match msg.msg_type.as_str() {
-            "Generate" => {
-                let req: Generate = msg.into_message()?;
-                let cancel = ctx.cancellation_token();
-                
-                let stream = self.backend
-                    .generate_stream(req.prompt, req.params)
-                    .take_until(cancel.cancelled())
-                    .map(|token| RawMessage::from_message(&StreamToken {
+    async fn receive(&mut self, msg: Message, ctx: &mut ActorContext) -> Result<Message> {
+        // 检查消息类型
+        if msg.msg_type().ends_with("Generate") {
+            let req: Generate = msg.unpack()?;
+            let cancel = ctx.cancellation_token();
+            
+            // 返回流式响应
+            let stream = self.backend
+                .generate_stream(req.prompt, req.params)
+                .take_until(cancel.cancelled())
+                .map(|token| {
+                    bincode::serialize(&StreamToken {
                         text: token.text,
                         logprob: token.logprob,
-                    }));
-                
-                Ok(Box::pin(stream))
-            }
-            _ => Err(anyhow::anyhow!("Unknown")),
+                    })
+                    .map_err(|e| anyhow::anyhow!("{}", e))
+                });
+            
+            return Ok(Message::stream("StreamToken", stream));
         }
+        
+        Err(anyhow::anyhow!("Unknown message type: {}", msg.msg_type()))
     }
 }
 ```
@@ -683,19 +768,16 @@ impl Actor for WorkerActor {
 
 ```rust
 pub struct RouterActor {
-    id: ActorId,
     workers: Vec<WorkerInfo>,
     strategy: LoadBalanceStrategy,
 }
 
 #[async_trait]
 impl Actor for RouterActor {
-    fn id(&self) -> &ActorId { &self.id }
-    
     async fn on_start(&mut self, ctx: &mut ActorContext) -> Result<()> {
         let sys = ctx.system_ref();
         
-        // 查询现有 Worker
+        // 查询现有 Worker (Single → Single)
         let workers: MetadataList = sys.ask(ListMetadata {
             namespace: "workers".into(),
             key_prefix: "".into(),
@@ -706,45 +788,45 @@ impl Actor for RouterActor {
             self.workers.push(info);
         }
         
-        // 监听 Worker 变化
-        let mut changes = sys.ask_stream::<_, MetadataChanged>(WatchMetadata {
+        // 监听 Worker 变化 (Single → Stream)
+        let request = Message::pack(&WatchMetadata {
             namespace: "workers".into(),
             key_prefix: "".into(),
-        }).await?;
+        })?;
+        let response = sys.send(request).await?;
         
-        ctx.spawn_task(async move {
-            while let Some(Ok(change)) = changes.next().await {
-                // 更新 worker 列表
-            }
-            Ok::<_, anyhow::Error>(())
-        });
+        if let Message::Stream { stream, .. } = response {
+            ctx.spawn_task(async move {
+                let mut stream = stream;
+                while let Some(Ok(data)) = stream.next().await {
+                    let _change: MetadataChanged = bincode::deserialize(&data)?;
+                    // 更新 worker 列表
+                }
+                Ok::<_, anyhow::Error>(())
+            });
+        }
         
         Ok(())
     }
     
-    async fn receive_stream(&mut self, msg: RawMessage, ctx: &mut ActorContext) 
-        -> Result<RawMessageStream> 
-    {
-        match msg.msg_type.as_str() {
-            "Generate" => {
-                let req: GenerateRequest = msg.into_message()?;
-                
-                // 选择 Worker
-                let worker_info = self.select_worker(&req)?;
-                let worker = ctx.resolve(&worker_info.addr).await?;
-                
-                // 转发流式请求
-                let stream = worker.ask_stream::<_, StreamToken>(Generate {
-                    prompt: req.prompt,
-                    params: req.params,
-                }).await?;
-                
-                Ok(Box::pin(stream.map(|r| 
-                    r.and_then(|t| RawMessage::from_message(&t))
-                )))
-            }
-            _ => Err(anyhow::anyhow!("Unknown")),
+    async fn receive(&mut self, msg: Message, ctx: &mut ActorContext) -> Result<Message> {
+        if msg.msg_type().ends_with("Generate") {
+            let req: GenerateRequest = msg.unpack()?;
+            
+            // 选择 Worker
+            let worker_info = self.select_worker(&req)?;
+            let worker = ctx.resolve(&worker_info.addr).await?;
+            
+            // 转发请求到 Worker，直接返回 Worker 的响应（可能是 Stream）
+            let request = Message::pack(&Generate {
+                prompt: req.prompt,
+                params: req.params,
+            })?;
+            
+            return worker.send(request).await;
         }
+        
+        Err(anyhow::anyhow!("Unknown message type: {}", msg.msg_type()))
     }
 }
 ```
@@ -758,9 +840,9 @@ pulsing/
 │       ├── lib.rs
 │       ├── actor/
 │       │   ├── mod.rs
-│       │   ├── traits.rs            # Actor, Message traits
+│       │   ├── traits.rs            # Actor, Message 枚举
 │       │   ├── context.rs           # ActorContext
-│       │   ├── reference.rs         # ActorRef (支持 ask_stream)
+│       │   ├── reference.rs         # ActorRef (send/fire/ask/tell)
 │       │   ├── mailbox.rs
 │       │   └── address.rs           # ActorAddress, ActorPath
 │       │
@@ -798,13 +880,12 @@ pulsing/
 
 ## 后续工作
 
-### 传输层重构
+### 传输层增强
 
-当前使用 HTTP/1.1，需要重构以支持：
-- HTTP/2 多路复用
-- 流式响应（chunked transfer / server-sent events）
-- 背压机制
-- 连接复用
+当前已支持 HTTP/2 (h2c)，后续可增强：
+- TLS 支持 (h2)
+- 更精细的流控和背压
+- 连接池优化
 
 ### 可靠性增强
 
@@ -832,8 +913,16 @@ pulsing/
 | **业务 Actor** | 具体业务逻辑 | 用户按需创建 |
 
 **核心设计原则**：
-1. Everything is Actor - 所有组件都是 Actor
-2. 零外部依赖 - Gossip 替代 etcd/NATS
-3. 原生流式支持 - ask_stream() 一等公民
-4. 简洁 API - 通过 SystemActor 统一系统操作入口
+1. **Everything is Actor** - 所有组件都是 Actor
+2. **零外部依赖** - Gossip 替代 etcd/NATS
+3. **统一 Message 类型** - `Message::Single` 和 `Message::Stream` 统一处理，无需区分 `ask`/`ask_stream`
+4. **简洁 API** - 通过 SystemActor 统一系统操作入口
+
+**消息模式**：
+| 模式 | 说明 | 使用场景 |
+|------|------|---------|
+| Single → Single | 传统 RPC | 查询、命令 |
+| Single → Stream | 服务端流式 | LLM 推理、Watch |
+| Stream → Single | 客户端流式 | 文件上传 |
+| Stream → Stream | 双向流式 | 实时通信 |
 
