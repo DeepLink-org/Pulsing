@@ -102,7 +102,10 @@ pub trait HttpMessageHandler: Send + Sync + 'static {
     async fn handle_gossip_message(&self, payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>>;
 
     /// Get node info for health check
-    fn get_node_info(&self) -> serde_json::Value;
+    async fn get_node_info(&self) -> serde_json::Value;
+
+    /// Get specific actor info
+    async fn get_actor_info(&self, actor_name: &str) -> Option<serde_json::Value>;
 }
 
 /// Shared state for HTTP handlers
@@ -159,7 +162,7 @@ impl HttpTransport {
 
         let app = Router::new()
             .route("/health", get(health_handler))
-            .route("/actor/{name}", post(actor_handler))
+            .route("/actor/{name}", post(actor_handler).get(actor_info_handler))
             .route("/cluster/gossip", post(gossip_handler))
             .with_state(state);
 
@@ -334,7 +337,7 @@ impl crate::actor::RemoteTransport for HttpRemoteTransport {
 // ============================================================================
 
 async fn health_handler(State(state): State<Arc<HttpState>>) -> impl IntoResponse {
-    Json(state.handler.get_node_info())
+    Json(state.handler.get_node_info().await)
 }
 
 async fn actor_handler(
@@ -367,6 +370,19 @@ async fn actor_handler(
                 request_id: request.request_id,
                 result: Err(e.to_string()),
             }),
+        ),
+    }
+}
+
+async fn actor_info_handler(
+    State(state): State<Arc<HttpState>>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    match state.handler.get_actor_info(&name).await {
+        Some(info) => (StatusCode::OK, Json(info)),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Actor not found"})),
         ),
     }
 }

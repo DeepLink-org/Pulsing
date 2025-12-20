@@ -6,11 +6,46 @@ use crate::actor::{
 use crate::cluster::{GossipCluster, GossipConfig, GossipMessage, MemberInfo};
 use crate::transport::{HttpMessageHandler, HttpRemoteTransport, HttpTransport, HttpTransportConfig};
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+/// Actor runtime statistics
+#[derive(Debug, Default)]
+pub struct ActorStats {
+    /// Number of times the actor started
+    pub start_count: AtomicU64,
+    /// Number of times the actor stopped
+    pub stop_count: AtomicU64,
+    /// Number of messages processed
+    pub message_count: AtomicU64,
+}
+
+impl ActorStats {
+    fn inc_start(&self) {
+        self.start_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn inc_stop(&self) {
+        self.stop_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn inc_message(&self) {
+        self.message_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "start_count": self.start_count.load(Ordering::Relaxed),
+            "stop_count": self.stop_count.load(Ordering::Relaxed),
+            "message_count": self.message_count.load(Ordering::Relaxed),
+        })
+    }
+}
 
 /// Actor System configuration
 #[derive(Clone, Debug)]
@@ -67,6 +102,12 @@ struct LocalActorHandle {
 
     /// Actor task handle
     join_handle: JoinHandle<()>,
+
+    /// Runtime statistics
+    stats: Arc<ActorStats>,
+
+    /// Static metadata provided by the actor
+    metadata: HashMap<String, String>,
 }
 
 /// The Actor System - manages actors and cluster membership
@@ -191,6 +232,11 @@ impl ActorSystem {
         let mut ctx = ActorContext::with_system(ctx_system, self.cancel_token.clone());
         ctx.set_actor_id(actor_id.clone());
 
+        // Get metadata before starting (as actor is moved)
+        let metadata = actor.metadata();
+        let stats = Arc::new(ActorStats::default());
+        stats.inc_start();
+
         // Start actor
         if let Err(e) = actor.on_start(&mut ctx).await {
             return Err(anyhow::anyhow!("Actor {} failed to start: {}", actor_id, e));
@@ -199,8 +245,10 @@ impl ActorSystem {
         // Spawn actor task
         let cancel = self.cancel_token.clone();
         let actor_name = actor_id.name.clone();
+        let loop_stats = stats.clone();
+        
         let join_handle = tokio::spawn(async move {
-            run_actor_loop(actor, receiver, ctx, cancel).await;
+            run_actor_loop(actor, receiver, ctx, cancel, loop_stats).await;
         });
 
         // Register locally
@@ -209,6 +257,8 @@ impl ActorSystem {
             LocalActorHandle {
                 sender: sender.clone(),
                 join_handle,
+                stats,
+                metadata,
             },
         );
 
@@ -328,12 +378,14 @@ async fn run_actor_loop<A: Actor>(
     mut receiver: mpsc::Receiver<Envelope>,
     mut ctx: ActorContext,
     cancel: CancellationToken,
+    stats: Arc<ActorStats>,
 ) {
     loop {
         tokio::select! {
             Some(envelope) = receiver.recv() => {
                 let raw = envelope.to_raw_message();
 
+                stats.inc_message();
                 match actor.receive(raw, &mut ctx).await {
                     Ok(response) => {
                         envelope.respond(Ok(response.payload));
@@ -350,6 +402,7 @@ async fn run_actor_loop<A: Actor>(
     }
 
     // Cleanup
+    stats.inc_stop();
     if let Err(e) = actor.on_stop(&mut ctx).await {
         tracing::warn!(actor_id = ?ctx.actor_id(), error = %e, "Actor stop error");
     }
@@ -402,11 +455,61 @@ impl HttpMessageHandler for SystemMessageHandler {
         }
     }
 
-    fn get_node_info(&self) -> serde_json::Value {
+    async fn get_node_info(&self) -> serde_json::Value {
+        // Collect local actors info
+        let mut actors = Vec::new();
+        for entry in self.local_actors.iter() {
+            let name = entry.key().clone();
+            let handle = entry.value();
+
+            actors.push(serde_json::json!({
+                "name": name,
+                "stats": handle.stats.to_json(),
+                "metadata": handle.metadata,
+            }));
+        }
+
+        // Collect cluster info
+        let mut cluster_info = serde_json::json!(null);
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            let members = cluster.alive_members().await;
+            
+            // Also get remote actors if possible (from gossip cache)
+            // Note: GossipCluster doesn't expose all cached actors directly in a convenient way yet,
+            // but we can add member count etc.
+            cluster_info = serde_json::json!({
+                "members_count": members.len(),
+                "members": members,
+            });
+        }
+
         serde_json::json!({
             "node_id": self.node_id.to_string(),
-            "actors": self.local_actors.iter().map(|e| e.key().clone()).collect::<Vec<_>>(),
+            "actors": actors,
+            "cluster": cluster_info,
         })
+    }
+
+    async fn get_actor_info(&self, actor_name: &str) -> Option<serde_json::Value> {
+        if let Some(handle) = self.local_actors.get(actor_name) {
+            return Some(serde_json::json!({
+                "name": actor_name,
+                "node_id": self.node_id.to_string(),
+                "status": "local",
+                "stats": handle.stats.to_json(),
+                "metadata": handle.metadata,
+            }));
+        }
+
+        // Check cluster cache for remote actor location
+        // TODO: For remote actors, we would need to either:
+        // 1. Scan all known nodes (expensive)
+        // 2. Maintain a global actor name index
+        // For now, only local actors are queryable by name
+        let _cluster_guard = self.cluster.read().await;
+        
+        None
     }
 }
 
@@ -489,4 +592,3 @@ mod tests {
         system.shutdown().await.unwrap();
     }
 }
-

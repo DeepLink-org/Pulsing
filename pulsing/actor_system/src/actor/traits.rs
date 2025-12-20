@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 
@@ -113,6 +114,13 @@ pub use super::context::ActorContext;
 pub trait Actor: Send + Sync + 'static {
     /// Get the actor's unique identifier
     fn id(&self) -> &ActorId;
+
+    /// Get actor metadata for diagnostics.
+    /// Returns a key-value map that can be used by monitoring/debugging tools.
+    /// The transport layer is responsible for serialization.
+    fn metadata(&self) -> HashMap<String, String> {
+        HashMap::new()
+    }
 
     /// Called when the actor starts
     async fn on_start(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {

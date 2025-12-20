@@ -150,6 +150,8 @@ dynamo-runtime = { path = "dynamo/lib/runtime" }
 dynamo-parsers = { path = "dynamo/lib/parsers" }
 
 pulsing-bench = { path = "pulsing/bench" }
+pulsing-actor = { path = "pulsing/actor_system" }
+bincode = "1.3"
 
 anyhow = { version = "1" }
 dynamo-async-openai = { path = "dynamo/lib/async-openai" }
