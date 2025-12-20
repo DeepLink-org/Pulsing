@@ -73,7 +73,10 @@ impl Actor for SharedCounter {
     ) -> anyhow::Result<RawMessage> {
         match msg.msg_type.as_str() {
             "GetCount" => {
-                println!("[{}] GetCount request, current: {}", self.node_name, self.count);
+                println!(
+                    "[{}] GetCount request, current: {}",
+                    self.node_name, self.count
+                );
                 RawMessage::from_message(&CountResponse {
                     count: self.count,
                     node: self.node_name.clone(),
@@ -215,4 +218,3 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-

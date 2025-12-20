@@ -184,4 +184,3 @@ mod tests {
         assert_eq!(result, vec![42]);
     }
 }
-

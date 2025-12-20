@@ -367,10 +367,7 @@ mod actor_messaging_tests {
         let actor_ref = system.spawn(actor).await.unwrap();
 
         let start = std::time::Instant::now();
-        let _: StateResponse = actor_ref
-            .ask(SlowMessage { delay_ms: 100 })
-            .await
-            .unwrap();
+        let _: StateResponse = actor_ref.ask(SlowMessage { delay_ms: 100 }).await.unwrap();
         let elapsed = start.elapsed();
 
         assert!(elapsed >= Duration::from_millis(100));
@@ -473,8 +470,12 @@ mod system_tests {
         system.stop("counter-1").await.unwrap();
 
         assert_eq!(system.local_actor_names().len(), 1);
-        assert!(!system.local_actor_names().contains(&"counter-1".to_string()));
-        assert!(system.local_actor_names().contains(&"counter-2".to_string()));
+        assert!(!system
+            .local_actor_names()
+            .contains(&"counter-1".to_string()));
+        assert!(system
+            .local_actor_names()
+            .contains(&"counter-2".to_string()));
 
         // Sending to stopped actor should fail
         let result: anyhow::Result<Pong> = ref1.ask(Ping { value: 1 }).await;
@@ -495,4 +496,3 @@ mod system_tests {
         assert!(token.is_cancelled());
     }
 }
-

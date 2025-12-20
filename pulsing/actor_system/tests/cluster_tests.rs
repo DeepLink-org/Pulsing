@@ -133,7 +133,9 @@ fn test_member_info_supersedes_by_status() {
 #[tokio::test]
 async fn test_system_with_cluster_config() {
     let config = SystemConfig::standalone();
-    let system = pulsing_actor::system::ActorSystem::new(config).await.unwrap();
+    let system = pulsing_actor::system::ActorSystem::new(config)
+        .await
+        .unwrap();
 
     assert!(!system.node_id().0.is_empty());
     assert!(system.addr().port() > 0);
@@ -144,7 +146,9 @@ async fn test_system_with_cluster_config() {
 #[tokio::test]
 async fn test_system_addr_is_consistent() {
     let config = SystemConfig::standalone();
-    let system = pulsing_actor::system::ActorSystem::new(config).await.unwrap();
+    let system = pulsing_actor::system::ActorSystem::new(config)
+        .await
+        .unwrap();
 
     // tcp_addr and gossip_addr should be the same now
     assert_eq!(system.tcp_addr(), system.gossip_addr());
@@ -157,7 +161,9 @@ async fn test_system_addr_is_consistent() {
 async fn test_system_with_specific_addr() {
     let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
     let config = SystemConfig::with_addr(addr);
-    let system = pulsing_actor::system::ActorSystem::new(config).await.unwrap();
+    let system = pulsing_actor::system::ActorSystem::new(config)
+        .await
+        .unwrap();
 
     // Should have bound to an actual port
     assert!(system.addr().port() > 0);

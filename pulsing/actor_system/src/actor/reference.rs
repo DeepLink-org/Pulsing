@@ -209,11 +209,7 @@ impl std::fmt::Debug for ActorRef {
             .field("actor_id", &self.actor_id)
             .field(
                 "location",
-                if self.is_local() {
-                    &"local"
-                } else {
-                    &"remote"
-                },
+                if self.is_local() { &"local" } else { &"remote" },
             )
             .finish()
     }
@@ -249,4 +245,3 @@ mod tests {
         assert_eq!(msg.value, 42);
     }
 }
-

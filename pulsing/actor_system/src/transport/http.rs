@@ -2,8 +2,17 @@
 //!
 //! Provides a unified HTTP transport for both actor messages and gossip protocol.
 //! This simplifies network configuration by using a single port for all communication.
+//!
+//! ## Routes
+//!
+//! - `POST /actors/{name}` - Send message to local actor
+//! - `GET /actors/{name}` - Get actor info
+//! - `POST /named/{path...}` - Send message to named actor
+//! - `GET /named/{path...}` - Get named actor info
+//! - `POST /cluster/gossip` - Gossip protocol
+//! - `GET /health` - Node health check
 
-use crate::actor::{ActorId, RawMessage};
+use crate::actor::{ActorId, ActorPath, RawMessage};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -91,10 +100,17 @@ pub struct GossipResponse {
 /// Handler trait for processing incoming messages
 #[async_trait::async_trait]
 pub trait HttpMessageHandler: Send + Sync + 'static {
-    /// Handle an actor message
+    /// Handle an actor message (by actor name)
     async fn handle_actor_message(
         &self,
         actor_name: &str,
+        msg: RawMessage,
+    ) -> anyhow::Result<Vec<u8>>;
+
+    /// Handle a named actor message (by path)
+    async fn handle_named_actor_message(
+        &self,
+        path: &str,
         msg: RawMessage,
     ) -> anyhow::Result<Vec<u8>>;
 
@@ -106,6 +122,9 @@ pub trait HttpMessageHandler: Send + Sync + 'static {
 
     /// Get specific actor info
     async fn get_actor_info(&self, actor_name: &str) -> Option<serde_json::Value>;
+
+    /// Get named actor info
+    async fn get_named_actor_info(&self, path: &str) -> Option<serde_json::Value>;
 }
 
 /// Shared state for HTTP handlers
@@ -162,8 +181,17 @@ impl HttpTransport {
 
         let app = Router::new()
             .route("/health", get(health_handler))
-            .route("/actor/{name}", post(actor_handler).get(actor_info_handler))
+            .route(
+                "/actors/{name}",
+                post(actor_handler).get(actor_info_handler),
+            )
+            // Named actor routes - support variable path depth
+            .route(
+                "/named/{*path}",
+                post(named_actor_handler).get(named_actor_info_handler),
+            )
             .route("/cluster/gossip", post(gossip_handler))
+            .route("/cluster/registry", get(registry_handler))
             .with_state(state);
 
         // Start server
@@ -200,7 +228,7 @@ impl HttpTransport {
         msg: RawMessage,
     ) -> anyhow::Result<Vec<u8>> {
         let request_id = self.next_request_id();
-        let url = format!("http://{}/actor/{}", addr, actor_name);
+        let url = format!("http://{}/actors/{}", addr, actor_name);
 
         let request = ActorRequest {
             msg_type: msg.msg_type,
@@ -209,12 +237,7 @@ impl HttpTransport {
             request_id,
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await?;
+        let response = self.client.post(&url).json(&request).send().await?;
 
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
@@ -237,7 +260,7 @@ impl HttpTransport {
         msg: RawMessage,
     ) -> anyhow::Result<()> {
         let request_id = self.next_request_id();
-        let url = format!("http://{}/actor/{}", addr, actor_name);
+        let url = format!("http://{}/actors/{}", addr, actor_name);
 
         let request = ActorRequest {
             msg_type: msg.msg_type,
@@ -251,6 +274,67 @@ impl HttpTransport {
         if !response.status().is_success() {
             return Err(anyhow::anyhow!(
                 "Actor request failed: {}",
+                response.status()
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Send a request to a named actor and wait for response
+    pub async fn send_named_request(
+        &self,
+        addr: SocketAddr,
+        path: &ActorPath,
+        msg: RawMessage,
+    ) -> anyhow::Result<Vec<u8>> {
+        let request_id = self.next_request_id();
+        let url = format!("http://{}/named/{}", addr, path.as_str());
+
+        let request = ActorRequest {
+            msg_type: msg.msg_type,
+            payload: msg.payload,
+            oneway: false,
+            request_id,
+        };
+
+        let response = self.client.post(&url).json(&request).send().await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "Named actor request failed: {}",
+                response.status()
+            ));
+        }
+
+        let actor_response: ActorResponse = response.json().await?;
+        actor_response
+            .result
+            .map_err(|e| anyhow::anyhow!("Named actor error: {}", e))
+    }
+
+    /// Send a one-way message to a named actor (fire-and-forget)
+    pub async fn send_named_oneway(
+        &self,
+        addr: SocketAddr,
+        path: &ActorPath,
+        msg: RawMessage,
+    ) -> anyhow::Result<()> {
+        let request_id = self.next_request_id();
+        let url = format!("http://{}/named/{}", addr, path.as_str());
+
+        let request = ActorRequest {
+            msg_type: msg.msg_type,
+            payload: msg.payload,
+            oneway: true,
+            request_id,
+        };
+
+        let response = self.client.post(&url).json(&request).send().await?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "Named actor request failed: {}",
                 response.status()
             ));
         }
@@ -282,19 +366,42 @@ impl HttpTransport {
     }
 }
 
+/// Target type for remote transport
+#[derive(Clone)]
+enum RemoteTarget {
+    /// Target by actor name
+    Actor(String),
+    /// Target by named actor path
+    Named(ActorPath),
+}
+
 /// Remote transport for ActorRef
 pub struct HttpRemoteTransport {
     transport: Arc<HttpTransport>,
     remote_addr: SocketAddr,
-    actor_name: String,
+    target: RemoteTarget,
 }
 
 impl HttpRemoteTransport {
+    /// Create a new remote transport targeting an actor by name
     pub fn new(transport: Arc<HttpTransport>, remote_addr: SocketAddr, actor_name: String) -> Self {
         Self {
             transport,
             remote_addr,
-            actor_name,
+            target: RemoteTarget::Actor(actor_name),
+        }
+    }
+
+    /// Create a new remote transport targeting a named actor by path
+    pub fn new_named(
+        transport: Arc<HttpTransport>,
+        remote_addr: SocketAddr,
+        path: ActorPath,
+    ) -> Self {
+        Self {
+            transport,
+            remote_addr,
+            target: RemoteTarget::Named(path),
         }
     }
 }
@@ -311,9 +418,19 @@ impl crate::actor::RemoteTransport for HttpRemoteTransport {
             msg_type: msg_type.to_string(),
             payload,
         };
-        self.transport
-            .send_request(self.remote_addr, &self.actor_name, msg)
-            .await
+
+        match &self.target {
+            RemoteTarget::Actor(name) => {
+                self.transport
+                    .send_request(self.remote_addr, name, msg)
+                    .await
+            }
+            RemoteTarget::Named(path) => {
+                self.transport
+                    .send_named_request(self.remote_addr, path, msg)
+                    .await
+            }
+        }
     }
 
     async fn send(
@@ -326,9 +443,19 @@ impl crate::actor::RemoteTransport for HttpRemoteTransport {
             msg_type: msg_type.to_string(),
             payload,
         };
-        self.transport
-            .send_oneway(self.remote_addr, &self.actor_name, msg)
-            .await
+
+        match &self.target {
+            RemoteTarget::Actor(name) => {
+                self.transport
+                    .send_oneway(self.remote_addr, name, msg)
+                    .await
+            }
+            RemoteTarget::Named(path) => {
+                self.transport
+                    .send_named_oneway(self.remote_addr, path, msg)
+                    .await
+            }
+        }
     }
 }
 
@@ -353,15 +480,21 @@ async fn actor_handler(
     match state.handler.handle_actor_message(&name, msg).await {
         Ok(result) => {
             if request.oneway {
-                (StatusCode::OK, Json(ActorResponse {
-                    request_id: request.request_id,
-                    result: Ok(vec![]),
-                }))
+                (
+                    StatusCode::OK,
+                    Json(ActorResponse {
+                        request_id: request.request_id,
+                        result: Ok(vec![]),
+                    }),
+                )
             } else {
-                (StatusCode::OK, Json(ActorResponse {
-                    request_id: request.request_id,
-                    result: Ok(result),
-                }))
+                (
+                    StatusCode::OK,
+                    Json(ActorResponse {
+                        request_id: request.request_id,
+                        result: Ok(result),
+                    }),
+                )
             }
         }
         Err(e) => (
@@ -387,6 +520,59 @@ async fn actor_info_handler(
     }
 }
 
+async fn named_actor_handler(
+    State(state): State<Arc<HttpState>>,
+    Path(path): Path<String>,
+    Json(request): Json<ActorRequest>,
+) -> impl IntoResponse {
+    let msg = RawMessage {
+        msg_type: request.msg_type,
+        payload: request.payload,
+    };
+
+    match state.handler.handle_named_actor_message(&path, msg).await {
+        Ok(result) => {
+            if request.oneway {
+                (
+                    StatusCode::OK,
+                    Json(ActorResponse {
+                        request_id: request.request_id,
+                        result: Ok(vec![]),
+                    }),
+                )
+            } else {
+                (
+                    StatusCode::OK,
+                    Json(ActorResponse {
+                        request_id: request.request_id,
+                        result: Ok(result),
+                    }),
+                )
+            }
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ActorResponse {
+                request_id: request.request_id,
+                result: Err(e.to_string()),
+            }),
+        ),
+    }
+}
+
+async fn named_actor_info_handler(
+    State(state): State<Arc<HttpState>>,
+    Path(path): Path<String>,
+) -> impl IntoResponse {
+    match state.handler.get_named_actor_info(&path).await {
+        Some(info) => (StatusCode::OK, Json(info)),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Named actor not found", "path": path})),
+        ),
+    }
+}
+
 async fn gossip_handler(
     State(state): State<Arc<HttpState>>,
     Json(request): Json<GossipRequest>,
@@ -406,6 +592,16 @@ async fn gossip_handler(
             )
         }
     }
+}
+
+async fn registry_handler(State(state): State<Arc<HttpState>>) -> impl IntoResponse {
+    let info = state.handler.get_node_info().await;
+    // Extract just the cluster registry info
+    let registry = info
+        .get("cluster")
+        .cloned()
+        .unwrap_or(serde_json::json!(null));
+    Json(registry)
 }
 
 #[cfg(test)]
@@ -448,4 +644,3 @@ mod tests {
         assert_eq!(decoded.payload, vec![1, 2, 3, 4]);
     }
 }
-

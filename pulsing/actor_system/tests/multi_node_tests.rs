@@ -551,3 +551,241 @@ mod edge_case_tests {
         system.shutdown().await.unwrap();
     }
 }
+
+// ============================================================================
+// Multi-Node Addressing Tests
+// ============================================================================
+
+mod addressing_multi_node_tests {
+    use super::*;
+
+    /// Helper to wait for gossip propagation with retry
+    async fn wait_for_named_actor<F, T>(
+        checker: F,
+        max_attempts: u32,
+        delay_ms: u64,
+        desc: &str,
+    ) -> Option<T>
+    where
+        F: Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<T>> + Send>>,
+    {
+        for attempt in 1..=max_attempts {
+            if let Some(result) = checker().await {
+                return Some(result);
+            }
+            if attempt < max_attempts {
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            }
+        }
+        eprintln!("{} not found after {} attempts", desc, max_attempts);
+        None
+    }
+
+    #[tokio::test]
+    async fn test_named_actor_cluster_registration() {
+        // Node 1
+        let config1 = create_cluster_config(20081);
+        let system1 = ActorSystem::new(config1).await.unwrap();
+        let gossip1_addr = system1.gossip_addr();
+
+        // Node 2 joins the cluster
+        let mut config2 = create_cluster_config(20082);
+        config2.seed_nodes = vec![gossip1_addr];
+        let system2 = ActorSystem::new(config2).await.unwrap();
+
+        // Wait for cluster to form
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Create named actor on node 1
+        let path = ActorPath::new("services/echo").unwrap();
+        let actor = EchoActor::new("echo_impl");
+        let _actor_ref = system1.spawn_named(path.clone(), actor).await.unwrap();
+
+        // Wait for gossip to propagate with retries
+        let path_clone = path.clone();
+        let system2_clone = system2.clone();
+        let info = wait_for_named_actor(
+            || {
+                let p = path_clone.clone();
+                let s = system2_clone.clone();
+                Box::pin(async move { s.lookup_named(&p).await })
+            },
+            10,
+            200,
+            "Named actor",
+        )
+        .await;
+
+        assert!(
+            info.is_some(),
+            "Node 2 should see the named actor after gossip"
+        );
+        let info = info.unwrap();
+        assert_eq!(info.instance_count(), 1);
+
+        system1.shutdown().await.unwrap();
+        system2.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_remote_named_actor() {
+        // Node 1
+        let config1 = create_cluster_config(20083);
+        let system1 = ActorSystem::new(config1).await.unwrap();
+        let gossip1_addr = system1.gossip_addr();
+
+        // Node 2 joins
+        let mut config2 = create_cluster_config(20084);
+        config2.seed_nodes = vec![gossip1_addr];
+        let system2 = ActorSystem::new(config2).await.unwrap();
+
+        // Wait for cluster formation
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Create named actor on node 1
+        let path = ActorPath::new("services/api/handler").unwrap();
+        let actor = EchoActor::new("api_handler");
+        let _actor_ref = system1.spawn_named(path.clone(), actor).await.unwrap();
+
+        // Wait for gossip propagation with retries
+        let addr = ActorAddress::parse("actor:///services/api/handler").unwrap();
+        let mut resolved_ref = None;
+        for attempt in 1..=15 {
+            match system2.resolve(&addr).await {
+                Ok(r) => {
+                    resolved_ref = Some(r);
+                    break;
+                }
+                Err(_) if attempt < 15 => {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+                Err(e) => {
+                    panic!("Failed to resolve after 15 attempts: {}", e);
+                }
+            }
+        }
+
+        let resolved_ref = resolved_ref.expect("Should resolve remote named actor");
+
+        // Should be a remote reference
+        assert!(!resolved_ref.is_local());
+
+        // Call should work
+        let response: Pong = resolved_ref.ask(Ping { value: 21 }).await.unwrap();
+        assert_eq!(response.result, 42);
+
+        system1.shutdown().await.unwrap();
+        system2.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_multi_instance_named_actor() {
+        // Node 1
+        let config1 = create_cluster_config(20085);
+        let system1 = ActorSystem::new(config1).await.unwrap();
+        let gossip1_addr = system1.gossip_addr();
+
+        // Node 2 joins
+        let mut config2 = create_cluster_config(20086);
+        config2.seed_nodes = vec![gossip1_addr];
+        let system2 = ActorSystem::new(config2).await.unwrap();
+
+        // Wait for cluster formation
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Create same named actor on BOTH nodes (multi-instance)
+        let path = ActorPath::new("services/worker/pool").unwrap();
+
+        let actor1 = EchoActor::new("pool_instance_1");
+        let _ref1 = system1.spawn_named(path.clone(), actor1).await.unwrap();
+
+        // Small delay between registrations
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let actor2 = EchoActor::new("pool_instance_2");
+        let _ref2 = system2.spawn_named(path.clone(), actor2).await.unwrap();
+
+        // Wait for gossip propagation with retries until we see 2 instances
+        for attempt in 1..=20 {
+            let info1 = system1.lookup_named(&path).await;
+            let info2 = system2.lookup_named(&path).await;
+
+            let count1 = info1.as_ref().map(|i| i.instance_count()).unwrap_or(0);
+            let count2 = info2.as_ref().map(|i| i.instance_count()).unwrap_or(0);
+
+            if count1 >= 2 && count2 >= 2 {
+                break;
+            }
+
+            if attempt == 20 {
+                eprintln!("Instance counts: system1={}, system2={}", count1, count2);
+                assert!(
+                    count1 >= 2,
+                    "System1 should see 2 instances, got {}",
+                    count1
+                );
+                assert!(
+                    count2 >= 2,
+                    "System2 should see 2 instances, got {}",
+                    count2
+                );
+            }
+
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        system1.shutdown().await.unwrap();
+        system2.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_global_address_cross_node() {
+        // Node 1
+        let config1 = create_cluster_config(20087);
+        let system1 = ActorSystem::new(config1).await.unwrap();
+        let gossip1_addr = system1.gossip_addr();
+        let node1_id = system1.node_id().clone();
+
+        // Node 2 joins
+        let mut config2 = create_cluster_config(20088);
+        config2.seed_nodes = vec![gossip1_addr];
+        let system2 = ActorSystem::new(config2).await.unwrap();
+
+        // Wait for cluster formation
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Create regular actor on node 1
+        let actor = EchoActor::new("remote_worker");
+        let _actor_ref = system1.spawn(actor).await.unwrap();
+
+        // Node 2 resolves using global address with retries
+        let addr = ActorAddress::global(node1_id.clone(), "remote_worker");
+        let mut resolved_ref = None;
+        for attempt in 1..=15 {
+            match system2.resolve(&addr).await {
+                Ok(r) => {
+                    resolved_ref = Some(r);
+                    break;
+                }
+                Err(_) if attempt < 15 => {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+                Err(e) => {
+                    panic!("Failed to resolve global address after 15 attempts: {}", e);
+                }
+            }
+        }
+
+        let resolved_ref = resolved_ref.expect("Should resolve global address");
+
+        // Should be a remote reference
+        assert!(!resolved_ref.is_local());
+
+        // Call should work
+        let response: Pong = resolved_ref.ask(Ping { value: 10 }).await.unwrap();
+        assert_eq!(response.result, 20);
+
+        system1.shutdown().await.unwrap();
+        system2.shutdown().await.unwrap();
+    }
+}

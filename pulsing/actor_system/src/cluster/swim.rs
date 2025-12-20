@@ -56,7 +56,11 @@ pub enum SwimMessage {
     },
 
     /// Indirect ping acknowledgment
-    PingReqAck { seq: u64, from: NodeId, target: NodeId },
+    PingReqAck {
+        seq: u64,
+        from: NodeId,
+        target: NodeId,
+    },
 }
 
 /// Pending ping state
@@ -216,4 +220,3 @@ mod tests {
         assert!(timeouts.is_empty());
     }
 }
-

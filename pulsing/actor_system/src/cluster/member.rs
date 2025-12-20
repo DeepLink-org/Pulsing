@@ -1,7 +1,8 @@
 //! Cluster member types
 
-use crate::actor::{ActorId, NodeId};
+use crate::actor::{ActorId, ActorPath, NodeId};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::time::Instant;
 
@@ -94,11 +95,10 @@ impl MemberInfo {
         }
 
         // Same incarnation: Dead > Suspect > Alive
-        match (&self.status, &other.status) {
-            (MemberStatus::Dead, _) => true,
-            (MemberStatus::Suspect, MemberStatus::Alive) => true,
-            _ => false,
-        }
+        matches!(
+            (&self.status, &other.status),
+            (MemberStatus::Dead, _) | (MemberStatus::Suspect, MemberStatus::Alive)
+        )
     }
 }
 
@@ -116,7 +116,7 @@ impl std::hash::Hash for MemberInfo {
     }
 }
 
-/// Actor location in the cluster
+/// Actor location in the cluster (legacy, for backward compatibility)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ActorLocation {
     /// Actor identifier
@@ -136,6 +136,86 @@ impl ActorLocation {
             node_id,
             version: 0,
         }
+    }
+}
+
+/// Named actor registration info - supports multiple instances
+///
+/// A named actor can have multiple instances across different nodes.
+/// The registry tracks all instances and supports load-balanced access.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NamedActorInfo {
+    /// Actor path (namespace/path/name)
+    pub path: ActorPath,
+
+    /// All instances (node IDs where this actor is deployed)
+    pub instances: HashSet<NodeId>,
+
+    /// Version number for conflict resolution (CRDT-like merge)
+    pub version: u64,
+}
+
+impl NamedActorInfo {
+    /// Create a new named actor info
+    pub fn new(path: ActorPath) -> Self {
+        Self {
+            path,
+            instances: HashSet::new(),
+            version: 0,
+        }
+    }
+
+    /// Create with a single instance
+    pub fn with_instance(path: ActorPath, node_id: NodeId) -> Self {
+        let mut instances = HashSet::new();
+        instances.insert(node_id);
+        Self {
+            path,
+            instances,
+            version: 1,
+        }
+    }
+
+    /// Add an instance
+    pub fn add_instance(&mut self, node_id: NodeId) {
+        if self.instances.insert(node_id) {
+            self.version += 1;
+        }
+    }
+
+    /// Remove an instance
+    pub fn remove_instance(&mut self, node_id: &NodeId) -> bool {
+        if self.instances.remove(node_id) {
+            self.version += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if the actor has any instances
+    pub fn is_empty(&self) -> bool {
+        self.instances.is_empty()
+    }
+
+    /// Get the number of instances
+    pub fn instance_count(&self) -> usize {
+        self.instances.len()
+    }
+
+    /// Merge with another NamedActorInfo (union of instances)
+    pub fn merge(&mut self, other: &NamedActorInfo) {
+        for node_id in &other.instances {
+            self.instances.insert(node_id.clone());
+        }
+        self.version = self.version.max(other.version) + 1;
+    }
+
+    /// Select a random instance for load balancing
+    pub fn select_instance(&self) -> Option<NodeId> {
+        use rand::prelude::IteratorRandom;
+        let mut rng = rand::rng();
+        self.instances.iter().choose(&mut rng).cloned()
     }
 }
 
@@ -180,4 +260,3 @@ mod tests {
         assert_eq!(member.incarnation, 1);
     }
 }
-

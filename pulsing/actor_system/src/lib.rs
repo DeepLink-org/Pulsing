@@ -129,12 +129,14 @@ pub mod transport;
 /// Prelude - commonly used types
 pub mod prelude {
     pub use crate::actor::{
-        Actor, ActorContext, ActorId, ActorRef, Handler, Message, MessageHandler, NodeId,
-        RawMessage,
+        Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, AddressParseError,
+        Handler, Message, MessageHandler, NodeId, RawMessage, LOCALHOST,
     };
-    pub use crate::cluster::{GossipCluster, GossipConfig, MemberInfo, MemberStatus};
+    pub use crate::cluster::{
+        GossipCluster, GossipConfig, MemberInfo, MemberStatus, NamedActorInfo,
+    };
     pub use crate::system::{ActorSystem, SystemConfig};
-    pub use crate::transport::TcpTransport;
+    pub use crate::transport::HttpTransport;
 
     pub use async_trait::async_trait;
     pub use serde::{de::DeserializeOwned, Deserialize, Serialize};

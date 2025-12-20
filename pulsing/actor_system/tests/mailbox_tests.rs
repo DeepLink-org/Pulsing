@@ -378,4 +378,3 @@ async fn test_mailbox_default_size() {
     // (Note: This is a simplified test, actual behavior depends on implementation)
     assert!(!sender.is_closed());
 }
-

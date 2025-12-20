@@ -572,3 +572,182 @@ mod lifecycle_tests {
         assert!(events2.lock().await.contains(&"started".to_string()));
     }
 }
+
+// ============================================================================
+// Addressing Tests
+// ============================================================================
+
+mod addressing_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_spawn_named_actor() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
+
+        // Create a named actor with path
+        let path = ActorPath::new("services/echo").unwrap();
+        let actor = EchoActor::new("echo_impl", counter.clone());
+        let actor_ref = system.spawn_named(path.clone(), actor).await.unwrap();
+
+        // Send message via the returned ref
+        let response: Pong = actor_ref.ask(Ping { value: 21 }).await.unwrap();
+        assert_eq!(response.result, 42);
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+        // Lookup named actor info
+        let info = system.lookup_named(&path).await;
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.path.as_str(), "services/echo");
+        assert_eq!(info.instance_count(), 1);
+
+        system.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_named_actor() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
+
+        // Create a named actor
+        let path = ActorPath::new("services/api/handler").unwrap();
+        let actor = EchoActor::new("api_handler", counter.clone());
+        let _actor_ref = system.spawn_named(path.clone(), actor).await.unwrap();
+
+        // Resolve by address
+        let addr = ActorAddress::parse("actor:///services/api/handler").unwrap();
+        let resolved_ref = system.resolve(&addr).await.unwrap();
+
+        // Send message via resolved ref
+        let response: Pong = resolved_ref.ask(Ping { value: 10 }).await.unwrap();
+        assert_eq!(response.result, 20);
+
+        system.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_global_address() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
+
+        // Create a regular actor
+        let actor = EchoActor::new("worker", counter.clone());
+        let _actor_ref = system.spawn(actor).await.unwrap();
+
+        // Get the full address
+        let node_id = system.node_id().clone();
+        let addr = ActorAddress::global(node_id, "worker");
+
+        // Resolve
+        let resolved_ref = system.resolve(&addr).await.unwrap();
+        let response: Pong = resolved_ref.ask(Ping { value: 5 }).await.unwrap();
+        assert_eq!(response.result, 10);
+
+        system.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_resolve_localhost() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
+
+        // Create actor
+        let actor = EchoActor::new("local_worker", counter.clone());
+        let _actor_ref = system.spawn(actor).await.unwrap();
+
+        // Resolve using localhost
+        let addr = ActorAddress::parse("actor://localhost/local_worker").unwrap();
+        assert!(addr.is_localhost());
+
+        let resolved_ref = system.resolve(&addr).await.unwrap();
+        let response: Pong = resolved_ref.ask(Ping { value: 7 }).await.unwrap();
+        assert_eq!(response.result, 14);
+
+        system.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_stop_named_actor() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
+
+        // Create a named actor
+        let path = ActorPath::new("services/temp").unwrap();
+        let actor = EchoActor::new("temp_actor", counter.clone());
+        let _actor_ref = system.spawn_named(path.clone(), actor).await.unwrap();
+
+        // Verify it exists
+        assert!(system.lookup_named(&path).await.is_some());
+
+        // Stop the named actor
+        system.stop_named(&path).await.unwrap();
+
+        // Wait a bit for cleanup
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Should no longer exist in local registry
+        // Note: In single-node mode, after stop the gossip registry
+        // will also be updated, but there might be a small delay
+        let info = system.lookup_named(&path).await;
+        // The info might still exist but with 0 instances, or not exist at all
+        if let Some(info) = info {
+            assert_eq!(info.instance_count(), 0);
+        }
+
+        system.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_actor_path_parsing() {
+        // Valid paths
+        assert!(ActorPath::new("services/api").is_ok());
+        assert!(ActorPath::new("services/llm/router").is_ok());
+        assert!(ActorPath::new("workers/pool/manager").is_ok());
+
+        // Invalid paths
+        assert!(ActorPath::new("single").is_err()); // needs namespace
+        assert!(ActorPath::new("").is_err());
+        assert!(ActorPath::new("a//b").is_err()); // empty segment
+    }
+
+    #[tokio::test]
+    async fn test_actor_address_parsing() {
+        // Named service
+        let addr = ActorAddress::parse("actor:///services/api").unwrap();
+        assert!(addr.is_named());
+        assert_eq!(addr.path().unwrap().namespace(), "services");
+        assert_eq!(addr.path().unwrap().name(), "api");
+
+        // Named instance
+        let addr = ActorAddress::parse("actor:///services/api@node_a").unwrap();
+        assert!(addr.is_named());
+        assert_eq!(addr.node_id().map(|n| n.as_str()), Some("node_a"));
+
+        // Global
+        let addr = ActorAddress::parse("actor://node_b/worker_123").unwrap();
+        assert!(addr.is_global());
+        assert_eq!(addr.actor_id(), Some("worker_123"));
+
+        // Local
+        let addr = ActorAddress::parse("actor://localhost/my_actor").unwrap();
+        assert!(addr.is_localhost());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_not_found() {
+        let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
+
+        // Try to resolve non-existent named actor
+        let addr = ActorAddress::parse("actor:///services/nonexistent").unwrap();
+        let result = system.resolve(&addr).await;
+        assert!(result.is_err());
+
+        // Try to resolve non-existent global actor
+        let addr = ActorAddress::parse("actor://localhost/nonexistent").unwrap();
+        let result = system.resolve(&addr).await;
+        assert!(result.is_err());
+
+        system.shutdown().await.unwrap();
+    }
+}

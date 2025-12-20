@@ -1,10 +1,15 @@
 //! Gossip protocol for cluster membership and actor discovery
 //!
 //! Uses HTTP transport for reliable gossip communication.
+//!
+//! ## Named Actor Registry
+//!
+//! Named actors are registered via Gossip and support multi-instance deployment.
+//! Each named actor has a path (namespace/name) and can have instances on multiple nodes.
 
-use super::member::{ActorLocation, MemberInfo, MemberStatus};
+use super::member::{ActorLocation, MemberInfo, MemberStatus, NamedActorInfo};
 use super::swim::{SwimConfig, SwimDetector, SwimMessage};
-use crate::actor::{ActorId, NodeId};
+use crate::actor::{ActorId, ActorPath, NodeId};
 use crate::transport::HttpTransport;
 use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
@@ -57,23 +62,26 @@ impl Default for GossipConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GossipMessage {
     /// Join request from a new node
-    Join {
-        node_id: NodeId,
-        addr: SocketAddr,
-    },
+    Join { node_id: NodeId, addr: SocketAddr },
 
     /// Welcome response with cluster state
     Welcome {
         from: NodeId,
         members: Vec<MemberInfo>,
+        /// Legacy actor locations (for backward compatibility)
         actors: Vec<ActorLocation>,
+        /// Named actor registry (new)
+        named_actors: Vec<NamedActorInfo>,
     },
 
     /// Periodic sync (piggyback on heartbeat)
     Sync {
         from: NodeId,
         members: Vec<MemberInfo>,
+        /// Legacy actor locations (for backward compatibility)
         actors: Vec<ActorLocation>,
+        /// Named actor registry (new)
+        named_actors: Vec<NamedActorInfo>,
     },
 
     /// Node is leaving gracefully
@@ -82,11 +90,17 @@ pub enum GossipMessage {
     /// SWIM failure detection message
     Swim(SwimMessage),
 
-    /// Actor registered
+    /// Actor registered (legacy)
     ActorRegistered { location: ActorLocation },
 
-    /// Actor unregistered
+    /// Actor unregistered (legacy)
     ActorUnregistered { actor_id: ActorId },
+
+    /// Named actor instance registered
+    NamedActorRegistered { path: ActorPath, node_id: NodeId },
+
+    /// Named actor instance unregistered
+    NamedActorUnregistered { path: ActorPath, node_id: NodeId },
 }
 
 /// Gossip cluster state
@@ -100,8 +114,12 @@ pub struct GossipCluster {
     /// Cluster members
     members: Arc<RwLock<HashMap<NodeId, MemberInfo>>>,
 
-    /// Actor registry (actor_id -> node_id)
+    /// Legacy actor registry (actor_id -> node_id) for backward compatibility
     actors: Arc<RwLock<HashMap<ActorId, NodeId>>>,
+
+    /// Named actor registry (path -> NamedActorInfo)
+    /// Supports multi-instance named actors
+    named_actors: Arc<RwLock<HashMap<String, NamedActorInfo>>>,
 
     /// HTTP transport for gossip
     transport: Arc<HttpTransport>,
@@ -134,11 +152,17 @@ impl GossipCluster {
             "Starting gossip cluster"
         );
 
+        // Initialize members with local node
+        let mut members = HashMap::new();
+        let local_member = MemberInfo::new(local_node.clone(), local_addr, local_addr);
+        members.insert(local_node.clone(), local_member);
+
         Self {
             local_node: local_node.clone(),
             local_addr,
-            members: Arc::new(RwLock::new(HashMap::new())),
+            members: Arc::new(RwLock::new(members)),
             actors: Arc::new(RwLock::new(HashMap::new())),
+            named_actors: Arc::new(RwLock::new(HashMap::new())),
             transport,
             seed_addrs: Arc::new(RwLock::new(Vec::new())),
             swim: SwimDetector::new(local_node, config.swim.clone()),
@@ -158,7 +182,7 @@ impl GossipCluster {
     }
 
     /// Join an existing cluster via seed nodes
-    /// 
+    ///
     /// Probes each seed address multiple times to discover more peers through
     /// load-balanced endpoints (e.g., Kubernetes Service IP).
     pub async fn join(&self, seed_addrs: Vec<SocketAddr>) -> anyhow::Result<()> {
@@ -193,7 +217,9 @@ impl GossipCluster {
                 tracing::debug!(seed = %addr, probe = probe + 1, "Sending join request");
                 match self.transport.send_gossip(*addr, payload.clone()).await {
                     Ok(Some(response_payload)) => {
-                        if let Ok(response) = bincode::deserialize::<GossipMessage>(&response_payload) {
+                        if let Ok(response) =
+                            bincode::deserialize::<GossipMessage>(&response_payload)
+                        {
                             self.handle_gossip(response).await?;
                         }
                     }
@@ -260,6 +286,7 @@ impl GossipCluster {
             local_addr: self.local_addr,
             members: self.members.clone(),
             actors: self.actors.clone(),
+            named_actors: self.named_actors.clone(),
             transport: self.transport.clone(),
             seed_addrs: self.seed_addrs.clone(),
             config: self.config.clone(),
@@ -292,6 +319,7 @@ impl GossipCluster {
                         .iter()
                         .map(|(id, node)| ActorLocation::new(id.clone(), node.clone()))
                         .collect(),
+                    named_actors: self.named_actors.read().await.values().cloned().collect(),
                 };
 
                 Ok(Some(welcome))
@@ -301,14 +329,17 @@ impl GossipCluster {
                 from: _,
                 members,
                 actors,
+                named_actors,
             } => {
                 tracing::debug!(
                     member_count = members.len(),
                     actor_count = actors.len(),
+                    named_actor_count = named_actors.len(),
                     "Received welcome"
                 );
                 self.merge_members(members).await;
                 self.merge_actors(actors).await;
+                self.merge_named_actors(named_actors).await;
                 Ok(None)
             }
 
@@ -316,24 +347,46 @@ impl GossipCluster {
                 from: _,
                 members,
                 actors,
+                named_actors,
             } => {
                 self.merge_members(members).await;
                 self.merge_actors(actors).await;
+                self.merge_named_actors(named_actors).await;
                 Ok(None)
             }
 
             GossipMessage::Leave { node_id } => {
                 tracing::info!(node_id = %node_id, "Node leaving cluster");
-                let mut members = self.members.write().await;
-                if let Some(member) = members.get_mut(&node_id) {
-                    member.status = MemberStatus::Leaving;
+
+                // Update member status
+                {
+                    let mut members = self.members.write().await;
+                    if let Some(member) = members.get_mut(&node_id) {
+                        member.status = MemberStatus::Leaving;
+                    }
                 }
+
+                // Remove all named actor instances from this node
+                {
+                    let mut named_actors = self.named_actors.write().await;
+                    let mut empty_paths = Vec::new();
+
+                    for (path, info) in named_actors.iter_mut() {
+                        info.remove_instance(&node_id);
+                        if info.is_empty() {
+                            empty_paths.push(path.clone());
+                        }
+                    }
+
+                    for path in empty_paths {
+                        named_actors.remove(&path);
+                    }
+                }
+
                 Ok(None)
             }
 
-            GossipMessage::Swim(swim_msg) => {
-                self.handle_swim(swim_msg).await
-            }
+            GossipMessage::Swim(swim_msg) => self.handle_swim(swim_msg).await,
 
             GossipMessage::ActorRegistered { location } => {
                 let mut actors = self.actors.write().await;
@@ -344,6 +397,33 @@ impl GossipCluster {
             GossipMessage::ActorUnregistered { actor_id } => {
                 let mut actors = self.actors.write().await;
                 actors.remove(&actor_id);
+                Ok(None)
+            }
+
+            GossipMessage::NamedActorRegistered { path, node_id } => {
+                tracing::debug!(path = %path, node_id = %node_id, "Named actor registered");
+                let mut named_actors = self.named_actors.write().await;
+                let key = path.as_str();
+
+                if let Some(info) = named_actors.get_mut(&key) {
+                    info.add_instance(node_id);
+                } else {
+                    named_actors.insert(key, NamedActorInfo::with_instance(path, node_id));
+                }
+                Ok(None)
+            }
+
+            GossipMessage::NamedActorUnregistered { path, node_id } => {
+                tracing::debug!(path = %path, node_id = %node_id, "Named actor unregistered");
+                let mut named_actors = self.named_actors.write().await;
+                let key = path.as_str();
+
+                if let Some(info) = named_actors.get_mut(&key) {
+                    info.remove_instance(&node_id);
+                    if info.is_empty() {
+                        named_actors.remove(&key);
+                    }
+                }
                 Ok(None)
             }
         }
@@ -367,7 +447,11 @@ impl GossipCluster {
                 Ok(None)
             }
 
-            SwimMessage::PingReqAck { seq, from: _, target: _ } => {
+            SwimMessage::PingReqAck {
+                seq,
+                from: _,
+                target: _,
+            } => {
                 self.swim.ack_received(seq).await;
                 Ok(None)
             }
@@ -399,7 +483,21 @@ impl GossipCluster {
         }
     }
 
-    /// Register a local actor
+    /// Merge received named actor info with local state
+    async fn merge_named_actors(&self, remote_named_actors: Vec<NamedActorInfo>) {
+        let mut local = self.named_actors.write().await;
+
+        for remote in remote_named_actors {
+            let key = remote.path.as_str();
+            if let Some(existing) = local.get_mut(&key) {
+                existing.merge(&remote);
+            } else {
+                local.insert(key, remote);
+            }
+        }
+    }
+
+    /// Register a local actor (legacy)
     pub async fn register_actor(&self, actor_id: ActorId) {
         let mut actors = self.actors.write().await;
         actors.insert(actor_id.clone(), self.local_node.clone());
@@ -410,7 +508,7 @@ impl GossipCluster {
         let _ = self.broadcast_message(&msg).await;
     }
 
-    /// Unregister a local actor
+    /// Unregister a local actor (legacy)
     pub async fn unregister_actor(&self, actor_id: &ActorId) {
         let mut actors = self.actors.write().await;
         actors.remove(actor_id);
@@ -422,7 +520,7 @@ impl GossipCluster {
         let _ = self.broadcast_message(&msg).await;
     }
 
-    /// Lookup an actor's location
+    /// Lookup an actor's location (legacy)
     pub async fn lookup_actor(&self, actor_id: &ActorId) -> Option<MemberInfo> {
         let actors = self.actors.read().await;
         let node_id = actors.get(actor_id)?;
@@ -431,15 +529,108 @@ impl GossipCluster {
         members.get(node_id).cloned()
     }
 
-    /// Get all alive members
+    // ==================== Named Actor Methods ====================
+
+    /// Register a named actor instance on this node
+    pub async fn register_named_actor(&self, path: ActorPath) {
+        let key = path.as_str();
+
+        // Update local registry
+        {
+            let mut named_actors = self.named_actors.write().await;
+            if let Some(info) = named_actors.get_mut(&key) {
+                info.add_instance(self.local_node.clone());
+            } else {
+                named_actors.insert(
+                    key.clone(),
+                    NamedActorInfo::with_instance(path.clone(), self.local_node.clone()),
+                );
+            }
+        }
+
+        // Broadcast to cluster
+        let msg = GossipMessage::NamedActorRegistered {
+            path,
+            node_id: self.local_node.clone(),
+        };
+        let _ = self.broadcast_message(&msg).await;
+    }
+
+    /// Unregister a named actor instance from this node
+    pub async fn unregister_named_actor(&self, path: &ActorPath) {
+        let key = path.as_str();
+
+        // Update local registry
+        {
+            let mut named_actors = self.named_actors.write().await;
+            if let Some(info) = named_actors.get_mut(&key) {
+                info.remove_instance(&self.local_node);
+                if info.is_empty() {
+                    named_actors.remove(&key);
+                }
+            }
+        }
+
+        // Broadcast to cluster
+        let msg = GossipMessage::NamedActorUnregistered {
+            path: path.clone(),
+            node_id: self.local_node.clone(),
+        };
+        let _ = self.broadcast_message(&msg).await;
+    }
+
+    /// Lookup a named actor's info
+    pub async fn lookup_named_actor(&self, path: &ActorPath) -> Option<NamedActorInfo> {
+        let named_actors = self.named_actors.read().await;
+        named_actors.get(&path.as_str()).cloned()
+    }
+
+    /// Select a random instance of a named actor (for load balancing)
+    pub async fn select_named_actor_instance(&self, path: &ActorPath) -> Option<MemberInfo> {
+        let named_actors = self.named_actors.read().await;
+        let info = named_actors.get(&path.as_str())?;
+        let node_id = info.select_instance()?;
+        drop(named_actors);
+
+        let members = self.members.read().await;
+        members.get(&node_id).cloned()
+    }
+
+    /// Get all instances of a named actor
+    pub async fn get_named_actor_instances(&self, path: &ActorPath) -> Vec<MemberInfo> {
+        let named_actors = self.named_actors.read().await;
+        let info = match named_actors.get(&path.as_str()) {
+            Some(info) => info.clone(),
+            None => return Vec::new(),
+        };
+        drop(named_actors);
+
+        let members = self.members.read().await;
+        info.instances
+            .iter()
+            .filter_map(|node_id| members.get(node_id).cloned())
+            .collect()
+    }
+
+    /// Get all named actors in the registry
+    pub async fn all_named_actors(&self) -> Vec<NamedActorInfo> {
+        self.named_actors.read().await.values().cloned().collect()
+    }
+
+    /// Get all alive members (excluding local node)
     pub async fn alive_members(&self) -> Vec<MemberInfo> {
         self.members
             .read()
             .await
             .values()
-            .filter(|m| m.status.is_alive())
+            .filter(|m| m.status.is_alive() && m.node_id != self.local_node)
             .cloned()
             .collect()
+    }
+
+    /// Get all members including local node
+    pub async fn all_members(&self) -> Vec<MemberInfo> {
+        self.members.read().await.values().cloned().collect()
     }
 
     /// Get member by node ID
@@ -462,7 +653,10 @@ impl GossipCluster {
         };
 
         for member in targets {
-            let _ = self.transport.send_gossip(member.addr, payload.clone()).await;
+            let _ = self
+                .transport
+                .send_gossip(member.addr, payload.clone())
+                .await;
         }
 
         Ok(())
@@ -484,6 +678,7 @@ struct GossipClusterInner {
     local_addr: SocketAddr,
     members: Arc<RwLock<HashMap<NodeId, MemberInfo>>>,
     actors: Arc<RwLock<HashMap<ActorId, NodeId>>>,
+    named_actors: Arc<RwLock<HashMap<String, NamedActorInfo>>>,
     transport: Arc<HttpTransport>,
     seed_addrs: Arc<RwLock<Vec<SocketAddr>>>,
     config: GossipConfig,
@@ -545,11 +740,15 @@ impl GossipClusterInner {
                 .iter()
                 .map(|(id, node)| ActorLocation::new(id.clone(), node.clone()))
                 .collect(),
+            named_actors: self.named_actors.read().await.values().cloned().collect(),
         };
 
         if let Ok(payload) = bincode::serialize(&msg) {
             for member in targets {
-                let _ = self.transport.send_gossip(member.addr, payload.clone()).await;
+                let _ = self
+                    .transport
+                    .send_gossip(member.addr, payload.clone())
+                    .await;
             }
         }
     }
@@ -585,14 +784,14 @@ impl GossipClusterInner {
     }
 
     /// Periodic seed re-probe loop
-    /// 
+    ///
     /// Periodically probes seed addresses to:
     /// - Discover new nodes that joined via the same Service IP
     /// - Recover from network partitions
     /// - Maintain cluster connectivity
     async fn seed_rejoin_loop(&self, interval: Duration, cancel: CancellationToken) {
         let mut timer = tokio::time::interval(interval);
-        
+
         // Skip the first tick (we already probed on startup)
         timer.tick().await;
 
@@ -626,6 +825,7 @@ impl GossipClusterInner {
                 .iter()
                 .map(|(id, node)| ActorLocation::new(id.clone(), node.clone()))
                 .collect(),
+            named_actors: self.named_actors.read().await.values().cloned().collect(),
         };
 
         let payload = match bincode::serialize(&msg) {
@@ -641,14 +841,25 @@ impl GossipClusterInner {
         for addr in &seeds {
             match self.transport.send_gossip(*addr, payload.clone()).await {
                 Ok(Some(response_payload)) => {
-                    if let Ok(response) = bincode::deserialize::<GossipMessage>(&response_payload) {
-                        // Merge received state
-                        if let GossipMessage::Sync { members, actors, .. } 
-                            | GossipMessage::Welcome { members, actors, .. } = response 
-                        {
-                            self.merge_members(members).await;
-                            self.merge_actors(actors).await;
+                    // Merge received state if it's a Sync or Welcome message
+                    if let Ok(
+                        GossipMessage::Sync {
+                            members,
+                            actors,
+                            named_actors,
+                            ..
                         }
+                        | GossipMessage::Welcome {
+                            members,
+                            actors,
+                            named_actors,
+                            ..
+                        },
+                    ) = bincode::deserialize::<GossipMessage>(&response_payload)
+                    {
+                        self.merge_members(members).await;
+                        self.merge_actors(actors).await;
+                        self.merge_named_actors(named_actors).await;
                     }
                 }
                 Ok(None) => {}
@@ -722,6 +933,20 @@ impl GossipClusterInner {
 
         for loc in remote_actors {
             local.insert(loc.actor_id, loc.node_id);
+        }
+    }
+
+    /// Merge received named actor info with local state
+    async fn merge_named_actors(&self, remote_named_actors: Vec<NamedActorInfo>) {
+        let mut local = self.named_actors.write().await;
+
+        for remote in remote_named_actors {
+            let key = remote.path.as_str();
+            if let Some(existing) = local.get_mut(&key) {
+                existing.merge(&remote);
+            } else {
+                local.insert(key, remote);
+            }
         }
     }
 }

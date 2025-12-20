@@ -156,7 +156,10 @@ impl Decoder for MessageCodec {
         // Read and decode the message
         let data = src.split_to(len);
         let msg: TransportMessage = bincode::deserialize(&data).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Decode error: {}", e))
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Decode error: {}", e),
+            )
         })?;
 
         Ok(Some(msg))
@@ -168,7 +171,10 @@ impl Encoder<TransportMessage> for MessageCodec {
 
     fn encode(&mut self, item: TransportMessage, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let data = bincode::serialize(&item).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Encode error: {}", e))
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Encode error: {}", e),
+            )
         })?;
 
         if data.len() > self.max_size {
@@ -247,4 +253,3 @@ mod tests {
         assert!(codec.decode(&mut partial).unwrap().is_some());
     }
 }
-

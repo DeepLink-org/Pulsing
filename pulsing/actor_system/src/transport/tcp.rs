@@ -175,10 +175,7 @@ impl TcpTransport {
                     .handle_message(&actor_id, &msg_type, payload)
                     .await;
 
-                let response = TransportMessage::response(
-                    id,
-                    result.map_err(|e| e.to_string()),
-                );
+                let response = TransportMessage::response(id, result.map_err(|e| e.to_string()));
 
                 if let Err(e) = framed.send(response).await {
                     tracing::warn!(error = %e, "Failed to send response");
@@ -220,12 +217,9 @@ impl TcpTransport {
         }
 
         // Create new connection
-        let stream = tokio::time::timeout(
-            self.config.connect_timeout,
-            TcpStream::connect(addr),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
+        let stream = tokio::time::timeout(self.config.connect_timeout, TcpStream::connect(addr))
+            .await
+            .map_err(|_| anyhow::anyhow!("Connection timeout"))??;
 
         let mut framed = Framed::new(stream, MessageCodec::new());
 
@@ -312,8 +306,7 @@ impl TcpTransport {
     ) -> anyhow::Result<Vec<u8>> {
         let conn = self.get_connection(addr).await?;
 
-        let (id, msg) =
-            TransportMessage::request(actor_id.clone(), msg_type.to_string(), payload);
+        let (id, msg) = TransportMessage::request(actor_id.clone(), msg_type.to_string(), payload);
 
         let (tx, rx) = oneshot::channel();
         self.pending.insert(id, tx);
@@ -424,10 +417,9 @@ mod tests {
 
         // Start server
         let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let server =
-            TcpTransport::new(server_addr, handler.clone(), TcpTransportConfig::default())
-                .await
-                .unwrap();
+        let server = TcpTransport::new(server_addr, handler.clone(), TcpTransportConfig::default())
+            .await
+            .unwrap();
 
         let server_addr = server.local_addr();
 
@@ -451,4 +443,3 @@ mod tests {
         client.shutdown();
     }
 }
-
