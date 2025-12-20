@@ -2,12 +2,13 @@
 
 use crate::actor::{
     Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Envelope,
-    Mailbox, NodeId, RawMessage, LOCALHOST,
+    Mailbox, NodeId, RawMessage, StopReason, LOCALHOST,
 };
 use crate::cluster::{GossipCluster, GossipConfig, GossipMessage, MemberInfo, NamedActorInfo};
 use crate::transport::{
     HttpMessageHandler, HttpRemoteTransport, HttpTransport, HttpTransportConfig,
 };
+use crate::watch::ActorLifecycle;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -114,6 +115,9 @@ struct LocalActorHandle {
 
     /// Named actor path (if this is a named actor)
     named_path: Option<ActorPath>,
+
+    /// Full actor ID
+    actor_id: ActorId,
 }
 
 /// The Actor System - manages actors and cluster membership
@@ -138,6 +142,9 @@ pub struct ActorSystem {
 
     /// Cancellation token
     cancel_token: CancellationToken,
+
+    /// Actor lifecycle manager (watch, termination handling)
+    lifecycle: Arc<ActorLifecycle>,
 }
 
 impl ActorSystem {
@@ -148,6 +155,7 @@ impl ActorSystem {
         let local_actors: Arc<DashMap<String, LocalActorHandle>> = Arc::new(DashMap::new());
         let named_actor_paths: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
         let cluster_holder: Arc<RwLock<Option<Arc<GossipCluster>>>> = Arc::new(RwLock::new(None));
+        let lifecycle = Arc::new(ActorLifecycle::new());
 
         // Create message handler (needs cluster reference for gossip)
         let handler = SystemMessageHandler {
@@ -196,6 +204,7 @@ impl ActorSystem {
             cluster: cluster_holder,
             transport,
             cancel_token,
+            lifecycle,
         });
 
         tracing::info!(
@@ -257,13 +266,17 @@ impl ActorSystem {
             return Err(anyhow::anyhow!("Actor {} failed to start: {}", actor_id, e));
         }
 
+        // Create termination notification channel
+        let (term_tx, term_rx) = tokio::sync::oneshot::channel::<StopReason>();
+
         // Spawn actor task
         let cancel = self.cancel_token.clone();
         let actor_name = actor_id.name.clone();
         let loop_stats = stats.clone();
 
         let join_handle = tokio::spawn(async move {
-            run_actor_loop(actor, receiver, ctx, cancel, loop_stats).await;
+            let reason = run_actor_loop(actor, receiver, ctx, cancel, loop_stats).await;
+            let _ = term_tx.send(reason);
         });
 
         // Register locally
@@ -275,8 +288,21 @@ impl ActorSystem {
                 stats,
                 metadata,
                 named_path: None,
+                actor_id: actor_id.clone(),
             },
         );
+
+        // Spawn termination handler task
+        let system = self.clone();
+        let term_actor_id = actor_id.clone();
+        let term_actor_name = actor_name.clone();
+        tokio::spawn(async move {
+            if let Ok(reason) = term_rx.await {
+                system
+                    .handle_actor_terminated(&term_actor_name, &term_actor_id, None, reason)
+                    .await;
+            }
+        });
 
         tracing::debug!(actor_id = %actor_id, "Spawned actor");
 
@@ -338,13 +364,17 @@ impl ActorSystem {
             return Err(anyhow::anyhow!("Actor {} failed to start: {}", actor_id, e));
         }
 
+        // Create termination notification channel
+        let (term_tx, term_rx) = tokio::sync::oneshot::channel::<StopReason>();
+
         // Spawn actor task
         let cancel = self.cancel_token.clone();
         let actor_name = actor_id.name.clone();
         let loop_stats = stats.clone();
 
         let join_handle = tokio::spawn(async move {
-            run_actor_loop(actor, receiver, ctx, cancel, loop_stats).await;
+            let reason = run_actor_loop(actor, receiver, ctx, cancel, loop_stats).await;
+            let _ = term_tx.send(reason);
         });
 
         // Register locally with path
@@ -356,6 +386,7 @@ impl ActorSystem {
                 stats,
                 metadata,
                 named_path: Some(path.clone()),
+                actor_id: actor_id.clone(),
             },
         );
 
@@ -370,6 +401,24 @@ impl ActorSystem {
                 cluster.register_named_actor(path.clone()).await;
             }
         }
+
+        // Spawn termination handler task
+        let system = self.clone();
+        let term_actor_id = actor_id.clone();
+        let term_actor_name = actor_name.clone();
+        let term_path = path.clone();
+        tokio::spawn(async move {
+            if let Ok(reason) = term_rx.await {
+                system
+                    .handle_actor_terminated(
+                        &term_actor_name,
+                        &term_actor_id,
+                        Some(term_path),
+                        reason,
+                    )
+                    .await;
+            }
+        });
 
         tracing::debug!(
             actor_id = %actor_id,
@@ -601,49 +650,94 @@ impl ActorSystem {
 
     /// Stop an actor by name
     pub async fn stop(&self, actor_name: &str) -> anyhow::Result<()> {
+        self.stop_with_reason(actor_name, StopReason::Killed).await
+    }
+
+    /// Stop an actor with a specific reason
+    pub async fn stop_with_reason(
+        &self,
+        actor_name: &str,
+        reason: StopReason,
+    ) -> anyhow::Result<()> {
         if let Some((_, handle)) = self.local_actors.remove(actor_name) {
             handle.join_handle.abort();
 
-            // If this was a named actor, unregister from cluster
-            if let Some(path) = handle.named_path {
-                let path_key = path.as_str();
-                self.named_actor_paths.remove(&path_key);
-
-                let cluster_guard = self.cluster.read().await;
-                if let Some(cluster) = cluster_guard.as_ref() {
-                    cluster.unregister_named_actor(&path).await;
-                }
-            } else {
-                // Legacy: unregister by actor_id
-                let actor_id = ActorId::new(self.node_id.clone(), actor_name.to_string());
-                let cluster_guard = self.cluster.read().await;
-                if let Some(cluster) = cluster_guard.as_ref() {
-                    cluster.unregister_actor(&actor_id).await;
-                }
-            }
-
-            tracing::debug!(actor = actor_name, "Stopped actor");
+            let local_actors = self.local_actors.clone();
+            self.lifecycle
+                .handle_termination(
+                    &handle.actor_id,
+                    actor_name,
+                    handle.named_path,
+                    reason,
+                    &self.named_actor_paths,
+                    &self.cluster,
+                    |name| local_actors.get(name).map(|h| h.sender.clone()),
+                )
+                .await;
         }
         Ok(())
     }
 
+    /// Handle actor termination - called when an actor naturally terminates
+    async fn handle_actor_terminated(
+        &self,
+        actor_name: &str,
+        actor_id: &ActorId,
+        named_path: Option<ActorPath>,
+        reason: StopReason,
+    ) {
+        // Only process if actor is still registered (not already stopped via stop())
+        if self.local_actors.remove(actor_name).is_none() {
+            return;
+        }
+
+        let local_actors = self.local_actors.clone();
+        self.lifecycle
+            .handle_termination(
+                actor_id,
+                actor_name,
+                named_path,
+                reason,
+                &self.named_actor_paths,
+                &self.cluster,
+                |name| local_actors.get(name).map(|h| h.sender.clone()),
+            )
+            .await;
+    }
+
     /// Stop a named actor by path
     pub async fn stop_named(&self, path: &ActorPath) -> anyhow::Result<()> {
+        self.stop_named_with_reason(path, StopReason::Killed).await
+    }
+
+    /// Stop a named actor by path with a specific reason
+    pub async fn stop_named_with_reason(
+        &self,
+        path: &ActorPath,
+        reason: StopReason,
+    ) -> anyhow::Result<()> {
         let path_key = path.as_str();
 
-        // Find and remove the local actor name mapping
-        if let Some((_, actor_name)) = self.named_actor_paths.remove(&path_key) {
-            // Stop the actual actor
+        // Find the local actor name for this path
+        if let Some(actor_name_ref) = self.named_actor_paths.get(&path_key) {
+            let actor_name = actor_name_ref.clone();
+            drop(actor_name_ref);
+
             if let Some((_, handle)) = self.local_actors.remove(&actor_name) {
                 handle.join_handle.abort();
 
-                // Unregister from cluster
-                let cluster_guard = self.cluster.read().await;
-                if let Some(cluster) = cluster_guard.as_ref() {
-                    cluster.unregister_named_actor(path).await;
-                }
-
-                tracing::debug!(path = %path, actor = actor_name, "Stopped named actor");
+                let local_actors = self.local_actors.clone();
+                self.lifecycle
+                    .handle_termination(
+                        &handle.actor_id,
+                        &actor_name,
+                        Some(path.clone()),
+                        reason,
+                        &self.named_actor_paths,
+                        &self.cluster,
+                        |name| local_actors.get(name).map(|h| h.sender.clone()),
+                    )
+                    .await;
             }
         }
 
@@ -689,42 +783,79 @@ impl ActorSystemRef for ActorSystem {
     fn node_id(&self) -> &NodeId {
         &self.node_id
     }
+
+    async fn watch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()> {
+        // Only support local watching for now
+        if target.node != self.node_id {
+            return Err(anyhow::anyhow!(
+                "Cannot watch remote actor: {} (watching remote actors not yet supported)",
+                target
+            ));
+        }
+
+        self.lifecycle.watch(&watcher.name, &target.name).await;
+        Ok(())
+    }
+
+    async fn unwatch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()> {
+        self.lifecycle.unwatch(&watcher.name, &target.name).await;
+        Ok(())
+    }
 }
 
-/// Actor message loop
+/// Actor message loop - returns the reason for stopping
 async fn run_actor_loop<A: Actor>(
     mut actor: A,
     mut receiver: mpsc::Receiver<Envelope>,
     mut ctx: ActorContext,
     cancel: CancellationToken,
     stats: Arc<ActorStats>,
-) {
-    loop {
+) -> StopReason {
+    let stop_reason = loop {
         tokio::select! {
-            Some(envelope) = receiver.recv() => {
-                let raw = envelope.to_raw_message();
+            msg = receiver.recv() => {
+                match msg {
+                    Some(envelope) => {
+                        let raw = envelope.to_raw_message();
 
-                stats.inc_message();
-                match actor.receive(raw, &mut ctx).await {
-                    Ok(response) => {
-                        envelope.respond(Ok(response.payload));
+                        stats.inc_message();
+                        match actor.receive(raw, &mut ctx).await {
+                            Ok(response) => {
+                                envelope.respond(Ok(response.payload));
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    actor_id = ?ctx.actor_id(),
+                                    error = %e,
+                                    "Actor handler error"
+                                );
+                                envelope.respond(Err(anyhow::anyhow!("Handler error: {}", e)));
+                            }
+                        }
                     }
-                    Err(e) => {
-                        envelope.respond(Err(anyhow::anyhow!("Handler error: {}", e)));
+                    None => {
+                        // Mailbox closed (all senders dropped)
+                        break StopReason::Normal;
                     }
                 }
             }
             _ = cancel.cancelled() => {
-                break;
+                break StopReason::SystemShutdown;
             }
         }
-    }
+    };
 
     // Cleanup
     stats.inc_stop();
     if let Err(e) = actor.on_stop(&mut ctx).await {
         tracing::warn!(actor_id = ?ctx.actor_id(), error = %e, "Actor stop error");
+        // If on_stop fails, mark as failed
+        if matches!(stop_reason, StopReason::Normal) {
+            return StopReason::Failed(e.to_string());
+        }
     }
+
+    stop_reason
 }
 
 /// Unified message handler for HTTP transport

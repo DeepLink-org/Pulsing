@@ -6,6 +6,45 @@ use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 
+/// Reason why an actor stopped
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum StopReason {
+    /// Normal shutdown (graceful stop)
+    Normal,
+    /// Actor panicked or encountered an unrecoverable error
+    Failed(String),
+    /// Actor was killed/aborted
+    Killed,
+    /// System is shutting down
+    SystemShutdown,
+}
+
+impl fmt::Display for StopReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StopReason::Normal => write!(f, "Normal"),
+            StopReason::Failed(msg) => write!(f, "Failed: {}", msg),
+            StopReason::Killed => write!(f, "Killed"),
+            StopReason::SystemShutdown => write!(f, "SystemShutdown"),
+        }
+    }
+}
+
+/// Message sent to watchers when a watched actor terminates
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Terminated {
+    /// The actor that terminated
+    pub actor_id: ActorId,
+    /// Reason for termination
+    pub reason: StopReason,
+}
+
+impl Message for Terminated {
+    fn type_id() -> &'static str {
+        "Terminated"
+    }
+}
+
 /// Node identifier in the cluster
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NodeId(pub String);

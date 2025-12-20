@@ -9,7 +9,7 @@
 
 use super::member::{ActorLocation, MemberInfo, MemberStatus, NamedActorInfo};
 use super::swim::{SwimConfig, SwimDetector, SwimMessage};
-use crate::actor::{ActorId, ActorPath, NodeId};
+use crate::actor::{ActorId, ActorPath, NodeId, StopReason};
 use crate::transport::HttpTransport;
 use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
@@ -101,6 +101,13 @@ pub enum GossipMessage {
 
     /// Named actor instance unregistered
     NamedActorUnregistered { path: ActorPath, node_id: NodeId },
+
+    /// Named actor instance failed (broadcast failure to cluster)
+    NamedActorFailed {
+        path: ActorPath,
+        node_id: NodeId,
+        reason: String,
+    },
 }
 
 /// Gossip cluster state
@@ -426,6 +433,35 @@ impl GossipCluster {
                 }
                 Ok(None)
             }
+
+            GossipMessage::NamedActorFailed {
+                path,
+                node_id,
+                reason,
+            } => {
+                tracing::warn!(
+                    path = %path,
+                    node_id = %node_id,
+                    reason = %reason,
+                    "Named actor failed on remote node"
+                );
+
+                // Remove the failed instance from registry
+                let mut named_actors = self.named_actors.write().await;
+                let key = path.as_str();
+
+                if let Some(info) = named_actors.get_mut(&key) {
+                    info.remove_instance(&node_id);
+                    if info.is_empty() {
+                        named_actors.remove(&key);
+                        tracing::info!(
+                            path = %path,
+                            "Named actor has no remaining instances"
+                        );
+                    }
+                }
+                Ok(None)
+            }
         }
     }
 
@@ -575,6 +611,24 @@ impl GossipCluster {
         let msg = GossipMessage::NamedActorUnregistered {
             path: path.clone(),
             node_id: self.local_node.clone(),
+        };
+        let _ = self.broadcast_message(&msg).await;
+    }
+
+    /// Broadcast named actor failure to the cluster
+    pub async fn broadcast_named_actor_failed(&self, path: &ActorPath, reason: &StopReason) {
+        let reason_str = reason.to_string();
+
+        tracing::info!(
+            path = %path,
+            reason = %reason_str,
+            "Broadcasting named actor failure to cluster"
+        );
+
+        let msg = GossipMessage::NamedActorFailed {
+            path: path.clone(),
+            node_id: self.local_node.clone(),
+            reason: reason_str,
         };
         let _ = self.broadcast_message(&msg).await;
     }

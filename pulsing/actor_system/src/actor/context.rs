@@ -32,6 +32,12 @@ pub trait ActorSystemRef: Send + Sync {
 
     /// Get the local node ID
     fn node_id(&self) -> &NodeId;
+
+    /// Watch an actor - will receive Terminated message when the watched actor stops
+    async fn watch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()>;
+
+    /// Stop watching an actor
+    async fn unwatch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()>;
 }
 
 impl ActorContext {
@@ -104,6 +110,34 @@ impl ActorContext {
     pub fn schedule_self<M>(&self, _msg: M, _delay: std::time::Duration) {
         // TODO: implement scheduling
         todo!("Scheduling not yet implemented")
+    }
+
+    /// Watch another actor - will receive Terminated message when it stops
+    pub async fn watch(&self, target: &ActorId) -> anyhow::Result<()> {
+        let watcher = self
+            .actor_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Actor ID not set in context"))?;
+
+        if let Some(ref system) = self.system {
+            system.watch(watcher, target).await
+        } else {
+            Err(anyhow::anyhow!("No system reference available"))
+        }
+    }
+
+    /// Stop watching another actor
+    pub async fn unwatch(&self, target: &ActorId) -> anyhow::Result<()> {
+        let watcher = self
+            .actor_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Actor ID not set in context"))?;
+
+        if let Some(ref system) = self.system {
+            system.unwatch(watcher, target).await
+        } else {
+            Err(anyhow::anyhow!("No system reference available"))
+        }
     }
 }
 

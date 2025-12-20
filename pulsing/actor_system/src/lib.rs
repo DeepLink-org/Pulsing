@@ -125,12 +125,13 @@ pub mod actor;
 pub mod cluster;
 pub mod system;
 pub mod transport;
+pub mod watch;
 
 /// Prelude - commonly used types
 pub mod prelude {
     pub use crate::actor::{
         Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, AddressParseError,
-        Handler, Message, MessageHandler, NodeId, RawMessage, LOCALHOST,
+        Handler, Message, MessageHandler, NodeId, RawMessage, StopReason, Terminated, LOCALHOST,
     };
     pub use crate::cluster::{
         GossipCluster, GossipConfig, MemberInfo, MemberStatus, NamedActorInfo,
