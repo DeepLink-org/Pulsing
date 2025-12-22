@@ -637,8 +637,18 @@ impl ActorSystem {
         }
     }
 
-    /// Get cluster members
+    /// Get cluster members (all members including Suspect status)
     pub async fn members(&self) -> Vec<MemberInfo> {
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            cluster.all_members().await
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get only alive cluster members (excluding local node)
+    pub async fn alive_members(&self) -> Vec<MemberInfo> {
         let cluster_guard = self.cluster.read().await;
         if let Some(cluster) = cluster_guard.as_ref() {
             cluster.alive_members().await
