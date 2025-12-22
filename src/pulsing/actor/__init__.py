@@ -72,19 +72,19 @@ from dataclasses import dataclass
 from typing import Any, Optional, Dict, List, Union, AsyncIterator, Tuple
 
 # Import native bindings
-from dynamo._core.actor import (
-    NodeId,
-    ActorId,
-    Message as RawMessage,  # Legacy alias
-    ActorRef,
-    SystemConfig,
-    ActorSystem as _ActorSystem,
-    # Streaming types
-    StreamReader,
-    StreamWriter,
-    StreamMessage,
-    UnifiedMessage as Message,
-)
+from dynamo._core import actor as _actor_module
+
+NodeId = _actor_module.NodeId
+ActorId = _actor_module.ActorId
+RawMessage = _actor_module.Message  # Legacy alias
+ActorRef = _actor_module.ActorRef
+SystemConfig = _actor_module.SystemConfig
+_ActorSystem = _actor_module.ActorSystem
+# Streaming types
+StreamReader = _actor_module.StreamReader
+StreamWriter = _actor_module.StreamWriter
+StreamMessage = _actor_module.StreamMessage
+Message = _actor_module.UnifiedMessage
 
 __all__ = [
     # Core types
