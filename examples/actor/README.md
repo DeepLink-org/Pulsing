@@ -1,131 +1,136 @@
-# Pulsing Actor System - Python Examples
+# Pulsing Actor System 示例
 
-这个目录包含了如何在 Python 中使用 Pulsing Actor System 的示例。
+本目录包含基于 Pulsing Actor System 的服务示例。
 
-## 概述
+## Actor 类型
 
-Pulsing Actor System 是一个轻量级的分布式 Actor 框架，具有以下特点：
+### 1. RouterActor
 
-- **零外部依赖**: 不需要 etcd、nats 或 redis
-- **基于 Gossip 的发现**: 使用 SWIM 协议自动发现集群成员
-- **位置透明的 ActorRef**: 本地和远程 Actor 使用相同的 API
-- **原生异步支持**: 基于 tokio 构建
+基于 RoundRobin 调度算法的路由器。
 
-## 核心概念
+```bash
+# 启动 Router
+pulsing actor --type router --namespace myapp --addr 0.0.0.0:8000
+```
 
-### Actor
+### 2. TransformersWorkerActor
 
-Actor 是独立的计算单元，通过消息传递进行通信。在 Python 中，你可以通过继承 `Actor` 基类来创建自己的 Actor：
+基于 HuggingFace Transformers 的推理 Worker。
+
+```bash
+# 启动 Worker (GPU)
+pulsing actor --type transformers \
+    --model Qwen/Qwen3-0.6B \
+    --namespace myapp \
+    --addr 0.0.0.0:8001 \
+    --seeds 192.168.1.100:8000
+
+# 启动 Worker (CPU)
+pulsing actor --type transformers \
+    --model gpt2 \
+    --device cpu \
+    --namespace myapp
+```
+
+## 部署示例
+
+### 单机部署
+
+```bash
+# 终端 1: 启动 Router
+pulsing actor --type router --addr 0.0.0.0:8000
+
+# 终端 2: 启动 Worker 1
+pulsing actor --type transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
+
+# 终端 3: 启动 Worker 2
+pulsing actor --type transformers --model gpt2 --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+```
+
+### 多机部署
+
+```bash
+# 机器 A (Router)
+pulsing actor --type router --addr 0.0.0.0:8000
+
+# 机器 B (Worker)
+pulsing actor --type transformers --model Qwen/Qwen3-0.6B --addr 0.0.0.0:8000 --seeds 192.168.1.A:8000
+
+# 机器 C (Worker)
+pulsing actor --type transformers --model Qwen/Qwen3-0.6B --addr 0.0.0.0:8000 --seeds 192.168.1.A:8000
+```
+
+## 编程接口
+
+### 直接使用 Actor 类
 
 ```python
-from pulsing.actor import Actor, RawMessage
+import asyncio
+from pulsing.actors import RouterActor, TransformersWorkerActor
 
-class MyActor(Actor):
-    def __init__(self):
-        self.state = {}
+async def main():
+    # 启动 Router
+    router = RouterActor(
+        namespace="myapp",
+        addr="0.0.0.0:8000"
+    )
+    await router.start()
     
-    def on_start(self, actor_id):
-        print(f"Actor {actor_id} started")
+    # 启动 Worker
+    worker = TransformersWorkerActor(
+        model="gpt2",
+        namespace="myapp",
+        addr="0.0.0.0:8001",
+        seeds=["127.0.0.1:8000"],
+        device="cpu"
+    )
+    await worker.start()
     
-    async def receive(self, msg: RawMessage) -> RawMessage:
-        # 处理消息
-        data = msg.to_json()
-        return RawMessage.from_json("response", {"result": "ok"})
+    # ... 业务逻辑 ...
+    
+    await worker.stop()
+    await router.stop()
+
+asyncio.run(main())
 ```
 
-### 消息传递
+### 消息协议
 
-支持两种消息模式：
+#### Router 消息
 
-1. **Ask 模式**: 发送消息并等待响应
-   ```python
-   response = await actor_ref.ask_json("message_type", {"key": "value"})
-   ```
+| 消息类型 | 描述 | 请求字段 | 响应字段 |
+|---------|------|---------|---------|
+| RouteRequest | 请求路由 | - | worker_id, endpoint |
+| RegisterWorker | 注册 Worker | worker_id, endpoint, metadata | message, total_workers |
+| UnregisterWorker | 注销 Worker | worker_id | message, total_workers |
+| HealthCheck | 健康检查 | - | status, total_workers, healthy_workers, workers |
 
-2. **Tell 模式**: 发送消息，不等待响应（fire-and-forget）
-   ```python
-   await actor_ref.tell_json("message_type", {"key": "value"})
-   ```
+#### Worker 消息
 
-### 集群模式
+| 消息类型 | 描述 | 请求字段 | 响应字段 |
+|---------|------|---------|---------|
+| GenerateRequest | 生成请求 | prompt 或 token_ids, max_new_tokens | text, token_ids, finish_reason |
+| WorkerStatus | 状态查询 | - | worker_id, model, is_loaded, request_count |
+| HealthCheck | 健康检查 | - | status, worker_id, is_loaded |
 
-可以通过指定种子节点来加入集群：
+## 架构图
 
-```python
-config = SystemConfig.with_addr("0.0.0.0:8001").with_seeds([
-    "192.168.1.100:8000"
-])
-system = await ActorSystem.create(config)
 ```
-
-## 示例
-
-### ping_pong.py
-
-基本的 Actor 通信示例，展示了：
-- 创建 ActorSystem
-- 定义同步和异步 Actor
-- 使用 ask/tell 模式发送消息
-
-运行：
-```bash
-python examples/actor/ping_pong.py
+                    ┌─────────────┐
+                    │   Client    │
+                    └──────┬──────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │   Router    │
+                    │ (RoundRobin)│
+                    └──────┬──────┘
+                           │
+           ┌───────────────┼───────────────┐
+           │               │               │
+           ▼               ▼               ▼
+    ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+    │   Worker    │ │   Worker    │ │   Worker    │
+    │(Transformers)│ │(Transformers)│ │(Transformers)│
+    └─────────────┘ └─────────────┘ └─────────────┘
 ```
-
-### cluster.py
-
-分布式集群示例，展示了：
-- 在不同端口启动多个节点
-- 通过种子节点加入集群
-- 查看集群成员
-
-运行：
-```bash
-# 终端 1 - 启动第一个节点
-python examples/actor/cluster.py --port 8000
-
-# 终端 2 - 启动第二个节点并加入集群
-python examples/actor/cluster.py --port 8001 --seed 127.0.0.1:8000
-```
-
-## API 参考
-
-### 类
-
-| 类 | 描述 |
-|---|---|
-| `ActorSystem` | Actor 系统，管理 Actor 和集群成员 |
-| `Actor` | Actor 基类，用户需要继承此类 |
-| `ActorRef` | Actor 引用，用于发送消息 |
-| `ActorId` | Actor 唯一标识符 |
-| `NodeId` | 节点唯一标识符 |
-| `RawMessage` | 原始消息，包含类型和负载 |
-| `SystemConfig` | 系统配置 |
-
-### ActorSystem 方法
-
-| 方法 | 描述 |
-|---|---|
-| `create(config)` | 创建新的 Actor 系统（异步） |
-| `spawn(name, handler)` | 创建新的 Actor（异步） |
-| `actor_ref(actor_id)` | 获取 Actor 引用（异步） |
-| `members()` | 获取集群成员（异步） |
-| `shutdown()` | 关闭系统（异步） |
-
-### ActorRef 方法
-
-| 方法 | 描述 |
-|---|---|
-| `ask(msg)` | 发送消息并等待响应（异步） |
-| `ask_json(msg_type, data)` | 发送 JSON 消息并等待响应（异步） |
-| `tell(msg)` | 发送消息，不等待响应（异步） |
-| `tell_json(msg_type, data)` | 发送 JSON 消息，不等待响应（异步） |
-
-### RawMessage 方法
-
-| 方法 | 描述 |
-|---|---|
-| `from_json(msg_type, data)` | 从 Python 对象创建消息（类方法） |
-| `to_json()` | 将消息负载解析为 Python 对象 |
-| `empty()` | 创建空响应消息（类方法） |
-

@@ -311,6 +311,52 @@ class ActorSystem:
         """Get names of all local actors."""
         return self._inner.local_actor_names()
     
+    async def get_named_instances(self, name: str) -> List[Dict[str, str]]:
+        """
+        Get all instances of a named actor across the cluster.
+        
+        This is useful for discovering all workers registered with the same name.
+        
+        Args:
+            name: The actor name (e.g., "worker")
+            
+        Returns:
+            List of instance info dictionaries with keys:
+            - node_id: The node's unique ID
+            - addr: The node's address
+            - status: Member status (Alive, Suspect, Dead)
+        
+        Example:
+            ```python
+            # Find all workers in the cluster
+            workers = await system.get_named_instances("worker")
+            for w in workers:
+                print(f"Worker at {w['addr']}")
+            ```
+        """
+        return await self._inner.get_named_instances(name)
+    
+    async def resolve_named(self, name: str) -> ActorRef:
+        """
+        Resolve a named actor reference (load balanced).
+        
+        If multiple instances exist, one will be selected using load balancing.
+        
+        Args:
+            name: The actor name (e.g., "worker")
+            
+        Returns:
+            ActorRef to one of the instances
+        
+        Example:
+            ```python
+            # Get a reference to one worker (load balanced)
+            worker_ref = await system.resolve_named("worker")
+            response = await worker_ref.ask_json("Generate", {"prompt": "Hello"})
+            ```
+        """
+        return await self._inner.resolve_named(name)
+    
     async def stop(self, actor_name: str) -> None:
         """
         Stop an actor.

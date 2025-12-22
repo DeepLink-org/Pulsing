@@ -246,6 +246,135 @@ def bench():
     benchmark_main(["pulsing-bench"] + cmd_args)
 
 
+@hp.param("actor")
+def actor(
+    type: str,
+    namespace: str = "dynamo",
+    addr: Optional[str] = None,
+    seeds: Optional[str] = None,
+    model: Optional[str] = None,
+    model_name: str = "pulsing-model",
+    device: str = "cuda",
+    max_new_tokens: int = 512,
+    preload_model: bool = False,
+    http_host: str = "0.0.0.0",
+    http_port: int = 8080,
+):
+    """
+    Start an Actor-based service.
+
+    This command starts actors based on the Pulsing Actor System.
+    Supported actor types:
+    - router: RoundRobin load balancing router (with OpenAI-compatible HTTP API)
+    - transformers: Transformers-based inference worker
+
+    Args:
+        type: Actor type. Options: 'router', 'transformers'
+        namespace: Service namespace. Default: 'dynamo'
+        addr: Actor System bind address (e.g., '0.0.0.0:8000')
+        seeds: Comma-separated list of seed nodes (e.g., '192.168.1.1:8000,192.168.1.2:8000')
+        model: Model path (required for 'transformers' type)
+        model_name: Model name for OpenAI API. Default: 'pulsing-model'
+        device: Device for inference ('cuda', 'cpu', 'mps'). Default: 'cuda'
+        max_new_tokens: Max tokens to generate. Default: 512
+        preload_model: Preload model on startup. Default: False
+        http_host: HTTP server host (for router). Default: '0.0.0.0'
+        http_port: HTTP server port (for router). Default: 8080
+
+    Examples:
+        # Start a router with OpenAI-compatible API on port 8080
+        pulsing actor --type router --http_port 8080 --model_name my-llm
+
+        # Test with curl
+        curl http://localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"my-llm","messages":[{"role":"user","content":"Hello"}]}'
+
+        # Start a transformers worker
+        pulsing actor --type transformers --model Qwen/Qwen3-0.6B --addr 0.0.0.0:8001 --seeds 192.168.1.100:8000
+
+        # Start worker on CPU
+        pulsing actor --type transformers --model gpt2 --device cpu
+    """
+    # Parse seeds
+    seed_list = []
+    if seeds:
+        seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
+
+    if type == "router":
+        _start_router_actor(namespace, addr, seed_list, http_host, http_port, model_name)
+    elif type == "transformers":
+        if not model:
+            raise ValueError("--model is required for 'transformers' actor type")
+        _start_transformers_actor(
+            model=model,
+            namespace=namespace,
+            addr=addr,
+            seeds=seed_list,
+            device=device,
+            max_new_tokens=max_new_tokens,
+            preload_model=preload_model,
+        )
+    else:
+        raise ValueError(f"Unknown actor type: {type}. Supported types: router, transformers")
+
+
+def _start_router_actor(
+    namespace: str,
+    addr: Optional[str],
+    seeds: list,
+    http_host: str,
+    http_port: int,
+    model_name: str,
+):
+    """Start RouterActor with OpenAI-compatible API"""
+    from ..actors import RouterActor
+
+    print(f"Starting RouterActor (namespace={namespace}, model={model_name})")
+    print(f"  Actor System addr: {addr or 'auto'}")
+    print(f"  HTTP API: http://{http_host}:{http_port}")
+
+    async def run():
+        router = RouterActor(
+            namespace=namespace,
+            addr=addr,
+            seeds=seeds if seeds else None,
+            http_host=http_host,
+            http_port=http_port,
+            model_name=model_name,
+        )
+        await router.run()
+
+    uvloop.run(run())
+
+
+def _start_transformers_actor(
+    model: str,
+    namespace: str,
+    addr: Optional[str],
+    seeds: list,
+    device: str,
+    max_new_tokens: int,
+    preload_model: bool,
+):
+    """Start TransformersWorkerActor"""
+    from ..actors import TransformersWorkerActor
+
+    print(f"Starting TransformersWorkerActor (model={model}, namespace={namespace})")
+
+    async def run():
+        worker = TransformersWorkerActor(
+            model=model,
+            namespace=namespace,
+            addr=addr,
+            seeds=seeds if seeds else None,
+            device=device,
+            max_new_tokens=max_new_tokens,
+            preload_model=preload_model,
+        )
+        await worker.run()
+
+    uvloop.run(run())
+
+
 def main():
     hp.launch()
 

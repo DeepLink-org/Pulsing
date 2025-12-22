@@ -1027,6 +1027,39 @@ impl PyActorSystem {
         self.inner.local_actor_names()
     }
 
+    /// Get all instances of a named actor across the cluster
+    fn get_named_instances<'py>(&self, py: Python<'py>, name: String) -> PyResult<Bound<'py, PyAny>> {
+        let system = self.inner.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let path = ActorPath::new(&format!("actors/{}", name)).map_err(to_pyerr)?;
+            let instances: Vec<pulsing_actor::cluster::MemberInfo> = system.get_named_instances(&path).await;
+            let result: Vec<std::collections::HashMap<String, String>> = instances
+                .into_iter()
+                .map(|m| {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert("node_id".to_string(), m.node_id.to_string());
+                    map.insert("addr".to_string(), m.addr.to_string());
+                    map.insert("status".to_string(), format!("{:?}", m.status));
+                    map
+                })
+                .collect();
+            Ok(result)
+        })
+    }
+
+    /// Resolve a named actor (selects one instance using load balancing)
+    fn resolve_named<'py>(&self, py: Python<'py>, name: String) -> PyResult<Bound<'py, PyAny>> {
+        let system = self.inner.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let path = ActorPath::new(&format!("actors/{}", name)).map_err(to_pyerr)?;
+            let addr = pulsing_actor::actor::ActorAddress::named(path);
+            let actor_ref = system.resolve(&addr).await.map_err(to_pyerr)?;
+            Ok(PyActorRef { inner: actor_ref })
+        })
+    }
+
     fn stop<'py>(&self, py: Python<'py>, actor_name: String) -> PyResult<Bound<'py, PyAny>> {
         let system = self.inner.clone();
 
