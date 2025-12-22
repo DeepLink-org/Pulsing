@@ -3,9 +3,9 @@
 import asyncio
 import signal
 
-from hyperparameter import auto_param
-
 from dynamo.runtime import DistributedRuntime
+
+import hyperparameter as hp
 
 
 async def graceful_shutdown(runtime: DistributedRuntime):
@@ -13,7 +13,7 @@ async def graceful_shutdown(runtime: DistributedRuntime):
     runtime.shutdown()
 
 
-@auto_param("runtime")
+@hp.param("runtime")
 def create_runtime(
     request_plane: str = "http",
     store_kv: str = "file",

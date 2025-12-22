@@ -57,6 +57,7 @@ impl From<RouterMode> for RsRouterMode {
     }
 }
 
+mod actor;
 mod context;
 mod engine;
 mod http;
@@ -65,6 +66,9 @@ mod llm;
 mod parsers;
 mod planner;
 mod prometheus_metrics;
+mod python_executor;
+
+pub use python_executor::{ExecutorError, init_python_executor, python_executor};
 
 type JsonServerStreamingIngress =
     Ingress<SingleIn<serde_json::Value>, ManyOut<RsAnnotated<serde_json::Value>>>;
@@ -200,6 +204,11 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_submodule(&prometheus_metrics)?;
 
     m.add_function(wrap_pyfunction!(benchmark_main, m)?)?;
+
+    // Actor system bindings
+    let actor_module = PyModule::new(m.py(), "actor")?;
+    actor::add_to_module(&actor_module)?;
+    m.add_submodule(&actor_module)?;
 
     Ok(())
 }

@@ -6,7 +6,7 @@ import os
 import tempfile
 from typing import Optional
 
-from hyperparameter import auto_param, param_scope
+import hyperparameter as hp
 from prometheus_client import REGISTRY
 from vllm.distributed.kv_events import ZmqEventPublisher
 from vllm.engine.arg_utils import AsyncEngineArgs
@@ -249,7 +249,7 @@ async def _register_vllm_model(
     )
 
 
-@auto_param("vllm.worker")
+@hp.param("vllm.worker")
 async def init_decode_worker(
     runtime: DistributedRuntime,
     model: str = None,
@@ -404,7 +404,7 @@ async def init_decode_worker(
         handler.cleanup()
 
 
-@auto_param("vllm.worker")
+@hp.param("vllm.worker")
 async def init_prefill_worker(
     runtime: DistributedRuntime,
     model: str = None,
@@ -538,7 +538,7 @@ async def init_prefill_worker(
         handler.cleanup()
 
 
-@auto_param("vllm.worker")
+@hp.param("vllm.worker")
 async def init_multimodal_processor_worker(
     runtime: DistributedRuntime,
     model: str = None,
@@ -614,7 +614,7 @@ async def init_multimodal_processor_worker(
         handler.cleanup()
 
 
-@auto_param("vllm.worker")
+@hp.param("vllm.worker")
 async def init_multimodal_encode_worker_worker(
     runtime: DistributedRuntime,
     model: str = None,
@@ -675,7 +675,7 @@ async def init_multimodal_encode_worker_worker(
         handler.cleanup()
 
 
-@auto_param("vllm.worker")
+@hp.param("vllm.worker")
 async def init_multimodal_worker_worker(
     runtime: DistributedRuntime,
     model: str = None,
