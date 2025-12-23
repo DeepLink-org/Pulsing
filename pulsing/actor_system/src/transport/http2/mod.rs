@@ -63,6 +63,7 @@ pub use server::{Http2Server, Http2ServerHandler};
 pub use stream::{StreamFrame, StreamHandle};
 
 use crate::actor::{ActorId, ActorPath, Message, PayloadStream, RemoteTransport};
+use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use futures::StreamExt;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -263,12 +264,14 @@ enum Http2RemoteTarget {
 /// Features:
 /// - Automatic connection pooling and reuse
 /// - Retry with exponential backoff for transient failures
+/// - Circuit breaker for fault tolerance
 /// - Configurable timeouts
 /// - Streaming response support
 pub struct Http2RemoteTransport {
     client: Arc<Http2Client>,
     remote_addr: SocketAddr,
     target: Http2RemoteTarget,
+    circuit_breaker: CircuitBreaker,
 }
 
 impl Http2RemoteTransport {
@@ -278,6 +281,7 @@ impl Http2RemoteTransport {
             client,
             remote_addr,
             target: Http2RemoteTarget::Actor(actor_name),
+            circuit_breaker: CircuitBreaker::new(),
         }
     }
 
@@ -287,7 +291,43 @@ impl Http2RemoteTransport {
             client,
             remote_addr,
             target: Http2RemoteTarget::Named(path),
+            circuit_breaker: CircuitBreaker::new(),
         }
+    }
+
+    /// Create a new remote transport with custom circuit breaker configuration
+    pub fn with_circuit_breaker(
+        client: Arc<Http2Client>,
+        remote_addr: SocketAddr,
+        actor_name: String,
+        cb_config: CircuitBreakerConfig,
+    ) -> Self {
+        Self {
+            client,
+            remote_addr,
+            target: Http2RemoteTarget::Actor(actor_name),
+            circuit_breaker: CircuitBreaker::with_config(cb_config),
+        }
+    }
+
+    /// Create a new remote transport targeting a named actor with custom circuit breaker
+    pub fn new_named_with_circuit_breaker(
+        client: Arc<Http2Client>,
+        remote_addr: SocketAddr,
+        path: ActorPath,
+        cb_config: CircuitBreakerConfig,
+    ) -> Self {
+        Self {
+            client,
+            remote_addr,
+            target: Http2RemoteTarget::Named(path),
+            circuit_breaker: CircuitBreaker::with_config(cb_config),
+        }
+    }
+
+    /// Get the circuit breaker (for monitoring/debugging)
+    pub fn circuit_breaker(&self) -> &CircuitBreaker {
+        &self.circuit_breaker
     }
 
     /// Get the underlying HTTP/2 client
@@ -317,10 +357,23 @@ impl RemoteTransport for Http2RemoteTransport {
         msg_type: &str,
         payload: Vec<u8>,
     ) -> anyhow::Result<Vec<u8>> {
+        // Check circuit breaker before making request
+        if !self.circuit_breaker.can_execute() {
+            return Err(anyhow::anyhow!(
+                "Circuit breaker is open for {}",
+                self.remote_addr
+            ));
+        }
+
         let path = self.request_path();
-        self.client
+        let result = self
+            .client
             .ask(self.remote_addr, &path, msg_type, payload)
-            .await
+            .await;
+
+        // Record outcome in circuit breaker
+        self.circuit_breaker.record_outcome(result.is_ok());
+        result
     }
 
     async fn send(
@@ -329,10 +382,23 @@ impl RemoteTransport for Http2RemoteTransport {
         msg_type: &str,
         payload: Vec<u8>,
     ) -> anyhow::Result<()> {
+        // Check circuit breaker before making request
+        if !self.circuit_breaker.can_execute() {
+            return Err(anyhow::anyhow!(
+                "Circuit breaker is open for {}",
+                self.remote_addr
+            ));
+        }
+
         let path = self.request_path();
-        self.client
+        let result = self
+            .client
             .tell(self.remote_addr, &path, msg_type, payload)
-            .await
+            .await;
+
+        // Record outcome in circuit breaker
+        self.circuit_breaker.record_outcome(result.is_ok());
+        result
     }
 
     async fn request_stream(

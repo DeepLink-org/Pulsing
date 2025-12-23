@@ -102,6 +102,7 @@
 //! ```
 
 pub mod actor;
+pub mod circuit_breaker;
 pub mod cluster;
 pub mod system;
 pub mod transport;
