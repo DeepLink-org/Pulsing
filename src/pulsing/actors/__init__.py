@@ -22,10 +22,15 @@ from .base import BaseServiceActor
 from .router import RouterActor
 from .worker import TransformersWorkerActor
 from .openai_server import OpenAIServer
+from .scheduler import Scheduler, RoundRobinScheduler, RandomScheduler, LeastConnectionScheduler
 
 __all__ = [
     "BaseServiceActor",
     "RouterActor",
     "TransformersWorkerActor",
     "OpenAIServer",
+    "Scheduler",
+    "RoundRobinScheduler",
+    "RandomScheduler",
+    "LeastConnectionScheduler",
 ]

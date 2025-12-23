@@ -259,6 +259,7 @@ def actor(
     preload_model: bool = False,
     http_host: str = "0.0.0.0",
     http_port: int = 8080,
+    scheduler: str = "round_robin",
 ):
     """
     Start an Actor-based service.
@@ -277,6 +278,7 @@ def actor(
         model_name: Model name for OpenAI API. Default: 'pulsing-model'
         device: Device for inference ('cuda', 'cpu', 'mps'). Default: 'cuda'
         max_new_tokens: Max tokens to generate. Default: 512
+        scheduler: Scheduler algorithm for router. Options: 'round_robin', 'random', 'least_connection'. Default: 'round_robin'
         preload_model: Preload model on startup. Default: False
         http_host: HTTP server host (for router). Default: '0.0.0.0'
         http_port: HTTP server port (for router). Default: 8080
@@ -300,7 +302,7 @@ def actor(
         seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
 
     if type == "router":
-        _start_router_actor(namespace, addr, seed_list, http_host, http_port, model_name)
+        _start_router_actor(namespace, addr, seed_list, http_host, http_port, model_name, scheduler)
     elif type == "transformers":
         if not model:
             raise ValueError("--model is required for 'transformers' actor type")
@@ -324,13 +326,25 @@ def _start_router_actor(
     http_host: str,
     http_port: int,
     model_name: str,
+    scheduler_type: str,
 ):
     """Start RouterActor with OpenAI-compatible API"""
-    from ..actors import RouterActor
+    from ..actors import RouterActor, RoundRobinScheduler, RandomScheduler, LeastConnectionScheduler
+    
+    # 选择调度器类（传递类，不是实例）
+    scheduler_map = {
+        "round_robin": RoundRobinScheduler,
+        "random": RandomScheduler,
+        "least_connection": LeastConnectionScheduler,
+    }
+    scheduler_class = scheduler_map.get(scheduler_type)
+    if not scheduler_class:
+        raise ValueError(f"Unknown scheduler: {scheduler_type}. Options: {list(scheduler_map.keys())}")
 
     print(f"Starting RouterActor (namespace={namespace}, model={model_name})")
     print(f"  Actor System addr: {addr or 'auto'}")
     print(f"  HTTP API: http://{http_host}:{http_port}")
+    print(f"  Scheduler: {scheduler_type}")
 
     async def run():
         router = RouterActor(
@@ -340,6 +354,7 @@ def _start_router_actor(
             http_host=http_host,
             http_port=http_port,
             model_name=model_name,
+            scheduler_class=scheduler_class,
         )
         await router.run()
 

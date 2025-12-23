@@ -62,13 +62,17 @@ class RouterActor(BaseServiceActor):
         http_host: str = "0.0.0.0",
         http_port: int = 8080,
         model_name: str = "pulsing-model",
+        scheduler_class=None,
     ):
         super().__init__(namespace=namespace, addr=addr, seeds=seeds, public=True)
         self._handler = RouterActorHandler()
         self._http_host = http_host
         self._http_port = http_port
         self._model_name = model_name
+        self._scheduler_class = scheduler_class  # 先保存类，等 actor_system 创建后再实例化
+        self._scheduler = None
         self._http_runner: Optional[web.AppRunner] = None
+        self._http_server = None
     
     @property
     def service_name(self) -> str:
@@ -77,19 +81,32 @@ class RouterActor(BaseServiceActor):
     def _create_actor(self) -> Actor:
         return self._handler
     
-    def _create_http_app(self) -> web.Application:
+    def _create_scheduler(self):
+        """创建调度器实例（需要 actor_system 已初始化）"""
+        if self._scheduler_class:
+            return self._scheduler_class(self._system)
+        else:
+            from .scheduler import RoundRobinScheduler
+            return RoundRobinScheduler(self._system)
+    
+    def _create_http_server(self):
         from .openai_server import OpenAIServer
-        server = OpenAIServer(
+        self._http_server = OpenAIServer(
             actor_system=self._system,
             model_name=self._model_name,
+            scheduler=self._scheduler,
         )
-        return server.create_app()
+        return self._http_server.create_app()
     
     async def start(self) -> ActorRef:
         actor_ref = await super().start()
         
+        # 创建调度器（需要 actor_system）
+        self._scheduler = self._create_scheduler()
+        
         # 启动 HTTP 服务器
-        app = self._create_http_app()
+        app = self._create_http_server()
+        
         self._http_runner = web.AppRunner(app)
         await self._http_runner.setup()
         site = web.TCPSite(self._http_runner, self._http_host, self._http_port)
@@ -100,4 +117,5 @@ class RouterActor(BaseServiceActor):
         # 停止 HTTP 服务器
         if self._http_runner:
             await self._http_runner.cleanup()
+        
         await super().stop()

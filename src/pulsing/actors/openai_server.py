@@ -63,10 +63,13 @@ class CompletionRequest:
 class OpenAIServer:
     """OpenAI 兼容的 HTTP 服务器"""
     
-    def __init__(self, actor_system: ActorSystem, model_name: str = "pulsing-model"):
+    def __init__(self, actor_system: ActorSystem, model_name: str = "pulsing-model", scheduler=None):
         self._actor_system = actor_system
         self.model_name = model_name
         self._request_count = 0
+        # 调度器负责选择 worker
+        from .scheduler import RoundRobinScheduler
+        self._scheduler = scheduler or RoundRobinScheduler(actor_system)
     
     def create_app(self) -> web.Application:
         app = web.Application()
@@ -84,16 +87,14 @@ class OpenAIServer:
         })
     
     async def health_check(self, request: web.Request) -> web.Response:
-        # 获取当前可用的 worker 数量
-        try:
-            workers = await self._actor_system.get_named_instances("worker")
-            healthy_workers = sum(1 for w in workers if w.get("status") == "Alive")
-        except Exception:
-            healthy_workers = 0
+        # 从调度器获取 worker 状态
+        total_workers = await self._scheduler.get_worker_count()
+        healthy_workers = await self._scheduler.get_healthy_worker_count()
         
         return web.json_response({
             "status": "healthy" if healthy_workers > 0 else "degraded",
             "model": self.model_name,
+            "total_workers": total_workers,
             "healthy_workers": healthy_workers,
             "request_count": self._request_count,
         })
@@ -119,11 +120,10 @@ class OpenAIServer:
         
         req = ChatCompletionRequest.from_dict(data)
         
-        # 直接通过 Named Actor 解析获取 worker
-        try:
-            worker_ref = await self._actor_system.resolve_named("worker")
-        except Exception as e:
-            return web.json_response({"error": {"message": f"No available workers: {e}"}}, status=503)
+        # 从调度器选择一个 worker（按需查询 + resolve）
+        worker_ref = await self._scheduler.select_worker()
+        if not worker_ref:
+            return web.json_response({"error": {"message": "No available workers"}}, status=503)
         
         prompt = self._build_chat_prompt(req.messages)
         if req.stream:
@@ -141,11 +141,10 @@ class OpenAIServer:
         
         req = CompletionRequest.from_dict(data)
         
-        # 直接通过 Named Actor 解析获取 worker
-        try:
-            worker_ref = await self._actor_system.resolve_named("worker")
-        except Exception as e:
-            return web.json_response({"error": {"message": f"No available workers: {e}"}}, status=503)
+        # 从调度器选择一个 worker（按需查询 + resolve）
+        worker_ref = await self._scheduler.select_worker()
+        if not worker_ref:
+            return web.json_response({"error": {"message": "No available workers"}}, status=503)
         
         prompt = req.prompt if isinstance(req.prompt, str) else req.prompt[0]
         if req.stream:
