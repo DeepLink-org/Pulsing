@@ -16,9 +16,9 @@ Usage:
 import asyncio
 import argparse
 from pulsing.actor import (
-    ActorSystem,
+    create_actor_system,
     SystemConfig,
-    RawMessage,
+    Message,
     Actor,
     ActorId,
     ActorRef,
@@ -35,21 +35,21 @@ class GreeterActor(Actor):
     def on_start(self, actor_id: ActorId):
         print(f"[{self.node_name}] GreeterActor started as '{actor_id.name}'")
     
-    def receive(self, msg: RawMessage) -> RawMessage:
+    def receive(self, msg: Message) -> Message:
         if msg.msg_type == "Greet":
             data = msg.to_json()
             name = data.get("name", "stranger")
             self.greet_count += 1
             greeting = f"Hello {name} from {self.node_name}! (greet #{self.greet_count})"
             print(f"[{self.node_name}] Greeting: {greeting}")
-            return RawMessage.from_json("Greeting", {"message": greeting})
+            return Message.from_json("Greeting", {"message": greeting})
         elif msg.msg_type == "Stats":
-            return RawMessage.from_json("Stats", {
+            return Message.from_json("Stats", {
                 "node": self.node_name,
                 "greet_count": self.greet_count
             })
         else:
-            return RawMessage.empty()
+            return Message.empty()
 
 
 async def run_node(port: int, seed_addr: str | None = None):
@@ -66,7 +66,7 @@ async def run_node(port: int, seed_addr: str | None = None):
         config = config.with_seeds([seed_addr])
     
     # Create actor system
-    system = await ActorSystem.create(config)
+    system = await create_actor_system(config)
     print(f"✓ System started at {system.addr}")
     print(f"  Node ID: {system.node_id}")
     

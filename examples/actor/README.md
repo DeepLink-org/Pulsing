@@ -141,7 +141,7 @@ curl http://localhost:8080/health
 
 ```python
 import asyncio
-from pulsing.actor import ActorSystem, SystemConfig, RawMessage, Actor, ActorId
+from pulsing.actor import create_actor_system, SystemConfig, Message, Actor, ActorId
 
 class PingPongActor(Actor):
     def __init__(self):
@@ -150,15 +150,15 @@ class PingPongActor(Actor):
     def on_start(self, actor_id: ActorId):
         print(f"Actor started: {actor_id.name}")
     
-    def receive(self, msg: RawMessage) -> RawMessage:
+    def receive(self, msg: Message) -> Message:
         if msg.msg_type == "Ping":
             self.count += 1
-            return RawMessage.from_json("Pong", {"count": self.count})
-        return RawMessage.empty()
+            return Message.from_json("Pong", {"count": self.count})
+        return Message.empty()
 
 async def main():
     config = SystemConfig.standalone()
-    system = await ActorSystem.create(config)
+    system = await create_actor_system(config)
     actor = await system.spawn("counter", PingPongActor())
     
     # Request-response
@@ -176,12 +176,12 @@ asyncio.run(main())
 import asyncio
 from pulsing.actors import TransformersWorker, start_router, stop_router
 from pulsing.actor.helpers import run_until_signal
-from pulsing.actor import ActorSystem, SystemConfig
+from pulsing.actor import create_actor_system, SystemConfig
 
 async def main():
     # Start Router
     router_config = SystemConfig.with_addr("0.0.0.0:8000")
-    router_system = await ActorSystem.create(router_config)
+    router_system = await create_actor_system(router_config)
     runner = await start_router(
         router_system,
         http_host="0.0.0.0",
@@ -191,7 +191,7 @@ async def main():
     
     # Start Worker
     worker_config = SystemConfig.with_addr("0.0.0.0:8001").with_seeds(["127.0.0.1:8000"])
-    worker_system = await ActorSystem.create(worker_config)
+    worker_system = await create_actor_system(worker_config)
     worker = TransformersWorker(model_name="gpt2", device="cpu")
     worker_ref = await worker_system.spawn("worker", worker, public=True)
     

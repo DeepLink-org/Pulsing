@@ -63,7 +63,7 @@ async def spawn_and_run(
         seeds: Seed node list
         public: Whether to register as public actor
     """
-    from . import ActorSystem, SystemConfig
+    from . import create_actor_system, SystemConfig
     
     # Create system config
     if addr:
@@ -75,7 +75,7 @@ async def spawn_and_run(
         config = config.with_seeds(seeds)
     
     # Create actor system and spawn actor
-    system = await ActorSystem.create(config)
+    system = await create_actor_system(config)
     actor_ref = await system.spawn(name, actor, public=public)
     
     print(f"[{name}] Started at {system.addr}")

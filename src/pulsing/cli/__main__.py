@@ -346,7 +346,7 @@ def _start_router_actor(
     scheduler_type: str,
 ):
     """Start Router with OpenAI-compatible API"""
-    from pulsing.actor import ActorSystem, SystemConfig
+    from pulsing.actor import create_actor_system, SystemConfig
     from pulsing.actor.helpers import run_until_signal
     from ..actors.router import start_router, stop_router
     from ..actors import RoundRobinScheduler, RandomScheduler, LeastConnectionScheduler
@@ -376,7 +376,7 @@ def _start_router_actor(
         if seeds:
             config = config.with_seeds(seeds)
         
-        system = await ActorSystem.create(config)
+        system = await create_actor_system(config)
         print(f"[Router] ActorSystem started at {system.addr}")
         
         # 2. 启动 Router HTTP 服务器

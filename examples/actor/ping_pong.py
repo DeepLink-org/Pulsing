@@ -10,9 +10,9 @@ Usage:
 
 import asyncio
 from pulsing.actor import (
-    ActorSystem,
+    create_actor_system,
     SystemConfig,
-    RawMessage,
+    Message,
     Actor,
     ActorId,
 )
@@ -30,19 +30,19 @@ class PingPongActor(Actor):
     def on_stop(self):
         print(f"✓ Actor stopped with final count: {self.count}")
     
-    def receive(self, msg: RawMessage) -> RawMessage:
+    def receive(self, msg: Message) -> Message:
         """Handle incoming messages."""
         if msg.msg_type == "Ping":
             data = msg.to_json()
             value = data.get("value", 1)
             self.count += value
             print(f"  Received Ping({value}), count is now {self.count}")
-            return RawMessage.from_json("Pong", {"result": self.count})
+            return Message.from_json("Pong", {"result": self.count})
         elif msg.msg_type == "GetCount":
-            return RawMessage.from_json("Count", {"count": self.count})
+            return Message.from_json("Count", {"count": self.count})
         else:
             print(f"  Unknown message type: {msg.msg_type}")
-            return RawMessage.empty()
+            return Message.empty()
 
 
 class AsyncPingPongActor(Actor):
@@ -54,7 +54,7 @@ class AsyncPingPongActor(Actor):
     def on_start(self, actor_id: ActorId):
         print(f"✓ Async Actor '{actor_id.name}' started")
     
-    async def receive(self, msg: RawMessage) -> RawMessage:
+    async def receive(self, msg: Message) -> Message:
         """Handle incoming messages asynchronously."""
         # Simulate some async work
         await asyncio.sleep(0.01)
@@ -64,9 +64,9 @@ class AsyncPingPongActor(Actor):
             value = data.get("value", 1)
             self.count += value
             print(f"  [Async] Received Ping({value}), count is now {self.count}")
-            return RawMessage.from_json("Pong", {"result": self.count})
+            return Message.from_json("Pong", {"result": self.count})
         else:
-            return RawMessage.empty()
+            return Message.empty()
 
 
 async def main():
@@ -77,7 +77,7 @@ async def main():
     
     # Create actor system in standalone mode
     config = SystemConfig.standalone()
-    system = await ActorSystem.create(config)
+    system = await create_actor_system(config)
     print(f"✓ Actor system started at {system.addr}")
     print(f"  Node ID: {system.node_id}")
     print()

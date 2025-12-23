@@ -17,7 +17,7 @@ import pytest
 
 from pulsing.actor import (
     Actor,
-    ActorSystem,
+    create_actor_system,
     SystemConfig,
     Message,
     StreamMessage,
@@ -178,7 +178,7 @@ class BidirectionalStreamActor(Actor):
 async def actor_system():
     """Create a standalone actor system for testing."""
     config = SystemConfig.standalone()
-    system = await ActorSystem.create(config)
+    system = await create_actor_system(config)
     yield system
     await system.shutdown()
 
@@ -188,11 +188,11 @@ async def cluster_systems():
     """Create two actor systems that form a cluster."""
     # First node
     config1 = SystemConfig.with_addr("127.0.0.1:18001")
-    system1 = await ActorSystem.create(config1)
+    system1 = await create_actor_system(config1)
 
     # Second node, joins the first
     config2 = SystemConfig.with_addr("127.0.0.1:18002").with_seeds(["127.0.0.1:18001"])
-    system2 = await ActorSystem.create(config2)
+    system2 = await create_actor_system(config2)
 
     # Wait for cluster to form
     await asyncio.sleep(0.5)
