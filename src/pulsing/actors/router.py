@@ -205,9 +205,9 @@ async def start_router(
     scheduler_class=None,
 ) -> web.AppRunner:
     """启动 Router HTTP 服务器，返回 AppRunner"""
-    from .scheduler import RoundRobinScheduler
+    from .scheduler import RandomScheduler
     
-    scheduler_class = scheduler_class or RoundRobinScheduler
+    scheduler_class = scheduler_class or RandomScheduler
     scheduler = scheduler_class(system)
     handler = _OpenAIHandler(system, model_name, scheduler)
     

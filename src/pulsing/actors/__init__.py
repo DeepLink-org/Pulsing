@@ -2,6 +2,7 @@
 
 # Worker
 from .worker import TransformersWorker, GenerationConfig
+from .vllm_worker import VllmWorker
 
 # Router
 from .router import start_router, stop_router
@@ -21,6 +22,7 @@ TransformersWorkerActor = TransformersWorker
 __all__ = [
     # Core API
     "TransformersWorker",
+    "VllmWorker",
     "GenerationConfig",
     "start_router",
     "stop_router",

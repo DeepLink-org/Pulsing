@@ -118,9 +118,9 @@ class ActorSystem:
         """Get all instances of named actor across cluster"""
         return await self._inner.get_named_instances(name)
     
-    async def resolve_named(self, name: str) -> ActorRef:
-        """Resolve named actor reference (load balanced)"""
-        return await self._inner.resolve_named(name)
+    async def resolve_named(self, name: str, node_id: Optional[str] = None) -> ActorRef:
+        """Resolve named actor reference (load balanced or specific node)"""
+        return await self._inner.resolve_named(name, node_id)
     
     async def stop(self, actor_name: str) -> None:
         """Stop an actor"""

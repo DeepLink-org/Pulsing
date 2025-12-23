@@ -175,7 +175,7 @@ asyncio.run(main())
 ```python
 import asyncio
 from pulsing.actors import TransformersWorker, start_router, stop_router
-from pulsing.actor.helpers import spawn_service_actor, run_until_signal
+from pulsing.actor.helpers import run_until_signal
 from pulsing.actor import ActorSystem, SystemConfig
 
 async def main():
@@ -190,14 +190,10 @@ async def main():
     )
     
     # Start Worker
+    worker_config = SystemConfig.with_addr("0.0.0.0:8001").with_seeds(["127.0.0.1:8000"])
+    worker_system = await ActorSystem.create(worker_config)
     worker = TransformersWorker(model_name="gpt2", device="cpu")
-    worker_system, worker_ref = await spawn_service_actor(
-        worker,
-        "worker",
-        addr="0.0.0.0:8001",
-        seeds=["127.0.0.1:8000"],
-        public=True
-    )
+    worker_ref = await worker_system.spawn("worker", worker, public=True)
     
     # Run until signal
     await run_until_signal(worker_system, "worker")

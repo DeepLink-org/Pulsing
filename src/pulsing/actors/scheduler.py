@@ -26,9 +26,10 @@ class Scheduler(ABC):
         workers = await self.get_available_workers()
         return sum(1 for w in workers if w.get("status") == "Alive")
     
-    async def _resolve_worker(self):
+    async def _resolve_worker(self, node_id: Optional[str] = None):
         try:
-            return await self._system.resolve_named(self._worker_name)
+            # 如果指定了 node_id，则请求解析该特定节点的 Actor
+            return await self._system.resolve_named(self._worker_name, node_id=node_id)
         except Exception:
             return None
     
@@ -52,16 +53,22 @@ class RoundRobinScheduler(Scheduler):
         
         async with self._lock:
             self._index = (self._index + 1) % len(workers)
+            selected_worker = workers[self._index]
         
-        return await self._resolve_worker()
+        return await self._resolve_worker(node_id=selected_worker.get("node_id"))
 
 
 class RandomScheduler(Scheduler):
     """随机调度器"""
     
     async def select_worker(self):
+        import random
         workers = await self.get_available_workers()
-        return await self._resolve_worker() if workers else None
+        if not workers:
+            return None
+            
+        selected_worker = random.choice(workers)
+        return await self._resolve_worker(node_id=selected_worker.get("node_id"))
 
 
 class LeastConnectionScheduler(Scheduler):
@@ -77,8 +84,9 @@ class LeastConnectionScheduler(Scheduler):
             return None
         
         async with self._lock:
-            selected = min(workers, key=lambda w: self._request_counts.get(w.get("node_id"), 0))
-            self._request_counts[selected["node_id"]] = self._request_counts.get(selected["node_id"], 0) + 1
+            selected_worker = min(workers, key=lambda w: self._request_counts.get(w.get("node_id"), 0))
+            node_id = selected_worker.get("node_id")
+            self._request_counts[node_id] = self._request_counts.get(node_id, 0) + 1
         
-        return await self._resolve_worker()
+        return await self._resolve_worker(node_id=node_id)
 

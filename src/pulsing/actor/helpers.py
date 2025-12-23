@@ -8,40 +8,6 @@ if TYPE_CHECKING:
     from . import Actor, ActorSystem, SystemConfig, ActorRef
 
 
-async def spawn_service_actor(
-    actor: "Actor",
-    name: str,
-    addr: Optional[str] = None,
-    seeds: Optional[List[str]] = None,
-    public: bool = True,
-) -> Tuple["ActorSystem", "ActorRef"]:
-    """
-    Create ActorSystem and spawn an actor
-    
-    Args:
-        actor: Actor instance
-        name: Actor name
-        addr: Bind address (e.g. "0.0.0.0:8000")
-        seeds: Seed node list
-        public: Whether to register as public actor for discovery
-    
-    Returns:
-        (ActorSystem, ActorRef) tuple
-    """
-    from . import ActorSystem, SystemConfig
-    
-    if addr:
-        config = SystemConfig.with_addr(addr)
-    else:
-        config = SystemConfig.standalone()
-    
-    if seeds:
-        config = config.with_seeds(seeds)
-    
-    system = await ActorSystem.create(config)
-    actor_ref = await system.spawn(name, actor, public=public)
-    
-    return system, actor_ref
 
 
 async def run_until_signal(system: "ActorSystem", actor_name: Optional[str] = None):
@@ -90,8 +56,6 @@ async def spawn_and_run(
     """
     Create ActorSystem, spawn actor, and run until signal
     
-    Combines spawn_service_actor + run_until_signal.
-    
     Args:
         actor: Actor instance
         name: Actor name
@@ -99,6 +63,20 @@ async def spawn_and_run(
         seeds: Seed node list
         public: Whether to register as public actor
     """
-    system, actor_ref = await spawn_service_actor(actor, name, addr, seeds, public)
+    from . import ActorSystem, SystemConfig
+    
+    # Create system config
+    if addr:
+        config = SystemConfig.with_addr(addr)
+    else:
+        config = SystemConfig.standalone()
+    
+    if seeds:
+        config = config.with_seeds(seeds)
+    
+    # Create actor system and spawn actor
+    system = await ActorSystem.create(config)
+    actor_ref = await system.spawn(name, actor, public=public)
+    
     print(f"[{name}] Started at {system.addr}")
     await run_until_signal(system, name)

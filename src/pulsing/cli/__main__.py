@@ -256,10 +256,11 @@ def actor(
     model_name: str = "pulsing-model",
     device: str = "cuda",
     max_new_tokens: int = 512,
+    role: str = "aggregated",
     preload_model: bool = False,
     http_host: str = "0.0.0.0",
     http_port: int = 8080,
-    scheduler: str = "round_robin",
+    scheduler: str = "random",
 ):
     """
     Start an Actor-based service.
@@ -268,16 +269,18 @@ def actor(
     Supported actor types:
     - router: RoundRobin load balancing router (with OpenAI-compatible HTTP API)
     - transformers: Transformers-based inference worker
+    - vllm: vLLM-based high-performance inference worker
 
     Args:
-        type: Actor type. Options: 'router', 'transformers'
+        type: Actor type. Options: 'router', 'transformers', 'vllm'
         namespace: Service namespace. Default: 'dynamo'
         addr: Actor System bind address (e.g., '0.0.0.0:8000')
         seeds: Comma-separated list of seed nodes (e.g., '192.168.1.1:8000,192.168.1.2:8000')
-        model: Model path (required for 'transformers' type)
+        model: Model path (required for 'transformers' and 'vllm' type)
         model_name: Model name for OpenAI API. Default: 'pulsing-model'
         device: Device for inference ('cuda', 'cpu', 'mps'). Default: 'cuda'
         max_new_tokens: Max tokens to generate. Default: 512
+        role: Worker role for vLLM ('aggregated', 'prefill', 'decode'). Default: 'aggregated'
         scheduler: Scheduler algorithm for router. Options: 'round_robin', 'random', 'least_connection'. Default: 'round_robin'
         preload_model: Preload model on startup. Default: False
         http_host: HTTP server host (for router). Default: '0.0.0.0'
@@ -289,6 +292,9 @@ def actor(
 
         # Test with curl
         curl http://localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"my-llm","messages":[{"role":"user","content":"Hello"}]}'
+
+        # Start a vLLM worker
+        pulsing actor --type vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
 
         # Start a transformers worker
         pulsing actor --type transformers --model Qwen/Qwen3-0.6B --addr 0.0.0.0:8001 --seeds 192.168.1.100:8000
@@ -315,8 +321,19 @@ def actor(
             max_new_tokens=max_new_tokens,
             preload_model=preload_model,
         )
+    elif type == "vllm":
+        if not model:
+            raise ValueError("--model is required for 'vllm' actor type")
+        _start_vllm_actor(
+            model=model,
+            namespace=namespace,
+            addr=addr,
+            seeds=seed_list,
+            max_new_tokens=max_new_tokens,
+            role=role,
+        )
     else:
-        raise ValueError(f"Unknown actor type: {type}. Supported types: router, transformers")
+        raise ValueError(f"Unknown actor type: {type}. Supported types: router, transformers, vllm")
 
 
 def _start_router_actor(
@@ -406,6 +423,41 @@ def _start_transformers_actor(
             device=device,
             gen_config=gen_config,
             preload=preload_model,
+        )
+        
+        # spawn 并运行
+        await spawn_and_run(
+            worker,
+            name="worker",
+            addr=addr,
+            seeds=seeds if seeds else None,
+            public=True,
+        )
+
+    uvloop.run(run())
+
+
+def _start_vllm_actor(
+    model: str,
+    namespace: str,
+    addr: Optional[str],
+    seeds: list,
+    max_new_tokens: int,
+    role: str = "aggregated",
+):
+    """Start vLLM Worker"""
+    from pulsing.actor.helpers import spawn_and_run
+    from ..actors import VllmWorker
+
+    print(f"Starting vLLM Worker (model={model}, namespace={namespace}, role={role})")
+    print(f"  Max tokens: {max_new_tokens}")
+
+    async def run():
+        # 创建 Worker Actor
+        worker = VllmWorker(
+            model=model,
+            role=role,
+            max_new_tokens=max_new_tokens,
         )
         
         # spawn 并运行
