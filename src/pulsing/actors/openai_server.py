@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, List, Union
 
 from aiohttp import web
-from pulsing.actor import Message
+from pulsing.actor import Message, ActorSystem
 
 
 @dataclass
@@ -63,10 +63,9 @@ class CompletionRequest:
 class OpenAIServer:
     """OpenAI 兼容的 HTTP 服务器"""
     
-    def __init__(self, router_scheduler, model_name: str = "pulsing-model", actor_system=None):
-        self.scheduler = router_scheduler
-        self.model_name = model_name
+    def __init__(self, actor_system: ActorSystem, model_name: str = "pulsing-model"):
         self._actor_system = actor_system
+        self.model_name = model_name
         self._request_count = 0
     
     def create_app(self) -> web.Application:
@@ -74,7 +73,6 @@ class OpenAIServer:
         app.router.add_get("/", self.index)
         app.router.add_get("/health", self.health_check)
         app.router.add_get("/v1/models", self.list_models)
-        app.router.add_get("/v1/workers", self.list_workers)
         app.router.add_post("/v1/chat/completions", self.chat_completions)
         app.router.add_post("/v1/completions", self.completions)
         return app
@@ -86,13 +84,17 @@ class OpenAIServer:
         })
     
     async def health_check(self, request: web.Request) -> web.Response:
-        workers = await self.scheduler.get_workers()
-        healthy = await self.scheduler.get_healthy_worker_count()
+        # 获取当前可用的 worker 数量
+        try:
+            workers = await self._actor_system.get_named_instances("worker")
+            healthy_workers = sum(1 for w in workers if w.get("status") == "Alive")
+        except Exception:
+            healthy_workers = 0
+        
         return web.json_response({
-            "status": "healthy" if healthy > 0 else "degraded",
+            "status": "healthy" if healthy_workers > 0 else "degraded",
             "model": self.model_name,
-            "total_workers": len(workers),
-            "healthy_workers": healthy,
+            "healthy_workers": healthy_workers,
             "request_count": self._request_count,
         })
     
@@ -107,21 +109,6 @@ class OpenAIServer:
             }]
         })
     
-    async def list_workers(self, request: web.Request) -> web.Response:
-        workers = await self.scheduler.get_workers()
-        return web.json_response({
-            "workers": [
-                {
-                    "worker_id": w.worker_id[:8] + "...",
-                    "endpoint": w.endpoint,
-                    "is_healthy": w.is_healthy,
-                    "request_count": w.request_count,
-                }
-                for w in workers
-            ],
-            "total": len(workers),
-        })
-    
     async def chat_completions(self, request: web.Request) -> web.Response:
         self._request_count += 1
         request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
@@ -131,15 +118,18 @@ class OpenAIServer:
             return web.json_response({"error": {"message": "Invalid JSON"}}, status=400)
         
         req = ChatCompletionRequest.from_dict(data)
-        worker = await self.scheduler.get_next_worker()
-        if not worker:
-            return web.json_response({"error": {"message": "No available workers"}}, status=503)
+        
+        # 直接通过 Named Actor 解析获取 worker
+        try:
+            worker_ref = await self._actor_system.resolve_named("worker")
+        except Exception as e:
+            return web.json_response({"error": {"message": f"No available workers: {e}"}}, status=503)
         
         prompt = self._build_chat_prompt(req.messages)
         if req.stream:
-            return await self._stream_generate(request, request_id, req.model, prompt, worker, req.max_tokens or 512, is_chat=True)
+            return await self._stream_generate(request, request_id, req.model, prompt, worker_ref, req.max_tokens or 512, is_chat=True)
         else:
-            return await self._sync_generate(request_id, req.model, prompt, worker, req.max_tokens or 512, is_chat=True)
+            return await self._sync_generate(request_id, req.model, prompt, worker_ref, req.max_tokens or 512, is_chat=True)
     
     async def completions(self, request: web.Request) -> web.Response:
         self._request_count += 1
@@ -150,15 +140,18 @@ class OpenAIServer:
             return web.json_response({"error": {"message": "Invalid JSON"}}, status=400)
         
         req = CompletionRequest.from_dict(data)
-        worker = await self.scheduler.get_next_worker()
-        if not worker:
-            return web.json_response({"error": {"message": "No available workers"}}, status=503)
+        
+        # 直接通过 Named Actor 解析获取 worker
+        try:
+            worker_ref = await self._actor_system.resolve_named("worker")
+        except Exception as e:
+            return web.json_response({"error": {"message": f"No available workers: {e}"}}, status=503)
         
         prompt = req.prompt if isinstance(req.prompt, str) else req.prompt[0]
         if req.stream:
-            return await self._stream_generate(request, request_id, req.model, prompt, worker, req.max_tokens, is_chat=False)
+            return await self._stream_generate(request, request_id, req.model, prompt, worker_ref, req.max_tokens, is_chat=False)
         else:
-            return await self._sync_generate(request_id, req.model, prompt, worker, req.max_tokens, is_chat=False)
+            return await self._sync_generate(request_id, req.model, prompt, worker_ref, req.max_tokens, is_chat=False)
     
     def _build_chat_prompt(self, messages: List[Dict]) -> str:
         parts = []
@@ -169,21 +162,16 @@ class OpenAIServer:
         parts.append("Assistant:")
         return "\n".join(parts)
     
-    async def _sync_generate(self, request_id: str, model: str, prompt: str, worker, max_tokens: int, is_chat: bool) -> web.Response:
+    async def _sync_generate(self, request_id: str, model: str, prompt: str, worker_ref, max_tokens: int, is_chat: bool) -> web.Response:
         created = int(time.time())
-        actor_ref = worker.actor_ref
         
-        if actor_ref:
-            try:
-                result = await actor_ref.ask_json("GenerateRequest", {"prompt": prompt, "max_new_tokens": max_tokens})
-                text = result.get("text", "")
-                prompt_tokens = result.get("prompt_tokens", 0)
-                completion_tokens = result.get("completion_tokens", 0)
-            except Exception as e:
-                text = f"[Error: {e}]"
-                prompt_tokens = completion_tokens = 0
-        else:
-            text = f"[Worker unavailable]"
+        try:
+            result = await worker_ref.ask_json("GenerateRequest", {"prompt": prompt, "max_new_tokens": max_tokens})
+            text = result.get("text", "")
+            prompt_tokens = result.get("prompt_tokens", 0)
+            completion_tokens = result.get("completion_tokens", 0)
+        except Exception as e:
+            text = f"[Error: {e}]"
             prompt_tokens = completion_tokens = 0
             
         res_data = {
@@ -200,41 +188,37 @@ class OpenAIServer:
             res_data["choices"][0]["text"] = text
         return web.json_response(res_data)
     
-    async def _stream_generate(self, request: web.Request, request_id: str, model: str, prompt: str, worker, max_tokens: int, is_chat: bool) -> web.StreamResponse:
+    async def _stream_generate(self, request: web.Request, request_id: str, model: str, prompt: str, worker_ref, max_tokens: int, is_chat: bool) -> web.StreamResponse:
         created = int(time.time())
         response = web.StreamResponse(headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"})
         await response.prepare(request)
         
         obj_type = "chat.completion.chunk" if is_chat else "text_completion"
-        actor_ref = worker.actor_ref
         
-        if actor_ref:
-            try:
-                req_msg = Message.from_json("GenerateStreamRequest", {"prompt": prompt, "max_new_tokens": max_tokens})
-                reader = await actor_ref.ask_stream(req_msg)
-                
-                async for chunk_bytes in reader:
-                    try:
-                        chunk = json.loads(chunk_bytes)
-                        text = chunk.get("text", "")
-                        if text:
-                            data = {
-                                "id": request_id, "object": obj_type, "created": created, "model": model or self.model_name,
-                                "choices": [{"index": 0, "finish_reason": None}]
-                            }
-                            if is_chat:
-                                data["choices"][0]["delta"] = {"content": text}
-                            else:
-                                data["choices"][0]["text"] = text
-                            await response.write(f"data: {json.dumps(data)}\n\n".encode())
-                        if chunk.get("finish_reason"):
-                            break
-                    except json.JSONDecodeError:
-                        continue
-            except Exception as e:
-                await response.write(f"data: {json.dumps({'error': str(e)})}\n\n".encode())
-        else:
-            await response.write(f"data: {json.dumps({'error': 'No worker available'})}\n\n".encode())
+        try:
+            req_msg = Message.from_json("GenerateStreamRequest", {"prompt": prompt, "max_new_tokens": max_tokens})
+            reader = await worker_ref.ask_stream(req_msg)
+            
+            async for chunk_bytes in reader:
+                try:
+                    chunk = json.loads(chunk_bytes)
+                    text = chunk.get("text", "")
+                    if text:
+                        data = {
+                            "id": request_id, "object": obj_type, "created": created, "model": model or self.model_name,
+                            "choices": [{"index": 0, "finish_reason": None}]
+                        }
+                        if is_chat:
+                            data["choices"][0]["delta"] = {"content": text}
+                        else:
+                            data["choices"][0]["text"] = text
+                        await response.write(f"data: {json.dumps(data)}\n\n".encode())
+                    if chunk.get("finish_reason"):
+                        break
+                except json.JSONDecodeError:
+                    continue
+        except Exception as e:
+            await response.write(f"data: {json.dumps({'error': str(e)})}\n\n".encode())
         
         # 结束标记
         final = {"id": request_id, "object": obj_type, "created": created, "model": model or self.model_name, "choices": [{"index": 0, "finish_reason": "stop"}]}

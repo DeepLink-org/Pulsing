@@ -2,9 +2,8 @@
 Pulsing Actors - 类 Dynamo 的分布式服务框架
 
 提供：
-- RouterActor: RoundRobin 负载均衡路由器，带 OpenAI 兼容 API
+- RouterActor: 基于 Named Actor 的路由器，带 OpenAI 兼容 API
 - TransformersWorkerActor: 基于 Transformers 的推理 Worker
-- WorkerDiscovery: 自动 Worker 发现
 
 使用示例:
     # 启动 Router
@@ -20,17 +19,13 @@ Pulsing Actors - 类 Dynamo 的分布式服务框架
 """
 
 from .base import BaseServiceActor
-from .router import RouterActor, RoundRobinScheduler, WorkerInfo
-from .worker import TransformersWorkerActor, GenerationConfig
-from .discovery import WorkerDiscovery, DiscoveredWorker
+from .router import RouterActor
+from .worker import TransformersWorkerActor
+from .openai_server import OpenAIServer
 
 __all__ = [
     "BaseServiceActor",
     "RouterActor",
-    "RoundRobinScheduler",
-    "WorkerInfo",
     "TransformersWorkerActor",
-    "GenerationConfig",
-    "WorkerDiscovery",
-    "DiscoveredWorker",
+    "OpenAIServer",
 ]
