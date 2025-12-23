@@ -10,7 +10,7 @@
 use super::member::{ActorLocation, MemberInfo, MemberStatus, NamedActorInfo};
 use super::swim::{SwimConfig, SwimDetector, SwimMessage};
 use crate::actor::{ActorId, ActorPath, NodeId, StopReason};
-use crate::transport::HttpTransport;
+use crate::transport::http2::Http2Transport;
 use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -128,8 +128,8 @@ pub struct GossipCluster {
     /// Supports multi-instance named actors
     named_actors: Arc<RwLock<HashMap<String, NamedActorInfo>>>,
 
-    /// HTTP transport for gossip
-    transport: Arc<HttpTransport>,
+    /// HTTP/2 transport for gossip
+    transport: Arc<Http2Transport>,
 
     /// Seed addresses for periodic re-probing
     seed_addrs: Arc<RwLock<Vec<SocketAddr>>>,
@@ -150,7 +150,7 @@ impl GossipCluster {
     pub fn new(
         local_node: NodeId,
         local_addr: SocketAddr,
-        transport: Arc<HttpTransport>,
+        transport: Arc<Http2Transport>,
         config: GossipConfig,
     ) -> Self {
         tracing::info!(
@@ -733,7 +733,7 @@ struct GossipClusterInner {
     members: Arc<RwLock<HashMap<NodeId, MemberInfo>>>,
     actors: Arc<RwLock<HashMap<ActorId, NodeId>>>,
     named_actors: Arc<RwLock<HashMap<String, NamedActorInfo>>>,
-    transport: Arc<HttpTransport>,
+    transport: Arc<Http2Transport>,
     seed_addrs: Arc<RwLock<Vec<SocketAddr>>>,
     config: GossipConfig,
     swim: SwimDetector,

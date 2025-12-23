@@ -672,7 +672,7 @@ impl PyActorRef {
         };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
+            let response = actor_ref.send_stream(actor_msg).await.map_err(to_pyerr)?;
             match response {
                 Message::Stream { stream, .. } => Ok(PyStreamReader::new(stream)),
                 Message::Single { .. } => Err(PyValueError::new_err(
@@ -1049,13 +1049,14 @@ impl PyActorSystem {
     }
 
     /// Resolve a named actor (selects one instance using load balancing)
-    fn resolve_named<'py>(&self, py: Python<'py>, name: String) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(signature = (name, node_id=None))]
+    fn resolve_named<'py>(&self, py: Python<'py>, name: String, node_id: Option<String>) -> PyResult<Bound<'py, PyAny>> {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let path = ActorPath::new(&format!("actors/{}", name)).map_err(to_pyerr)?;
-            let addr = pulsing_actor::actor::ActorAddress::named(path);
-            let actor_ref = system.resolve(&addr).await.map_err(to_pyerr)?;
+            let node = node_id.as_ref().map(|s| NodeId::new(s.clone()));
+            let actor_ref = system.resolve_named(&path, node.as_ref()).await.map_err(to_pyerr)?;
             Ok(PyActorRef { inner: actor_ref })
         })
     }

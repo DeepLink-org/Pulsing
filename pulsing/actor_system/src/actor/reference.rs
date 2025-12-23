@@ -144,6 +144,31 @@ impl ActorRef {
         }
     }
 
+    /// Send a message and expect a streaming response
+    pub async fn send_stream(&self, msg: Message) -> anyhow::Result<Message> {
+        match &self.inner {
+            ActorRefInner::Local(_) => {
+                // For local actors, send() already handles stream responses
+                // because the actor handler can return Message::Stream
+                self.send(msg).await
+            }
+            ActorRefInner::Remote(remote) => {
+                // For remote actors, we must use request_stream to set correct headers
+                let Message::Single { msg_type, data } = msg else {
+                    return Err(anyhow::anyhow!("Streaming requests not yet supported for remote actors"));
+                };
+                let stream = remote
+                    .transport
+                    .request_stream(&self.actor_id, &msg_type, data)
+                    .await?;
+                Ok(Message::Stream {
+                    msg_type: String::new(),
+                    stream,
+                })
+            }
+        }
+    }
+
     /// Send a fire-and-forget message (no response expected)
     pub async fn fire(&self, msg: Message) -> anyhow::Result<()> {
         match &self.inner {

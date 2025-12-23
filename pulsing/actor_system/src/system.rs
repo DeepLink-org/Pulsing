@@ -1,15 +1,16 @@
 //! Actor System - the main entry point for creating and managing actors
 
 use crate::actor::{
-    Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Envelope,
-    EnvelopeResponse, Mailbox, Message, NodeId, StopReason, LOCALHOST,
+    Actor, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Envelope,
+    EnvelopeResponse, Message, MessageStream, NodeId, StopReason,
 };
-use crate::cluster::{GossipCluster, GossipConfig, GossipMessage, MemberInfo, NamedActorInfo};
+use crate::cluster::{GossipCluster, GossipConfig, GossipMessage, MemberInfo};
 use crate::transport::{
-    HttpMessageHandler, HttpRemoteTransport, HttpTransport, HttpTransportConfig,
+    Http2Config, Http2RemoteTransport, Http2ServerHandler, Http2Transport,
 };
 use crate::watch::ActorLifecycle;
 use dashmap::DashMap;
+use futures::StreamExt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -54,17 +55,17 @@ impl ActorStats {
 /// Actor System configuration
 #[derive(Clone, Debug)]
 pub struct SystemConfig {
-    /// HTTP address for all communication (actors + gossip)
+    /// HTTP/2 address for all communication (actors + gossip)
     pub addr: SocketAddr,
 
-    /// Seed nodes to join (HTTP addresses)
+    /// Seed nodes to join (HTTP/2 addresses)
     pub seed_nodes: Vec<SocketAddr>,
 
     /// Gossip configuration
     pub gossip_config: GossipConfig,
 
-    /// HTTP transport configuration
-    pub http_config: HttpTransportConfig,
+    /// HTTP/2 transport configuration
+    pub http2_config: Http2Config,
 }
 
 impl Default for SystemConfig {
@@ -73,7 +74,7 @@ impl Default for SystemConfig {
             addr: "0.0.0.0:0".parse().unwrap(),
             seed_nodes: Vec::new(),
             gossip_config: GossipConfig::default(),
-            http_config: HttpTransportConfig::default(),
+            http2_config: Http2Config::default(),
         }
     }
 }
@@ -125,7 +126,7 @@ pub struct ActorSystem {
     /// Local node ID
     node_id: NodeId,
 
-    /// HTTP address
+    /// HTTP/2 address
     addr: SocketAddr,
 
     /// Local actors (actor_name -> handle)
@@ -137,8 +138,8 @@ pub struct ActorSystem {
     /// Gossip cluster (for discovery)
     cluster: Arc<RwLock<Option<Arc<GossipCluster>>>>,
 
-    /// HTTP transport
-    transport: Arc<HttpTransport>,
+    /// HTTP/2 transport
+    transport: Arc<Http2Transport>,
 
     /// Cancellation token
     cancel_token: CancellationToken,
@@ -165,11 +166,11 @@ impl ActorSystem {
             cluster: cluster_holder.clone(),
         };
 
-        // Create HTTP transport
-        let (transport, actual_addr) = HttpTransport::new(
+        // Create HTTP/2 transport
+        let (transport, actual_addr) = Http2Transport::new(
             config.addr,
             Arc::new(handler),
-            config.http_config,
+            config.http2_config,
             cancel_token.clone(),
         )
         .await?;
@@ -197,437 +198,228 @@ impl ActorSystem {
         }
 
         let system = Arc::new(Self {
-            node_id,
+            node_id: node_id.clone(),
             addr: actual_addr,
             local_actors,
             named_actor_paths,
             cluster: cluster_holder,
             transport,
-            cancel_token,
+            cancel_token: cancel_token.clone(),
             lifecycle,
         });
 
         tracing::info!(
-            node_id = %system.node_id,
-            addr = %system.addr,
+            node_id = %node_id,
+            addr = %actual_addr,
             "Actor system started"
         );
 
         Ok(system)
     }
 
-    /// Get the local node ID
+    /// Get node ID
     pub fn node_id(&self) -> &NodeId {
         &self.node_id
     }
 
-    /// Get the HTTP address
+    /// Get local address
     pub fn addr(&self) -> SocketAddr {
         self.addr
     }
 
-    /// Get the HTTP address (alias for compatibility)
-    pub fn tcp_addr(&self) -> SocketAddr {
-        self.addr
+    /// Get list of local actor names
+    pub fn local_actor_names(&self) -> Vec<String> {
+        self.local_actors.iter().map(|e| e.key().clone()).collect()
     }
 
-    /// Get the gossip address (same as HTTP address now)
-    pub fn gossip_addr(&self) -> SocketAddr {
-        self.addr
-    }
-
-    /// Spawn a new actor with a name.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let actor_ref = system.spawn("counter", Counter { count: 0 }).await?;
-    /// ```
-    pub async fn spawn<A>(
-        self: &Arc<Self>,
-        name: impl Into<String>,
-        mut actor: A,
-    ) -> anyhow::Result<ActorRef>
+    /// Spawn an actor with a local name
+    pub async fn spawn<A>(&self, name: impl AsRef<str>, actor: A) -> anyhow::Result<ActorRef>
     where
         A: Actor,
     {
-        let name = name.into();
-        let actor_id = ActorId::new(self.node_id.clone(), name.clone());
+        let name = name.as_ref();
 
-        // Create mailbox
-        let mailbox = Mailbox::new();
-        let sender = mailbox.sender();
-        let (_, receiver) = mailbox.split();
+        // Check for duplicate
+        if self.local_actors.contains_key(name) {
+            return Err(anyhow::anyhow!("Actor already exists: {}", name));
+        }
 
-        // Create context with the assigned ID
-        let ctx_system: Arc<dyn ActorSystemRef> = self.clone();
-        let mut ctx =
-            ActorContext::with_system(actor_id.clone(), ctx_system, self.cancel_token.clone());
-
-        // Get metadata before starting (as actor is moved)
-        let metadata = actor.metadata();
+        let actor_id = ActorId::new(self.node_id.clone(), name);
+        let (sender, receiver) = mpsc::channel(128);
         let stats = Arc::new(ActorStats::default());
-        stats.inc_start();
-
-        // Start actor
-        if let Err(e) = actor.on_start(&mut ctx).await {
-            return Err(anyhow::anyhow!("Actor {} failed to start: {}", actor_id, e));
-        }
-
-        // Create termination notification channel
-        let (term_tx, term_rx) = tokio::sync::oneshot::channel::<StopReason>();
-
-        // Spawn actor task
-        let cancel = self.cancel_token.clone();
-        let actor_name = name.clone();
-        let loop_stats = stats.clone();
-
-        let join_handle = tokio::spawn(async move {
-            let reason = run_actor_loop(actor, receiver, ctx, cancel, loop_stats).await;
-            let _ = term_tx.send(reason);
-        });
-
-        // Register locally
-        self.local_actors.insert(
-            actor_name.clone(),
-            LocalActorHandle {
-                sender: sender.clone(),
-                join_handle,
-                stats,
-                metadata,
-                named_path: None,
-                actor_id: actor_id.clone(),
-            },
-        );
-
-        // Spawn termination handler task
-        let system = self.clone();
-        let term_actor_id = actor_id.clone();
-        let term_actor_name = actor_name.clone();
-        tokio::spawn(async move {
-            if let Ok(reason) = term_rx.await {
-                system
-                    .handle_actor_terminated(&term_actor_name, &term_actor_id, None, reason)
-                    .await;
-            }
-        });
-
-        tracing::debug!(actor_id = %actor_id, "Spawned actor");
-
-        Ok(ActorRef::local(actor_id, sender))
-    }
-
-    /// Spawn a named actor with a path (broadcasts location to cluster).
-    ///
-    /// Named actors are registered in the cluster registry and can be discovered
-    /// by other nodes using the actor path.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let path = ActorPath::new("services/llm/router")?;
-    /// let actor_ref = system.spawn_named(path, "router", Router::new()).await?;
-    /// ```
-    pub async fn spawn_named<A>(
-        self: &Arc<Self>,
-        path: ActorPath,
-        name: impl Into<String>,
-        mut actor: A,
-    ) -> anyhow::Result<ActorRef>
-    where
-        A: Actor,
-    {
-        let name = name.into();
-        let path_key = path.as_str();
-
-        // Check if path is already registered locally
-        if self.named_actor_paths.contains_key(&path_key) {
-            return Err(anyhow::anyhow!(
-                "Named actor path '{}' is already registered on this node",
-                path_key
-            ));
-        }
-
-        let actor_id = ActorId::new(self.node_id.clone(), name.clone());
-
-        // Create mailbox
-        let mailbox = Mailbox::new();
-        let sender = mailbox.sender();
-        let (_, receiver) = mailbox.split();
-
-        // Create context with the assigned ID
-        let ctx_system: Arc<dyn ActorSystemRef> = self.clone();
-        let mut ctx =
-            ActorContext::with_system(actor_id.clone(), ctx_system, self.cancel_token.clone());
-
-        // Get metadata before starting
         let metadata = actor.metadata();
-        let stats = Arc::new(ActorStats::default());
-        stats.inc_start();
 
-        // Start actor
-        if let Err(e) = actor.on_start(&mut ctx).await {
-            return Err(anyhow::anyhow!("Actor {} failed to start: {}", actor_id, e));
-        }
+        // Create context
+        let ctx = ActorContext::new(actor_id.clone());
 
-        // Create termination notification channel
-        let (term_tx, term_rx) = tokio::sync::oneshot::channel::<StopReason>();
-
-        // Spawn actor task
+        // Spawn actor loop
+        let stats_clone = stats.clone();
         let cancel = self.cancel_token.clone();
-        let actor_name = actor_id.name.clone();
-        let loop_stats = stats.clone();
-
+        let actor_id_for_log = actor_id.clone();
         let join_handle = tokio::spawn(async move {
-            let reason = run_actor_loop(actor, receiver, ctx, cancel, loop_stats).await;
-            let _ = term_tx.send(reason);
+            let reason = run_actor_loop(actor, receiver, ctx, cancel, stats_clone).await;
+            tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Actor stopped");
         });
 
-        // Register locally with path
-        self.local_actors.insert(
-            actor_name.clone(),
-            LocalActorHandle {
-                sender: sender.clone(),
-                join_handle,
-                stats,
-                metadata,
-                named_path: Some(path.clone()),
-                actor_id: actor_id.clone(),
-            },
-        );
-
-        // Register path -> actor_name mapping
-        self.named_actor_paths
-            .insert(path_key.clone(), actor_name.clone());
-
-        // Register in cluster (broadcast)
-        {
-            let cluster_guard = self.cluster.read().await;
-            if let Some(cluster) = cluster_guard.as_ref() {
-                cluster.register_named_actor(path.clone()).await;
-            }
-        }
-
-        // Spawn termination handler task
-        let system = self.clone();
-        let term_actor_id = actor_id.clone();
-        let term_actor_name = actor_name.clone();
-        let term_path = path.clone();
-        tokio::spawn(async move {
-            if let Ok(reason) = term_rx.await {
-                system
-                    .handle_actor_terminated(
-                        &term_actor_name,
-                        &term_actor_id,
-                        Some(term_path),
-                        reason,
-                    )
-                    .await;
-            }
-        });
-
-        tracing::debug!(
-            actor_id = %actor_id,
-            path = %path,
-            "Spawned named actor"
-        );
-
-        Ok(ActorRef::local(actor_id, sender))
-    }
-
-    /// Get a reference to an actor by ActorId (local or remote)
-    ///
-    /// For the new addressing scheme, prefer using `resolve()` with `ActorAddress`.
-    pub async fn actor_ref(&self, actor_id: &ActorId) -> anyhow::Result<ActorRef> {
-        // Check local first
-        if actor_id.node == self.node_id {
-            if let Some(handle) = self.local_actors.get(&actor_id.name) {
-                return Ok(ActorRef::local(actor_id.clone(), handle.sender.clone()));
-            }
-            return Err(anyhow::anyhow!("Local actor not found: {}", actor_id));
-        }
-
-        // Check cluster
-        let cluster_guard = self.cluster.read().await;
-        if let Some(cluster) = cluster_guard.as_ref() {
-            // 1. Direct addressing: check if we know the node
-            if let Some(member) = cluster.get_member(&actor_id.node).await {
-                let transport = Arc::new(HttpRemoteTransport::new(
-                    self.transport.clone(),
-                    member.addr,
-                    actor_id.name.clone(),
-                ));
-                return Ok(ActorRef::remote(actor_id.clone(), member.addr, transport));
-            }
-
-            // 2. Fallback: check gossip cache (for legacy or alias support)
-            if let Some(member) = cluster.lookup_actor(actor_id).await {
-                let transport = Arc::new(HttpRemoteTransport::new(
-                    self.transport.clone(),
-                    member.addr,
-                    actor_id.name.clone(),
-                ));
-                return Ok(ActorRef::remote(actor_id.clone(), member.addr, transport));
-            }
-        }
-
-        Err(anyhow::anyhow!("Actor not found: {}", actor_id))
-    }
-
-    /// Resolve an actor address to get an ActorRef
-    ///
-    /// This is the primary method for getting actor references using the new
-    /// addressing scheme.
-    ///
-    /// # Address Types
-    /// - Named service: `actor:///namespace/path/name` - load-balanced access
-    /// - Named instance: `actor:///namespace/path/name@node_id` - specific instance
-    /// - Global: `actor://node_id/actor_id` - direct address
-    /// - Local: `actor://localhost/actor_id` - current node shortcut
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Access named actor (load balanced)
-    /// let addr = ActorAddress::parse("actor:///services/llm/router")?;
-    /// let actor_ref = system.resolve(&addr).await?;
-    ///
-    /// // Access specific instance
-    /// let addr = ActorAddress::parse("actor:///services/llm/router@node_a")?;
-    /// let actor_ref = system.resolve(&addr).await?;
-    ///
-    /// // Access by global address
-    /// let addr = ActorAddress::parse("actor://node_a/worker_123")?;
-    /// let actor_ref = system.resolve(&addr).await?;
-    /// ```
-    pub async fn resolve(&self, address: &ActorAddress) -> anyhow::Result<ActorRef> {
-        match address {
-            ActorAddress::Named { path, instance } => {
-                self.resolve_named(path, instance.as_ref()).await
-            }
-            ActorAddress::Global { node_id, actor_id } => {
-                self.resolve_global(node_id, actor_id).await
-            }
-        }
-    }
-
-    /// Resolve a named actor address
-    async fn resolve_named(
-        &self,
-        path: &ActorPath,
-        instance: Option<&NodeId>,
-    ) -> anyhow::Result<ActorRef> {
-        let path_key = path.as_str();
-
-        // If instance is specified, resolve to that specific node
-        if let Some(target_node) = instance {
-            // Check if it's local
-            if target_node == &self.node_id {
-                if let Some(actor_name) = self.named_actor_paths.get(&path_key) {
-                    if let Some(handle) = self.local_actors.get(actor_name.value()) {
-                        let actor_id = ActorId::new(self.node_id.clone(), actor_name.clone());
-                        return Ok(ActorRef::local(actor_id, handle.sender.clone()));
-                    }
-                }
-                return Err(anyhow::anyhow!(
-                    "Named actor not found locally: {}",
-                    path_key
-                ));
-            }
-
-            // Remote instance - need to find the node and route to it
-            let cluster_guard = self.cluster.read().await;
-            if let Some(cluster) = cluster_guard.as_ref() {
-                if let Some(member) = cluster.get_member(target_node).await {
-                    // Use path name as the actor name for remote routing
-                    let transport = Arc::new(HttpRemoteTransport::new_named(
-                        self.transport.clone(),
-                        member.addr,
-                        path.clone(),
-                    ));
-                    let actor_id = ActorId::new(target_node.clone(), path.name().to_string());
-                    return Ok(ActorRef::remote(actor_id, member.addr, transport));
-                }
-            }
-            return Err(anyhow::anyhow!(
-                "Named actor instance not found: {}@{}",
-                path_key,
-                target_node
-            ));
-        }
-
-        // No instance specified - check local first, then load balance
-        if let Some(actor_name) = self.named_actor_paths.get(&path_key) {
-            if let Some(handle) = self.local_actors.get(actor_name.value()) {
-                let actor_id = ActorId::new(self.node_id.clone(), actor_name.clone());
-                return Ok(ActorRef::local(actor_id, handle.sender.clone()));
-            }
-        }
-
-        // Look up in cluster registry and select an instance
-        let cluster_guard = self.cluster.read().await;
-        if let Some(cluster) = cluster_guard.as_ref() {
-            if let Some(member) = cluster.select_named_actor_instance(path).await {
-                let transport = Arc::new(HttpRemoteTransport::new_named(
-                    self.transport.clone(),
-                    member.addr,
-                    path.clone(),
-                ));
-                let actor_id = ActorId::new(member.node_id.clone(), path.name().to_string());
-                return Ok(ActorRef::remote(actor_id, member.addr, transport));
-            }
-        }
-
-        Err(anyhow::anyhow!("Named actor not found: {}", path_key))
-    }
-
-    /// Resolve a global actor address
-    async fn resolve_global(&self, node_id: &NodeId, actor_id: &str) -> anyhow::Result<ActorRef> {
-        // Handle localhost
-        let resolved_node = if node_id.as_str() == LOCALHOST {
-            &self.node_id
-        } else {
-            node_id
+        // Register actor
+        let handle = LocalActorHandle {
+            sender: sender.clone(),
+            join_handle,
+            stats: stats.clone(),
+            metadata,
+            named_path: None,
+            actor_id: actor_id.clone(),
         };
 
-        // Check local
-        if resolved_node == &self.node_id {
-            if let Some(handle) = self.local_actors.get(actor_id) {
-                let full_actor_id = ActorId::new(self.node_id.clone(), actor_id.to_string());
-                return Ok(ActorRef::local(full_actor_id, handle.sender.clone()));
-            }
-            return Err(anyhow::anyhow!("Local actor not found: {}", actor_id));
-        }
+        self.local_actors.insert(name.to_string(), handle);
 
-        // Remote
-        let cluster_guard = self.cluster.read().await;
-        if let Some(cluster) = cluster_guard.as_ref() {
-            if let Some(member) = cluster.get_member(resolved_node).await {
-                let transport = Arc::new(HttpRemoteTransport::new(
-                    self.transport.clone(),
-                    member.addr,
-                    actor_id.to_string(),
-                ));
-                let full_actor_id = ActorId::new(resolved_node.clone(), actor_id.to_string());
-                return Ok(ActorRef::remote(full_actor_id, member.addr, transport));
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Actor not found: actor://{}/{}",
-            node_id,
-            actor_id
-        ))
+        // Create ActorRef
+        Ok(ActorRef::local(actor_id, sender))
     }
 
-    /// Look up named actor info from the cluster registry
-    pub async fn lookup_named(&self, path: &ActorPath) -> Option<NamedActorInfo> {
+    /// Spawn a named actor (publicly accessible via named path)
+    pub async fn spawn_named<A>(
+        &self,
+        path: ActorPath,
+        local_name: impl AsRef<str>,
+        actor: A,
+    ) -> anyhow::Result<ActorRef>
+    where
+        A: Actor,
+    {
+        let local_name = local_name.as_ref();
+
+        // Check for duplicate
+        if self.local_actors.contains_key(local_name) {
+            return Err(anyhow::anyhow!("Actor already exists: {}", local_name));
+        }
+
+        let actor_id = ActorId::new(self.node_id.clone(), local_name);
+        let (sender, receiver) = mpsc::channel(128);
+        let stats = Arc::new(ActorStats::default());
+        let metadata = actor.metadata();
+
+        // Create context
+        let ctx = ActorContext::new(actor_id.clone());
+
+        // Spawn actor loop
+        let stats_clone = stats.clone();
+        let cancel = self.cancel_token.clone();
+        let actor_id_for_log = actor_id.clone();
+
+        let join_handle = tokio::spawn(async move {
+            let reason = run_actor_loop(actor, receiver, ctx, cancel, stats_clone).await;
+            tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Actor stopped");
+        });
+
+        // Register actor
+        let handle = LocalActorHandle {
+            sender: sender.clone(),
+            join_handle,
+            stats: stats.clone(),
+            metadata,
+            named_path: Some(path.clone()),
+            actor_id: actor_id.clone(),
+        };
+
+        self.local_actors.insert(local_name.to_string(), handle);
+        self.named_actor_paths.insert(path.as_str().to_string(), local_name.to_string());
+
+        // Register in cluster
+        if let Some(cluster) = self.cluster.read().await.as_ref() {
+            cluster.register_named_actor(path.clone()).await;
+        }
+
+        // Create ActorRef
+        Ok(ActorRef::local(actor_id, sender))
+    }
+
+    /// Get ActorRef for a local or remote actor by ID
+    pub async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef> {
+        // Check if local
+        if id.node == self.node_id {
+            if let Some(handle) = self.local_actors.get(&id.name) {
+                return Ok(ActorRef::local(id.clone(), handle.sender.clone()));
+            }
+            return Err(anyhow::anyhow!("Local actor not found: {}", id.name));
+        }
+
+        // Remote actor - get address from cluster
         let cluster_guard = self.cluster.read().await;
-        if let Some(cluster) = cluster_guard.as_ref() {
-            cluster.lookup_named_actor(path).await
+        let cluster = cluster_guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Cluster not initialized"))?;
+
+        let member = cluster.get_member(&id.node).await.ok_or_else(|| {
+            anyhow::anyhow!("Node not found in cluster: {}", id.node)
+        })?;
+
+        // Create remote transport
+        let transport = Http2RemoteTransport::new(
+            self.transport.client(),
+            member.addr,
+            id.name.clone(),
+        );
+
+        Ok(ActorRef::remote(id.clone(), member.addr, Arc::new(transport)))
+    }
+
+    /// Resolve a named actor and get an ActorRef
+    pub async fn resolve_named(
+        &self,
+        path: &ActorPath,
+        node_id: Option<&NodeId>,
+    ) -> anyhow::Result<ActorRef> {
+        let cluster_guard = self.cluster.read().await;
+        let cluster = cluster_guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Cluster not initialized"))?;
+
+        let instances = cluster.get_named_actor_instances(path).await;
+
+        if instances.is_empty() {
+            return Err(anyhow::anyhow!("Named actor not found: {}", path.as_str()));
+        }
+
+        // If node_id specified, find that specific instance
+        let target = if let Some(nid) = node_id {
+            instances
+                .iter()
+                .find(|i| &i.node_id == nid)
+                .ok_or_else(|| anyhow::anyhow!("Actor instance not found on node: {}", nid))?
         } else {
-            None
+            // Otherwise pick first instance
+            &instances[0]
+        };
+
+        // If local, get local ref
+        if target.node_id == self.node_id {
+            let actor_name = self
+                .named_actor_paths
+                .get(&path.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Named actor not found locally"))?
+                .clone();
+
+            let handle = self.local_actors.get(&actor_name).ok_or_else(|| {
+                anyhow::anyhow!("Actor not found: {}", actor_name)
+            })?;
+
+            let actor_id = ActorId::new(self.node_id.clone(), actor_name);
+            return Ok(ActorRef::local(actor_id, handle.sender.clone()));
         }
+
+        // Remote actor
+        let transport = Http2RemoteTransport::new_named(
+            self.transport.client(),
+            target.addr,
+            path.clone(),
+        );
+
+        let actor_id = ActorId::new(target.node_id.clone(), path.as_str());
+        Ok(ActorRef::remote(actor_id, target.addr, Arc::new(transport)))
     }
 
-    /// Get all instances of a named actor
+    /// Get all instances of a named actor across the cluster
     pub async fn get_named_instances(&self, path: &ActorPath) -> Vec<MemberInfo> {
         let cluster_guard = self.cluster.read().await;
         if let Some(cluster) = cluster_guard.as_ref() {
@@ -637,7 +429,7 @@ impl ActorSystem {
         }
     }
 
-    /// Get cluster members (all members including Suspect status)
+    /// Get cluster member information
     pub async fn members(&self) -> Vec<MemberInfo> {
         let cluster_guard = self.cluster.read().await;
         if let Some(cluster) = cluster_guard.as_ref() {
@@ -647,56 +439,44 @@ impl ActorSystem {
         }
     }
 
-    /// Get only alive cluster members (excluding local node)
-    pub async fn alive_members(&self) -> Vec<MemberInfo> {
-        let cluster_guard = self.cluster.read().await;
-        if let Some(cluster) = cluster_guard.as_ref() {
-            cluster.alive_members().await
-        } else {
-            Vec::new()
-        }
-    }
-
-    /// Get local actors
-    pub fn local_actor_names(&self) -> Vec<String> {
-        self.local_actors.iter().map(|e| e.key().clone()).collect()
-    }
-
-    /// Stop an actor by name
-    pub async fn stop(&self, actor_name: &str) -> anyhow::Result<()> {
-        self.stop_with_reason(actor_name, StopReason::Killed).await
+    /// Stop an actor
+    pub async fn stop(&self, name: impl AsRef<str>) -> anyhow::Result<()> {
+        self.stop_with_reason(name, StopReason::Killed).await
     }
 
     /// Stop an actor with a specific reason
     pub async fn stop_with_reason(
         &self,
-        actor_name: &str,
+        name: impl AsRef<str>,
         reason: StopReason,
     ) -> anyhow::Result<()> {
-        if let Some((_, handle)) = self.local_actors.remove(actor_name) {
+        let name = name.as_ref();
+
+        if let Some((_, handle)) = self.local_actors.remove(name) {
             handle.join_handle.abort();
 
             let local_actors = self.local_actors.clone();
             self.lifecycle
                 .handle_termination(
                     &handle.actor_id,
-                    actor_name,
-                    handle.named_path,
+                    name,
+                    handle.named_path.clone(),
                     reason,
                     &self.named_actor_paths,
                     &self.cluster,
-                    |name| local_actors.get(name).map(|h| h.sender.clone()),
+                    |n| local_actors.get(n).map(|h| h.sender.clone()),
                 )
                 .await;
         }
+
         Ok(())
     }
 
-    /// Handle actor termination - called when an actor naturally terminates
-    async fn handle_actor_terminated(
+    /// Handle actor termination (called by actor loop on exit)
+    async fn handle_actor_termination(
         &self,
-        actor_name: &str,
         actor_id: &ActorId,
+        actor_name: &str,
         named_path: Option<ActorPath>,
         reason: StopReason,
     ) {
@@ -882,7 +662,7 @@ async fn run_actor_loop<A: Actor>(
 }
 
 
-/// Unified message handler for HTTP transport
+/// Unified message handler for HTTP/2 transport
 struct SystemMessageHandler {
     node_id: NodeId,
     local_actors: Arc<DashMap<String, LocalActorHandle>>,
@@ -890,9 +670,36 @@ struct SystemMessageHandler {
     cluster: Arc<RwLock<Option<Arc<GossipCluster>>>>,
 }
 
-#[async_trait::async_trait]
-impl HttpMessageHandler for SystemMessageHandler {
-    async fn handle_actor_message(&self, actor_name: &str, msg: Message) -> anyhow::Result<Message> {
+impl SystemMessageHandler {
+    /// Dispatch a message to an actor (ask pattern)
+    async fn dispatch_message(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
+        // Check if path is /actors/{name} or /named/{path}
+        if path.starts_with("/actors/") {
+            let actor_name = &path[8..]; // Remove "/actors/"
+            self.send_to_local_actor(actor_name, msg).await
+        } else if path.starts_with("/named/") {
+            let named_path = &path[7..]; // Remove "/named/"
+            self.send_to_named_actor(named_path, msg).await
+        } else {
+            Err(anyhow::anyhow!("Invalid path: {}", path))
+        }
+    }
+
+    /// Dispatch a fire-and-forget message
+    async fn dispatch_tell(&self, path: &str, msg: Message) -> anyhow::Result<()> {
+        // Check if path is /actors/{name} or /named/{path}
+        if path.starts_with("/actors/") {
+            let actor_name = &path[8..];
+            self.tell_local_actor(actor_name, msg).await
+        } else if path.starts_with("/named/") {
+            let named_path = &path[7..];
+            self.tell_named_actor(named_path, msg).await
+        } else {
+            Err(anyhow::anyhow!("Invalid path: {}", path))
+        }
+    }
+
+    async fn send_to_local_actor(&self, actor_name: &str, msg: Message) -> anyhow::Result<Message> {
         let handle = self
             .local_actors
             .get(actor_name)
@@ -910,7 +717,7 @@ impl HttpMessageHandler for SystemMessageHandler {
         rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
     }
 
-    async fn handle_actor_tell(&self, actor_name: &str, msg: Message) -> anyhow::Result<()> {
+    async fn tell_local_actor(&self, actor_name: &str, msg: Message) -> anyhow::Result<()> {
         let handle = self
             .local_actors
             .get(actor_name)
@@ -927,60 +734,80 @@ impl HttpMessageHandler for SystemMessageHandler {
         Ok(())
     }
 
-    async fn handle_named_actor_message(
+    async fn send_to_named_actor(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
+        let actor_name = self
+            .named_actor_paths
+            .get(path)
+            .ok_or_else(|| anyhow::anyhow!("Named actor not found: {}", path))?
+            .clone();
+
+        self.send_to_local_actor(&actor_name, msg).await
+    }
+
+    async fn tell_named_actor(&self, path: &str, msg: Message) -> anyhow::Result<()> {
+        let actor_name = self
+            .named_actor_paths
+            .get(path)
+            .ok_or_else(|| anyhow::anyhow!("Named actor not found: {}", path))?
+            .clone();
+
+        self.tell_local_actor(&actor_name, msg).await
+    }
+}
+
+#[async_trait::async_trait]
+impl Http2ServerHandler for SystemMessageHandler {
+    async fn handle_ask(
         &self,
         path: &str,
-        msg: Message,
-    ) -> anyhow::Result<Message> {
-        // Look up the local actor name for this path
-        let actor_name = self
-            .named_actor_paths
-            .get(path)
-            .ok_or_else(|| anyhow::anyhow!("Named actor not found: {}", path))?
-            .clone();
-
-        let handle = self
-            .local_actors
-            .get(&actor_name)
-            .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
-
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let envelope = Envelope::ask(msg, tx);
-
-        handle
-            .sender
-            .send(envelope)
-            .await
-            .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
-
-        rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
+        msg_type: &str,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<Vec<u8>> {
+        let msg = Message::single(msg_type, payload);
+        let response = self.dispatch_message(path, msg).await?;
+        
+        let Message::Single { data, .. } = response else {
+            return Err(anyhow::anyhow!("Expected single response"));
+        };
+        Ok(data)
     }
 
-    async fn handle_named_actor_tell(&self, path: &str, msg: Message) -> anyhow::Result<()> {
-        // Look up the local actor name for this path
-        let actor_name = self
-            .named_actor_paths
-            .get(path)
-            .ok_or_else(|| anyhow::anyhow!("Named actor not found: {}", path))?
-            .clone();
-
-        let handle = self
-            .local_actors
-            .get(&actor_name)
-            .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
-
-        let envelope = Envelope::tell_msg(msg);
-
-        handle
-            .sender
-            .send(envelope)
-            .await
-            .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
-
-        Ok(())
+    async fn handle_tell(
+        &self,
+        path: &str,
+        msg_type: &str,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        let msg = Message::single(msg_type, payload);
+        self.dispatch_tell(path, msg).await
     }
 
-    async fn handle_gossip_message(&self, payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
+    async fn handle_stream(
+        &self,
+        path: &str,
+        msg_type: &str,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<MessageStream> {
+        let msg = Message::single(msg_type, payload);
+        let response = self.dispatch_message(path, msg).await?;
+        
+        match response {
+            Message::Stream { stream, .. } => {
+                // Convert PayloadStream to MessageStream
+                let msg_stream = stream.map(|result| {
+                    result.map(|data| Message::single("", data))
+                });
+                Ok(Box::pin(msg_stream))
+            }
+            Message::Single { .. } => {
+                // If actor returns single message, convert to stream
+                let stream = futures::stream::once(async move { Ok(response) });
+                Ok(Box::pin(stream))
+            }
+        }
+    }
+
+    async fn handle_gossip(&self, payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
         let cluster_guard = self.cluster.read().await;
         if let Some(cluster) = cluster_guard.as_ref() {
             let msg: GossipMessage = bincode::deserialize(&payload)?;
@@ -995,7 +822,7 @@ impl HttpMessageHandler for SystemMessageHandler {
         }
     }
 
-    async fn get_node_info(&self) -> serde_json::Value {
+    async fn health_check(&self) -> serde_json::Value {
         // Collect local actors info
         let mut actors = Vec::new();
         for entry in self.local_actors.iter() {
@@ -1049,116 +876,10 @@ impl HttpMessageHandler for SystemMessageHandler {
 
         serde_json::json!({
             "node_id": self.node_id.to_string(),
+            "actors_count": actors.len(),
             "actors": actors,
             "named_actors": named_actors,
             "cluster": cluster_info,
         })
-    }
-
-    async fn get_actor_info(&self, actor_name: &str) -> Option<serde_json::Value> {
-        if let Some(handle) = self.local_actors.get(actor_name) {
-            let mut info = serde_json::json!({
-                "name": actor_name,
-                "node_id": self.node_id.to_string(),
-                "status": "local",
-                "stats": handle.stats.to_json(),
-                "metadata": handle.metadata,
-            });
-
-            if let Some(path) = &handle.named_path {
-                info["named_path"] = serde_json::json!(path.as_str());
-            }
-
-            return Some(info);
-        }
-
-        None
-    }
-
-    async fn get_named_actor_info(&self, path: &str) -> Option<serde_json::Value> {
-        // Check local first
-        if let Some(actor_name) = self.named_actor_paths.get(path) {
-            if let Some(handle) = self.local_actors.get(actor_name.value()) {
-                return Some(serde_json::json!({
-                    "path": path,
-                    "actor_name": actor_name.value(),
-                    "node_id": self.node_id.to_string(),
-                    "status": "local",
-                    "stats": handle.stats.to_json(),
-                    "metadata": handle.metadata,
-                }));
-            }
-        }
-
-        // Check cluster registry
-        let cluster_guard = self.cluster.read().await;
-        if let Some(cluster) = cluster_guard.as_ref() {
-            if let Ok(actor_path) = ActorPath::new(path) {
-                if let Some(info) = cluster.lookup_named_actor(&actor_path).await {
-                    return Some(serde_json::json!({
-                        "path": path,
-                        "instances": info.instances.iter().map(|n| n.to_string()).collect::<Vec<_>>(),
-                        "instance_count": info.instance_count(),
-                        "status": "remote",
-                    }));
-                }
-            }
-        }
-
-        None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Serialize, Deserialize, Debug)]
-    struct Ping {
-        value: i32,
-    }
-
-    #[derive(Serialize, Deserialize, Debug)]
-    struct Pong {
-        result: i32,
-    }
-
-    struct Counter {
-        count: i32,
-    }
-
-    #[async_trait::async_trait]
-    impl Actor for Counter {
-        async fn receive(
-            &mut self,
-            msg: Message,
-            _ctx: &mut ActorContext,
-        ) -> anyhow::Result<Message> {
-            if msg.msg_type().ends_with("Ping") {
-                let ping: Ping = msg.unpack()?;
-                self.count += ping.value;
-                return Message::pack(&Pong { result: self.count });
-            }
-            Err(anyhow::anyhow!("Unknown message type: {}", msg.msg_type()))
-        }
-    }
-
-    #[tokio::test]
-    async fn test_actor_system_spawn() {
-        let config = SystemConfig::standalone();
-        let system = ActorSystem::new(config).await.unwrap();
-
-        let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
-        assert!(actor_ref.is_local());
-
-        // Send message
-        let pong: Pong = actor_ref.ask(Ping { value: 10 }).await.unwrap();
-        assert_eq!(pong.result, 10);
-
-        let pong: Pong = actor_ref.ask(Ping { value: 5 }).await.unwrap();
-        assert_eq!(pong.result, 15);
-
-        system.shutdown().await.unwrap();
     }
 }

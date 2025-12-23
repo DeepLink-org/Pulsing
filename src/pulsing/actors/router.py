@@ -162,6 +162,7 @@ class RouterActor(BaseServiceActor):
         server = OpenAIServer(
             router_scheduler=self._handler.scheduler,
             model_name=self._model_name,
+            actor_system=self._system,  # 传递 ActorSystem 用于 resolve_named
         )
         return server.create_app()
     

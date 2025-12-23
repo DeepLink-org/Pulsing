@@ -96,6 +96,11 @@ class WorkerDiscovery:
             addr = instance.get("addr", "")
             status = instance.get("status", "")
             
+            # 修正地址：0.0.0.0 替换为 127.0.0.1
+            if addr.startswith("0.0.0.0:"):
+                addr = addr.replace("0.0.0.0:", "127.0.0.1:")
+                print(f"[WorkerDiscovery] Corrected addr to {addr}")
+            
             # 排除 Dead 状态
             if status == "Dead":
                 continue
@@ -116,9 +121,18 @@ class WorkerDiscovery:
     async def _add_worker(self, node_id: str, addr: str, is_healthy: bool = True):
         actor_ref = None
         try:
+            # 暂时不指定 node_id，让系统自动选择（等编译新版本后可以指定）
             actor_ref = await self.system.resolve_named(self.worker_name)
-        except Exception:
-            pass
+            
+            # 测试连接：发送一个 HealthCheck
+            try:
+                result = await actor_ref.ask_json("HealthCheck", {})
+                print(f"[WorkerDiscovery] HealthCheck OK for {node_id[:8]}...: {result.get('status')}")
+            except Exception as e:
+                print(f"[WorkerDiscovery] HealthCheck failed for {node_id[:8]}...: {e}")
+                
+        except Exception as e:
+            print(f"[WorkerDiscovery] Failed to resolve actor_ref for {node_id[:8]}...: {e}")
         
         worker = DiscoveredWorker(
             node_id=node_id,
@@ -127,7 +141,7 @@ class WorkerDiscovery:
             is_healthy=is_healthy,
         )
         self._workers[node_id] = worker
-        print(f"[WorkerDiscovery] + {node_id[:8]}... at {addr}")
+        print(f"[WorkerDiscovery] + {node_id[:8]}... at {addr}, has_ref={actor_ref is not None}")
         
         if self.on_worker_added:
             try:
