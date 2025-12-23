@@ -1,136 +1,263 @@
-# Pulsing Actor System 示例
+# Pulsing Actor System Examples
 
-本目录包含基于 Pulsing Actor System 的服务示例。
+This directory contains examples of using the Pulsing Actor System for distributed LLM inference.
 
-## Actor 类型
+## Example Files
 
-### 1. RouterActor
+### 1. ping_pong.py - Basic Actor Communication
 
-基于 RoundRobin 调度算法的路由器。
-
-```bash
-# 启动 Router
-pulsing actor --type router --namespace myapp --addr 0.0.0.0:8000
-```
-
-### 2. TransformersWorkerActor
-
-基于 HuggingFace Transformers 的推理 Worker。
+Simple example demonstrating actor message passing patterns.
 
 ```bash
-# 启动 Worker (GPU)
-pulsing actor --type transformers \
-    --model Qwen/Qwen3-0.6B \
-    --namespace myapp \
-    --addr 0.0.0.0:8001 \
-    --seeds 192.168.1.100:8000
-
-# 启动 Worker (CPU)
-pulsing actor --type transformers \
-    --model gpt2 \
-    --device cpu \
-    --namespace myapp
+python examples/actor/ping_pong.py
 ```
 
-## 部署示例
+**Features:**
+- Synchronous and asynchronous actors
+- `ask` (request-response) pattern
+- `tell` (fire-and-forget) pattern
+- Actor lifecycle (`on_start`, `on_stop`)
 
-### 单机部署
+### 2. cluster.py - Distributed Cluster
+
+Multi-node actor cluster with gossip-based discovery.
 
 ```bash
-# 终端 1: 启动 Router
-pulsing actor --type router --addr 0.0.0.0:8000
+# Terminal 1 - Start first node
+python examples/actor/cluster.py --port 8000
 
-# 终端 2: 启动 Worker 1
-pulsing actor --type transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
-
-# 终端 3: 启动 Worker 2
-pulsing actor --type transformers --model gpt2 --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+# Terminal 2 - Start second node and join cluster
+python examples/actor/cluster.py --port 8001 --seed 127.0.0.1:8000
 ```
 
-### 多机部署
+**Features:**
+- Multi-node cluster formation
+- Service discovery via gossip protocol
+- Cross-node actor communication
+- Cluster membership monitoring
+
+## CLI Usage
+
+### 1. Router
+
+HTTP server with OpenAI-compatible API and load balancing (RoundRobin scheduler).
 
 ```bash
-# 机器 A (Router)
-pulsing actor --type router --addr 0.0.0.0:8000
-
-# 机器 B (Worker)
-pulsing actor --type transformers --model Qwen/Qwen3-0.6B --addr 0.0.0.0:8000 --seeds 192.168.1.A:8000
-
-# 机器 C (Worker)
-pulsing actor --type transformers --model Qwen/Qwen3-0.6B --addr 0.0.0.0:8000 --seeds 192.168.1.A:8000
+# Start Router
+pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
 ```
 
-## 编程接口
+### 2. Worker
 
-### 直接使用 Actor 类
+HuggingFace Transformers-based inference worker with streaming support.
+
+```bash
+# Start Worker (GPU)
+pulsing actor transformers --model gpt2 --addr 127.0.0.1:8001 --seeds 127.0.0.1:8000
+
+# Start Worker (CPU)
+pulsing actor transformers --model gpt2 --device cpu --addr 127.0.0.1:8001 --seeds 127.0.0.1:8000
+
+# Start Worker with larger model
+pulsing actor transformers --model Qwen/Qwen2.5-0.5B --addr 127.0.0.1:8001 --seeds 127.0.0.1:8000
+```
+
+## Deployment Examples
+
+### Single Machine
+
+```bash
+# Terminal 1: Start Router
+pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+
+# Terminal 2: Start Worker 1
+pulsing actor transformers --model gpt2 --addr 127.0.0.1:8001 --seeds 127.0.0.1:8000
+
+# Terminal 3: Start Worker 2
+pulsing actor transformers --model gpt2 --addr 127.0.0.1:8002 --seeds 127.0.0.1:8000
+```
+
+### Multi-Machine Cluster
+
+```bash
+# Machine A (Router)
+pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+
+# Machine B (Worker 1)
+pulsing actor transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 192.168.1.A:8000
+
+# Machine C (Worker 2)
+pulsing actor transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 192.168.1.A:8000
+```
+
+## Testing
+
+### Chat Completions (Non-streaming)
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "my-llm",
+    "messages": [{"role": "user", "content": "Hello, how are you?"}],
+    "stream": false
+  }'
+```
+
+### Chat Completions (Streaming)
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "my-llm",
+    "messages": [{"role": "user", "content": "Tell me a story"}],
+    "stream": true
+  }'
+```
+
+### Completions API
+
+```bash
+curl -X POST http://localhost:8080/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "my-llm",
+    "prompt": "Once upon a time",
+    "max_tokens": 100,
+    "stream": true
+  }'
+```
+
+### Health Check
+
+```bash
+curl http://localhost:8080/health
+```
+
+## Programming API
+
+### Basic Actor (from ping_pong.py)
 
 ```python
 import asyncio
-from pulsing.actors import RouterActor, TransformersWorkerActor
+from pulsing.actor import ActorSystem, SystemConfig, RawMessage, Actor, ActorId
+
+class PingPongActor(Actor):
+    def __init__(self):
+        self.count = 0
+    
+    def on_start(self, actor_id: ActorId):
+        print(f"Actor started: {actor_id.name}")
+    
+    def receive(self, msg: RawMessage) -> RawMessage:
+        if msg.msg_type == "Ping":
+            self.count += 1
+            return RawMessage.from_json("Pong", {"count": self.count})
+        return RawMessage.empty()
 
 async def main():
-    # 启动 Router
-    router = RouterActor(
-        namespace="myapp",
-        addr="0.0.0.0:8000"
-    )
-    await router.start()
+    config = SystemConfig.standalone()
+    system = await ActorSystem.create(config)
+    actor = await system.spawn("counter", PingPongActor())
     
-    # 启动 Worker
-    worker = TransformersWorkerActor(
-        model="gpt2",
-        namespace="myapp",
-        addr="0.0.0.0:8001",
-        seeds=["127.0.0.1:8000"],
-        device="cpu"
-    )
-    await worker.start()
+    # Request-response
+    response = await actor.ask_json("Ping", {})
+    print(f"Count: {response['count']}")
     
-    # ... 业务逻辑 ...
-    
-    await worker.stop()
-    await router.stop()
+    await system.shutdown()
 
 asyncio.run(main())
 ```
 
-### 消息协议
+### LLM Inference (Router + Worker)
 
-#### Router 消息
+```python
+import asyncio
+from pulsing.actors import TransformersWorker, start_router, stop_router
+from pulsing.actor.helpers import spawn_service_actor, run_until_signal
+from pulsing.actor import ActorSystem, SystemConfig
 
-| 消息类型 | 描述 | 请求字段 | 响应字段 |
-|---------|------|---------|---------|
-| RouteRequest | 请求路由 | - | worker_id, endpoint |
-| RegisterWorker | 注册 Worker | worker_id, endpoint, metadata | message, total_workers |
-| UnregisterWorker | 注销 Worker | worker_id | message, total_workers |
-| HealthCheck | 健康检查 | - | status, total_workers, healthy_workers, workers |
+async def main():
+    # Start Router
+    router_config = SystemConfig.with_addr("0.0.0.0:8000")
+    router_system = await ActorSystem.create(router_config)
+    runner = await start_router(
+        router_system,
+        http_host="0.0.0.0",
+        http_port=8080,
+        model_name="my-llm"
+    )
+    
+    # Start Worker
+    worker = TransformersWorker(model_name="gpt2", device="cpu")
+    worker_system, worker_ref = await spawn_service_actor(
+        worker,
+        "worker",
+        addr="0.0.0.0:8001",
+        seeds=["127.0.0.1:8000"],
+        public=True
+    )
+    
+    # Run until signal
+    await run_until_signal(worker_system, "worker")
+    
+    # Cleanup
+    await stop_router(runner)
+    await router_system.shutdown()
+    await worker_system.shutdown()
 
-#### Worker 消息
+asyncio.run(main())
+```
 
-| 消息类型 | 描述 | 请求字段 | 响应字段 |
-|---------|------|---------|---------|
-| GenerateRequest | 生成请求 | prompt 或 token_ids, max_new_tokens | text, token_ids, finish_reason |
-| WorkerStatus | 状态查询 | - | worker_id, model, is_loaded, request_count |
-| HealthCheck | 健康检查 | - | status, worker_id, is_loaded |
+### Message Protocol
 
-## 架构图
+#### Worker Messages
+
+| Message Type | Description | Request Fields | Response Fields |
+|-------------|-------------|----------------|-----------------|
+| GenerateRequest | Synchronous generation | prompt, max_new_tokens | text, prompt_tokens, completion_tokens |
+| GenerateStreamRequest | Streaming generation | prompt, max_new_tokens | Stream of JSON chunks with text, finish_reason |
+| HealthCheck | Health status | - | status, worker_id, is_loaded |
+
+**GenerateStreamRequest Response Format:**
+
+Each chunk is a JSON object:
+```json
+{"text": "token", "finish_reason": null}
+{"text": "", "finish_reason": "length"}
+```
+
+## Architecture
 
 ```
-                    ┌─────────────┐
-                    │   Client    │
-                    └──────┬──────┘
-                           │
+                    ┌──────────────┐
+                    │    Client    │
+                    └──────┬───────┘
+                           │ HTTP/1.1 (OpenAI API)
                            ▼
-                    ┌─────────────┐
-                    │   Router    │
-                    │ (RoundRobin)│
-                    └──────┬──────┘
-                           │
+                    ┌──────────────┐
+                    │    Router    │
+                    │  (HTTP/SSE)  │
+                    └──────┬───────┘
+                           │ HTTP/2 (Actor System)
            ┌───────────────┼───────────────┐
            │               │               │
            ▼               ▼               ▼
     ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-    │   Worker    │ │   Worker    │ │   Worker    │
+    │   Worker 1  │ │   Worker 2  │ │   Worker 3  │
     │(Transformers)│ │(Transformers)│ │(Transformers)│
     └─────────────┘ └─────────────┘ └─────────────┘
 ```
+
+**Key Features:**
+- **Load Balancing**: RoundRobin scheduler selects workers on demand
+- **Service Discovery**: Gossip-based cluster membership via Rust Actor System
+- **Streaming**: HTTP/2 for inter-actor streaming, SSE for client-facing API
+- **Dynamic Scaling**: Workers can join/leave cluster without restart
+
+## Learn More
+
+- See `ping_pong.py` for basic actor patterns
+- See `cluster.py` for distributed cluster setup
+- See `../cli/README.md` for more CLI options
