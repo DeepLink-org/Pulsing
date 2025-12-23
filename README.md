@@ -63,9 +63,28 @@ pulsing router --endpoint dynamo.prefill.generate \
 | `pulsing vllm` | 启动 vLLM 后端 worker |
 | `pulsing transformers` | 启动 Transformers 后端 worker |
 | `pulsing router` | 启动独立 KV 感知路由器 |
+| `pulsing actor router` | 启动 Actor System Router (OpenAI 兼容 API) |
+| `pulsing actor transformers` | 启动 Actor System Worker (Transformers) |
 | `pulsing bench` | 运行性能基准测试 |
 
 使用 `pulsing <command> --help` 查看各命令的详细参数。
+
+### Actor System 示例
+
+基于原生 Actor System 的分布式推理：
+
+```bash
+# 启动 Router (OpenAI 兼容 API)
+pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+
+# 启动 Worker
+pulsing actor transformers --model gpt2 --addr 127.0.0.1:8001 --seeds 127.0.0.1:8000
+
+# 测试请求
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "my-llm", "messages": [{"role": "user", "content": "Hello"}], "stream": true}'
+```
 
 ## 与 NVIDIA Dynamo 的关系
 

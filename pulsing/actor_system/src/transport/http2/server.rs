@@ -47,6 +47,12 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
         payload: Vec<u8>,
     ) -> anyhow::Result<MessageStream>;
 
+    /// Handle gossip message
+    async fn handle_gossip(
+        &self,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<Option<Vec<u8>>>;
+
     /// Get health status
     async fn health_check(&self) -> serde_json::Value {
         serde_json::json!({"status": "ok"})
@@ -292,10 +298,35 @@ impl Http2Server {
         };
 
         // Dispatch based on mode
+        if path == "/cluster/gossip" {
+            return Self::handle_gossip_request(&handler, body_bytes).await;
+        }
+
         match mode {
             MessageMode::Ask => Self::handle_ask_request(&handler, &path, &msg_type, body_bytes).await,
             MessageMode::Tell => Self::handle_tell_request(&handler, &path, &msg_type, body_bytes).await,
             MessageMode::Stream => Self::handle_stream_request(&handler, &path, &msg_type, body_bytes).await,
+        }
+    }
+
+    async fn handle_gossip_request(
+        handler: &Arc<dyn Http2ServerHandler>,
+        payload: Vec<u8>,
+    ) -> Result<Response<BoxBody>, Infallible> {
+        match handler.handle_gossip(payload).await {
+            Ok(Some(response)) => Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/octet-stream")
+                .body(full_body(response))
+                .unwrap()),
+            Ok(None) => Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(empty_body())
+                .unwrap()),
+            Err(e) => Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(full_body(e.to_string().into_bytes()))
+                .unwrap()),
         }
     }
 

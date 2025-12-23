@@ -246,6 +246,180 @@ def bench():
     benchmark_main(["pulsing-bench"] + cmd_args)
 
 
+@hp.param("actor")
+def actor(
+    type: str,
+    namespace: str = "dynamo",
+    addr: Optional[str] = None,
+    seeds: Optional[str] = None,
+    model: Optional[str] = None,
+    model_name: str = "pulsing-model",
+    device: str = "cuda",
+    max_new_tokens: int = 512,
+    preload_model: bool = False,
+    http_host: str = "0.0.0.0",
+    http_port: int = 8080,
+    scheduler: str = "round_robin",
+):
+    """
+    Start an Actor-based service.
+
+    This command starts actors based on the Pulsing Actor System.
+    Supported actor types:
+    - router: RoundRobin load balancing router (with OpenAI-compatible HTTP API)
+    - transformers: Transformers-based inference worker
+
+    Args:
+        type: Actor type. Options: 'router', 'transformers'
+        namespace: Service namespace. Default: 'dynamo'
+        addr: Actor System bind address (e.g., '0.0.0.0:8000')
+        seeds: Comma-separated list of seed nodes (e.g., '192.168.1.1:8000,192.168.1.2:8000')
+        model: Model path (required for 'transformers' type)
+        model_name: Model name for OpenAI API. Default: 'pulsing-model'
+        device: Device for inference ('cuda', 'cpu', 'mps'). Default: 'cuda'
+        max_new_tokens: Max tokens to generate. Default: 512
+        scheduler: Scheduler algorithm for router. Options: 'round_robin', 'random', 'least_connection'. Default: 'round_robin'
+        preload_model: Preload model on startup. Default: False
+        http_host: HTTP server host (for router). Default: '0.0.0.0'
+        http_port: HTTP server port (for router). Default: 8080
+
+    Examples:
+        # Start a router with OpenAI-compatible API on port 8080
+        pulsing actor --type router --http_port 8080 --model_name my-llm
+
+        # Test with curl
+        curl http://localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"my-llm","messages":[{"role":"user","content":"Hello"}]}'
+
+        # Start a transformers worker
+        pulsing actor --type transformers --model Qwen/Qwen3-0.6B --addr 0.0.0.0:8001 --seeds 192.168.1.100:8000
+
+        # Start worker on CPU
+        pulsing actor --type transformers --model gpt2 --device cpu
+    """
+    # Parse seeds
+    seed_list = []
+    if seeds:
+        seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
+
+    if type == "router":
+        _start_router_actor(namespace, addr, seed_list, http_host, http_port, model_name, scheduler)
+    elif type == "transformers":
+        if not model:
+            raise ValueError("--model is required for 'transformers' actor type")
+        _start_transformers_actor(
+            model=model,
+            namespace=namespace,
+            addr=addr,
+            seeds=seed_list,
+            device=device,
+            max_new_tokens=max_new_tokens,
+            preload_model=preload_model,
+        )
+    else:
+        raise ValueError(f"Unknown actor type: {type}. Supported types: router, transformers")
+
+
+def _start_router_actor(
+    namespace: str,
+    addr: Optional[str],
+    seeds: list,
+    http_host: str,
+    http_port: int,
+    model_name: str,
+    scheduler_type: str,
+):
+    """Start Router with OpenAI-compatible API"""
+    from pulsing.actor import ActorSystem, SystemConfig
+    from pulsing.actor.helpers import run_until_signal
+    from ..actors.router import start_router, stop_router
+    from ..actors import RoundRobinScheduler, RandomScheduler, LeastConnectionScheduler
+    
+    # 选择调度器类
+    scheduler_map = {
+        "round_robin": RoundRobinScheduler,
+        "random": RandomScheduler,
+        "least_connection": LeastConnectionScheduler,
+    }
+    scheduler_class = scheduler_map.get(scheduler_type)
+    if not scheduler_class:
+        raise ValueError(f"Unknown scheduler: {scheduler_type}. Options: {list(scheduler_map.keys())}")
+
+    print(f"Starting Router (namespace={namespace}, model={model_name})")
+    print(f"  Actor System addr: {addr or 'auto'}")
+    print(f"  HTTP API: http://{http_host}:{http_port}")
+    print(f"  Scheduler: {scheduler_type}")
+
+    async def run():
+        # 1. 创建 ActorSystem
+        if addr:
+            config = SystemConfig.with_addr(addr)
+        else:
+            config = SystemConfig.standalone()
+        
+        if seeds:
+            config = config.with_seeds(seeds)
+        
+        system = await ActorSystem.create(config)
+        print(f"[Router] ActorSystem started at {system.addr}")
+        
+        # 2. 启动 Router HTTP 服务器
+        runner = await start_router(
+            system,
+            http_host=http_host,
+            http_port=http_port,
+            model_name=model_name,
+            scheduler_class=scheduler_class,
+        )
+        
+        # 3. 运行直到收到信号
+        try:
+            await run_until_signal(system, "router")
+        finally:
+            await stop_router(runner)
+
+    uvloop.run(run())
+
+
+def _start_transformers_actor(
+    model: str,
+    namespace: str,
+    addr: Optional[str],
+    seeds: list,
+    device: str,
+    max_new_tokens: int,
+    preload_model: bool,
+):
+    """Start Transformers Worker"""
+    from pulsing.actor.helpers import spawn_and_run
+    from ..actors import TransformersWorker, GenerationConfig
+
+    print(f"Starting Transformers Worker (model={model}, namespace={namespace})")
+    print(f"  Device: {device}")
+    print(f"  Max tokens: {max_new_tokens}")
+    print(f"  Preload: {preload_model}")
+
+    async def run():
+        # 创建 Worker Actor
+        gen_config = GenerationConfig(max_new_tokens=max_new_tokens)
+        worker = TransformersWorker(
+            model_name=model,
+            device=device,
+            gen_config=gen_config,
+            preload=preload_model,
+        )
+        
+        # spawn 并运行
+        await spawn_and_run(
+            worker,
+            name="worker",
+            addr=addr,
+            seeds=seeds if seeds else None,
+            public=True,
+        )
+
+    uvloop.run(run())
+
+
 def main():
     hp.launch()
 

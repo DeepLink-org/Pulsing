@@ -66,6 +66,148 @@ use crate::actor::{ActorId, ActorPath, Message, PayloadStream, RemoteTransport};
 use futures::StreamExt;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+
+/// High-level HTTP/2 Transport
+/// 
+/// Combines Http2Server and Http2Client into a single component
+/// used by ActorSystem and GossipCluster.
+pub struct Http2Transport {
+    local_addr: SocketAddr,
+    client: Arc<Http2Client>,
+    server: Option<Http2Server>,
+    config: Http2Config,
+}
+
+impl Http2Transport {
+    /// Create a new HTTP/2 transport and start the server
+    pub async fn new(
+        bind_addr: SocketAddr,
+        handler: Arc<dyn Http2ServerHandler>,
+        config: Http2Config,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<(Arc<Self>, SocketAddr)> {
+        // Build HTTP/2 client
+        let client = Arc::new(Http2Client::new(config.clone()));
+        client.start_background_tasks();
+
+        // Start HTTP/2 server
+        let server = Http2Server::new(bind_addr, handler, config.clone(), cancel.clone()).await?;
+        let local_addr = server.local_addr();
+
+        let transport = Arc::new(Self {
+            local_addr,
+            client,
+            server: Some(server),
+            config,
+        });
+
+        Ok((transport, local_addr))
+    }
+
+    /// Create a client-only transport (no server)
+    pub fn new_client(config: Http2Config) -> Arc<Self> {
+        let client = Arc::new(Http2Client::new(config.clone()));
+        client.start_background_tasks();
+
+        Arc::new(Self {
+            local_addr: "0.0.0.0:0".parse().unwrap(),
+            client,
+            server: None,
+            config,
+        })
+    }
+
+    /// Get local address
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    /// Send a request to an actor and wait for response
+    pub async fn ask(
+        &self,
+        addr: SocketAddr,
+        actor_name: &str,
+        msg: Message,
+    ) -> anyhow::Result<Message> {
+        let path = format!("/actors/{}", actor_name);
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming requests not yet supported"));
+        };
+
+        let response = self.client.ask(addr, &path, &msg_type, data).await?;
+        Ok(Message::single("", response))
+    }
+
+    /// Send a request to a named actor and wait for response
+    pub async fn ask_named(
+        &self,
+        addr: SocketAddr,
+        path: &ActorPath,
+        msg: Message,
+    ) -> anyhow::Result<Message> {
+        let url_path = format!("/named/{}", path.as_str());
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming requests not yet supported"));
+        };
+
+        let response = self.client.ask(addr, &url_path, &msg_type, data).await?;
+        Ok(Message::single("", response))
+    }
+
+    /// Send a fire-and-forget message
+    pub async fn tell(
+        &self,
+        addr: SocketAddr,
+        actor_name: &str,
+        msg: Message,
+    ) -> anyhow::Result<()> {
+        let path = format!("/actors/{}", actor_name);
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming not supported for tell"));
+        };
+
+        self.client.tell(addr, &path, &msg_type, data).await
+    }
+
+    /// Send a fire-and-forget message to a named actor
+    pub async fn tell_named(
+        &self,
+        addr: SocketAddr,
+        path: &ActorPath,
+        msg: Message,
+    ) -> anyhow::Result<()> {
+        let url_path = format!("/named/{}", path.as_str());
+        let Message::Single { msg_type, data } = msg else {
+            return Err(anyhow::anyhow!("Streaming not supported for tell"));
+        };
+
+        self.client.tell(addr, &url_path, &msg_type, data).await
+    }
+
+    /// Send a gossip message
+    pub async fn send_gossip(
+        &self,
+        addr: SocketAddr,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let response = self
+            .client
+            .ask(addr, "/cluster/gossip", "gossip", payload)
+            .await?;
+        
+        if response.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(response))
+        }
+    }
+
+    /// Get the underlying client
+    pub fn client(&self) -> Arc<Http2Client> {
+        self.client.clone()
+    }
+}
 
 /// Message mode for HTTP/2 requests
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
