@@ -247,15 +247,6 @@ pub mod headers {
     pub const REQUEST_ID: &str = "x-request-id";
 }
 
-/// Target type for HTTP/2 remote transport
-#[derive(Clone)]
-enum Http2RemoteTarget {
-    /// Target by actor name
-    Actor(String),
-    /// Target by named actor path
-    Named(ActorPath),
-}
-
 /// HTTP/2 Remote Transport for ActorRef
 ///
 /// Implements the `RemoteTransport` trait, enabling `ActorRef` to communicate
@@ -270,7 +261,8 @@ enum Http2RemoteTarget {
 pub struct Http2RemoteTransport {
     client: Arc<Http2Client>,
     remote_addr: SocketAddr,
-    target: Http2RemoteTarget,
+    /// Request path (e.g., "/actors/name" or "/named/path")
+    path: String,
     circuit_breaker: CircuitBreaker,
 }
 
@@ -280,7 +272,7 @@ impl Http2RemoteTransport {
         Self {
             client,
             remote_addr,
-            target: Http2RemoteTarget::Actor(actor_name),
+            path: format!("/actors/{}", actor_name),
             circuit_breaker: CircuitBreaker::new(),
         }
     }
@@ -290,7 +282,7 @@ impl Http2RemoteTransport {
         Self {
             client,
             remote_addr,
-            target: Http2RemoteTarget::Named(path),
+            path: format!("/named/{}", path.as_str()),
             circuit_breaker: CircuitBreaker::new(),
         }
     }
@@ -305,7 +297,7 @@ impl Http2RemoteTransport {
         Self {
             client,
             remote_addr,
-            target: Http2RemoteTarget::Actor(actor_name),
+            path: format!("/actors/{}", actor_name),
             circuit_breaker: CircuitBreaker::with_config(cb_config),
         }
     }
@@ -320,7 +312,7 @@ impl Http2RemoteTransport {
         Self {
             client,
             remote_addr,
-            target: Http2RemoteTarget::Named(path),
+            path: format!("/named/{}", path.as_str()),
             circuit_breaker: CircuitBreaker::with_config(cb_config),
         }
     }
@@ -340,12 +332,9 @@ impl Http2RemoteTransport {
         self.remote_addr
     }
 
-    /// Get the path for the request
-    fn request_path(&self) -> String {
-        match &self.target {
-            Http2RemoteTarget::Actor(name) => format!("/actors/{}", name),
-            Http2RemoteTarget::Named(path) => format!("/named/{}", path.as_str()),
-        }
+    /// Get the request path
+    pub fn path(&self) -> &str {
+        &self.path
     }
 }
 
@@ -365,10 +354,9 @@ impl RemoteTransport for Http2RemoteTransport {
             ));
         }
 
-        let path = self.request_path();
         let result = self
             .client
-            .ask(self.remote_addr, &path, msg_type, payload)
+            .ask(self.remote_addr, &self.path, msg_type, payload)
             .await;
 
         // Record outcome in circuit breaker
@@ -390,10 +378,9 @@ impl RemoteTransport for Http2RemoteTransport {
             ));
         }
 
-        let path = self.request_path();
         let result = self
             .client
-            .tell(self.remote_addr, &path, msg_type, payload)
+            .tell(self.remote_addr, &self.path, msg_type, payload)
             .await;
 
         // Record outcome in circuit breaker
@@ -407,10 +394,9 @@ impl RemoteTransport for Http2RemoteTransport {
         msg_type: &str,
         payload: Vec<u8>,
     ) -> anyhow::Result<PayloadStream> {
-        let path = self.request_path();
         let msg_stream = self
             .client
-            .ask_stream_raw(self.remote_addr, &path, msg_type, payload)
+            .ask_stream_raw(self.remote_addr, &self.path, msg_type, payload)
             .await?;
 
         // Convert MessageStream to PayloadStream by extracting payload
@@ -476,10 +462,10 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
 
         let transport = Http2RemoteTransport::new(client.clone(), addr, "my_actor".to_string());
-        assert_eq!(transport.request_path(), "/actors/my_actor");
+        assert_eq!(transport.path(), "/actors/my_actor");
 
         let path = ActorPath::new("services/llm").unwrap();
         let transport = Http2RemoteTransport::new_named(client, addr, path);
-        assert_eq!(transport.request_path(), "/named/services/llm");
+        assert_eq!(transport.path(), "/named/services/llm");
     }
 }

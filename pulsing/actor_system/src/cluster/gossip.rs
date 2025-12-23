@@ -68,9 +68,7 @@ pub enum GossipMessage {
     Welcome {
         from: NodeId,
         members: Vec<MemberInfo>,
-        /// Legacy actor locations (for backward compatibility)
-        actors: Vec<ActorLocation>,
-        /// Named actor registry (new)
+        /// Named actor registry (only sync named actors to reduce gossip traffic)
         named_actors: Vec<NamedActorInfo>,
     },
 
@@ -78,9 +76,7 @@ pub enum GossipMessage {
     Sync {
         from: NodeId,
         members: Vec<MemberInfo>,
-        /// Legacy actor locations (for backward compatibility)
-        actors: Vec<ActorLocation>,
-        /// Named actor registry (new)
+        /// Named actor registry (only sync named actors to reduce gossip traffic)
         named_actors: Vec<NamedActorInfo>,
     },
 
@@ -315,17 +311,10 @@ impl GossipCluster {
                     members.insert(node_id, member);
                 }
 
-                // Return welcome with current state
+                // Return welcome with current state (only sync named actors to reduce traffic)
                 let welcome = GossipMessage::Welcome {
                     from: self.local_node.clone(),
                     members: self.members.read().await.values().cloned().collect(),
-                    actors: self
-                        .actors
-                        .read()
-                        .await
-                        .iter()
-                        .map(|(id, node)| ActorLocation::new(id.clone(), node.clone()))
-                        .collect(),
                     named_actors: self.named_actors.read().await.values().cloned().collect(),
                 };
 
@@ -335,17 +324,14 @@ impl GossipCluster {
             GossipMessage::Welcome {
                 from: _,
                 members,
-                actors,
                 named_actors,
             } => {
                 tracing::debug!(
                     member_count = members.len(),
-                    actor_count = actors.len(),
                     named_actor_count = named_actors.len(),
                     "Received welcome"
                 );
                 self.merge_members(members).await;
-                self.merge_actors(actors).await;
                 self.merge_named_actors(named_actors).await;
                 Ok(None)
             }
@@ -353,11 +339,9 @@ impl GossipCluster {
             GossipMessage::Sync {
                 from: _,
                 members,
-                actors,
                 named_actors,
             } => {
                 self.merge_members(members).await;
-                self.merge_actors(actors).await;
                 self.merge_named_actors(named_actors).await;
                 Ok(None)
             }
@@ -511,6 +495,10 @@ impl GossipCluster {
     }
 
     /// Merge received actor locations with local state
+    /// 
+    /// NOTE: This method is kept for backward compatibility but is no longer called
+    /// since we only sync named_actors via Gossip to reduce traffic.
+    #[allow(dead_code)]
     async fn merge_actors(&self, remote_actors: Vec<ActorLocation>) {
         let mut local = self.actors.write().await;
 
@@ -783,17 +771,10 @@ impl GossipClusterInner {
                 .collect()
         };
 
-        // Build sync message
+        // Build sync message (only sync named actors to reduce gossip traffic)
         let msg = GossipMessage::Sync {
             from: self.local_node.clone(),
             members: self.members.read().await.values().cloned().collect(),
-            actors: self
-                .actors
-                .read()
-                .await
-                .iter()
-                .map(|(id, node)| ActorLocation::new(id.clone(), node.clone()))
-                .collect(),
             named_actors: self.named_actors.read().await.values().cloned().collect(),
         };
 
@@ -869,16 +850,10 @@ impl GossipClusterInner {
             return;
         }
 
+        // Build sync message (only sync named actors to reduce gossip traffic)
         let msg = GossipMessage::Sync {
             from: self.local_node.clone(),
             members: self.members.read().await.values().cloned().collect(),
-            actors: self
-                .actors
-                .read()
-                .await
-                .iter()
-                .map(|(id, node)| ActorLocation::new(id.clone(), node.clone()))
-                .collect(),
             named_actors: self.named_actors.read().await.values().cloned().collect(),
         };
 
@@ -899,20 +874,17 @@ impl GossipClusterInner {
                     if let Ok(
                         GossipMessage::Sync {
                             members,
-                            actors,
                             named_actors,
                             ..
                         }
                         | GossipMessage::Welcome {
                             members,
-                            actors,
                             named_actors,
                             ..
                         },
                     ) = bincode::deserialize::<GossipMessage>(&response_payload)
                     {
                         self.merge_members(members).await;
-                        self.merge_actors(actors).await;
                         self.merge_named_actors(named_actors).await;
                     }
                 }
@@ -982,6 +954,10 @@ impl GossipClusterInner {
     }
 
     /// Merge received actor locations with local state
+    /// 
+    /// NOTE: This method is kept for backward compatibility but is no longer called
+    /// since we only sync named_actors via Gossip to reduce traffic.
+    #[allow(dead_code)]
     async fn merge_actors(&self, remote_actors: Vec<ActorLocation>) {
         let mut local = self.actors.write().await;
 
