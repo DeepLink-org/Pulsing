@@ -101,8 +101,14 @@ impl ActorLifecycle {
         self.log_termination(actor_id, named_path.as_ref(), &reason);
 
         // 2. Cleanup routing table and broadcast to cluster
-        self.cleanup_and_broadcast(actor_id, named_path.as_ref(), &reason, named_actor_paths, cluster)
-            .await;
+        self.cleanup_and_broadcast(
+            actor_id,
+            named_path.as_ref(),
+            &reason,
+            named_actor_paths,
+            cluster,
+        )
+        .await;
 
         // 3. Notify all watchers
         self.notify_watchers(actor_id, actor_name, reason, get_sender)
@@ -110,7 +116,12 @@ impl ActorLifecycle {
     }
 
     /// Log actor termination event
-    fn log_termination(&self, actor_id: &ActorId, named_path: Option<&ActorPath>, reason: &StopReason) {
+    fn log_termination(
+        &self,
+        actor_id: &ActorId,
+        named_path: Option<&ActorPath>,
+        reason: &StopReason,
+    ) {
         if let Some(path) = named_path {
             tracing::info!(
                 actor_id = %actor_id,

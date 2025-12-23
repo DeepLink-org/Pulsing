@@ -273,13 +273,12 @@ impl ConnectionPool {
     }
 
     /// Get or create a connection to the given address
-    pub async fn get_connection(
-        &self,
-        addr: SocketAddr,
-    ) -> anyhow::Result<ConnectionGuard> {
+    pub async fn get_connection(&self, addr: SocketAddr) -> anyhow::Result<ConnectionGuard> {
         // Try to get an existing healthy connection first
         if let Some(conn) = self.try_get_existing(addr).await {
-            self.stats.connections_reused.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .connections_reused
+                .fetch_add(1, Ordering::Relaxed);
             return Ok(conn);
         }
 
@@ -297,7 +296,9 @@ impl ConnectionPool {
                 if let Ok(mut guard) = conn.try_lock() {
                     if guard.state == ConnectionState::Idle && guard.is_healthy(&self.config) {
                         guard.mark_used();
-                        self.stats.active_connections.fetch_add(1, Ordering::Relaxed);
+                        self.stats
+                            .active_connections
+                            .fetch_add(1, Ordering::Relaxed);
                         self.stats.idle_connections.fetch_sub(1, Ordering::Relaxed);
                         return Some(ConnectionGuard {
                             conn: conn.clone(),
@@ -370,8 +371,12 @@ impl ConnectionPool {
             }
         }
 
-        self.stats.connections_created.fetch_add(1, Ordering::Relaxed);
-        self.stats.active_connections.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .connections_created
+            .fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .active_connections
+            .fetch_add(1, Ordering::Relaxed);
 
         Ok(ConnectionGuard {
             conn,
@@ -381,13 +386,11 @@ impl ConnectionPool {
 
     /// Create the actual TCP + HTTP/2 connection
     async fn create_connection_inner(&self, addr: SocketAddr) -> anyhow::Result<PooledConnection> {
-        let stream = tokio::time::timeout(
-            self.http2_config.connect_timeout,
-            TcpStream::connect(addr),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("Connection timeout to {}", addr))?
-        .map_err(|e| anyhow::anyhow!("Connection failed to {}: {}", addr, e))?;
+        let stream =
+            tokio::time::timeout(self.http2_config.connect_timeout, TcpStream::connect(addr))
+                .await
+                .map_err(|_| anyhow::anyhow!("Connection timeout to {}", addr))?
+                .map_err(|e| anyhow::anyhow!("Connection failed to {}: {}", addr, e))?;
 
         // Set TCP options
         stream.set_nodelay(true)?;
@@ -479,7 +482,11 @@ impl ConnectionPool {
                 let healthy = pool
                     .connections
                     .iter()
-                    .filter(|c| c.try_lock().map(|g| g.is_healthy(&self.config)).unwrap_or(false))
+                    .filter(|c| {
+                        c.try_lock()
+                            .map(|g| g.is_healthy(&self.config))
+                            .unwrap_or(false)
+                    })
                     .count();
 
                 serde_json::json!({
@@ -517,7 +524,9 @@ impl Drop for ConnectionGuard {
         if let Ok(mut guard) = self.conn.try_lock() {
             guard.mark_idle();
         }
-        self.stats.active_connections.fetch_sub(1, Ordering::Relaxed);
+        self.stats
+            .active_connections
+            .fetch_sub(1, Ordering::Relaxed);
         self.stats.idle_connections.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -568,4 +577,3 @@ mod tests {
         assert_eq!(stats.connections_created.load(Ordering::Relaxed), 0);
     }
 }
-

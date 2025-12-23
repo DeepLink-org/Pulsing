@@ -37,7 +37,7 @@ async fn test_mailbox_send_receive() {
     // Receive
     let received = receiver.recv().await.unwrap();
     assert_eq!(received.msg_type(), "test");
-    
+
     // Extract payload from message
     if let Message::Single { data, .. } = received.message {
         assert_eq!(data, vec![1, 2, 3]);
@@ -336,7 +336,11 @@ async fn test_mailbox_response_delivery() {
         sender.send(envelope).await.unwrap();
 
         let response = rx.await.unwrap().unwrap();
-        let Message::Single { data: response_payload, .. } = response else {
+        let Message::Single {
+            data: response_payload,
+            ..
+        } = response
+        else {
             panic!("expected single")
         };
         assert_eq!(response_payload, vec![(i as u8) * 2]);
@@ -361,7 +365,7 @@ async fn test_mailbox_empty_payload() {
 
     let received = receiver.recv().await.unwrap();
     assert_eq!(received.msg_type(), "empty");
-    
+
     if let Message::Single { data, .. } = received.message {
         assert!(data.is_empty());
     } else {
@@ -381,7 +385,7 @@ async fn test_mailbox_large_payload() {
     sender.send(envelope).await.unwrap();
 
     let received = receiver.recv().await.unwrap();
-    
+
     if let Message::Single { data, .. } = received.message {
         assert_eq!(data.len(), 1_000_000);
         assert_eq!(data, large_payload);

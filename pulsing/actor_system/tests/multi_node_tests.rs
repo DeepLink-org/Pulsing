@@ -91,7 +91,7 @@ mod two_node_tests {
         // Node 1 (seed)
         let config1 = create_cluster_config(20001);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
 
         // Node 2 joins node 1
         let mut config2 = create_cluster_config(20002);
@@ -114,7 +114,7 @@ mod two_node_tests {
         // Node 1
         let config1 = create_cluster_config(20011);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
 
         // Spawn actor on node 1
         let actor1_ref = system1.spawn("echo", Echo).await.unwrap();
@@ -158,7 +158,7 @@ mod multi_node_tests {
         // Node 1 (seed)
         let config1 = create_cluster_config(20031);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
 
         // Node 2
         let mut config2 = create_cluster_config(20032);
@@ -188,7 +188,7 @@ mod multi_node_tests {
         // Node 1
         let config1 = create_cluster_config(20041);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
 
         let _ref1 = system1.spawn("actor-on-node1", Echo).await.unwrap();
 
@@ -229,7 +229,9 @@ mod shared_state_tests {
         let count = Arc::new(AtomicI32::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = Counter { count: count.clone() };
+        let actor = Counter {
+            count: count.clone(),
+        };
         let actor_ref = system.spawn("counter", actor).await.unwrap();
 
         // Multiple increments
@@ -249,7 +251,9 @@ mod shared_state_tests {
         let count = Arc::new(AtomicI32::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = Counter { count: count.clone() };
+        let actor = Counter {
+            count: count.clone(),
+        };
         let actor_ref = system.spawn("counter", actor).await.unwrap();
 
         // Concurrent increments
@@ -286,7 +290,7 @@ mod failure_tests {
     async fn test_graceful_shutdown() {
         let config1 = create_cluster_config(20051);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
 
         let mut config2 = create_cluster_config(20052);
         config2.seed_nodes = vec![gossip1_addr];
@@ -309,7 +313,7 @@ mod failure_tests {
     async fn test_node_rejoin() {
         let config1 = create_cluster_config(20061);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
 
         // Node 2 joins
         let mut config2 = create_cluster_config(20062);
@@ -436,7 +440,7 @@ mod edge_case_tests {
     async fn test_same_actor_name_different_nodes() {
         let config1 = create_cluster_config(20071);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
 
         let mut config2 = create_cluster_config(20072);
         config2.seed_nodes = vec![gossip1_addr];
@@ -503,7 +507,7 @@ mod addressing_multi_node_tests {
         // Node 1
         let config1 = create_cluster_config(20081);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
 
         // Node 2 joins the cluster
         let mut config2 = create_cluster_config(20082);
@@ -515,7 +519,10 @@ mod addressing_multi_node_tests {
 
         // Create named actor on node 1
         let path = ActorPath::new("services/echo").unwrap();
-        let _actor_ref = system1.spawn_named(path.clone(), "echo_impl", Echo).await.unwrap();
+        let _actor_ref = system1
+            .spawn_named(path.clone(), "echo_impl", Echo)
+            .await
+            .unwrap();
 
         // Wait for gossip to propagate with retries
         let path_clone = path.clone();
@@ -548,7 +555,7 @@ mod addressing_multi_node_tests {
         // Node 1
         let config1 = create_cluster_config(20083);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
 
         // Node 2 joins
         let mut config2 = create_cluster_config(20084);
@@ -560,7 +567,10 @@ mod addressing_multi_node_tests {
 
         // Create named actor on node 1
         let path = ActorPath::new("services/api/handler").unwrap();
-        let _actor_ref = system1.spawn_named(path.clone(), "api_handler", Echo).await.unwrap();
+        let _actor_ref = system1
+            .spawn_named(path.clone(), "api_handler", Echo)
+            .await
+            .unwrap();
 
         // Wait for gossip propagation with retries
         let addr = ActorAddress::parse("actor:///services/api/handler").unwrap();
@@ -598,7 +608,7 @@ mod addressing_multi_node_tests {
         // Node 1
         let config1 = create_cluster_config(20085);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
 
         // Node 2 joins
         let mut config2 = create_cluster_config(20086);
@@ -611,12 +621,18 @@ mod addressing_multi_node_tests {
         // Create same named actor on BOTH nodes (multi-instance)
         let path = ActorPath::new("services/worker/pool").unwrap();
 
-        let _ref1 = system1.spawn_named(path.clone(), "pool_instance_1", Echo).await.unwrap();
+        let _ref1 = system1
+            .spawn_named(path.clone(), "pool_instance_1", Echo)
+            .await
+            .unwrap();
 
         // Small delay between registrations
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let _ref2 = system2.spawn_named(path.clone(), "pool_instance_2", Echo).await.unwrap();
+        let _ref2 = system2
+            .spawn_named(path.clone(), "pool_instance_2", Echo)
+            .await
+            .unwrap();
 
         // Wait for gossip propagation with retries until we see 2 instances
         for attempt in 1..=20 {
@@ -656,7 +672,7 @@ mod addressing_multi_node_tests {
         // Node 1
         let config1 = create_cluster_config(20087);
         let system1 = ActorSystem::new(config1).await.unwrap();
-        let gossip1_addr = system1.gossip_addr();
+        let gossip1_addr = system1.addr();
         let node1_id = system1.node_id().clone();
 
         // Node 2 joins

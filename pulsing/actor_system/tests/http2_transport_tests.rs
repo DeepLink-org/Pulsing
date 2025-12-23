@@ -92,6 +92,10 @@ impl Http2ServerHandler for TestHandler {
         Ok(Box::pin(stream))
     }
 
+    async fn handle_gossip(&self, _payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
     async fn health_check(&self) -> serde_json::Value {
         serde_json::json!({
             "status": "healthy",
@@ -263,7 +267,12 @@ async fn test_http2_multiple_requests() {
     // Send multiple requests
     for i in 0..10 {
         let response = client
-            .ask(addr, "/actors/test", "Msg", format!("request-{}", i).into_bytes())
+            .ask(
+                addr,
+                "/actors/test",
+                "Msg",
+                format!("request-{}", i).into_bytes(),
+            )
             .await
             .unwrap();
 
@@ -305,7 +314,12 @@ async fn test_http2_concurrent_requests() {
         let client = client.clone();
         let handle = tokio::spawn(async move {
             client
-                .ask(addr, "/actors/test", "Concurrent", format!("req-{}", i).into_bytes())
+                .ask(
+                    addr,
+                    "/actors/test",
+                    "Concurrent",
+                    format!("req-{}", i).into_bytes(),
+                )
                 .await
         });
         handles.push(handle);
@@ -641,7 +655,12 @@ async fn test_http2_stream_request() {
     // Create client and send stream request
     let client = Http2Client::new(Http2Config::default());
     let mut stream = client
-        .ask_stream(addr, "/actors/stream-test", "StreamMsg", b"test-payload".to_vec())
+        .ask_stream(
+            addr,
+            "/actors/stream-test",
+            "StreamMsg",
+            b"test-payload".to_vec(),
+        )
         .await
         .unwrap();
 
@@ -751,7 +770,7 @@ async fn test_http2_stream_cancellation() {
 
     // Cancel after receiving first frame
     let stream_cancel = stream.cancellation_token();
-    
+
     let mut pinned = std::pin::pin!(stream);
     let first = pinned.next().await;
     assert!(first.is_some());
@@ -844,7 +863,12 @@ async fn test_http2_throughput_benchmark() {
     // Send requests sequentially
     for i in 0..request_count {
         let _ = client
-            .ask(addr, "/actors/bench", "Bench", format!("req-{}", i).into_bytes())
+            .ask(
+                addr,
+                "/actors/bench",
+                "Bench",
+                format!("req-{}", i).into_bytes(),
+            )
             .await
             .unwrap();
     }
@@ -894,7 +918,12 @@ async fn test_http2_concurrent_throughput_benchmark() {
         let client = client.clone();
         let handle = tokio::spawn(async move {
             client
-                .ask(addr, "/actors/bench", "Bench", format!("req-{}", i).into_bytes())
+                .ask(
+                    addr,
+                    "/actors/bench",
+                    "Bench",
+                    format!("req-{}", i).into_bytes(),
+                )
                 .await
         });
         handles.push(handle);
@@ -979,7 +1008,11 @@ async fn test_http2_stream_throughput_benchmark() {
     );
 
     // Should handle reasonable throughput
-    assert!(streams_per_sec > 10.0, "Stream throughput too low: {} streams/s", streams_per_sec);
+    assert!(
+        streams_per_sec > 10.0,
+        "Stream throughput too low: {} streams/s",
+        streams_per_sec
+    );
 
     // Cleanup
     cancel.cancel();
@@ -1012,7 +1045,12 @@ async fn test_http2_latency_benchmark() {
     for i in 0..request_count {
         let start = std::time::Instant::now();
         let _ = client
-            .ask(addr, "/actors/latency", "Ping", format!("req-{}", i).into_bytes())
+            .ask(
+                addr,
+                "/actors/latency",
+                "Ping",
+                format!("req-{}", i).into_bytes(),
+            )
             .await
             .unwrap();
         latencies.push(start.elapsed());
@@ -1024,7 +1062,8 @@ async fn test_http2_latency_benchmark() {
     let max = latencies.last().unwrap();
     let median = latencies[request_count / 2];
     let p99 = latencies[(request_count * 99) / 100];
-    let avg: std::time::Duration = latencies.iter().sum::<std::time::Duration>() / request_count as u32;
+    let avg: std::time::Duration =
+        latencies.iter().sum::<std::time::Duration>() / request_count as u32;
 
     println!(
         "HTTP/2 Latency: min={:?}, avg={:?}, median={:?}, p99={:?}, max={:?}",
@@ -1069,7 +1108,12 @@ async fn test_http2_connection_pool_reuse() {
     // Send multiple requests to trigger connection reuse
     for i in 0..10 {
         let _ = client
-            .ask(addr, "/actors/pool-test", "Msg", format!("req-{}", i).into_bytes())
+            .ask(
+                addr,
+                "/actors/pool-test",
+                "Msg",
+                format!("req-{}", i).into_bytes(),
+            )
             .await
             .unwrap();
     }
@@ -1079,10 +1123,7 @@ async fn test_http2_connection_pool_reuse() {
     let created = stats.connections_created.load(Ordering::Relaxed);
     let reused = stats.connections_reused.load(Ordering::Relaxed);
 
-    println!(
-        "Connection Pool: created={}, reused={}",
-        created, reused
-    );
+    println!("Connection Pool: created={}, reused={}", created, reused);
 
     // Should have created very few connections but reused many times
     // HTTP/2 multiplexing means we should only need 1 connection
@@ -1100,16 +1141,18 @@ async fn test_http2_retry_on_connection_error() {
 
     // Create client with retry
     let client = Http2ClientBuilder::new()
-        .retry_config(
-            RetryConfig::with_max_retries(2)
-                .initial_delay(Duration::from_millis(10))
-        )
+        .retry_config(RetryConfig::with_max_retries(2).initial_delay(Duration::from_millis(10)))
         .connect_timeout(Duration::from_millis(100))
         .build();
 
     // Try to connect to a port that doesn't exist
     let result: Result<Vec<u8>, _> = client
-        .ask("127.0.0.1:1".parse().unwrap(), "/actors/test", "Msg", vec![])
+        .ask(
+            "127.0.0.1:1".parse().unwrap(),
+            "/actors/test",
+            "Msg",
+            vec![],
+        )
         .await;
 
     // Should fail after retries
@@ -1117,7 +1160,10 @@ async fn test_http2_retry_on_connection_error() {
     let err = result.unwrap_err().to_string();
     // Error message should indicate connection failure
     assert!(
-        err.contains("Connection") || err.contains("connect") || err.contains("timeout") || err.contains("backing off"),
+        err.contains("Connection")
+            || err.contains("connect")
+            || err.contains("timeout")
+            || err.contains("backing off"),
         "Unexpected error: {}",
         err
     );

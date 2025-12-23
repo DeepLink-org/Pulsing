@@ -30,7 +30,11 @@ struct SharedCounter {
 #[async_trait]
 impl Actor for SharedCounter {
     async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
-        println!("[{}] SharedCounter started on {}", ctx.id().name, self.node_name);
+        println!(
+            "[{}] SharedCounter started on {}",
+            ctx.id().name,
+            self.node_name
+        );
         Ok(())
     }
 
@@ -76,8 +80,7 @@ async fn main() -> anyhow::Result<()> {
         _ => (8000 + node_num as u16, vec!["127.0.0.1:8001".parse()?]),
     };
 
-    let config = SystemConfig::with_addr(format!("127.0.0.1:{}", port).parse()?)
-        .with_seeds(seeds);
+    let config = SystemConfig::with_addr(format!("127.0.0.1:{}", port).parse()?).with_seeds(seeds);
     let system = ActorSystem::new(config).await?;
     println!("Started at {}", system.addr());
 

@@ -97,7 +97,9 @@ impl RetryConfig {
         }
 
         let base_delay = self.initial_delay.as_millis() as f64
-            * self.backoff_multiplier.powi(attempt.saturating_sub(1) as i32);
+            * self
+                .backoff_multiplier
+                .powi(attempt.saturating_sub(1) as i32);
 
         let capped_delay = base_delay.min(self.max_delay.as_millis() as f64);
 
@@ -150,7 +152,7 @@ impl RetryableError {
             // If the pool is backing off, immediate retry is futile.
             // We should either not retry, or wait longer.
             // For now, let's treat it as non-retryable to stop the log spam.
-            return Self::Unknown; 
+            return Self::Unknown;
         }
 
         if msg.contains("connection")
@@ -317,16 +319,28 @@ mod tests {
     #[test]
     fn test_error_classification() {
         let conn_err = anyhow::anyhow!("Connection refused");
-        assert_eq!(RetryableError::classify(&conn_err), RetryableError::Connection);
+        assert_eq!(
+            RetryableError::classify(&conn_err),
+            RetryableError::Connection
+        );
 
         let timeout_err = anyhow::anyhow!("Request timeout");
-        assert_eq!(RetryableError::classify(&timeout_err), RetryableError::Timeout);
+        assert_eq!(
+            RetryableError::classify(&timeout_err),
+            RetryableError::Timeout
+        );
 
         let server_err = anyhow::anyhow!("500 Internal Server Error");
-        assert_eq!(RetryableError::classify(&server_err), RetryableError::ServerError);
+        assert_eq!(
+            RetryableError::classify(&server_err),
+            RetryableError::ServerError
+        );
 
         let client_err = anyhow::anyhow!("404 Not Found");
-        assert_eq!(RetryableError::classify(&client_err), RetryableError::ClientError);
+        assert_eq!(
+            RetryableError::classify(&client_err),
+            RetryableError::ClientError
+        );
     }
 
     #[test]
@@ -347,13 +361,17 @@ mod tests {
     #[tokio::test]
     async fn test_retry_executor_success() {
         let executor = RetryExecutor::new(RetryConfig::with_max_retries(3));
-        let result = executor.execute(true, || async { Ok::<_, anyhow::Error>(42) }).await;
+        let result = executor
+            .execute(true, || async { Ok::<_, anyhow::Error>(42) })
+            .await;
         assert_eq!(result.unwrap(), 42);
     }
 
     #[tokio::test]
     async fn test_retry_executor_retry_then_success() {
-        let executor = RetryExecutor::new(RetryConfig::with_max_retries(3).initial_delay(Duration::from_millis(1)));
+        let executor = RetryExecutor::new(
+            RetryConfig::with_max_retries(3).initial_delay(Duration::from_millis(1)),
+        );
         let counter = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
         let counter_clone = counter.clone();
@@ -375,4 +393,3 @@ mod tests {
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 }
-

@@ -43,11 +43,7 @@ struct EchoActor {
 
 #[async_trait]
 impl Actor for EchoActor {
-    async fn receive(
-        &mut self,
-        msg: Message,
-        _ctx: &mut ActorContext,
-    ) -> anyhow::Result<Message> {
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
         if msg.msg_type().ends_with("Ping") {
             let ping: Ping = msg.unpack()?;
             self.echo_count.fetch_add(1, Ordering::SeqCst);
@@ -65,11 +61,7 @@ struct Accumulator {
 
 #[async_trait]
 impl Actor for Accumulator {
-    async fn receive(
-        &mut self,
-        msg: Message,
-        _ctx: &mut ActorContext,
-    ) -> anyhow::Result<Message> {
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
         let msg_type = msg.msg_type();
         if msg_type.ends_with("Accumulate") {
             let acc: Accumulate = msg.unpack()?;
@@ -95,7 +87,9 @@ mod single_node_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = EchoActor { echo_count: counter.clone() };
+        let actor = EchoActor {
+            echo_count: counter.clone(),
+        };
         let actor_ref = system.spawn("echo", actor).await.unwrap();
 
         let response: Pong = actor_ref.ask(Ping { value: 21 }).await.unwrap();
@@ -151,7 +145,9 @@ mod single_node_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = EchoActor { echo_count: counter.clone() };
+        let actor = EchoActor {
+            echo_count: counter.clone(),
+        };
         let actor_ref = system.spawn("echo", actor).await.unwrap();
 
         let message_count: usize = 1000;
@@ -179,8 +175,14 @@ mod single_node_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         // Create two accumulators
-        let ref1 = system.spawn("acc1", Accumulator { total: 0 }).await.unwrap();
-        let ref2 = system.spawn("acc2", Accumulator { total: 0 }).await.unwrap();
+        let ref1 = system
+            .spawn("acc1", Accumulator { total: 0 })
+            .await
+            .unwrap();
+        let ref2 = system
+            .spawn("acc2", Accumulator { total: 0 })
+            .await
+            .unwrap();
 
         // Add to acc1
         for i in 1..=5 {
@@ -240,7 +242,9 @@ mod stress_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = EchoActor { echo_count: counter.clone() };
+        let actor = EchoActor {
+            echo_count: counter.clone(),
+        };
         let actor_ref = system.spawn("echo", actor).await.unwrap();
 
         let burst_count = 500;
@@ -271,7 +275,9 @@ mod stress_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor = EchoActor { echo_count: counter.clone() };
+        let actor = EchoActor {
+            echo_count: counter.clone(),
+        };
         let actor_ref = system.spawn("echo", actor).await.unwrap();
 
         let duration = Duration::from_secs(2);
@@ -311,7 +317,11 @@ mod error_tests {
 
     #[async_trait]
     impl Actor for Crashy {
-        async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+        async fn receive(
+            &mut self,
+            msg: Message,
+            _ctx: &mut ActorContext,
+        ) -> anyhow::Result<Message> {
             if msg.msg_type().ends_with("CrashMessage") {
                 self.crash_count.fetch_add(1, Ordering::SeqCst);
                 return Err(anyhow::anyhow!("Intentional crash!"));
@@ -329,7 +339,15 @@ mod error_tests {
         let crash_count = Arc::new(AtomicI32::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor_ref = system.spawn("crashy", Crashy { crash_count: crash_count.clone() }).await.unwrap();
+        let actor_ref = system
+            .spawn(
+                "crashy",
+                Crashy {
+                    crash_count: crash_count.clone(),
+                },
+            )
+            .await
+            .unwrap();
 
         // Send crash message
         let result: Result<Pong, _> = actor_ref.ask(CrashMessage).await;
@@ -348,7 +366,15 @@ mod error_tests {
         let crash_count = Arc::new(AtomicI32::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor_ref = system.spawn("crashy", Crashy { crash_count: crash_count.clone() }).await.unwrap();
+        let actor_ref = system
+            .spawn(
+                "crashy",
+                Crashy {
+                    crash_count: crash_count.clone(),
+                },
+            )
+            .await
+            .unwrap();
 
         // Multiple crash messages
         for _ in 0..5 {
@@ -369,7 +395,15 @@ mod error_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor_ref = system.spawn("echo", EchoActor { echo_count: counter }).await.unwrap();
+        let actor_ref = system
+            .spawn(
+                "echo",
+                EchoActor {
+                    echo_count: counter,
+                },
+            )
+            .await
+            .unwrap();
 
         #[derive(Serialize, Deserialize, Debug, Clone)]
         struct UnknownMsg;
@@ -404,8 +438,15 @@ mod lifecycle_tests {
             Ok(())
         }
 
-        async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
-            self.events.lock().await.push(format!("received:{}", msg.msg_type()));
+        async fn receive(
+            &mut self,
+            msg: Message,
+            _ctx: &mut ActorContext,
+        ) -> anyhow::Result<Message> {
+            self.events
+                .lock()
+                .await
+                .push(format!("received:{}", msg.msg_type()));
             Message::pack(&Pong { result: 0 })
         }
     }
@@ -415,7 +456,15 @@ mod lifecycle_tests {
         let events = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor_ref = system.spawn("tracker", LifecycleTracker { events: events.clone() }).await.unwrap();
+        let actor_ref = system
+            .spawn(
+                "tracker",
+                LifecycleTracker {
+                    events: events.clone(),
+                },
+            )
+            .await
+            .unwrap();
 
         // Send a message
         let _: Pong = actor_ref.ask(Ping { value: 1 }).await.unwrap();
@@ -441,8 +490,27 @@ mod lifecycle_tests {
         let events2 = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let _ = system.spawn("tracker1", LifecycleTracker { events: events1.clone() }).await.unwrap();
-        let _ = system.spawn("tracker2", LifecycleTracker { events: events2.clone() }).await.unwrap();
+        let _ = system
+            .spawn(
+                "tracker1",
+                LifecycleTracker {
+                    events: events1.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let _ = system
+            .spawn(
+                "tracker2",
+                LifecycleTracker {
+                    events: events2.clone(),
+                },
+            )
+            .await
+            .unwrap();
+
+        // Wait for actors to start
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Shutdown should stop all
         system.shutdown().await.unwrap();
@@ -467,7 +535,16 @@ mod addressing_tests {
 
         // Create a named actor with path
         let path = ActorPath::new("services/echo").unwrap();
-        let actor_ref = system.spawn_named(path.clone(), "echo_impl", EchoActor { echo_count: counter.clone() }).await.unwrap();
+        let actor_ref = system
+            .spawn_named(
+                path.clone(),
+                "echo_impl",
+                EchoActor {
+                    echo_count: counter.clone(),
+                },
+            )
+            .await
+            .unwrap();
 
         // Send message via the returned ref
         let response: Pong = actor_ref.ask(Ping { value: 21 }).await.unwrap();
@@ -491,7 +568,16 @@ mod addressing_tests {
 
         // Create a named actor
         let path = ActorPath::new("services/api/handler").unwrap();
-        let _actor_ref = system.spawn_named(path.clone(), "api_handler", EchoActor { echo_count: counter.clone() }).await.unwrap();
+        let _actor_ref = system
+            .spawn_named(
+                path.clone(),
+                "api_handler",
+                EchoActor {
+                    echo_count: counter.clone(),
+                },
+            )
+            .await
+            .unwrap();
 
         // Resolve by address
         let addr = ActorAddress::parse("actor:///services/api/handler").unwrap();
@@ -510,7 +596,15 @@ mod addressing_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         // Create a regular actor
-        let _actor_ref = system.spawn("worker", EchoActor { echo_count: counter.clone() }).await.unwrap();
+        let _actor_ref = system
+            .spawn(
+                "worker",
+                EchoActor {
+                    echo_count: counter.clone(),
+                },
+            )
+            .await
+            .unwrap();
 
         // Get the full address
         let node_id = system.node_id().clone();
@@ -530,7 +624,15 @@ mod addressing_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         // Create actor
-        let _actor_ref = system.spawn("local_worker", EchoActor { echo_count: counter.clone() }).await.unwrap();
+        let _actor_ref = system
+            .spawn(
+                "local_worker",
+                EchoActor {
+                    echo_count: counter.clone(),
+                },
+            )
+            .await
+            .unwrap();
 
         // Resolve using localhost
         let addr = ActorAddress::parse("actor://localhost/local_worker").unwrap();
@@ -550,7 +652,16 @@ mod addressing_tests {
 
         // Create a named actor
         let path = ActorPath::new("services/temp").unwrap();
-        let _actor_ref = system.spawn_named(path.clone(), "temp_actor", EchoActor { echo_count: counter.clone() }).await.unwrap();
+        let _actor_ref = system
+            .spawn_named(
+                path.clone(),
+                "temp_actor",
+                EchoActor {
+                    echo_count: counter.clone(),
+                },
+            )
+            .await
+            .unwrap();
 
         // Verify it exists
         assert!(system.lookup_named(&path).await.is_some());

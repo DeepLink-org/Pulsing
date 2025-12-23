@@ -103,7 +103,8 @@ pub struct GossipResponse {
 #[async_trait::async_trait]
 pub trait HttpMessageHandler: Send + Sync + 'static {
     /// Handle an actor message with ask pattern (expects response)
-    async fn handle_actor_message(&self, actor_name: &str, msg: Message) -> anyhow::Result<Message>;
+    async fn handle_actor_message(&self, actor_name: &str, msg: Message)
+        -> anyhow::Result<Message>;
 
     /// Handle an actor message with tell pattern (fire-and-forget)
     async fn handle_actor_tell(&self, actor_name: &str, msg: Message) -> anyhow::Result<()>;
@@ -236,7 +237,9 @@ impl HttpTransport {
         let url = format!("http://{}/actors/{}", addr, actor_name);
 
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming not supported by HTTP/1.1 transport"));
+            return Err(anyhow::anyhow!(
+                "Streaming not supported by HTTP/1.1 transport"
+            ));
         };
         let request = ActorRequest {
             msg_type,
@@ -273,7 +276,9 @@ impl HttpTransport {
         let url = format!("http://{}/actors/{}", addr, actor_name);
 
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming not supported by HTTP/1.1 transport"));
+            return Err(anyhow::anyhow!(
+                "Streaming not supported by HTTP/1.1 transport"
+            ));
         };
         let request = ActorRequest {
             msg_type,
@@ -285,10 +290,7 @@ impl HttpTransport {
         let response = self.client.put(&url).json(&request).send().await?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Actor tell failed: {}",
-                response.status()
-            ));
+            return Err(anyhow::anyhow!("Actor tell failed: {}", response.status()));
         }
 
         Ok(())
@@ -305,7 +307,9 @@ impl HttpTransport {
         let url = format!("http://{}/named/{}", addr, path.as_str());
 
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming not supported by HTTP/1.1 transport"));
+            return Err(anyhow::anyhow!(
+                "Streaming not supported by HTTP/1.1 transport"
+            ));
         };
         let request = ActorRequest {
             msg_type,
@@ -342,7 +346,9 @@ impl HttpTransport {
         let url = format!("http://{}/named/{}", addr, path.as_str());
 
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming not supported by HTTP/1.1 transport"));
+            return Err(anyhow::anyhow!(
+                "Streaming not supported by HTTP/1.1 transport"
+            ));
         };
         let request = ActorRequest {
             msg_type,

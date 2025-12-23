@@ -32,12 +32,8 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
     ) -> anyhow::Result<Vec<u8>>;
 
     /// Handle tell (fire-and-forget) message
-    async fn handle_tell(
-        &self,
-        path: &str,
-        msg_type: &str,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<()>;
+    async fn handle_tell(&self, path: &str, msg_type: &str, payload: Vec<u8>)
+        -> anyhow::Result<()>;
 
     /// Handle stream request - returns a MessageStream
     async fn handle_stream(
@@ -48,10 +44,7 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
     ) -> anyhow::Result<MessageStream>;
 
     /// Handle gossip message
-    async fn handle_gossip(
-        &self,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<Option<Vec<u8>>>;
+    async fn handle_gossip(&self, payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>>;
 
     /// Get health status
     async fn health_check(&self) -> serde_json::Value {
@@ -292,7 +285,9 @@ impl Http2Server {
             Err(e) => {
                 return Ok(Response::builder()
                     .status(StatusCode::BAD_REQUEST)
-                    .body(full_body(format!("Failed to read body: {}", e).into_bytes()))
+                    .body(full_body(
+                        format!("Failed to read body: {}", e).into_bytes(),
+                    ))
                     .unwrap());
             }
         };
@@ -303,9 +298,15 @@ impl Http2Server {
         }
 
         match mode {
-            MessageMode::Ask => Self::handle_ask_request(&handler, &path, &msg_type, body_bytes).await,
-            MessageMode::Tell => Self::handle_tell_request(&handler, &path, &msg_type, body_bytes).await,
-            MessageMode::Stream => Self::handle_stream_request(&handler, &path, &msg_type, body_bytes).await,
+            MessageMode::Ask => {
+                Self::handle_ask_request(&handler, &path, &msg_type, body_bytes).await
+            }
+            MessageMode::Tell => {
+                Self::handle_tell_request(&handler, &path, &msg_type, body_bytes).await
+            }
+            MessageMode::Stream => {
+                Self::handle_stream_request(&handler, &path, &msg_type, body_bytes).await
+            }
         }
     }
 
@@ -484,6 +485,10 @@ mod tests {
                 Ok(Message::single("token", b"world")),
             ]);
             Ok(Box::pin(stream))
+        }
+
+        async fn handle_gossip(&self, _payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
+            Ok(None)
         }
     }
 

@@ -150,9 +150,9 @@ async fn test_system_addr_is_consistent() {
         .await
         .unwrap();
 
-    // tcp_addr and gossip_addr should be the same now
-    assert_eq!(system.tcp_addr(), system.gossip_addr());
-    assert_eq!(system.addr(), system.tcp_addr());
+    // tcp_addr and gossip_addr are now unified into a single addr()
+    // Both actor messages and gossip use the same HTTP/2 transport
+    assert_ne!(system.addr().port(), 0);
 
     system.shutdown().await.unwrap();
 }

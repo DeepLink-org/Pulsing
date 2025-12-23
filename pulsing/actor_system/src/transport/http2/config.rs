@@ -121,9 +121,9 @@ impl Http2Config {
     pub fn high_throughput() -> Self {
         Self {
             max_concurrent_streams: 200,
-            initial_window_size: 256 * 1024,             // 256KB
+            initial_window_size: 256 * 1024,                 // 256KB
             initial_connection_window_size: 4 * 1024 * 1024, // 4MB
-            max_frame_size: 64 * 1024,                   // 64KB
+            max_frame_size: 64 * 1024,                       // 64KB
             max_connections_per_host: 20,
             ..Default::default()
         }

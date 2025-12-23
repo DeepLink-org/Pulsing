@@ -53,7 +53,10 @@ impl Http2Client {
         retry_config: RetryConfig,
     ) -> Self {
         Self {
-            pool: Arc::new(ConnectionPool::with_config(http2_config.clone(), pool_config)),
+            pool: Arc::new(ConnectionPool::with_config(
+                http2_config.clone(),
+                pool_config,
+            )),
             config: http2_config,
             retry_config,
             cancel: CancellationToken::new(),
@@ -99,7 +102,9 @@ impl Http2Client {
         // ask is idempotent if the message handler is idempotent
         // We treat read operations as idempotent by default
         executor
-            .execute(true, || self.ask_once(addr, path, msg_type, payload.clone()))
+            .execute(true, || {
+                self.ask_once(addr, path, msg_type, payload.clone())
+            })
             .await
     }
 
@@ -118,14 +123,11 @@ impl Http2Client {
         let status = response.status();
 
         // Read response body with timeout
-        let body = tokio::time::timeout(
-            self.config.request_timeout,
-            response.collect(),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("Response body read timeout"))?
-        .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?
-        .to_bytes();
+        let body = tokio::time::timeout(self.config.request_timeout, response.collect())
+            .await
+            .map_err(|_| anyhow::anyhow!("Response body read timeout"))?
+            .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?
+            .to_bytes();
 
         if !status.is_success() {
             let error_msg = String::from_utf8_lossy(&body);
@@ -151,7 +153,9 @@ impl Http2Client {
 
         // tell is NOT idempotent by default (could have side effects)
         executor
-            .execute(false, || self.tell_once(addr, path, msg_type, payload.clone()))
+            .execute(false, || {
+                self.tell_once(addr, path, msg_type, payload.clone())
+            })
             .await
     }
 
@@ -275,7 +279,9 @@ impl Http2Client {
                 let buffer = buffer.clone();
                 async move {
                     let frame = result.map_err(|e| anyhow::anyhow!("Body read error: {}", e))?;
-                    let data = frame.into_data().map_err(|_| anyhow::anyhow!("Not data frame"))?;
+                    let data = frame
+                        .into_data()
+                        .map_err(|_| anyhow::anyhow!("Not data frame"))?;
 
                     let mut buf = buffer.lock().await;
                     buf.push_str(&String::from_utf8_lossy(&data));
@@ -382,11 +388,7 @@ impl Http2ClientBuilder {
 
     /// Set maximum retries
     pub fn max_retries(mut self, n: u32) -> Self {
-        self.retry_config = Some(
-            self.retry_config
-                .unwrap_or_default()
-                .max_retries(n),
-        );
+        self.retry_config = Some(self.retry_config.unwrap_or_default().max_retries(n));
         self
     }
 

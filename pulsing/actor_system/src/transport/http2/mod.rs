@@ -69,7 +69,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 /// High-level HTTP/2 Transport
-/// 
+///
 /// Combines Http2Server and Http2Client into a single component
 /// used by ActorSystem and GossipCluster.
 pub struct Http2Transport {
@@ -195,7 +195,7 @@ impl Http2Transport {
             .client
             .ask(addr, "/cluster/gossip", "gossip", payload)
             .await?;
-        
+
         if response.is_empty() {
             Ok(None)
         } else {
@@ -318,7 +318,9 @@ impl RemoteTransport for Http2RemoteTransport {
         payload: Vec<u8>,
     ) -> anyhow::Result<Vec<u8>> {
         let path = self.request_path();
-        self.client.ask(self.remote_addr, &path, msg_type, payload).await
+        self.client
+            .ask(self.remote_addr, &path, msg_type, payload)
+            .await
     }
 
     async fn send(
@@ -328,7 +330,9 @@ impl RemoteTransport for Http2RemoteTransport {
         payload: Vec<u8>,
     ) -> anyhow::Result<()> {
         let path = self.request_path();
-        self.client.tell(self.remote_addr, &path, msg_type, payload).await
+        self.client
+            .tell(self.remote_addr, &path, msg_type, payload)
+            .await
     }
 
     async fn request_stream(
@@ -342,7 +346,7 @@ impl RemoteTransport for Http2RemoteTransport {
             .client
             .ask_stream_raw(self.remote_addr, &path, msg_type, payload)
             .await?;
-        
+
         // Convert MessageStream to PayloadStream by extracting payload
         let payload_stream = msg_stream.map(|result| {
             result.and_then(|msg| {
@@ -365,7 +369,9 @@ impl RemoteTransport for Http2RemoteTransport {
     async fn send_message(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
         let Message::Single { msg_type, data } = msg else {
             // For streaming requests, we need to use a different approach
-            return Err(anyhow::anyhow!("Streaming requests require request_stream method"));
+            return Err(anyhow::anyhow!(
+                "Streaming requests require request_stream method"
+            ));
         };
         let response = self.request(actor_id, &msg_type, data).await?;
         Ok(Message::single("", response))
@@ -374,7 +380,9 @@ impl RemoteTransport for Http2RemoteTransport {
     /// Send a one-way message (unified interface)
     async fn send_oneway(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<()> {
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming not supported for fire-and-forget"));
+            return Err(anyhow::anyhow!(
+                "Streaming not supported for fire-and-forget"
+            ));
         };
         self.send(actor_id, &msg_type, data).await
     }

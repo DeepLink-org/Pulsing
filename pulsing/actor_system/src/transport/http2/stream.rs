@@ -154,9 +154,7 @@ impl<T> Drop for StreamHandle<T> {
 }
 
 /// Convert a MessageStream to StreamFrame stream
-pub fn to_frame_stream(
-    stream: MessageStream,
-) -> impl Stream<Item = anyhow::Result<StreamFrame>> {
+pub fn to_frame_stream(stream: MessageStream) -> impl Stream<Item = anyhow::Result<StreamFrame>> {
     stream.enumerate().map(|(seq, result)| {
         result.and_then(|msg| {
             let Message::Single { msg_type, data } = msg else {

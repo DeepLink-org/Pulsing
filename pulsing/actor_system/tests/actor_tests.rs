@@ -52,11 +52,7 @@ struct Counter {
 
 #[async_trait]
 impl Actor for Counter {
-    async fn receive(
-        &mut self,
-        msg: Message,
-        _ctx: &mut ActorContext,
-    ) -> anyhow::Result<Message> {
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
         let msg_type = msg.msg_type();
         if msg_type.ends_with("Ping") {
             let ping: Ping = msg.unpack()?;
@@ -101,11 +97,7 @@ impl Actor for LifecycleActor {
         Ok(())
     }
 
-    async fn receive(
-        &mut self,
-        msg: Message,
-        _ctx: &mut ActorContext,
-    ) -> anyhow::Result<Message> {
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
         if msg.msg_type().ends_with("Ping") {
             return Message::pack(&Pong { result: 0 });
         }
@@ -342,12 +334,22 @@ mod spawn_tests {
 
         let mut refs = Vec::new();
         for i in 0..5 {
-            refs.push(system.spawn(format!("counter-{}", i), Counter { count: 0 }).await.unwrap());
+            refs.push(
+                system
+                    .spawn(format!("counter-{}", i), Counter { count: 0 })
+                    .await
+                    .unwrap(),
+            );
         }
 
         // Each actor should be independent
         for (i, actor_ref) in refs.iter().enumerate() {
-            let response: Pong = actor_ref.ask(Ping { value: i as i32 + 1 }).await.unwrap();
+            let response: Pong = actor_ref
+                .ask(Ping {
+                    value: i as i32 + 1,
+                })
+                .await
+                .unwrap();
             assert_eq!(response.result, i as i32 + 1);
         }
 
@@ -358,8 +360,14 @@ mod spawn_tests {
     async fn test_actor_isolation() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let ref1 = system.spawn("counter1", Counter { count: 0 }).await.unwrap();
-        let ref2 = system.spawn("counter2", Counter { count: 0 }).await.unwrap();
+        let ref1 = system
+            .spawn("counter1", Counter { count: 0 })
+            .await
+            .unwrap();
+        let ref2 = system
+            .spawn("counter2", Counter { count: 0 })
+            .await
+            .unwrap();
 
         // Modify actor1
         ref1.ask::<_, Pong>(Ping { value: 100 }).await.unwrap();

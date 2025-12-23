@@ -155,7 +155,9 @@ impl ActorRef {
             ActorRefInner::Remote(remote) => {
                 // For remote actors, we must use request_stream to set correct headers
                 let Message::Single { msg_type, data } = msg else {
-                    return Err(anyhow::anyhow!("Streaming requests not yet supported for remote actors"));
+                    return Err(anyhow::anyhow!(
+                        "Streaming requests not yet supported for remote actors"
+                    ));
                 };
                 let stream = remote
                     .transport

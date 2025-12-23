@@ -374,11 +374,7 @@ pub trait Actor: Send + Sync + 'static {
     /// - Stream -> Stream (bidirectional streaming)
     ///
     /// For "tell" (fire-and-forget) messages, the response is ignored.
-    async fn receive(
-        &mut self,
-        msg: Message,
-        ctx: &mut ActorContext,
-    ) -> anyhow::Result<Message> {
+    async fn receive(&mut self, msg: Message, ctx: &mut ActorContext) -> anyhow::Result<Message> {
         Err(anyhow::anyhow!(
             "Actor {} does not handle message type: {}",
             ctx.id(),
