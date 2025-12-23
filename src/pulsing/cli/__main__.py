@@ -328,10 +328,13 @@ def _start_router_actor(
     model_name: str,
     scheduler_type: str,
 ):
-    """Start RouterActor with OpenAI-compatible API"""
-    from ..actors import RouterActor, RoundRobinScheduler, RandomScheduler, LeastConnectionScheduler
+    """Start Router with OpenAI-compatible API"""
+    from pulsing.actor import ActorSystem, SystemConfig
+    from pulsing.actor.helpers import run_until_signal
+    from ..actors.router import start_router, stop_router
+    from ..actors import RoundRobinScheduler, RandomScheduler, LeastConnectionScheduler
     
-    # 选择调度器类（传递类，不是实例）
+    # 选择调度器类
     scheduler_map = {
         "round_robin": RoundRobinScheduler,
         "random": RandomScheduler,
@@ -341,22 +344,38 @@ def _start_router_actor(
     if not scheduler_class:
         raise ValueError(f"Unknown scheduler: {scheduler_type}. Options: {list(scheduler_map.keys())}")
 
-    print(f"Starting RouterActor (namespace={namespace}, model={model_name})")
+    print(f"Starting Router (namespace={namespace}, model={model_name})")
     print(f"  Actor System addr: {addr or 'auto'}")
     print(f"  HTTP API: http://{http_host}:{http_port}")
     print(f"  Scheduler: {scheduler_type}")
 
     async def run():
-        router = RouterActor(
-            namespace=namespace,
-            addr=addr,
-            seeds=seeds if seeds else None,
+        # 1. 创建 ActorSystem
+        if addr:
+            config = SystemConfig.with_addr(addr)
+        else:
+            config = SystemConfig.standalone()
+        
+        if seeds:
+            config = config.with_seeds(seeds)
+        
+        system = await ActorSystem.create(config)
+        print(f"[Router] ActorSystem started at {system.addr}")
+        
+        # 2. 启动 Router HTTP 服务器
+        runner = await start_router(
+            system,
             http_host=http_host,
             http_port=http_port,
             model_name=model_name,
             scheduler_class=scheduler_class,
         )
-        await router.run()
+        
+        # 3. 运行直到收到信号
+        try:
+            await run_until_signal(system, "router")
+        finally:
+            await stop_router(runner)
 
     uvloop.run(run())
 
@@ -370,22 +389,33 @@ def _start_transformers_actor(
     max_new_tokens: int,
     preload_model: bool,
 ):
-    """Start TransformersWorkerActor"""
-    from ..actors import TransformersWorkerActor
+    """Start Transformers Worker"""
+    from pulsing.actor.helpers import spawn_and_run
+    from ..actors import TransformersWorker, GenerationConfig
 
-    print(f"Starting TransformersWorkerActor (model={model}, namespace={namespace})")
+    print(f"Starting Transformers Worker (model={model}, namespace={namespace})")
+    print(f"  Device: {device}")
+    print(f"  Max tokens: {max_new_tokens}")
+    print(f"  Preload: {preload_model}")
 
     async def run():
-        worker = TransformersWorkerActor(
-            model=model,
-            namespace=namespace,
+        # 创建 Worker Actor
+        gen_config = GenerationConfig(max_new_tokens=max_new_tokens)
+        worker = TransformersWorker(
+            model_name=model,
+            device=device,
+            gen_config=gen_config,
+            preload=preload_model,
+        )
+        
+        # spawn 并运行
+        await spawn_and_run(
+            worker,
+            name="worker",
             addr=addr,
             seeds=seeds if seeds else None,
-            device=device,
-            max_new_tokens=max_new_tokens,
-            preload_model=preload_model,
+            public=True,
         )
-        await worker.run()
 
     uvloop.run(run())
 
