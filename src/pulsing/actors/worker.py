@@ -5,25 +5,10 @@ Transformers Worker Actor - 基于 Transformers 的推理 Worker
 import asyncio
 import uuid
 import json
-import sys
 from dataclasses import dataclass
 from typing import Optional, Dict, List, Union
 
-# # 关键：从底层核心导入，并强制检查
-# from dynamo._core import actor as _core_actor
-# StreamMessage = _core_actor.StreamMessage
-# RawMessage = _core_actor.Message
-# Message = _core_actor.UnifiedMessage
-# ActorRef = _core_actor.ActorRef
-# ActorId = _core_actor.ActorId
-
-# 从高层导入接口
-from pulsing.actor import Actor
-from pulsing.actor import StreamMessage
-from pulsing.actor import Message
-from pulsing.actor import ActorRef
-from pulsing.actor import ActorId
-from pulsing.actor import RawMessage
+from pulsing.actor import Actor, StreamMessage, Message, ActorRef, ActorId
 from .base import BaseServiceActor
 
 

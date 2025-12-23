@@ -11,28 +11,24 @@ from typing import Optional, List
 
 from aiohttp import web
 
-from pulsing.actor import Actor, ActorRef, Message, ActorId, ActorSystem
+from pulsing.actor import Actor, ActorRef, Message, ActorId
 
 from .base import BaseServiceActor
 
 
-class RouterActorHandler(Actor):
-    """Router Actor 消息处理器"""
-    
-    def __init__(self):
-        self._actor_id: Optional[ActorId] = None
+class SimpleActor(Actor):
+    """简单的 Actor 实现"""
     
     def on_start(self, actor_id: ActorId) -> None:
-        self._actor_id = actor_id
+        pass
     
     def on_stop(self) -> None:
         pass
     
     def metadata(self) -> dict:
-        return {"type": "router"}
+        return {}
     
     async def receive(self, msg: Message) -> Message:
-        # 简单返回状态
         return Message.from_json("Ok", {"status": "running"})
 
 
@@ -65,47 +61,32 @@ class RouterActor(BaseServiceActor):
         scheduler_class=None,
     ):
         super().__init__(namespace=namespace, addr=addr, seeds=seeds, public=True)
-        self._handler = RouterActorHandler()
         self._http_host = http_host
         self._http_port = http_port
         self._model_name = model_name
-        self._scheduler_class = scheduler_class  # 先保存类，等 actor_system 创建后再实例化
+        self._scheduler_class = scheduler_class
         self._scheduler = None
         self._http_runner: Optional[web.AppRunner] = None
-        self._http_server = None
     
     @property
     def service_name(self) -> str:
         return "router"
     
     def _create_actor(self) -> Actor:
-        return self._handler
-    
-    def _create_scheduler(self):
-        """创建调度器实例（需要 actor_system 已初始化）"""
-        if self._scheduler_class:
-            return self._scheduler_class(self._system)
-        else:
-            from .scheduler import RoundRobinScheduler
-            return RoundRobinScheduler(self._system)
-    
-    def _create_http_server(self):
-        from .openai_server import OpenAIServer
-        self._http_server = OpenAIServer(
-            actor_system=self._system,
-            model_name=self._model_name,
-            scheduler=self._scheduler,
-        )
-        return self._http_server.create_app()
+        return SimpleActor()
     
     async def start(self) -> ActorRef:
         actor_ref = await super().start()
         
-        # 创建调度器（需要 actor_system）
-        self._scheduler = self._create_scheduler()
+        # 创建调度器
+        from .scheduler import RoundRobinScheduler
+        scheduler_class = self._scheduler_class or RoundRobinScheduler
+        self._scheduler = scheduler_class(self._system)
         
-        # 启动 HTTP 服务器
-        app = self._create_http_server()
+        # 创建 HTTP 服务器
+        from .openai_server import OpenAIServer
+        server = OpenAIServer(self._system, self._model_name, self._scheduler)
+        app = server.create_app()
         
         self._http_runner = web.AppRunner(app)
         await self._http_runner.setup()

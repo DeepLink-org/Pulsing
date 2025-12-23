@@ -27,22 +27,25 @@ class Scheduler(ABC):
     async def get_available_workers(self):
         """从 Gossip 获取当前可用的 worker 列表"""
         try:
-            instances = await self._system.get_named_instances(self._worker_name)
-            # 返回所有实例（不过滤状态，让 resolve_named 时由 Rust 层判断）
-            return instances
-        except Exception as e:
-            print(f"[Scheduler] Failed to get workers: {e}")
+            return await self._system.get_named_instances(self._worker_name)
+        except Exception:
             return []
     
     async def get_worker_count(self) -> int:
         """获取 worker 总数"""
-        workers = await self.get_available_workers()
-        return len(workers)
+        return len(await self.get_available_workers())
     
     async def get_healthy_worker_count(self) -> int:
         """获取健康 worker 数量（Alive 状态）"""
         workers = await self.get_available_workers()
         return sum(1 for w in workers if w.get("status") == "Alive")
+    
+    async def _resolve_worker(self):
+        """解析 worker ActorRef（子类共用）"""
+        try:
+            return await self._system.resolve_named(self._worker_name)
+        except Exception:
+            return None
     
     @abstractmethod
     async def select_worker(self):
@@ -55,91 +58,46 @@ class Scheduler(ABC):
 
 
 class RoundRobinScheduler(Scheduler):
-    """轮询调度器 - 最简单的负载均衡"""
+    """轮询调度器"""
     
     def __init__(self, actor_system, worker_name: str = "worker"):
         super().__init__(actor_system, worker_name)
         self._index = 0
     
     async def select_worker(self):
-        """按 RoundRobin 选择一个 worker"""
         workers = await self.get_available_workers()
         if not workers:
-            print("[Scheduler] No workers available")
             return None
         
         async with self._lock:
-            # RoundRobin 选择
-            selected = workers[self._index % len(workers)]
-            self._index += 1
-            
-            node_id = selected.get("node_id", "unknown")[:8]
-            addr = selected.get("addr", "unknown")
-            print(f"[Scheduler] RoundRobin selected: {node_id}... at {addr} ({self._index-1} % {len(workers)})")
+            self._index = (self._index + 1) % len(workers)
         
-        # 解析 ActorRef（Rust 层会选择健康的实例）
-        try:
-            actor_ref = await self._system.resolve_named(self._worker_name)
-            return actor_ref
-        except Exception as e:
-            print(f"[Scheduler] Failed to resolve worker: {e}")
-            return None
+        return await self._resolve_worker()
 
 
 class RandomScheduler(Scheduler):
     """随机调度器"""
     
-    def __init__(self, actor_system, worker_name: str = "worker"):
-        super().__init__(actor_system, worker_name)
-    
     async def select_worker(self):
-        """随机选择一个 worker"""
-        import random
-        
         workers = await self.get_available_workers()
-        if not workers:
-            return None
-        
-        selected = random.choice(workers)
-        node_id = selected.get("node_id", "unknown")[:8]
-        print(f"[Scheduler] Random selected: {node_id}...")
-        
-        try:
-            actor_ref = await self._system.resolve_named(self._worker_name)
-            return actor_ref
-        except Exception as e:
-            print(f"[Scheduler] Failed to resolve worker: {e}")
-            return None
+        return await self._resolve_worker() if workers else None
 
 
 class LeastConnectionScheduler(Scheduler):
-    """最少连接调度器 - 选择当前请求数最少的 worker
-    
-    注意：这个实现维护了请求计数状态
-    """
+    """最少连接调度器 - 基于请求计数"""
     
     def __init__(self, actor_system, worker_name: str = "worker"):
         super().__init__(actor_system, worker_name)
-        self._request_counts = {}  # node_id -> count
+        self._request_counts = {}
     
     async def select_worker(self):
-        """选择请求数最少的 worker"""
         workers = await self.get_available_workers()
         if not workers:
             return None
         
         async with self._lock:
-            # 选择请求数最少的
             selected = min(workers, key=lambda w: self._request_counts.get(w.get("node_id"), 0))
-            node_id = selected.get("node_id")
-            self._request_counts[node_id] = self._request_counts.get(node_id, 0) + 1
-            
-            print(f"[Scheduler] LeastConnection selected: {node_id[:8]}... (requests={self._request_counts[node_id]})")
+            self._request_counts[selected["node_id"]] = self._request_counts.get(selected["node_id"], 0) + 1
         
-        try:
-            actor_ref = await self._system.resolve_named(self._worker_name)
-            return actor_ref
-        except Exception as e:
-            print(f"[Scheduler] Failed to resolve worker: {e}")
-            return None
+        return await self._resolve_worker()
 

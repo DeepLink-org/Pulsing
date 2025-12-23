@@ -153,13 +153,8 @@ class OpenAIServer:
             return await self._sync_generate(request_id, req.model, prompt, worker_ref, req.max_tokens, is_chat=False)
     
     def _build_chat_prompt(self, messages: List[Dict]) -> str:
-        parts = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            parts.append(f"{role.capitalize()}: {content}")
-        parts.append("Assistant:")
-        return "\n".join(parts)
+        parts = [f"{msg.get('role', 'user').capitalize()}: {msg.get('content', '')}" for msg in messages]
+        return "\n".join(parts + ["Assistant:"])
     
     async def _sync_generate(self, request_id: str, model: str, prompt: str, worker_ref, max_tokens: int, is_chat: bool) -> web.Response:
         created = int(time.time())
