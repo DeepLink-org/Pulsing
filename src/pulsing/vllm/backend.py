@@ -2,8 +2,8 @@
 
 import os
 
-import uvloop
 import hyperparameter as hp
+import uvloop
 
 from dynamo.llm import fetch_llm
 

@@ -7,8 +7,8 @@ Provides the worker function for the standalone KV-aware router service.
 import asyncio
 import logging
 
-import uvloop
 import hyperparameter as hp
+import uvloop
 
 from dynamo.llm import KvRouterConfig
 

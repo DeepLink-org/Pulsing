@@ -4,8 +4,8 @@ import asyncio
 import os
 from typing import AsyncGenerator, Optional
 
-import uvloop
 import hyperparameter as hp
+import uvloop
 
 from dynamo.llm import (
     ModelInput,

@@ -3,9 +3,9 @@
 import asyncio
 import signal
 
-from dynamo.runtime import DistributedRuntime
-
 import hyperparameter as hp
+
+from dynamo.runtime import DistributedRuntime
 
 
 async def graceful_shutdown(runtime: DistributedRuntime):

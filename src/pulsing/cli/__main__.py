@@ -3,8 +3,8 @@ import os
 import sys
 from typing import Optional
 
-import uvloop
 import hyperparameter as hp
+import uvloop
 
 from dynamo.llm import (
     EngineType,
@@ -97,7 +97,11 @@ def frontend(
                 router_temperature=float(router_temperature),
                 use_kv_events=_to_bool(use_kv_events),
                 router_replica_sync=_to_bool(router_replica_sync),
-                router_snapshot_threshold=int(router_snapshot_threshold) if router_snapshot_threshold else 1000000,
+                router_snapshot_threshold=(
+                    int(router_snapshot_threshold)
+                    if router_snapshot_threshold
+                    else 1000000
+                ),
                 router_reset_states=_to_bool(router_reset_states),
                 router_track_active_blocks=_to_bool(router_track_active_blocks),
             )
@@ -110,8 +114,14 @@ def frontend(
 
         kwargs = {
             "http_host": http_host or os.environ.get("DYN_HTTP_HOST", "0.0.0.0"),
-            "http_port": int(http_port) if http_port else int(os.environ.get("DYN_HTTP_PORT", "8000")),
-            "kv_cache_block_size": int(kv_cache_block_size) if kv_cache_block_size else 16,
+            "http_port": (
+                int(http_port)
+                if http_port
+                else int(os.environ.get("DYN_HTTP_PORT", "8000"))
+            ),
+            "kv_cache_block_size": (
+                int(kv_cache_block_size) if kv_cache_block_size else 16
+            ),
             "router_config": DynamoRouterConfig(
                 router_mode_enum,
                 kv_router_config,
@@ -156,7 +166,7 @@ def vllm(model: str):
         model: Model path or HuggingFace model name (e.g., 'Qwen/Qwen3-0.6B')
     """
     from hyperparameter import param_scope
-    
+
     try:
         from ..vllm import start_vllm_worker
     except ImportError as e:
@@ -180,7 +190,7 @@ def transformers(model: str):
         model: Model path or HuggingFace model name (e.g., 'gpt2')
     """
     from hyperparameter import param_scope
-    
+
     try:
         from .transformers_backend import start_transformers_worker
     except ImportError as e:
@@ -308,7 +318,9 @@ def actor(
         seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
 
     if type == "router":
-        _start_router_actor(namespace, addr, seed_list, http_host, http_port, model_name, scheduler)
+        _start_router_actor(
+            namespace, addr, seed_list, http_host, http_port, model_name, scheduler
+        )
     elif type == "transformers":
         if not model:
             raise ValueError("--model is required for 'transformers' actor type")
@@ -333,7 +345,9 @@ def actor(
             role=role,
         )
     else:
-        raise ValueError(f"Unknown actor type: {type}. Supported types: router, transformers, vllm")
+        raise ValueError(
+            f"Unknown actor type: {type}. Supported types: router, transformers, vllm"
+        )
 
 
 def _start_router_actor(
@@ -346,11 +360,12 @@ def _start_router_actor(
     scheduler_type: str,
 ):
     """Start Router with OpenAI-compatible API"""
-    from pulsing.actor import create_actor_system, SystemConfig
+    from pulsing.actor import SystemConfig, create_actor_system
     from pulsing.actor.helpers import run_until_signal
+
+    from ..actors import LeastConnectionScheduler, RandomScheduler, RoundRobinScheduler
     from ..actors.router import start_router, stop_router
-    from ..actors import RoundRobinScheduler, RandomScheduler, LeastConnectionScheduler
-    
+
     # 选择调度器类
     scheduler_map = {
         "round_robin": RoundRobinScheduler,
@@ -359,7 +374,9 @@ def _start_router_actor(
     }
     scheduler_class = scheduler_map.get(scheduler_type)
     if not scheduler_class:
-        raise ValueError(f"Unknown scheduler: {scheduler_type}. Options: {list(scheduler_map.keys())}")
+        raise ValueError(
+            f"Unknown scheduler: {scheduler_type}. Options: {list(scheduler_map.keys())}"
+        )
 
     print(f"Starting Router (namespace={namespace}, model={model_name})")
     print(f"  Actor System addr: {addr or 'auto'}")
@@ -372,13 +389,13 @@ def _start_router_actor(
             config = SystemConfig.with_addr(addr)
         else:
             config = SystemConfig.standalone()
-        
+
         if seeds:
             config = config.with_seeds(seeds)
-        
+
         system = await create_actor_system(config)
         print(f"[Router] ActorSystem started at {system.addr}")
-        
+
         # 2. 启动 Router HTTP 服务器
         runner = await start_router(
             system,
@@ -387,7 +404,7 @@ def _start_router_actor(
             model_name=model_name,
             scheduler_class=scheduler_class,
         )
-        
+
         # 3. 运行直到收到信号
         try:
             await run_until_signal(system, "router")
@@ -408,7 +425,8 @@ def _start_transformers_actor(
 ):
     """Start Transformers Worker"""
     from pulsing.actor.helpers import spawn_and_run
-    from ..actors import TransformersWorker, GenerationConfig
+
+    from ..actors import GenerationConfig, TransformersWorker
 
     print(f"Starting Transformers Worker (model={model}, namespace={namespace})")
     print(f"  Device: {device}")
@@ -424,7 +442,7 @@ def _start_transformers_actor(
             gen_config=gen_config,
             preload=preload_model,
         )
-        
+
         # spawn 并运行
         await spawn_and_run(
             worker,
@@ -447,6 +465,7 @@ def _start_vllm_actor(
 ):
     """Start vLLM Worker"""
     from pulsing.actor.helpers import spawn_and_run
+
     from ..actors import VllmWorker
 
     print(f"Starting vLLM Worker (model={model}, namespace={namespace}, role={role})")
@@ -459,7 +478,7 @@ def _start_vllm_actor(
             role=role,
             max_new_tokens=max_new_tokens,
         )
-        
+
         # spawn 并运行
         await spawn_and_run(
             worker,
