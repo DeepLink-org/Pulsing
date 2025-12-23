@@ -106,23 +106,29 @@ class TransformersWorker(Actor):
         max_new_tokens = data.get("max_new_tokens", self.gen_config.max_new_tokens)
         self._request_count += 1
         
-        inputs = self._tokenizer(prompt, return_tensors="pt").to(self._model.device)
-        outputs = self._model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            pad_token_id=self._tokenizer.eos_token_id,
-            do_sample=self.gen_config.do_sample,
-        )
+        loop = asyncio.get_running_loop()
         
-        input_len = inputs["input_ids"].shape[1]
-        new_tokens = outputs[0][input_len:]
-        text = self._tokenizer.decode(new_tokens, skip_special_tokens=True)
+        def _generate_sync():
+            inputs = self._tokenizer(prompt, return_tensors="pt").to(self._model.device)
+            outputs = self._model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                pad_token_id=self._tokenizer.eos_token_id,
+                do_sample=self.gen_config.do_sample,
+            )
+            
+            input_len = inputs["input_ids"].shape[1]
+            new_tokens = outputs[0][input_len:]
+            text = self._tokenizer.decode(new_tokens, skip_special_tokens=True)
+            return text, input_len, len(new_tokens)
+            
+        text, prompt_tokens, completion_tokens = await loop.run_in_executor(None, _generate_sync)
         
         return Message.from_json("GenerateResponse", {
             "text": text,
             "worker_id": self.worker_id,
-            "prompt_tokens": input_len,
-            "completion_tokens": len(new_tokens),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
         })
     
     async def _handle_generate_stream(self, msg: Message) -> StreamMessage:

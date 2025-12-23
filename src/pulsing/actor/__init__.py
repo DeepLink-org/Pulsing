@@ -84,7 +84,7 @@ class Actor(ABC):
         return {}
 
     @abstractmethod
-    def receive(self, msg: Message) -> Optional[Union[Message, StreamMessage]]:
+    async def receive(self, msg: Message) -> Optional[Union[Message, StreamMessage]]:
         """
         Handle incoming message
         
@@ -97,7 +97,7 @@ class Actor(ABC):
             - None: No response
             
         Example:
-            def receive(self, msg):
+            async def receive(self, msg):
                 data = msg.to_json()
                 if msg.msg_type == "Ping":
                     return Message.from_json("Pong", {"count": 1})

@@ -146,6 +146,13 @@ impl RetryableError {
     pub fn classify(error: &anyhow::Error) -> Self {
         let msg = error.to_string().to_lowercase();
 
+        if msg.contains("backing off") {
+            // If the pool is backing off, immediate retry is futile.
+            // We should either not retry, or wait longer.
+            // For now, let's treat it as non-retryable to stop the log spam.
+            return Self::Unknown; 
+        }
+
         if msg.contains("connection")
             || msg.contains("connect")
             || msg.contains("refused")
