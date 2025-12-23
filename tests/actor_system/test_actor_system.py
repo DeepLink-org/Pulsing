@@ -230,7 +230,7 @@ async def test_ask_single_message(actor_system):
     """Test ask pattern with single message."""
     actor_ref = await actor_system.spawn("echo", EchoActor())
 
-    # Send message and get response (using send() which supports UnifiedMessage)
+    # Send message and get response (using send() which supports Message)
     request = Message.from_json("greeting", {"text": "hello"})
     response = await actor_ref.send(request)
 

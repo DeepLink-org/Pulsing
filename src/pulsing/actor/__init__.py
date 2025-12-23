@@ -23,7 +23,7 @@ SystemConfig = _actor_module.SystemConfig
 StreamReader = _actor_module.StreamReader
 StreamWriter = _actor_module.StreamWriter
 StreamMessage = _actor_module.StreamMessage
-Message = _actor_module.UnifiedMessage
+Message = _actor_module.Message
 
 from . import helpers
 
