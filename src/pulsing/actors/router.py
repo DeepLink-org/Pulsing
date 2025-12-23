@@ -173,13 +173,11 @@ class RouterActor(BaseServiceActor):
             actor_ref=discovered_worker.actor_ref,
             endpoint=discovered_worker.addr,
         )
-        if await self._handler.scheduler.add_worker(worker_info):
-            print(f"[Router] + Worker {discovered_worker.worker_id[:8]}...")
+        await self._handler.scheduler.add_worker(worker_info)
     
     async def _on_worker_removed(self, worker_id: str):
         """Worker 移除回调"""
-        if await self._handler.scheduler.remove_worker(worker_id):
-            print(f"[Router] - Worker {worker_id[:8]}...")
+        await self._handler.scheduler.remove_worker(worker_id)
     
     async def start(self) -> ActorRef:
         actor_ref = await super().start()
@@ -200,8 +198,6 @@ class RouterActor(BaseServiceActor):
         await self._http_runner.setup()
         site = web.TCPSite(self._http_runner, self._http_host, self._http_port)
         await site.start()
-        
-        print(f"[Router] HTTP: http://{self._http_host}:{self._http_port}")
         return actor_ref
     
     async def stop(self):

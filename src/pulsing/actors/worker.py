@@ -94,7 +94,6 @@ class TransformersWorkerHandler(Actor):
     async def receive(self, msg: Message) -> Union[Message, StreamMessage]:
         """处理请求"""
         msg_type = msg.msg_type
-        print(f"[Worker] Received: {msg_type}")
         
         try:
             if msg_type == "GenerateRequest":

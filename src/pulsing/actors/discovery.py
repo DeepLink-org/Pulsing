@@ -61,7 +61,6 @@ class WorkerDiscovery:
             return
         self._running = True
         self._scan_task = asyncio.create_task(self._scan_loop())
-        print(f"[WorkerDiscovery] Started")
     
     async def stop(self):
         """停止发现服务"""
@@ -72,14 +71,13 @@ class WorkerDiscovery:
                 await self._scan_task
             except asyncio.CancelledError:
                 pass
-        print("[WorkerDiscovery] Stopped")
     
     async def _scan_loop(self):
         while self._running:
             try:
                 await self._discover_workers()
-            except Exception as e:
-                print(f"[WorkerDiscovery] Error: {e}")
+            except Exception:
+                pass  # 静默处理扫描错误
             await asyncio.sleep(self.scan_interval)
     
     async def _discover_workers(self):
@@ -99,40 +97,85 @@ class WorkerDiscovery:
             # 修正地址：0.0.0.0 替换为 127.0.0.1
             if addr.startswith("0.0.0.0:"):
                 addr = addr.replace("0.0.0.0:", "127.0.0.1:")
-                print(f"[WorkerDiscovery] Corrected addr to {addr}")
             
-            # 排除 Dead 状态
-            if status == "Dead":
+            # 只处理 Alive 状态的 Worker，其他状态（Suspect/Dead）视为不可用
+            if status != "Alive":
+                # 如果之前存在，标记为需要移除
+                if node_id in self._workers:
+                    current_nodes.add(node_id)  # 保留在当前节点集合中，避免立即删除
+                    worker = self._workers[node_id]
+                    if worker.is_healthy:
+                        # 状态变化：从健康变为不健康
+                        worker.is_healthy = False
+                        worker.actor_ref = None
+                        if self.on_worker_removed:
+                            try:
+                                await self.on_worker_removed(node_id)
+                            except Exception:
+                                pass
+                    worker.last_seen = time.time()
                 continue
             
+            # 只有 Alive 状态才处理
             current_nodes.add(node_id)
-            is_healthy = (status == "Alive")
+            is_healthy = True
             
             if node_id not in self._workers:
                 await self._add_worker(node_id, addr, is_healthy)
             else:
-                self._workers[node_id].last_seen = time.time()
-                self._workers[node_id].is_healthy = is_healthy
+                worker = self._workers[node_id]
+                worker.last_seen = time.time()
+                # 如果之前不健康，现在恢复健康，重新添加
+                if not worker.is_healthy:
+                    worker.is_healthy = True
+                    # 重新解析 actor_ref
+                    try:
+                        worker.actor_ref = await self.system.resolve_named(self.worker_name)
+                        await asyncio.wait_for(
+                            worker.actor_ref.ask_json("HealthCheck", {}),
+                            timeout=2.0
+                        )
+                        if self.on_worker_added:
+                            try:
+                                await self.on_worker_added(worker)
+                            except Exception:
+                                pass
+                    except Exception:
+                        worker.is_healthy = False
+                        worker.actor_ref = None
         
         # 移除消失的 Worker
         for node_id in set(self._workers.keys()) - current_nodes:
             await self._remove_worker(node_id)
+        
+        # 清理长时间不健康的 Worker（超过 30 秒）
+        now = time.time()
+        to_remove = []
+        for node_id, worker in self._workers.items():
+            if not worker.is_healthy and (now - worker.last_seen) > 30:
+                to_remove.append(node_id)
+        for node_id in to_remove:
+            await self._remove_worker(node_id)
     
     async def _add_worker(self, node_id: str, addr: str, is_healthy: bool = True):
         actor_ref = None
-        try:
-            # 暂时不指定 node_id，让系统自动选择（等编译新版本后可以指定）
-            actor_ref = await self.system.resolve_named(self.worker_name)
-            
-            # 测试连接：发送一个 HealthCheck
+        # 只有状态为 Alive 的 Worker 才解析 actor_ref
+        if is_healthy:
             try:
-                result = await actor_ref.ask_json("HealthCheck", {})
-                print(f"[WorkerDiscovery] HealthCheck OK for {node_id[:8]}...: {result.get('status')}")
-            except Exception as e:
-                print(f"[WorkerDiscovery] HealthCheck failed for {node_id[:8]}...: {e}")
-                
-        except Exception as e:
-            print(f"[WorkerDiscovery] Failed to resolve actor_ref for {node_id[:8]}...: {e}")
+                actor_ref = await self.system.resolve_named(self.worker_name)
+                # 测试连接：发送一个 HealthCheck（设置短超时）
+                await asyncio.wait_for(
+                    actor_ref.ask_json("HealthCheck", {}),
+                    timeout=2.0
+                )
+            except asyncio.TimeoutError:
+                # 连接超时，标记为不健康
+                is_healthy = False
+                actor_ref = None
+            except Exception:
+                # 其他错误，也标记为不健康
+                is_healthy = False
+                actor_ref = None
         
         worker = DiscoveredWorker(
             node_id=node_id,
@@ -141,24 +184,22 @@ class WorkerDiscovery:
             is_healthy=is_healthy,
         )
         self._workers[node_id] = worker
-        print(f"[WorkerDiscovery] + {node_id[:8]}... at {addr}, has_ref={actor_ref is not None}")
         
-        if self.on_worker_added:
+        if self.on_worker_added and is_healthy:
             try:
                 await self.on_worker_added(worker)
-            except Exception as e:
-                print(f"[WorkerDiscovery] Callback error: {e}")
+            except Exception:
+                pass  # 静默处理回调错误
     
     async def _remove_worker(self, node_id: str):
         if node_id in self._workers:
-            worker = self._workers.pop(node_id)
-            print(f"[WorkerDiscovery] - {node_id[:8]}... at {worker.addr}")
+            self._workers.pop(node_id)
             
             if self.on_worker_removed:
                 try:
                     await self.on_worker_removed(node_id)
-                except Exception as e:
-                    print(f"[WorkerDiscovery] Callback error: {e}")
+                except Exception:
+                    pass  # 静默处理回调错误
     
     def get_workers(self) -> List[DiscoveredWorker]:
         return list(self._workers.values())

@@ -172,6 +172,7 @@ class OpenAIServer:
     async def _sync_generate(self, request_id: str, model: str, prompt: str, worker, max_tokens: int, is_chat: bool) -> web.Response:
         created = int(time.time())
         actor_ref = worker.actor_ref
+        
         if actor_ref:
             try:
                 result = await actor_ref.ask_json("GenerateRequest", {"prompt": prompt, "max_new_tokens": max_tokens})
@@ -182,7 +183,7 @@ class OpenAIServer:
                 text = f"[Error: {e}]"
                 prompt_tokens = completion_tokens = 0
         else:
-            text = f"[Worker: {worker.worker_id[:8]}...] Echo: {prompt[-100:]}"
+            text = f"[Worker unavailable]"
             prompt_tokens = completion_tokens = 0
             
         res_data = {
@@ -207,17 +208,10 @@ class OpenAIServer:
         obj_type = "chat.completion.chunk" if is_chat else "text_completion"
         actor_ref = worker.actor_ref
         
-        print(f"[OpenAI] Stream request: worker={worker.worker_id[:8]}..., has_ref={actor_ref is not None}")
-        
         if actor_ref:
             try:
-                # 使用 ask_stream() 来正确触发 HTTP/2 stream 模式
-                print(f"[OpenAI] Sending GenerateStreamRequest to worker...")
                 req_msg = Message.from_json("GenerateStreamRequest", {"prompt": prompt, "max_new_tokens": max_tokens})
-                
-                # ask_stream 会自动返回 reader，不需要检查 is_stream
                 reader = await actor_ref.ask_stream(req_msg)
-                print(f"[OpenAI] Got stream reader, consuming...")
                 
                 async for chunk_bytes in reader:
                     try:
@@ -228,28 +222,26 @@ class OpenAIServer:
                                 "id": request_id, "object": obj_type, "created": created, "model": model or self.model_name,
                                 "choices": [{"index": 0, "finish_reason": None}]
                             }
-                            if is_chat: data["choices"][0]["delta"] = {"content": text}
-                            else: data["choices"][0]["text"] = text
+                            if is_chat:
+                                data["choices"][0]["delta"] = {"content": text}
+                            else:
+                                data["choices"][0]["text"] = text
                             await response.write(f"data: {json.dumps(data)}\n\n".encode())
-                        if chunk.get("finish_reason"): 
-                            print(f"[OpenAI] Stream finished")
+                        if chunk.get("finish_reason"):
                             break
-                    except Exception as ce:
-                        print(f"[OpenAI] Chunk error: {ce}")
+                    except json.JSONDecodeError:
                         continue
             except Exception as e:
-                print(f"[OpenAI] Stream error: {e}")
-                import traceback
-                traceback.print_exc()
                 await response.write(f"data: {json.dumps({'error': str(e)})}\n\n".encode())
         else:
-            print(f"[OpenAI] WARNING: No actor_ref for worker {worker.worker_id[:8]}...")
             await response.write(f"data: {json.dumps({'error': 'No worker available'})}\n\n".encode())
         
         # 结束标记
         final = {"id": request_id, "object": obj_type, "created": created, "model": model or self.model_name, "choices": [{"index": 0, "finish_reason": "stop"}]}
-        if is_chat: final["choices"][0]["delta"] = {}
-        else: final["choices"][0]["text"] = ""
+        if is_chat:
+            final["choices"][0]["delta"] = {}
+        else:
+            final["choices"][0]["text"] = ""
         await response.write(f"data: {json.dumps(final)}\n\n".encode())
         await response.write(b"data: [DONE]\n\n")
         return response
