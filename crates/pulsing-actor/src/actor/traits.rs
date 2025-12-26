@@ -152,14 +152,6 @@ impl Message {
         }
     }
 
-    /// Create an empty single message (for responses)
-    pub fn empty() -> Self {
-        Message::Single {
-            msg_type: String::new(),
-            data: Vec::new(),
-        }
-    }
-
     /// Pack a serializable value into a message
     ///
     /// Uses `std::any::type_name` to automatically generate the message type.
@@ -233,11 +225,6 @@ impl Message {
     pub fn is_stream(&self) -> bool {
         matches!(self, Message::Stream { .. })
     }
-
-    /// Check if this message has a type
-    pub fn has_type(&self) -> bool {
-        !self.msg_type().is_empty()
-    }
 }
 
 impl fmt::Debug for Message {
@@ -258,7 +245,10 @@ impl fmt::Debug for Message {
 
 impl Default for Message {
     fn default() -> Self {
-        Self::empty()
+        Message::Single {
+            msg_type: String::new(),
+            data: Vec::new(),
+        }
     }
 }
 
@@ -287,25 +277,8 @@ impl<'de> Deserialize<'de> for Message {
     }
 }
 
-impl Clone for Message {
-    fn clone(&self) -> Self {
-        match self {
-            Message::Single { msg_type, data } => Message::Single {
-                msg_type: msg_type.clone(),
-                data: data.clone(),
-            },
-            Message::Stream { .. } => panic!("Cannot clone streaming message"),
-        }
-    }
-}
-
 /// Message stream type (for streaming scenarios)
 pub type MessageStream = Pin<Box<dyn Stream<Item = anyhow::Result<Message>> + Send>>;
-
-/// Create an empty message stream
-pub fn empty_stream() -> MessageStream {
-    Box::pin(futures::stream::empty())
-}
 
 // ============================================================================
 // Actor trait - unified interface
@@ -410,17 +383,6 @@ mod tests {
     }
 
     #[test]
-    fn test_message_clone() {
-        let msg = Message::single("TestType", b"hello");
-        let cloned = msg.clone();
-        assert_eq!(cloned.msg_type(), "TestType");
-        let Message::Single { data, .. } = cloned else {
-            panic!("expected single")
-        };
-        assert_eq!(data, b"hello");
-    }
-
-    #[test]
     fn test_actor_id() {
         let node = NodeId::generate();
         let id = ActorId::new(node, 123);
@@ -458,7 +420,7 @@ mod tests {
     fn test_message_response() {
         // Response without type (empty string)
         let response = Message::single("", b"hello");
-        assert!(!response.has_type());
+        assert!(response.msg_type().is_empty());
         assert!(response.is_single());
 
         let Message::Single { data, .. } = response else {
@@ -471,7 +433,7 @@ mod tests {
     fn test_message_request() {
         // Request with type
         let request = Message::single("Echo", b"hello");
-        assert!(request.has_type());
+        assert!(!request.msg_type().is_empty());
         assert_eq!(request.msg_type(), "Echo");
     }
 }
