@@ -99,6 +99,93 @@ def actor(
         )
 
 
+@hp.param("inspect")
+def inspect(seeds: Optional[str] = None):
+    """
+    Inspect the actor system state.
+
+    Args:
+        seeds: Comma-separated list of seed nodes to join the cluster.
+
+    Examples:
+        pulsing inspect --seeds 127.0.0.1:8000
+    """
+    seed_list = []
+    if seeds:
+        seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
+    _inspect_system(seed_list)
+
+
+def _inspect_system(seeds: list):
+    """Inspect the actor system state"""
+    import asyncio
+    import json
+    import aiohttp
+    from pulsing.actor import SystemConfig, create_actor_system
+
+    async def run():
+        if not seeds:
+            print("Error: --seeds is required for 'inspect' command")
+            return
+
+        print(f"Connecting to cluster via seeds: {seeds}...")
+        config = SystemConfig.standalone().with_seeds(seeds)
+        system = await create_actor_system(config)
+        
+        # Give some time for discovery
+        await asyncio.sleep(1.0)
+        
+        members = await system.members()
+        print(f"\nCluster Status: {len(members)} nodes found")
+        print("=" * 60)
+
+        async with aiohttp.ClientSession() as session:
+            for member in members:
+                node_id = member.get("node_id")
+                addr = member.get("addr")
+                status = member.get("status")
+                
+                print(f"\nNode: {node_id} ({addr}) [{status}]")
+                
+                if status != "Alive":
+                    print("  [Node is not alive, skipping details]")
+                    continue
+
+                # Fetch health info from the node
+                try:
+                    health_url = f"http://{addr}/health"
+                    async with session.get(health_url, timeout=2.0) as resp:
+                        if resp.status == 200:
+                            health_info = await resp.json()
+                            
+                            # Print Named Actors
+                            named_actors = health_info.get("named_actors", [])
+                            if named_actors:
+                                print("  Named Actors:")
+                                for a in named_actors:
+                                    print(f"    - {a.get('path')} -> {a.get('actor_name')}")
+                            
+                            # Print Anonymous Actors (filter out system/internal if needed, but for now print all)
+                            actors = health_info.get("actors", [])
+                            if actors:
+                                print(f"  Local Actors ({len(actors)} total):")
+                                for a in actors:
+                                    name = a.get("name")
+                                    # If it has a named_path, it's already listed in Named Actors
+                                    is_named = "named_path" in a
+                                    prefix = "[Named]" if is_named else "[Anon] "
+                                    print(f"    - {prefix} {name}")
+                        else:
+                            print(f"  [Error fetching health: HTTP {resp.status}]")
+                except Exception as e:
+                    print(f"  [Error connecting to node: {e}]")
+        
+        print("\n" + "=" * 60)
+        await system.shutdown()
+
+    uvloop.run(run())
+
+
 def _start_router_actor(
     namespace: str,
     addr: Optional[str],
