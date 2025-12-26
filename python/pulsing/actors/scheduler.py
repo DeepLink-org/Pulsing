@@ -64,7 +64,9 @@ class Scheduler(ABC):
 
     async def _resolve_worker(self, node_id: Optional[str] = None):
         try:
-            return await self._system.resolve_named(self._worker_name, node_id=node_id)
+            # node_id 在 MemberInfo 中被序列化为字符串，需要转回 int 以匹配 resolve_named
+            nid_int = int(node_id) if node_id else None
+            return await self._system.resolve_named(self._worker_name, node_id=nid_int)
         except Exception:
             return None
 

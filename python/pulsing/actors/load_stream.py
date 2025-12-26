@@ -206,7 +206,8 @@ class StreamLoadScheduler:
     async def _discover_and_subscribe(self):
         """发现并订阅 Worker"""
         try:
-            workers = await self._system.lookup_named_actor(self._worker_name)
+            # 使用 get_named_instances 替代未绑定的 lookup_named_actor
+            workers = await self._system.get_named_instances(self._worker_name)
             current = {w.get("node_id") for w in workers if w.get("node_id")}
             
             async with self._lock:
@@ -216,14 +217,18 @@ class StreamLoadScheduler:
                 # 下线 Worker
                 for node_id in self._subscribed_workers - current:
                     await self._unsubscribe_worker(node_id)
-        except:
+        except Exception as e:
+            print(f"[StreamLoadScheduler] Discover error: {e}")
             pass
     
     async def _subscribe_worker(self, node_id: str):
         if node_id in self._subscribed_workers:
             return
         try:
-            worker_ref = await self._system.get_actor_ref(node_id)
+            # 使用 resolve_named 替代未绑定的 get_actor_ref
+            # node_id 需要从字符串转为 int
+            nid_int = int(node_id)
+            worker_ref = await self._system.resolve_named(self._worker_name, node_id=nid_int)
             if worker_ref:
                 self._worker_refs[node_id] = worker_ref
                 await self._consumer.subscribe(worker_ref, node_id)
@@ -233,7 +238,8 @@ class StreamLoadScheduler:
                         self._on_worker_added(node_id)
                     except:
                         pass
-        except:
+        except Exception as e:
+            print(f"[StreamLoadScheduler] Subscribe error for node {node_id}: {e}")
             pass
     
     async def _unsubscribe_worker(self, node_id: str):
