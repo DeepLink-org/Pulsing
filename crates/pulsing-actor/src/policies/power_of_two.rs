@@ -198,12 +198,10 @@ mod tests {
     #[test]
     fn test_power_of_two_single_worker() {
         let policy = PowerOfTwoPolicy::new();
-        let workers: Vec<Arc<dyn Worker>> = vec![Arc::new(BasicWorker::new(
-            "http://w1:8000".to_string(),
-        ))];
+        let workers: Vec<Arc<dyn Worker>> =
+            vec![Arc::new(BasicWorker::new("http://w1:8000".to_string()))];
 
         // With single worker, should always select it
         assert_eq!(policy.select_worker(&workers, None), Some(0));
     }
 }
-

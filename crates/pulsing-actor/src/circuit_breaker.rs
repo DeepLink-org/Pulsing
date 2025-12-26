@@ -547,4 +547,3 @@ mod tests {
         assert_eq!(cb2.failure_count(), 2);
     }
 }
-

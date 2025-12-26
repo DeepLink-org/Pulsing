@@ -208,10 +208,7 @@ impl ConsistentHashPolicy {
         for header_name in Self::SESSION_HEADER_NAMES {
             if let Some(value) = headers.get(*header_name) {
                 if !value.is_empty() {
-                    debug!(
-                        "Found session key in header '{}': {}",
-                        header_name, value
-                    );
+                    debug!("Found session key in header '{}': {}", header_name, value);
                     return Some(format!("header:{}:{}", header_name, value));
                 }
             }
@@ -227,7 +224,9 @@ impl ConsistentHashPolicy {
         }
 
         // Try to extract session_params.session_id
-        if let Some(session_id) = self.extract_nested_field_value(text, "session_params", "session_id") {
+        if let Some(session_id) =
+            self.extract_nested_field_value(text, "session_params", "session_id")
+        {
             return Some(format!("session:{}", session_id));
         }
 
@@ -494,7 +493,8 @@ impl LoadBalancingPolicy for ConsistentHashPolicy {
         headers: Option<&RequestHeaders>,
     ) -> Option<(usize, usize)> {
         // For PD mode, use consistent hashing for both prefill and decode
-        let prefill_idx = self.select_worker_with_headers(prefill_workers, request_text, headers)?;
+        let prefill_idx =
+            self.select_worker_with_headers(prefill_workers, request_text, headers)?;
         let decode_idx = self.select_worker_with_headers(decode_workers, request_text, headers)?;
         Some((prefill_idx, decode_idx))
     }
@@ -574,4 +574,3 @@ mod tests {
         assert!(idx1.is_some());
     }
 }
-

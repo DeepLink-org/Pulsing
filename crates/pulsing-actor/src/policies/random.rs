@@ -100,9 +100,8 @@ mod tests {
     #[test]
     fn test_random_no_healthy_workers() {
         let policy = RandomPolicy::new();
-        let workers: Vec<Arc<dyn Worker>> = vec![Arc::new(BasicWorker::new(
-            "http://w1:8000".to_string(),
-        ))];
+        let workers: Vec<Arc<dyn Worker>> =
+            vec![Arc::new(BasicWorker::new("http://w1:8000".to_string()))];
 
         if let Some(w) = workers[0].as_any().downcast_ref::<BasicWorker>() {
             w.set_health(false);
@@ -110,4 +109,3 @@ mod tests {
         assert_eq!(policy.select_worker(&workers, None), None);
     }
 }
-

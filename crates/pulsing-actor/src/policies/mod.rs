@@ -166,7 +166,8 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
         headers: Option<&RequestHeaders>,
     ) -> Option<(usize, usize)> {
         // Default implementation: select independently
-        let prefill_idx = self.select_worker_with_headers(prefill_workers, request_text, headers)?;
+        let prefill_idx =
+            self.select_worker_with_headers(prefill_workers, request_text, headers)?;
         let decode_idx = self.select_worker_with_headers(decode_workers, request_text, headers)?;
         Some((prefill_idx, decode_idx))
     }
@@ -238,13 +239,11 @@ impl Worker for BasicWorker {
     }
 
     fn increment_load(&self) {
-        self.load
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.load.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn decrement_load(&self) {
-        self.load
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        self.load.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn increment_processed(&self) {
@@ -315,4 +314,3 @@ mod tests {
         assert_eq!(indices, vec![0, 2]);
     }
 }
-

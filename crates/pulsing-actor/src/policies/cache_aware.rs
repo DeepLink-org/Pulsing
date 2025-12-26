@@ -181,7 +181,10 @@ impl CacheAwarePolicy {
         if let Ok(mut trees) = self.trees.lock() {
             for (model_id, tree) in trees.iter_mut() {
                 tree.evict_tenant_by_size(max_size);
-                debug!("Cache eviction for model {}, max_size: {}", model_id, max_size);
+                debug!(
+                    "Cache eviction for model {}, max_size: {}",
+                    model_id, max_size
+                );
             }
         }
     }
@@ -341,7 +344,10 @@ impl LoadBalancingPolicy for CacheAwarePolicy {
 
     fn on_request_complete(&self, worker_url: &str, success: bool) {
         if !success {
-            debug!("Request to {} completed with success={}", worker_url, success);
+            debug!(
+                "Request to {} completed with success={}",
+                worker_url, success
+            );
         }
     }
 
@@ -360,7 +366,8 @@ impl LoadBalancingPolicy for CacheAwarePolicy {
         // - Prefill: Use cache-aware routing for better cache utilization
         // - Decode: Use least-load routing for better load distribution
 
-        let prefill_idx = self.select_worker_with_headers(prefill_workers, request_text, headers)?;
+        let prefill_idx =
+            self.select_worker_with_headers(prefill_workers, request_text, headers)?;
 
         // Select decode worker using least-load logic
         let healthy_decode = get_healthy_worker_indices(decode_workers);
@@ -473,7 +480,7 @@ mod tests {
 
         // Remove a worker
         policy.remove_worker_by_url("http://w1:8000");
-        
+
         if let Some(w) = workers[0].as_any().downcast_ref::<BasicWorker>() {
             w.set_health(false);
         }
@@ -483,4 +490,3 @@ mod tests {
         assert_eq!(idx, 1);
     }
 }
-

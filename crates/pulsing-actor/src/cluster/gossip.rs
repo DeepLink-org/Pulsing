@@ -495,7 +495,7 @@ impl GossipCluster {
     }
 
     /// Merge received actor locations with local state
-    /// 
+    ///
     /// NOTE: This method is kept for backward compatibility but is no longer called
     /// since we only sync named_actors via Gossip to reduce traffic.
     #[allow(dead_code)]
@@ -954,7 +954,7 @@ impl GossipClusterInner {
     }
 
     /// Merge received actor locations with local state
-    /// 
+    ///
     /// NOTE: This method is kept for backward compatibility but is no longer called
     /// since we only sync named_actors via Gossip to reduce traffic.
     #[allow(dead_code)]

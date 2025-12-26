@@ -232,7 +232,9 @@ impl ActorAddress {
 
             if let Some((path, node)) = path_part.rsplit_once('@') {
                 // With instance specifier
-                let node_id = node.parse::<u64>().map_err(|_| AddressParseError::InvalidFormat)?;
+                let node_id = node
+                    .parse::<u64>()
+                    .map_err(|_| AddressParseError::InvalidFormat)?;
                 Ok(Self::Named {
                     path: ActorPath::new(path)?,
                     instance: Some(NodeId::new(node_id)),
@@ -254,8 +256,12 @@ impl ActorAddress {
                 return Err(AddressParseError::InvalidFormat);
             }
 
-            let node_id = node_id_str.parse::<u64>().map_err(|_| AddressParseError::InvalidFormat)?;
-            let actor_id = actor_id_str.parse::<u64>().map_err(|_| AddressParseError::InvalidFormat)?;
+            let node_id = node_id_str
+                .parse::<u64>()
+                .map_err(|_| AddressParseError::InvalidFormat)?;
+            let actor_id = actor_id_str
+                .parse::<u64>()
+                .map_err(|_| AddressParseError::InvalidFormat)?;
 
             Ok(Self::Global {
                 node_id: NodeId::new(node_id),
@@ -503,10 +509,8 @@ mod tests {
         assert_eq!(addr.to_uri(), "actor:///services/api");
 
         // Named instance
-        let addr = ActorAddress::named_instance(
-            ActorPath::new("services/api").unwrap(),
-            NodeId::new(123),
-        );
+        let addr =
+            ActorAddress::named_instance(ActorPath::new("services/api").unwrap(), NodeId::new(123));
         assert_eq!(addr.to_uri(), "actor:///services/api@123");
 
         // Global

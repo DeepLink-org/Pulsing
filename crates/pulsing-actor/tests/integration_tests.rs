@@ -634,7 +634,8 @@ mod addressing_tests {
             .unwrap();
 
         // Resolve using local address (node_id = 0) with actual actor id
-        let addr = ActorAddress::parse(&format!("actor://0/{}", actor_ref.id().local_id())).unwrap();
+        let addr =
+            ActorAddress::parse(&format!("actor://0/{}", actor_ref.id().local_id())).unwrap();
         assert!(addr.is_local());
 
         let resolved_ref = system.resolve(&addr).await.unwrap();

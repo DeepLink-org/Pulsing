@@ -142,7 +142,7 @@ impl Tree {
                     // No match - create new node
                     let curr_text = slice_by_chars(text, curr_idx, text_count);
                     let curr_text_count = curr_text.chars().count();
-                    
+
                     let new_node = Arc::new(Node {
                         children: RwLock::new(HashMap::new()),
                         text: RwLock::new(curr_text),
@@ -390,8 +390,10 @@ impl Tree {
             }
         }
 
-        debug!("Before eviction - tenant char counts: {:?}", 
-            self.tenant_char_count.read().unwrap());
+        debug!(
+            "Before eviction - tenant char counts: {:?}",
+            self.tenant_char_count.read().unwrap()
+        );
 
         // Process eviction
         while let Some(Reverse(entry)) = pq.pop() {
@@ -434,7 +436,7 @@ impl Tree {
                 if children.is_empty() && access_times.is_empty() {
                     drop(children);
                     drop(access_times);
-                    
+
                     if let Some(ref parent) = parent_ref {
                         let text = node.text.read().unwrap();
                         if let Some(first_char) = text.chars().next() {
@@ -460,8 +462,10 @@ impl Tree {
             }
         }
 
-        debug!("After eviction - tenant char counts: {:?}",
-            self.tenant_char_count.read().unwrap());
+        debug!(
+            "After eviction - tenant char counts: {:?}",
+            self.tenant_char_count.read().unwrap()
+        );
     }
 
     /// Remove all data for a tenant
@@ -495,7 +499,7 @@ impl Tree {
             if children.is_empty() && access_times.is_empty() {
                 drop(children);
                 drop(access_times);
-                
+
                 if let Some(parent) = curr.parent.read().unwrap().as_ref() {
                     let text = curr.text.read().unwrap();
                     if let Some(first_char) = text.chars().next() {
@@ -526,7 +530,7 @@ impl Tree {
     /// Get the tenant with smallest tree size
     pub fn get_smallest_tenant(&self) -> String {
         let counts = self.tenant_char_count.read().unwrap();
-        
+
         if counts.is_empty() {
             return "empty".to_string();
         }
@@ -643,4 +647,3 @@ mod tests {
         assert_eq!(tenant, "tenant2");
     }
 }
-

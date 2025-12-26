@@ -30,11 +30,7 @@ struct SharedCounter {
 #[async_trait]
 impl Actor for SharedCounter {
     async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
-        println!(
-            "[{}] SharedCounter started on {}",
-            ctx.id(),
-            self.node_name
-        );
+        println!("[{}] SharedCounter started on {}", ctx.id(), self.node_name);
         Ok(())
     }
 

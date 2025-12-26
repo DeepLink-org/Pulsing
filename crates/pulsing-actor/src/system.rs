@@ -364,7 +364,10 @@ impl ActorSystem {
             for entry in self.local_actors.iter() {
                 let entry_local_id = entry.value().actor_id.local_id();
                 if entry_local_id == target_local_id {
-                    return Ok(ActorRef::local(entry.value().actor_id, entry.value().sender.clone()));
+                    return Ok(ActorRef::local(
+                        entry.value().actor_id,
+                        entry.value().sender.clone(),
+                    ));
                 }
             }
             return Err(anyhow::anyhow!("Local actor not found: {}", id));
@@ -382,14 +385,9 @@ impl ActorSystem {
             .ok_or_else(|| anyhow::anyhow!("Node not found in cluster: {}", id.node()))?;
 
         // Create remote transport using actor id
-        let transport =
-            Http2RemoteTransport::new_by_id(self.transport.client(), member.addr, *id);
+        let transport = Http2RemoteTransport::new_by_id(self.transport.client(), member.addr, *id);
 
-        Ok(ActorRef::remote(
-            *id,
-            member.addr,
-            Arc::new(transport),
-        ))
+        Ok(ActorRef::remote(*id, member.addr, Arc::new(transport)))
     }
 
     /// Resolve a named actor and get an ActorRef

@@ -119,4 +119,3 @@ mod tests {
         assert_eq!(policy.select_worker(&workers, None), Some(0));
     }
 }
-

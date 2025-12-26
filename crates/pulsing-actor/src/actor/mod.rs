@@ -11,6 +11,5 @@ pub use context::{ActorContext, ActorSystemRef};
 pub use mailbox::{Envelope, EnvelopeResponse, Mailbox, MailboxSender, DEFAULT_MAILBOX_SIZE};
 pub use reference::{ActorRef, ActorRefInner, RemoteActorRef, RemoteTransport};
 pub use traits::{
-    Actor, ActorId, Message, MessageDispatcher, MessageStream, NodeId, PayloadStream,
-    StopReason,
+    Actor, ActorId, Message, MessageDispatcher, MessageStream, NodeId, PayloadStream, StopReason,
 };
