@@ -27,24 +27,30 @@ pub enum StopReason {
     SystemShutdown,
 }
 
-/// Node identifier in the cluster
-#[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
-pub struct NodeId(pub String);
+/// Node identifier in the cluster (0 = local)
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Serialize, Deserialize, Default)]
+pub struct NodeId(pub u64);
 
 impl NodeId {
-    /// Generate a new unique NodeId
+    /// Local node id (0)
+    pub const LOCAL: NodeId = NodeId(0);
+
+    /// Generate a new unique NodeId using UUID
     pub fn generate() -> Self {
-        Self(uuid::Uuid::new_v4().to_string())
+        let uuid = uuid::Uuid::new_v4();
+        // Use the lower 64 bits of UUID, ensure non-zero (0 is reserved for LOCAL)
+        let id = uuid.as_u128() as u64;
+        Self(if id == 0 { 1 } else { id })
     }
 
-    /// Create from string
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
+    /// Create from u64
+    pub fn new(id: u64) -> Self {
+        Self(id)
     }
 
-    /// Get the inner string
-    pub fn as_str(&self) -> &str {
-        &self.0
+    /// Check if this is the local node
+    pub fn is_local(&self) -> bool {
+        self.0 == 0
     }
 }
 
@@ -55,35 +61,40 @@ impl fmt::Display for NodeId {
 }
 
 /// Actor identifier (globally unique)
-#[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ActorId {
-    /// Node where the actor resides
-    pub node: NodeId,
-    /// Actor name (unique within the node)
-    pub name: String,
-}
+/// High 64 bits = node id, Low 64 bits = local actor id
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Serialize, Deserialize, Default)]
+pub struct ActorId(pub u128);
 
 impl ActorId {
-    /// Create a new ActorId
-    pub fn new(node: NodeId, name: impl Into<String>) -> Self {
-        Self {
-            node,
-            name: name.into(),
-        }
+    /// Create a new ActorId from node id and local id
+    pub fn new(node: NodeId, local_id: u64) -> Self {
+        Self(((node.0 as u128) << 64) | (local_id as u128))
     }
 
-    /// Create a local actor id (node will be set when spawned)
-    pub fn local(name: impl Into<String>) -> Self {
-        Self {
-            node: NodeId::new("local"),
-            name: name.into(),
-        }
+    /// Create a local actor id
+    pub fn local(local_id: u64) -> Self {
+        Self::new(NodeId::LOCAL, local_id)
+    }
+
+    /// Get the node id
+    pub fn node(&self) -> NodeId {
+        NodeId((self.0 >> 64) as u64)
+    }
+
+    /// Get the local actor id
+    pub fn local_id(&self) -> u64 {
+        self.0 as u64
+    }
+
+    /// Check if this is a local actor
+    pub fn is_local(&self) -> bool {
+        self.node().is_local()
     }
 }
 
 impl fmt::Display for ActorId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}@{}", self.name, self.node)
+        write!(f, "{}:{}", self.node().0, self.local_id())
     }
 }
 
@@ -412,9 +423,9 @@ mod tests {
     #[test]
     fn test_actor_id() {
         let node = NodeId::generate();
-        let id = ActorId::new(node.clone(), "test-actor");
-        assert_eq!(id.name, "test-actor");
-        assert_eq!(id.node, node);
+        let id = ActorId::new(node, 123);
+        assert_eq!(id.local_id(), 123);
+        assert_eq!(id.node(), node);
     }
 
     #[test]

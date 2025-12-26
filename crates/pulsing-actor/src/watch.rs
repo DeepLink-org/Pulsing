@@ -195,7 +195,7 @@ impl ActorLifecycle {
         );
 
         // Create termination message with actor_id and reason
-        let termination_msg = (actor_id.clone(), reason.clone());
+        let termination_msg = (*actor_id, reason.clone());
 
         let msg = match Message::pack(&termination_msg) {
             Ok(msg) => msg,
@@ -355,7 +355,7 @@ mod tests {
         lifecycle.watch("watcher1", "target1").await;
         lifecycle.watch("watcher2", "target1").await;
 
-        let actor_id = ActorId::new(NodeId::generate(), "target1");
+        let actor_id = ActorId::new(NodeId::generate(), 1);
 
         // Create a channel to receive notifications
         let (tx, mut rx) = mpsc::channel::<Envelope>(10);

@@ -249,7 +249,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_actor_ref_tell() {
         let (tx, mut rx) = mpsc::channel(16);
-        let actor_id = ActorId::local("test");
+        let actor_id = ActorId::local(1);
         let actor_ref = ActorRef::local(actor_id, tx);
 
         actor_ref.tell(TestMsg { value: 42 }).await.unwrap();
@@ -262,7 +262,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_actor_ref_fire() {
         let (tx, mut rx) = mpsc::channel(16);
-        let actor_id = ActorId::local("test");
+        let actor_id = ActorId::local(1);
         let actor_ref = ActorRef::local(actor_id, tx);
 
         let msg = Message::single("TestMsg", b"hello");

@@ -116,7 +116,8 @@ mod basic_tests {
     async fn test_actor_spawn() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
         let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
-        assert_eq!(actor_ref.id().name, "counter");
+        // ActorId now uses u128 (node_id:local_id), verify it's a local actor
+        assert!(actor_ref.is_local());
         system.shutdown().await;
     }
 

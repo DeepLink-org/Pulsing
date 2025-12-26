@@ -80,7 +80,7 @@ pub struct SwimDetector {
 impl Clone for SwimDetector {
     fn clone(&self) -> Self {
         Self {
-            local_node: self.local_node.clone(),
+            local_node: self.local_node,
             config: self.config.clone(),
             seq: AtomicU64::new(self.seq.load(Ordering::SeqCst)),
             pending_pings: RwLock::new(HashMap::new()),
@@ -109,7 +109,7 @@ impl SwimDetector {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst);
         let ping = SwimMessage::Ping {
             seq,
-            from: self.local_node.clone(),
+            from: self.local_node,
         };
         (seq, ping)
     }
@@ -118,7 +118,7 @@ impl SwimDetector {
     pub fn create_ack(&self, seq: u64) -> SwimMessage {
         SwimMessage::Ack {
             seq,
-            from: self.local_node.clone(),
+            from: self.local_node,
         }
     }
 

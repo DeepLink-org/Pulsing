@@ -11,7 +11,7 @@ use pulsing_actor::transport::TransportMessage;
 fn test_transport_message_request() {
     let msg = TransportMessage::Request {
         id: 123,
-        actor_id: ActorId::local("test"),
+        actor_id: ActorId::local(1),
         msg_type: "Ping".to_string(),
         payload: vec![1, 2, 3],
     };
@@ -39,7 +39,7 @@ fn test_transport_message_response() {
 #[test]
 fn test_transport_message_oneway() {
     let msg = TransportMessage::OneWay {
-        actor_id: ActorId::local("actor"),
+        actor_id: ActorId::local(1),
         msg_type: "Fire".to_string(),
         payload: vec![7, 8, 9],
     };
@@ -50,7 +50,7 @@ fn test_transport_message_oneway() {
             msg_type,
             payload,
         } => {
-            assert_eq!(actor_id.name, "actor");
+            assert_eq!(actor_id.local_id(), 1);
             assert_eq!(msg_type, "Fire");
             assert_eq!(payload, vec![7, 8, 9]);
         }
@@ -60,7 +60,7 @@ fn test_transport_message_oneway() {
 
 #[test]
 fn test_transport_message_request_helper() {
-    let actor_id = ActorId::local("test-actor");
+    let actor_id = ActorId::local(1);
     let (id, msg) = TransportMessage::request(actor_id, "TestType".to_string(), vec![1, 2]);
 
     match msg {
@@ -71,7 +71,7 @@ fn test_transport_message_request_helper() {
             payload,
         } => {
             assert_eq!(req_id, id);
-            assert_eq!(req_actor.name, "test-actor");
+            assert_eq!(req_actor.local_id(), 1);
             assert_eq!(msg_type, "TestType");
             assert_eq!(payload, vec![1, 2]);
         }
@@ -94,7 +94,7 @@ fn test_transport_message_response_helper() {
 
 #[test]
 fn test_transport_message_oneway_helper() {
-    let actor_id = ActorId::local("one-way-actor");
+    let actor_id = ActorId::local(1);
     let msg = TransportMessage::one_way(actor_id, "FireAndForget".to_string(), vec![100]);
 
     match msg {
@@ -103,7 +103,7 @@ fn test_transport_message_oneway_helper() {
             msg_type,
             payload,
         } => {
-            assert_eq!(actor_id.name, "one-way-actor");
+            assert_eq!(actor_id.local_id(), 1);
             assert_eq!(msg_type, "FireAndForget");
             assert_eq!(payload, vec![100]);
         }
@@ -113,7 +113,7 @@ fn test_transport_message_oneway_helper() {
 
 #[test]
 fn test_transport_message_request_id() {
-    let actor_id = ActorId::local("test");
+    let actor_id = ActorId::local(1);
     let (id, msg) = TransportMessage::request(actor_id, "Test".to_string(), vec![]);
 
     assert_eq!(msg.request_id(), Some(id));
@@ -121,7 +121,7 @@ fn test_transport_message_request_id() {
     let response = TransportMessage::response(456, Ok(vec![]));
     assert_eq!(response.request_id(), None);
 
-    let oneway = TransportMessage::one_way(ActorId::local("test"), "Test".to_string(), vec![]);
+    let oneway = TransportMessage::one_way(ActorId::local(1), "Test".to_string(), vec![]);
     assert_eq!(oneway.request_id(), None);
 }
 

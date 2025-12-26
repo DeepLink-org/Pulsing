@@ -7,15 +7,12 @@
 //! 1. Named Actor Service Address: `actor:///namespace/path/name`
 //! 2. Named Actor Instance Address: `actor:///namespace/path/name@node_id`
 //! 3. Global Actor Address: `actor://node_id/actor_id`
-//! 4. Local Reference: `actor://localhost/actor_id`
+//! 4. Local Reference: `actor://0/actor_id` (node_id=0 means local)
 
 use super::traits::NodeId;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::Hash;
-
-/// Reserved node identifier for local references
-pub const LOCALHOST: &str = "localhost";
 
 /// Address parsing error
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,11 +173,10 @@ impl TryFrom<&str> for ActorPath {
 
 /// Actor address - unified addressing for all actor types
 ///
-/// Supports four address formats:
+/// Supports three address formats:
 /// 1. Named service: `actor:///namespace/path/name` - load-balanced access to named actor
 /// 2. Named instance: `actor:///namespace/path/name@node_id` - specific instance
-/// 3. Global: `actor://node_id/actor_id` - direct address to any actor
-/// 4. Local: `actor://localhost/actor_id` - shortcut for current node
+/// 3. Global: `actor://node_id/actor_id` - direct address to any actor (node_id=0 means local)
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ActorAddress {
     /// Named Actor - registered via Gossip, supports multiple instances
@@ -195,10 +191,10 @@ pub enum ActorAddress {
     /// Global Actor Address - direct addressing without Gossip registration
     /// Format: `actor://node_id/actor_id`
     Global {
-        /// The node where the actor resides
+        /// The node where the actor resides (0 = local)
         node_id: NodeId,
         /// The actor's local identifier
-        actor_id: String,
+        actor_id: u64,
     },
 }
 
@@ -213,13 +209,13 @@ impl ActorAddress {
     /// let addr = ActorAddress::parse("actor:///services/llm/router").unwrap();
     ///
     /// // Named actor (specific instance)
-    /// let addr = ActorAddress::parse("actor:///services/llm/router@node_a").unwrap();
+    /// let addr = ActorAddress::parse("actor:///services/llm/router@123").unwrap();
     ///
     /// // Global address
-    /// let addr = ActorAddress::parse("actor://node_a/worker_123").unwrap();
+    /// let addr = ActorAddress::parse("actor://123/456").unwrap();
     ///
-    /// // Local reference
-    /// let addr = ActorAddress::parse("actor://localhost/worker_123").unwrap();
+    /// // Local reference (node_id = 0)
+    /// let addr = ActorAddress::parse("actor://0/456").unwrap();
     /// ```
     pub fn parse(uri: &str) -> Result<Self, AddressParseError> {
         if !uri.starts_with("actor://") {
@@ -236,9 +232,10 @@ impl ActorAddress {
 
             if let Some((path, node)) = path_part.rsplit_once('@') {
                 // With instance specifier
+                let node_id = node.parse::<u64>().map_err(|_| AddressParseError::InvalidFormat)?;
                 Ok(Self::Named {
                     path: ActorPath::new(path)?,
-                    instance: Some(NodeId::new(node)),
+                    instance: Some(NodeId::new(node_id)),
                 })
             } else {
                 // Service address (no instance)
@@ -248,18 +245,21 @@ impl ActorAddress {
                 })
             }
         } else {
-            // Global/Local: actor://node_id/actor_id
-            let (node_id, actor_id) = rest
+            // Global: actor://node_id/actor_id
+            let (node_id_str, actor_id_str) = rest
                 .split_once('/')
                 .ok_or(AddressParseError::InvalidFormat)?;
 
-            if node_id.is_empty() || actor_id.is_empty() {
+            if node_id_str.is_empty() || actor_id_str.is_empty() {
                 return Err(AddressParseError::InvalidFormat);
             }
 
+            let node_id = node_id_str.parse::<u64>().map_err(|_| AddressParseError::InvalidFormat)?;
+            let actor_id = actor_id_str.parse::<u64>().map_err(|_| AddressParseError::InvalidFormat)?;
+
             Ok(Self::Global {
                 node_id: NodeId::new(node_id),
-                actor_id: actor_id.to_string(),
+                actor_id,
             })
         }
     }
@@ -281,18 +281,15 @@ impl ActorAddress {
     }
 
     /// Create a global actor address
-    pub fn global(node_id: NodeId, actor_id: impl Into<String>) -> Self {
-        Self::Global {
-            node_id,
-            actor_id: actor_id.into(),
-        }
+    pub fn global(node_id: NodeId, actor_id: u64) -> Self {
+        Self::Global { node_id, actor_id }
     }
 
-    /// Create a local actor reference
-    pub fn local(actor_id: impl Into<String>) -> Self {
+    /// Create a local actor reference (node_id = 0)
+    pub fn local(actor_id: u64) -> Self {
         Self::Global {
-            node_id: NodeId::new(LOCALHOST),
-            actor_id: actor_id.into(),
+            node_id: NodeId::LOCAL,
+            actor_id,
         }
     }
 
@@ -309,17 +306,17 @@ impl ActorAddress {
                 path,
                 instance: Some(node),
             } => {
-                format!("actor:///{}@{}", path.as_str(), node)
+                format!("actor:///{}@{}", path.as_str(), node.0)
             }
             Self::Global { node_id, actor_id } => {
-                format!("actor://{}/{}", node_id, actor_id)
+                format!("actor://{}/{}", node_id.0, actor_id)
             }
         }
     }
 
-    /// Check if this is a localhost reference
-    pub fn is_localhost(&self) -> bool {
-        matches!(self, Self::Global { node_id, .. } if node_id.as_str() == LOCALHOST)
+    /// Check if this is a local reference (node_id = 0)
+    pub fn is_local(&self) -> bool {
+        matches!(self, Self::Global { node_id, .. } if node_id.is_local())
     }
 
     /// Check if this is a named actor address
@@ -332,11 +329,11 @@ impl ActorAddress {
         matches!(self, Self::Global { .. })
     }
 
-    /// Resolve localhost to actual node ID
-    pub fn resolve_localhost(self, current_node: &NodeId) -> Self {
+    /// Resolve local node id to actual node ID
+    pub fn resolve_local(self, current_node: NodeId) -> Self {
         match self {
-            Self::Global { node_id, actor_id } if node_id.as_str() == LOCALHOST => Self::Global {
-                node_id: current_node.clone(),
+            Self::Global { node_id, actor_id } if node_id.is_local() => Self::Global {
+                node_id: current_node,
                 actor_id,
             },
             other => other,
@@ -362,18 +359,18 @@ impl ActorAddress {
         }
     }
 
-    /// Get the node ID for global addresses
-    pub fn node_id(&self) -> Option<&NodeId> {
+    /// Get the node ID
+    pub fn node_id(&self) -> Option<NodeId> {
         match self {
-            Self::Global { node_id, .. } => Some(node_id),
-            Self::Named { instance, .. } => instance.as_ref(),
+            Self::Global { node_id, .. } => Some(*node_id),
+            Self::Named { instance, .. } => *instance,
         }
     }
 
     /// Get the actor ID for global addresses
-    pub fn actor_id(&self) -> Option<&str> {
+    pub fn actor_id(&self) -> Option<u64> {
         match self {
-            Self::Global { actor_id, .. } => Some(actor_id),
+            Self::Global { actor_id, .. } => Some(*actor_id),
             _ => None,
         }
     }
@@ -448,11 +445,11 @@ mod tests {
 
     #[test]
     fn test_address_parse_named_instance() {
-        let addr = ActorAddress::parse("actor:///services/llm/router@node_a").unwrap();
+        let addr = ActorAddress::parse("actor:///services/llm/router@123").unwrap();
         match addr {
             ActorAddress::Named { path, instance } => {
                 assert_eq!(path.as_str(), "services/llm/router");
-                assert_eq!(instance.unwrap().as_str(), "node_a");
+                assert_eq!(instance.unwrap().0, 123);
             }
             _ => panic!("Expected Named address"),
         }
@@ -460,40 +457,40 @@ mod tests {
 
     #[test]
     fn test_address_parse_global() {
-        let addr = ActorAddress::parse("actor://node_a/worker_123").unwrap();
+        let addr = ActorAddress::parse("actor://123/456").unwrap();
         match addr {
             ActorAddress::Global { node_id, actor_id } => {
-                assert_eq!(node_id.as_str(), "node_a");
-                assert_eq!(actor_id, "worker_123");
+                assert_eq!(node_id.0, 123);
+                assert_eq!(actor_id, 456);
             }
             _ => panic!("Expected Global address"),
         }
     }
 
     #[test]
-    fn test_address_parse_localhost() {
-        let addr = ActorAddress::parse("actor://localhost/worker_123").unwrap();
-        assert!(addr.is_localhost());
+    fn test_address_parse_local() {
+        let addr = ActorAddress::parse("actor://0/456").unwrap();
+        assert!(addr.is_local());
 
         match addr {
             ActorAddress::Global { node_id, actor_id } => {
-                assert_eq!(node_id.as_str(), "localhost");
-                assert_eq!(actor_id, "worker_123");
+                assert_eq!(node_id.0, 0);
+                assert_eq!(actor_id, 456);
             }
             _ => panic!("Expected Global address"),
         }
     }
 
     #[test]
-    fn test_address_resolve_localhost() {
-        let addr = ActorAddress::parse("actor://localhost/worker_123").unwrap();
-        let current_node = NodeId::new("node_a");
-        let resolved = addr.resolve_localhost(&current_node);
+    fn test_address_resolve_local() {
+        let addr = ActorAddress::parse("actor://0/456").unwrap();
+        let current_node = NodeId::new(123);
+        let resolved = addr.resolve_local(current_node);
 
         match resolved {
             ActorAddress::Global { node_id, actor_id } => {
-                assert_eq!(node_id.as_str(), "node_a");
-                assert_eq!(actor_id, "worker_123");
+                assert_eq!(node_id.0, 123);
+                assert_eq!(actor_id, 456);
             }
             _ => panic!("Expected Global address"),
         }
@@ -508,17 +505,17 @@ mod tests {
         // Named instance
         let addr = ActorAddress::named_instance(
             ActorPath::new("services/api").unwrap(),
-            NodeId::new("node_a"),
+            NodeId::new(123),
         );
-        assert_eq!(addr.to_uri(), "actor:///services/api@node_a");
+        assert_eq!(addr.to_uri(), "actor:///services/api@123");
 
         // Global
-        let addr = ActorAddress::global(NodeId::new("node_a"), "worker_123");
-        assert_eq!(addr.to_uri(), "actor://node_a/worker_123");
+        let addr = ActorAddress::global(NodeId::new(123), 456);
+        assert_eq!(addr.to_uri(), "actor://123/456");
 
         // Local
-        let addr = ActorAddress::local("worker_123");
-        assert_eq!(addr.to_uri(), "actor://localhost/worker_123");
+        let addr = ActorAddress::local(456);
+        assert_eq!(addr.to_uri(), "actor://0/456");
     }
 
     #[test]
@@ -531,9 +528,9 @@ mod tests {
     fn test_address_roundtrip() {
         let cases = vec![
             "actor:///services/llm/router",
-            "actor:///services/llm/router@node_a",
-            "actor://node_a/worker_123",
-            "actor://localhost/worker_123",
+            "actor:///services/llm/router@123",
+            "actor://123/456",
+            "actor://0/789",
         ];
 
         for uri in cases {

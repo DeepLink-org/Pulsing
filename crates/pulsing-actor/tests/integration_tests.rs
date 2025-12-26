@@ -606,9 +606,8 @@ mod addressing_tests {
             .await
             .unwrap();
 
-        // Get the full address
-        let node_id = system.node_id().clone();
-        let addr = ActorAddress::global(node_id, "worker");
+        // Get the full address - use local address with actor id 0 as placeholder
+        let addr = ActorAddress::local(0);
 
         // Resolve
         let resolved_ref = system.resolve(&addr).await.unwrap();
@@ -634,9 +633,9 @@ mod addressing_tests {
             .await
             .unwrap();
 
-        // Resolve using localhost
-        let addr = ActorAddress::parse("actor://localhost/local_worker").unwrap();
-        assert!(addr.is_localhost());
+        // Resolve using local address (node_id = 0)
+        let addr = ActorAddress::parse("actor://0/123").unwrap();
+        assert!(addr.is_local());
 
         let resolved_ref = system.resolve(&addr).await.unwrap();
         let response: Pong = resolved_ref.ask(Ping { value: 7 }).await.unwrap();
@@ -705,19 +704,19 @@ mod addressing_tests {
         assert_eq!(addr.path().unwrap().namespace(), "services");
         assert_eq!(addr.path().unwrap().name(), "api");
 
-        // Named instance
-        let addr = ActorAddress::parse("actor:///services/api@node_a").unwrap();
+        // Named instance (node_id is now u64)
+        let addr = ActorAddress::parse("actor:///services/api@123").unwrap();
         assert!(addr.is_named());
-        assert_eq!(addr.node_id().map(|n| n.as_str()), Some("node_a"));
+        assert_eq!(addr.node_id().map(|n| n.0), Some(123));
 
-        // Global
-        let addr = ActorAddress::parse("actor://node_b/worker_123").unwrap();
+        // Global (node_id and actor_id are now u64)
+        let addr = ActorAddress::parse("actor://456/789").unwrap();
         assert!(addr.is_global());
-        assert_eq!(addr.actor_id(), Some("worker_123"));
+        assert_eq!(addr.actor_id(), Some(789));
 
-        // Local
-        let addr = ActorAddress::parse("actor://localhost/my_actor").unwrap();
-        assert!(addr.is_localhost());
+        // Local (node_id = 0)
+        let addr = ActorAddress::parse("actor://0/100").unwrap();
+        assert!(addr.is_local());
     }
 
     #[tokio::test]

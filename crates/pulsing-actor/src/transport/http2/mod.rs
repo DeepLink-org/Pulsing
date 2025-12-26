@@ -277,6 +277,16 @@ impl Http2RemoteTransport {
         }
     }
 
+    /// Create a new remote transport targeting an actor by ID
+    pub fn new_by_id(client: Arc<Http2Client>, remote_addr: SocketAddr, actor_id: ActorId) -> Self {
+        Self {
+            client,
+            remote_addr,
+            path: format!("/actors/{}", actor_id.local_id()),
+            circuit_breaker: CircuitBreaker::new(),
+        }
+    }
+
     /// Create a new remote transport targeting a named actor by path
     pub fn new_named(client: Arc<Http2Client>, remote_addr: SocketAddr, path: ActorPath) -> Self {
         Self {

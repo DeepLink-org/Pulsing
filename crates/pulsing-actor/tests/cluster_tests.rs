@@ -137,7 +137,7 @@ async fn test_system_with_cluster_config() {
         .await
         .unwrap();
 
-    assert!(!system.node_id().0.is_empty());
+    assert!(system.node_id().0 != 0); // 0 is reserved for LOCAL
     assert!(system.addr().port() > 0);
 
     system.shutdown().await.unwrap();
@@ -178,25 +178,25 @@ async fn test_system_with_specific_addr() {
 #[test]
 fn test_actor_id_creation() {
     let node_id = NodeId::generate();
-    let actor_id = ActorId::new(node_id.clone(), "my-actor");
+    let actor_id = ActorId::new(node_id, 123);
 
-    assert_eq!(actor_id.node, node_id);
-    assert_eq!(actor_id.name, "my-actor");
+    assert_eq!(actor_id.node(), node_id);
+    assert_eq!(actor_id.local_id(), 123);
 }
 
 #[test]
 fn test_actor_id_local() {
-    let actor_id = ActorId::local("test-actor");
+    let actor_id = ActorId::local(456);
 
-    assert_eq!(actor_id.node.0, "local");
-    assert_eq!(actor_id.name, "test-actor");
+    assert!(actor_id.is_local());
+    assert_eq!(actor_id.local_id(), 456);
 }
 
 #[test]
 fn test_actor_id_equality() {
     let node_id = NodeId::generate();
-    let id1 = ActorId::new(node_id.clone(), "actor");
-    let id2 = ActorId::new(node_id, "actor");
+    let id1 = ActorId::new(node_id, 1);
+    let id2 = ActorId::new(node_id, 1);
 
     assert_eq!(id1, id2);
 }
@@ -204,11 +204,12 @@ fn test_actor_id_equality() {
 #[test]
 fn test_actor_id_display() {
     let node_id = NodeId::generate();
-    let actor_id = ActorId::new(node_id.clone(), "my-actor");
+    let actor_id = ActorId::new(node_id, 42);
     let display = format!("{}", actor_id);
 
-    assert!(display.contains("my-actor"));
-    assert!(display.contains(&node_id.0));
+    // Display format is "node_id:local_id"
+    assert!(display.contains("42"));
+    assert!(display.contains(&node_id.0.to_string()));
 }
 
 // ============================================================================
@@ -222,8 +223,8 @@ fn test_node_id_generation() {
 
     // Should be unique
     assert_ne!(id1, id2);
-    assert!(!id1.0.is_empty());
-    assert!(!id2.0.is_empty());
+    assert!(id1.0 != 0); // 0 is reserved for LOCAL
+    assert!(id2.0 != 0);
 }
 
 #[test]

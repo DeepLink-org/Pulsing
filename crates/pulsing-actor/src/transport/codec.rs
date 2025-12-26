@@ -203,7 +203,7 @@ mod tests {
         let mut codec = MessageCodec::new();
         let mut buf = BytesMut::new();
 
-        let actor_id = ActorId::new(NodeId::generate(), "test");
+        let actor_id = ActorId::new(NodeId::generate(), 1);
         let (id, msg) = TransportMessage::request(actor_id, "TestMsg".to_string(), vec![1, 2, 3]);
 
         // Encode
@@ -232,7 +232,7 @@ mod tests {
         let mut codec = MessageCodec::new();
         let mut buf = BytesMut::new();
 
-        let actor_id = ActorId::new(NodeId::generate(), "test");
+        let actor_id = ActorId::new(NodeId::generate(), 1);
         let (_, msg) = TransportMessage::request(actor_id, "TestMsg".to_string(), vec![1, 2, 3]);
 
         // Encode

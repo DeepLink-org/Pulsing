@@ -95,8 +95,9 @@ mod actor_address_tests {
     fn test_address_parsing() {
         // Test that addresses can be created and parsed
         let node = NodeId::generate();
-        let actor_id = ActorId::new(node, "test");
-        assert_eq!(actor_id.name, "test");
+        let actor_id = ActorId::new(node, 123);
+        assert_eq!(actor_id.local_id(), 123);
+        assert_eq!(actor_id.node(), node);
     }
 }
 

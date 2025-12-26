@@ -19,7 +19,7 @@ struct Counter {
 #[async_trait]
 impl Actor for Counter {
     async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
-        println!("[{}] started with count: {}", ctx.id().name, self.count);
+        println!("[{}] started with count: {}", ctx.id(), self.count);
         Ok(())
     }
 

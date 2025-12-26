@@ -455,7 +455,7 @@ mod tests {
             .unwrap();
 
         // Send request
-        let actor_id = ActorId::local("test");
+        let actor_id = ActorId::local(1);
         let response = client
             .send_request(server_addr, &actor_id, "test", vec![1, 2, 3])
             .await

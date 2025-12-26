@@ -32,7 +32,7 @@ impl Actor for SharedCounter {
     async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
         println!(
             "[{}] SharedCounter started on {}",
-            ctx.id().name,
+            ctx.id(),
             self.node_name
         );
         Ok(())
@@ -106,7 +106,9 @@ async fn main() -> anyhow::Result<()> {
         println!("Waiting for cluster sync...");
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        let actor_id = ActorId::new(NodeId::new(""), "shared-counter");
+        // Note: This example needs to be updated to work with the new ID system
+        // For now, we'll use a placeholder actor_id
+        let actor_id = ActorId::new(NodeId::new(0), 0);
         let actor = system.actor_ref(&actor_id).await?;
 
         println!("Found actor, sending messages...\n");

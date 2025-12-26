@@ -35,10 +35,26 @@ impl PyNodeId {
     }
 
     #[new]
-    fn new(id: String) -> Self {
+    fn new(id: u64) -> Self {
         Self {
             inner: NodeId::new(id),
         }
+    }
+
+    #[staticmethod]
+    fn local() -> Self {
+        Self {
+            inner: NodeId::LOCAL,
+        }
+    }
+
+    #[getter]
+    fn id(&self) -> u64 {
+        self.inner.0
+    }
+
+    fn is_local(&self) -> bool {
+        self.inner.is_local()
     }
 
     fn __str__(&self) -> String {
@@ -46,7 +62,7 @@ impl PyNodeId {
     }
 
     fn __repr__(&self) -> String {
-        format!("NodeId('{}')", self.inner)
+        format!("NodeId({})", self.inner.0)
     }
 }
 
@@ -60,32 +76,36 @@ pub struct PyActorId {
 #[pymethods]
 impl PyActorId {
     #[new]
-    #[pyo3(signature = (name, node=None))]
-    fn new(name: String, node: Option<PyNodeId>) -> Self {
+    #[pyo3(signature = (local_id, node=None))]
+    fn new(local_id: u64, node: Option<PyNodeId>) -> Self {
         let inner = match node {
-            Some(n) => ActorId::new(n.inner, name),
-            None => ActorId::local(name),
+            Some(n) => ActorId::new(n.inner, local_id),
+            None => ActorId::local(local_id),
         };
         Self { inner }
     }
 
     #[staticmethod]
-    fn local(name: String) -> Self {
+    fn local(local_id: u64) -> Self {
         Self {
-            inner: ActorId::local(name),
+            inner: ActorId::local(local_id),
         }
     }
 
     #[getter]
-    fn name(&self) -> String {
-        self.inner.name.clone()
+    fn local_id(&self) -> u64 {
+        self.inner.local_id()
     }
 
     #[getter]
     fn node(&self) -> PyNodeId {
         PyNodeId {
-            inner: self.inner.node.clone(),
+            inner: self.inner.node(),
         }
+    }
+
+    fn is_local(&self) -> bool {
+        self.inner.is_local()
     }
 
     fn __str__(&self) -> String {
@@ -94,8 +114,8 @@ impl PyActorId {
 
     fn __repr__(&self) -> String {
         format!(
-            "ActorId(name='{}', node='{}')",
-            self.inner.name, self.inner.node
+            "ActorId(local_id={}, node={})",
+            self.inner.local_id(), self.inner.node()
         )
     }
 
@@ -917,13 +937,13 @@ impl PyActorSystem {
         &self,
         py: Python<'py>,
         name: String,
-        node_id: Option<String>,
+        node_id: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let path = ActorPath::new(&format!("actors/{}", name)).map_err(to_pyerr)?;
-            let node = node_id.as_ref().map(|s| NodeId::new(s.clone()));
+            let node = node_id.map(NodeId::new);
             let actor_ref = system
                 .resolve_named(&path, node.as_ref())
                 .await

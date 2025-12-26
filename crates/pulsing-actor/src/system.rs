@@ -144,6 +144,9 @@ pub struct ActorSystem {
 
     /// Actor lifecycle manager (watch, termination handling)
     lifecycle: Arc<ActorLifecycle>,
+
+    /// Actor ID counter (for generating unique local IDs)
+    actor_id_counter: AtomicU64,
 }
 
 impl ActorSystem {
@@ -158,7 +161,7 @@ impl ActorSystem {
 
         // Create message handler (needs cluster reference for gossip)
         let handler = SystemMessageHandler {
-            node_id: node_id.clone(),
+            node_id,
             local_actors: local_actors.clone(),
             named_actor_paths: named_actor_paths.clone(),
             cluster: cluster_holder.clone(),
@@ -175,7 +178,7 @@ impl ActorSystem {
 
         // Create gossip cluster
         let cluster = GossipCluster::new(
-            node_id.clone(),
+            node_id,
             actual_addr,
             transport.clone(),
             config.gossip_config,
@@ -196,7 +199,7 @@ impl ActorSystem {
         }
 
         let system = Arc::new(Self {
-            node_id: node_id.clone(),
+            node_id,
             addr: actual_addr,
             local_actors,
             named_actor_paths,
@@ -204,6 +207,7 @@ impl ActorSystem {
             transport,
             cancel_token: cancel_token.clone(),
             lifecycle,
+            actor_id_counter: AtomicU64::new(1),
         });
 
         tracing::info!(
@@ -230,6 +234,12 @@ impl ActorSystem {
         self.local_actors.iter().map(|e| e.key().clone()).collect()
     }
 
+    /// Generate a new unique local actor ID
+    fn next_actor_id(&self) -> ActorId {
+        let local_id = self.actor_id_counter.fetch_add(1, Ordering::Relaxed);
+        ActorId::new(self.node_id, local_id)
+    }
+
     /// Spawn an actor with a local name
     pub async fn spawn<A>(&self, name: impl AsRef<str>, actor: A) -> anyhow::Result<ActorRef>
     where
@@ -242,7 +252,7 @@ impl ActorSystem {
             return Err(anyhow::anyhow!("Actor already exists: {}", name));
         }
 
-        let actor_id = ActorId::new(self.node_id.clone(), name);
+        let actor_id = self.next_actor_id();
         let (sender, receiver) = mpsc::channel(128);
         let stats = Arc::new(ActorStats::default());
         let metadata = actor.metadata();
@@ -303,7 +313,7 @@ impl ActorSystem {
             ));
         }
 
-        let actor_id = ActorId::new(self.node_id.clone(), local_name);
+        let actor_id = self.next_actor_id();
         let (sender, receiver) = mpsc::channel(128);
         let stats = Arc::new(ActorStats::default());
         let metadata = actor.metadata();
@@ -346,12 +356,15 @@ impl ActorSystem {
 
     /// Get ActorRef for a local or remote actor by ID
     pub async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef> {
-        // Check if local (including localhost alias)
-        if id.node == self.node_id || id.node.as_str() == "localhost" {
-            if let Some(handle) = self.local_actors.get(&id.name) {
-                return Ok(ActorRef::local(id.clone(), handle.sender.clone()));
+        // Check if local
+        if id.node() == self.node_id || id.is_local() {
+            // Find local actor by iterating (since we don't have name in ActorId anymore)
+            for entry in self.local_actors.iter() {
+                if entry.value().actor_id == *id {
+                    return Ok(ActorRef::local(*id, entry.value().sender.clone()));
+                }
             }
-            return Err(anyhow::anyhow!("Local actor not found: {}", id.name));
+            return Err(anyhow::anyhow!("Local actor not found: {}", id));
         }
 
         // Remote actor - get address from cluster
@@ -361,16 +374,16 @@ impl ActorSystem {
             .ok_or_else(|| anyhow::anyhow!("Cluster not initialized"))?;
 
         let member = cluster
-            .get_member(&id.node)
+            .get_member(&id.node())
             .await
-            .ok_or_else(|| anyhow::anyhow!("Node not found in cluster: {}", id.node))?;
+            .ok_or_else(|| anyhow::anyhow!("Node not found in cluster: {}", id.node()))?;
 
-        // Create remote transport
+        // Create remote transport using actor id
         let transport =
-            Http2RemoteTransport::new(self.transport.client(), member.addr, id.name.clone());
+            Http2RemoteTransport::new_by_id(self.transport.client(), member.addr, *id);
 
         Ok(ActorRef::remote(
-            id.clone(),
+            *id,
             member.addr,
             Arc::new(transport),
         ))
@@ -417,15 +430,16 @@ impl ActorSystem {
                 .get(&actor_name)
                 .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
 
-            let actor_id = ActorId::new(self.node_id.clone(), actor_name);
-            return Ok(ActorRef::local(actor_id, handle.sender.clone()));
+            return Ok(ActorRef::local(handle.actor_id, handle.sender.clone()));
         }
 
         // Remote actor
         let transport =
             Http2RemoteTransport::new_named(self.transport.client(), target.addr, path.clone());
 
-        let actor_id = ActorId::new(target.node_id.clone(), path.as_str());
+        // For remote named actors, we use a placeholder ActorId since we don't know the actual ID
+        // The transport will use the path for routing
+        let actor_id = ActorId::new(target.node_id, 0);
         Ok(ActorRef::remote(actor_id, target.addr, Arc::new(transport)))
     }
 
@@ -438,7 +452,7 @@ impl ActorSystem {
                 self.resolve_named(path, instance.as_ref()).await
             }
             ActorAddress::Global { node_id, actor_id } => {
-                let id = ActorId::new(node_id.clone(), actor_id);
+                let id = ActorId::new(*node_id, *actor_id);
                 self.actor_ref(&id).await
             }
         }
@@ -609,25 +623,30 @@ impl ActorSystemRef for ActorSystem {
         ActorSystem::actor_ref(self, id).await
     }
 
-    fn node_id(&self) -> &NodeId {
-        &self.node_id
+    fn node_id(&self) -> NodeId {
+        self.node_id
     }
 
     async fn watch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()> {
         // Only support local watching for now
-        if target.node != self.node_id {
+        if target.node() != self.node_id {
             return Err(anyhow::anyhow!(
                 "Cannot watch remote actor: {} (watching remote actors not yet supported)",
                 target
             ));
         }
 
-        self.lifecycle.watch(&watcher.name, &target.name).await;
+        // Use string representation of ActorId for watching
+        let watcher_key = watcher.to_string();
+        let target_key = target.to_string();
+        self.lifecycle.watch(&watcher_key, &target_key).await;
         Ok(())
     }
 
     async fn unwatch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()> {
-        self.lifecycle.unwatch(&watcher.name, &target.name).await;
+        let watcher_key = watcher.to_string();
+        let target_key = target.to_string();
+        self.lifecycle.unwatch(&watcher_key, &target_key).await;
         Ok(())
     }
 }

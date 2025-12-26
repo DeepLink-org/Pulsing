@@ -157,11 +157,11 @@ impl GossipCluster {
 
         // Initialize members with local node
         let mut members = HashMap::new();
-        let local_member = MemberInfo::new(local_node.clone(), local_addr, local_addr);
-        members.insert(local_node.clone(), local_member);
+        let local_member = MemberInfo::new(local_node, local_addr, local_addr);
+        members.insert(local_node, local_member);
 
         Self {
-            local_node: local_node.clone(),
+            local_node,
             local_addr,
             members: Arc::new(RwLock::new(members)),
             actors: Arc::new(RwLock::new(HashMap::new())),
@@ -201,7 +201,7 @@ impl GossipCluster {
         }
 
         let msg = GossipMessage::Join {
-            node_id: self.local_node.clone(),
+            node_id: self.local_node,
             addr: self.local_addr,
         };
 
@@ -285,7 +285,7 @@ impl GossipCluster {
     /// Clone inner state for spawning tasks
     fn clone_inner(&self) -> GossipClusterInner {
         GossipClusterInner {
-            local_node: self.local_node.clone(),
+            local_node: self.local_node,
             local_addr: self.local_addr,
             members: self.members.clone(),
             actors: self.actors.clone(),
@@ -305,7 +305,7 @@ impl GossipCluster {
                 tracing::info!(node_id = %node_id, "Node joining cluster");
 
                 // Add new member (same addr for both since we use single port)
-                let member = MemberInfo::new(node_id.clone(), addr, addr);
+                let member = MemberInfo::new(node_id, addr, addr);
                 {
                     let mut members = self.members.write().await;
                     members.insert(node_id, member);
@@ -313,7 +313,7 @@ impl GossipCluster {
 
                 // Return welcome with current state (only sync named actors to reduce traffic)
                 let welcome = GossipMessage::Welcome {
-                    from: self.local_node.clone(),
+                    from: self.local_node,
                     members: self.members.read().await.values().cloned().collect(),
                     named_actors: self.named_actors.read().await.values().cloned().collect(),
                 };
@@ -488,7 +488,7 @@ impl GossipCluster {
                     // Local version is newer, ignore
                 }
                 _ => {
-                    local.insert(remote.node_id.clone(), remote);
+                    local.insert(remote.node_id, remote);
                 }
             }
         }
@@ -524,10 +524,10 @@ impl GossipCluster {
     /// Register a local actor (legacy)
     pub async fn register_actor(&self, actor_id: ActorId) {
         let mut actors = self.actors.write().await;
-        actors.insert(actor_id.clone(), self.local_node.clone());
+        actors.insert(actor_id, self.local_node);
 
         // Broadcast to cluster
-        let location = ActorLocation::new(actor_id, self.local_node.clone());
+        let location = ActorLocation::new(actor_id, self.local_node);
         let msg = GossipMessage::ActorRegistered { location };
         let _ = self.broadcast_message(&msg).await;
     }
@@ -539,7 +539,7 @@ impl GossipCluster {
 
         // Broadcast to cluster
         let msg = GossipMessage::ActorUnregistered {
-            actor_id: actor_id.clone(),
+            actor_id: *actor_id,
         };
         let _ = self.broadcast_message(&msg).await;
     }
@@ -563,11 +563,11 @@ impl GossipCluster {
         {
             let mut named_actors = self.named_actors.write().await;
             if let Some(info) = named_actors.get_mut(&key) {
-                info.add_instance(self.local_node.clone());
+                info.add_instance(self.local_node);
             } else {
                 named_actors.insert(
                     key.clone(),
-                    NamedActorInfo::with_instance(path.clone(), self.local_node.clone()),
+                    NamedActorInfo::with_instance(path.clone(), self.local_node),
                 );
             }
         }
@@ -575,7 +575,7 @@ impl GossipCluster {
         // Broadcast to cluster
         let msg = GossipMessage::NamedActorRegistered {
             path,
-            node_id: self.local_node.clone(),
+            node_id: self.local_node,
         };
         let _ = self.broadcast_message(&msg).await;
     }
@@ -598,7 +598,7 @@ impl GossipCluster {
         // Broadcast to cluster
         let msg = GossipMessage::NamedActorUnregistered {
             path: path.clone(),
-            node_id: self.local_node.clone(),
+            node_id: self.local_node,
         };
         let _ = self.broadcast_message(&msg).await;
     }
@@ -615,7 +615,7 @@ impl GossipCluster {
 
         let msg = GossipMessage::NamedActorFailed {
             path: path.clone(),
-            node_id: self.local_node.clone(),
+            node_id: self.local_node,
             reason: reason_str,
         };
         let _ = self.broadcast_message(&msg).await;
@@ -707,7 +707,7 @@ impl GossipCluster {
     /// Leave the cluster gracefully
     pub async fn leave(&self) -> anyhow::Result<()> {
         let msg = GossipMessage::Leave {
-            node_id: self.local_node.clone(),
+            node_id: self.local_node,
         };
         self.broadcast_message(&msg).await
     }
@@ -773,7 +773,7 @@ impl GossipClusterInner {
 
         // Build sync message (only sync named actors to reduce gossip traffic)
         let msg = GossipMessage::Sync {
-            from: self.local_node.clone(),
+            from: self.local_node,
             members: self.members.read().await.values().cloned().collect(),
             named_actors: self.named_actors.read().await.values().cloned().collect(),
         };
@@ -852,7 +852,7 @@ impl GossipClusterInner {
 
         // Build sync message (only sync named actors to reduce gossip traffic)
         let msg = GossipMessage::Sync {
-            from: self.local_node.clone(),
+            from: self.local_node,
             members: self.members.read().await.values().cloned().collect(),
             named_actors: self.named_actors.read().await.values().cloned().collect(),
         };
@@ -947,7 +947,7 @@ impl GossipClusterInner {
                     // Local version is newer, ignore
                 }
                 _ => {
-                    local.insert(remote.node_id.clone(), remote);
+                    local.insert(remote.node_id, remote);
                 }
             }
         }

@@ -117,7 +117,7 @@ impl std::hash::Hash for MemberInfo {
 }
 
 /// Actor location in the cluster (legacy, for backward compatibility)
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ActorLocation {
     /// Actor identifier
     pub actor_id: ActorId,
@@ -228,8 +228,8 @@ mod tests {
         let node_id = NodeId::generate();
         let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
 
-        let mut m1 = MemberInfo::new(node_id.clone(), addr, addr);
-        let mut m2 = MemberInfo::new(node_id.clone(), addr, addr);
+        let mut m1 = MemberInfo::new(node_id, addr, addr);
+        let mut m2 = MemberInfo::new(node_id, addr, addr);
 
         // Same incarnation, same status - neither supersedes
         assert!(!m1.supersedes(&m2));
