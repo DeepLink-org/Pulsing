@@ -67,6 +67,10 @@ path = "../../examples/rust/ping_pong.rs"
 name = "cluster"
 path = "../../examples/rust/cluster.rs"
 
+[[example]]
+name = "message_patterns"
+path = "../../examples/rust/message_patterns.rs"
+
 [[test]]
 name = "integration"
 path = "tests/integration_tests.rs"
