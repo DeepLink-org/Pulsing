@@ -248,6 +248,45 @@ pub trait Actor: Send + Sync + 'static {
     /// Handle a message and produce a response.
     ///
     /// This is the unified handler for all message patterns (RPC, Streaming).
+    ///
+    /// # Patterns
+    ///
+    /// 1. **Single Request -> Single Response** (Standard RPC)
+    /// ```ignore
+    /// async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    ///     let req: MyRequest = msg.unpack()?;
+    ///     Message::pack(&MyResponse { .. })
+    /// }
+    /// ```
+    ///
+    /// 2. **Single Request -> Stream Response** (Server Streaming)
+    /// ```ignore
+    /// async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    ///     let (tx, rx) = mpsc::channel(32);
+    ///     tokio::spawn(async move {
+    ///         for i in 0..10 {
+    ///             tx.send(Ok(bincode::serialize(&i).unwrap())).await;
+    ///         }
+    ///     });
+    ///     Ok(Message::from_channel("StreamResponse", rx))
+    /// }
+    /// ```
+    ///
+    /// 3. **Stream Request -> Single Response** (Client Streaming)
+    /// ```ignore
+    /// async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    ///     let mut stream = match msg {
+    ///         Message::Stream { stream, .. } => stream,
+    ///         _ => return Err(anyhow::anyhow!("Expected stream")),
+    ///     };
+    ///     let mut sum = 0;
+    ///     while let Some(chunk) = stream.next().await {
+    ///         let val: i32 = bincode::deserialize(&chunk?)?;
+    ///         sum += val;
+    ///     }
+    ///     Message::pack(&sum)
+    /// }
+    /// ```
     async fn receive(&mut self, msg: Message, ctx: &mut ActorContext) -> anyhow::Result<Message> {
         Err(anyhow::anyhow!(
             "Actor {} does not handle message type: {}",
@@ -316,5 +355,58 @@ mod tests {
         let request = Message::single("Echo", b"hello");
         assert!(!request.msg_type().is_empty());
         assert_eq!(request.msg_type(), "Echo");
+    }
+
+    #[tokio::test]
+    async fn test_message_server_streaming() {
+        use tokio_stream::StreamExt;
+
+        // Simulate a server streaming response
+        let (tx, rx) = mpsc::channel(10);
+        let msg = Message::from_channel("StreamResponse", rx);
+
+        assert!(msg.is_stream());
+
+        tokio::spawn(async move {
+            tx.send(Ok(vec![1])).await.unwrap();
+            tx.send(Ok(vec![2])).await.unwrap();
+            tx.send(Ok(vec![3])).await.unwrap();
+        });
+
+        let Message::Stream { mut stream, .. } = msg else {
+            panic!("expected stream")
+        };
+
+        let mut values = Vec::new();
+        while let Some(item) = stream.next().await {
+            values.push(item.unwrap()[0]);
+        }
+
+        assert_eq!(values, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn test_message_client_streaming() {
+        use tokio_stream::StreamExt;
+
+        // Simulate a client streaming request
+        let (tx, rx) = mpsc::channel(10);
+        let msg = Message::from_channel("StreamRequest", rx);
+
+        tokio::spawn(async move {
+            tx.send(Ok(vec![10])).await.unwrap();
+            tx.send(Ok(vec![20])).await.unwrap();
+        });
+
+        let Message::Stream { mut stream, .. } = msg else {
+            panic!("expected stream")
+        };
+
+        let mut sum = 0;
+        while let Some(item) = stream.next().await {
+            sum += item.unwrap()[0];
+        }
+
+        assert_eq!(sum, 30);
     }
 }
