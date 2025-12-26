@@ -7,39 +7,24 @@ use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 use std::pin::Pin;
+use thiserror::Error;
 use tokio::sync::mpsc;
 
 /// Reason why an actor stopped
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Error, Serialize, Deserialize)]
 pub enum StopReason {
     /// Normal shutdown (graceful stop)
+    #[error("Normal")]
     Normal,
     /// Actor panicked or encountered an unrecoverable error
+    #[error("Failed: {0}")]
     Failed(String),
     /// Actor was killed/aborted
+    #[error("Killed")]
     Killed,
     /// System is shutting down
+    #[error("SystemShutdown")]
     SystemShutdown,
-}
-
-impl fmt::Display for StopReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StopReason::Normal => write!(f, "Normal"),
-            StopReason::Failed(msg) => write!(f, "Failed: {}", msg),
-            StopReason::Killed => write!(f, "Killed"),
-            StopReason::SystemShutdown => write!(f, "SystemShutdown"),
-        }
-    }
-}
-
-/// Message sent to watchers when a watched actor terminates
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Terminated {
-    /// The actor that terminated
-    pub actor_id: ActorId,
-    /// Reason for termination
-    pub reason: StopReason,
 }
 
 /// Node identifier in the cluster

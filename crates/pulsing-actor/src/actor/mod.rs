@@ -12,5 +12,5 @@ pub use mailbox::{Envelope, EnvelopeResponse, Mailbox, MailboxSender, DEFAULT_MA
 pub use reference::{ActorRef, ActorRefInner, RemoteActorRef, RemoteTransport};
 pub use traits::{
     empty_stream, Actor, ActorId, Message, MessageDispatcher, MessageStream, NodeId, PayloadStream,
-    StopReason, Terminated,
+    StopReason,
 };

@@ -39,7 +39,7 @@ pub trait ActorSystemRef: Send + Sync {
     /// Get the local node ID
     fn node_id(&self) -> &NodeId;
 
-    /// Watch an actor - will receive Terminated message when the watched actor stops
+    /// Watch an actor - will receive a termination message (ActorId, StopReason) when the watched actor stops
     async fn watch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()>;
 
     /// Stop watching an actor
@@ -117,7 +117,7 @@ impl ActorContext {
         todo!("Scheduling not yet implemented")
     }
 
-    /// Watch another actor - will receive Terminated message when it stops
+    /// Watch another actor - will receive a termination message (ActorId, StopReason) when it stops
     pub async fn watch(&self, target: &ActorId) -> anyhow::Result<()> {
         if let Some(ref system) = self.system {
             system.watch(&self.actor_id, target).await
