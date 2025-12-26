@@ -104,10 +104,6 @@ impl PyActorId {
         }
     }
 
-    fn is_local(&self) -> bool {
-        self.inner.is_local()
-    }
-
     fn __str__(&self) -> String {
         self.inner.to_string()
     }

@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use futures::Stream;
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
@@ -10,22 +10,9 @@ use std::pin::Pin;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-/// Reason why an actor stopped
-#[derive(Clone, Debug, Error, Serialize, Deserialize)]
-pub enum StopReason {
-    /// Normal shutdown (graceful stop)
-    #[error("Normal")]
-    Normal,
-    /// Actor panicked or encountered an unrecoverable error
-    #[error("Failed: {0}")]
-    Failed(String),
-    /// Actor was killed/aborted
-    #[error("Killed")]
-    Killed,
-    /// System is shutting down
-    #[error("SystemShutdown")]
-    SystemShutdown,
-}
+// ============================================================================
+// Identifiers
+// ============================================================================
 
 /// Node identifier in the cluster (0 = local)
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Serialize, Deserialize, Default)]
@@ -85,11 +72,6 @@ impl ActorId {
     pub fn local_id(&self) -> u64 {
         self.0 as u64
     }
-
-    /// Check if this is a local actor
-    pub fn is_local(&self) -> bool {
-        self.node().is_local()
-    }
 }
 
 impl fmt::Display for ActorId {
@@ -99,33 +81,41 @@ impl fmt::Display for ActorId {
 }
 
 // ============================================================================
-// Message - unified message type supporting single and streaming
+// Lifecycle
+// ============================================================================
+
+/// Reason why an actor stopped
+#[derive(Clone, Debug, Error, Serialize, Deserialize)]
+pub enum StopReason {
+    /// Normal shutdown (graceful stop)
+    #[error("Normal")]
+    Normal,
+    /// Actor panicked or encountered an unrecoverable error
+    #[error("Failed: {0}")]
+    Failed(String),
+    /// Actor was killed/aborted
+    #[error("Killed")]
+    Killed,
+    /// System is shutting down
+    #[error("SystemShutdown")]
+    SystemShutdown,
+}
+
+// ============================================================================
+// Messaging
 // ============================================================================
 
 /// Stream type for payload data
 pub type PayloadStream = Pin<Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send>>;
+
+/// Message stream type (for streaming scenarios)
+pub type MessageStream = Pin<Box<dyn Stream<Item = anyhow::Result<Message>> + Send>>;
 
 /// Unified message type for both requests and responses
 ///
 /// Message is an enum with two variants:
 /// - `Single`: for traditional request-response with a single data payload
 /// - `Stream`: for streaming scenarios with a payload stream
-///
-/// # Example
-/// ```ignore
-/// // Create a single message with raw bytes
-/// let request = Message::single("Echo", b"hello");
-///
-/// // Pack a serializable struct (uses type_name as msg_type)
-/// let request = Message::pack(&Ping { value: 42 })?;
-///
-/// // Create a streaming response
-/// let (tx, rx) = mpsc::channel(32);
-/// let response = Message::from_channel("", rx);
-///
-/// // Unpack a message to a specific type
-/// let ping: Ping = msg.unpack()?;
-/// ```
 pub enum Message {
     /// Single data message
     Single {
@@ -155,13 +145,6 @@ impl Message {
     /// Pack a serializable value into a message
     ///
     /// Uses `std::any::type_name` to automatically generate the message type.
-    /// The type name includes the full module path (e.g., "my_crate::Ping").
-    ///
-    /// # Example
-    /// ```ignore
-    /// let msg = Message::pack(&Ping { value: 42 })?;
-    /// assert!(msg.msg_type().ends_with("::Ping"));
-    /// ```
     pub fn pack<M: Serialize + 'static>(msg: &M) -> anyhow::Result<Self> {
         Ok(Message::Single {
             msg_type: std::any::type_name::<M>().to_string(),
@@ -170,14 +153,6 @@ impl Message {
     }
 
     /// Unpack (deserialize) the message data into a specific type
-    ///
-    /// Only works for `Single` variant. Does not check the message type -
-    /// the caller is responsible for matching the correct type.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let ping: Ping = msg.unpack()?;
-    /// ```
     pub fn unpack<M: DeserializeOwned>(self) -> anyhow::Result<M> {
         match self {
             Message::Single { data, .. } => Ok(bincode::deserialize(&data)?),
@@ -243,45 +218,8 @@ impl fmt::Debug for Message {
     }
 }
 
-impl Default for Message {
-    fn default() -> Self {
-        Message::Single {
-            msg_type: String::new(),
-            data: Vec::new(),
-        }
-    }
-}
-
-// Custom Serialize/Deserialize for Message (only supports Single variant)
-impl Serialize for Message {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Message::Single { msg_type, data } => (msg_type, data).serialize(serializer),
-            Message::Stream { .. } => Err(serde::ser::Error::custom(
-                "Cannot serialize streaming message",
-            )),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Message {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let (msg_type, data): (String, Vec<u8>) = Deserialize::deserialize(deserializer)?;
-        Ok(Message::Single { msg_type, data })
-    }
-}
-
-/// Message stream type (for streaming scenarios)
-pub type MessageStream = Pin<Box<dyn Stream<Item = anyhow::Result<Message>> + Send>>;
-
 // ============================================================================
-// Actor trait - unified interface
+// Actor Trait
 // ============================================================================
 
 /// Actor context passed to handlers
@@ -289,33 +227,7 @@ pub use super::context::ActorContext;
 
 /// Core Actor trait
 ///
-/// Implement this trait to create an actor. The `receive` method handles all messages.
-/// Use `ctx.id()` to get the actor's ID within handlers.
-///
-/// # Example
-/// ```ignore
-/// struct Counter {
-///     count: i32,
-/// }
-///
-/// #[async_trait]
-/// impl Actor for Counter {
-///     async fn receive(
-///         &mut self,
-///         msg: Message,
-///         ctx: &mut ActorContext,
-///     ) -> anyhow::Result<Message> {
-///         if msg.msg_type().ends_with("Increment") {
-///             self.count += 1;
-///             return Message::pack(&self.count);
-///         }
-///         Err(anyhow::anyhow!("Unknown message"))
-///     }
-/// }
-///
-/// // Spawn with a name
-/// let actor_ref = system.spawn("counter", Counter { count: 0 }).await?;
-/// ```
+/// Implement this trait to create an actor.
 #[async_trait]
 pub trait Actor: Send + Sync + 'static {
     /// Get actor metadata for diagnostics (optional).
@@ -324,7 +236,6 @@ pub trait Actor: Send + Sync + 'static {
     }
 
     /// Called when the actor starts.
-    /// Use `ctx.id()` to get the actor's assigned ID.
     async fn on_start(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
         Ok(())
     }
@@ -336,13 +247,7 @@ pub trait Actor: Send + Sync + 'static {
 
     /// Handle a message and produce a response.
     ///
-    /// This is the unified handler for all message patterns:
-    /// - Single -> Single (traditional RPC)
-    /// - Single -> Stream (server streaming, e.g., LLM generation)
-    /// - Stream -> Single (client streaming)
-    /// - Stream -> Stream (bidirectional streaming)
-    ///
-    /// For "tell" (fire-and-forget) messages, the response is ignored.
+    /// This is the unified handler for all message patterns (RPC, Streaming).
     async fn receive(&mut self, msg: Message, ctx: &mut ActorContext) -> anyhow::Result<Message> {
         Err(anyhow::anyhow!(
             "Actor {} does not handle message type: {}",
@@ -352,13 +257,6 @@ pub trait Actor: Send + Sync + 'static {
     }
 }
 
-/// Trait for dispatching messages to actors (used by transport layer)
-#[async_trait]
-pub trait MessageDispatcher: Send + Sync {
-    /// Handle an incoming message for an actor
-    async fn dispatch(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<Message>;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,20 +264,6 @@ mod tests {
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct TestMessage {
         value: i32,
-    }
-
-    #[test]
-    fn test_message_serialization() {
-        // Test serialization of single message
-        let msg = Message::single("TestType", b"hello");
-        let serialized = bincode::serialize(&msg).unwrap();
-        let deserialized: Message = bincode::deserialize(&serialized).unwrap();
-
-        assert_eq!(deserialized.msg_type(), "TestType");
-        let Message::Single { data, .. } = deserialized else {
-            panic!("expected single")
-        };
-        assert_eq!(data, b"hello");
     }
 
     #[test]
@@ -408,7 +292,6 @@ mod tests {
         let msg = TestMessage { value: 42 };
         let message = Message::pack(&msg).unwrap();
 
-        // type_name includes module path
         assert!(message.msg_type().ends_with("TestMessage"));
         assert!(message.is_single());
 
@@ -418,7 +301,6 @@ mod tests {
 
     #[test]
     fn test_message_response() {
-        // Response without type (empty string)
         let response = Message::single("", b"hello");
         assert!(response.msg_type().is_empty());
         assert!(response.is_single());
@@ -431,7 +313,6 @@ mod tests {
 
     #[test]
     fn test_message_request() {
-        // Request with type
         let request = Message::single("Echo", b"hello");
         assert!(!request.msg_type().is_empty());
         assert_eq!(request.msg_type(), "Echo");

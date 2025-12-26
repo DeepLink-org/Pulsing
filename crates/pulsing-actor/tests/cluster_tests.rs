@@ -188,7 +188,7 @@ fn test_actor_id_creation() {
 fn test_actor_id_local() {
     let actor_id = ActorId::local(456);
 
-    assert!(actor_id.is_local());
+    assert!(actor_id.node().is_local());
     assert_eq!(actor_id.local_id(), 456);
 }
 

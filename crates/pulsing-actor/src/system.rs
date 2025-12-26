@@ -357,9 +357,9 @@ impl ActorSystem {
     /// Get ActorRef for a local or remote actor by ID
     pub async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef> {
         // Check if local
-        if id.node() == self.node_id || id.is_local() {
+        if id.node() == self.node_id || id.node().is_local() {
             // Find local actor by iterating (since we don't have name in ActorId anymore)
-            // When id.is_local(), compare only local_id since node_id=0 means "current node"
+            // When id.node().is_local(), compare only local_id since node_id=0 means "current node"
             let target_local_id = id.local_id();
             for entry in self.local_actors.iter() {
                 let entry_local_id = entry.value().actor_id.local_id();
