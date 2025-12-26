@@ -686,12 +686,10 @@ mod addressing_multi_node_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Create regular actor on node 1
-        let _actor_ref = system1.spawn("remote_worker", Echo).await.unwrap();
+        let actor_ref = system1.spawn("remote_worker", Echo).await.unwrap();
 
         // Node 2 resolves using global address with retries
-        // Note: ActorAddress::global now requires a u64 actor_id
-        // For testing, we'll use the named actor resolution instead
-        let addr = ActorAddress::global(node1_id, 0); // placeholder
+        let addr = ActorAddress::global(node1_id, actor_ref.id().local_id());
         let mut resolved_ref = None;
         for attempt in 1..=15 {
             match system2.resolve(&addr).await {

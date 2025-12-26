@@ -359,9 +359,12 @@ impl ActorSystem {
         // Check if local
         if id.node() == self.node_id || id.is_local() {
             // Find local actor by iterating (since we don't have name in ActorId anymore)
+            // When id.is_local(), compare only local_id since node_id=0 means "current node"
+            let target_local_id = id.local_id();
             for entry in self.local_actors.iter() {
-                if entry.value().actor_id == *id {
-                    return Ok(ActorRef::local(*id, entry.value().sender.clone()));
+                let entry_local_id = entry.value().actor_id.local_id();
+                if entry_local_id == target_local_id {
+                    return Ok(ActorRef::local(entry.value().actor_id, entry.value().sender.clone()));
                 }
             }
             return Err(anyhow::anyhow!("Local actor not found: {}", id));
@@ -760,16 +763,24 @@ impl SystemMessageHandler {
     }
 
     async fn send_to_local_actor(&self, actor_name: &str, msg: Message) -> anyhow::Result<Message> {
-        let handle = self
-            .local_actors
-            .get(actor_name)
-            .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
+        // Find actor sender - first try by name, then by local_id
+        let sender = if let Some(handle) = self.local_actors.get(actor_name) {
+            handle.sender.clone()
+        } else if let Ok(local_id) = actor_name.parse::<u64>() {
+            // Try to find by local_id
+            self.local_actors
+                .iter()
+                .find(|entry| entry.value().actor_id.local_id() == local_id)
+                .map(|entry| entry.value().sender.clone())
+                .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?
+        } else {
+            return Err(anyhow::anyhow!("Actor not found: {}", actor_name));
+        };
 
         let (tx, rx) = tokio::sync::oneshot::channel();
         let envelope = Envelope::ask(msg, tx);
 
-        handle
-            .sender
+        sender
             .send(envelope)
             .await
             .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
@@ -778,15 +789,23 @@ impl SystemMessageHandler {
     }
 
     async fn tell_local_actor(&self, actor_name: &str, msg: Message) -> anyhow::Result<()> {
-        let handle = self
-            .local_actors
-            .get(actor_name)
-            .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
+        // Find actor sender - first try by name, then by local_id
+        let sender = if let Some(handle) = self.local_actors.get(actor_name) {
+            handle.sender.clone()
+        } else if let Ok(local_id) = actor_name.parse::<u64>() {
+            // Try to find by local_id
+            self.local_actors
+                .iter()
+                .find(|entry| entry.value().actor_id.local_id() == local_id)
+                .map(|entry| entry.value().sender.clone())
+                .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?
+        } else {
+            return Err(anyhow::anyhow!("Actor not found: {}", actor_name));
+        };
 
         let envelope = Envelope::tell_msg(msg);
 
-        handle
-            .sender
+        sender
             .send(envelope)
             .await
             .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;

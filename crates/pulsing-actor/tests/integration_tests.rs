@@ -596,7 +596,7 @@ mod addressing_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         // Create a regular actor
-        let _actor_ref = system
+        let actor_ref = system
             .spawn(
                 "worker",
                 EchoActor {
@@ -606,8 +606,8 @@ mod addressing_tests {
             .await
             .unwrap();
 
-        // Get the full address - use local address with actor id 0 as placeholder
-        let addr = ActorAddress::local(0);
+        // Get the full address using the actual actor id
+        let addr = ActorAddress::local(actor_ref.id().local_id());
 
         // Resolve
         let resolved_ref = system.resolve(&addr).await.unwrap();
@@ -623,7 +623,7 @@ mod addressing_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         // Create actor
-        let _actor_ref = system
+        let actor_ref = system
             .spawn(
                 "local_worker",
                 EchoActor {
@@ -633,8 +633,8 @@ mod addressing_tests {
             .await
             .unwrap();
 
-        // Resolve using local address (node_id = 0)
-        let addr = ActorAddress::parse("actor://0/123").unwrap();
+        // Resolve using local address (node_id = 0) with actual actor id
+        let addr = ActorAddress::parse(&format!("actor://0/{}", actor_ref.id().local_id())).unwrap();
         assert!(addr.is_local());
 
         let resolved_ref = system.resolve(&addr).await.unwrap();
@@ -728,8 +728,8 @@ mod addressing_tests {
         let result = system.resolve(&addr).await;
         assert!(result.is_err());
 
-        // Try to resolve non-existent global actor
-        let addr = ActorAddress::parse("actor://localhost/nonexistent").unwrap();
+        // Try to resolve non-existent global actor (use numeric node_id and actor_id)
+        let addr = ActorAddress::parse("actor://999/999").unwrap();
         let result = system.resolve(&addr).await;
         assert!(result.is_err());
 
