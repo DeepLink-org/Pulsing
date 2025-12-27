@@ -28,7 +28,6 @@ pub struct ActorStats {
 }
 
 impl ActorStats {
-
     fn inc_stop(&self) {
         self.stop_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -528,7 +527,6 @@ impl ActorSystem {
         Ok(())
     }
 
-
     /// Stop a named actor by path
     pub async fn stop_named(&self, path: &ActorPath) -> anyhow::Result<()> {
         self.stop_named_with_reason(path, StopReason::Killed).await
@@ -820,7 +818,11 @@ impl Http2ServerHandler for SystemMessageHandler {
         self.dispatch_tell(path, msg).await
     }
 
-    async fn handle_gossip(&self, payload: Vec<u8>, peer_addr: SocketAddr) -> anyhow::Result<Option<Vec<u8>>> {
+    async fn handle_gossip(
+        &self,
+        payload: Vec<u8>,
+        peer_addr: SocketAddr,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
         let cluster_guard = self.cluster.read().await;
         if let Some(cluster) = cluster_guard.as_ref() {
             let msg: GossipMessage = bincode::deserialize(&payload)?;

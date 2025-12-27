@@ -84,4 +84,3 @@ async def spawn_and_run(
 
     print(f"[{name}] Started at {system.addr}")
     await run_until_signal(system, name)
-

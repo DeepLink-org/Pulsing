@@ -277,7 +277,11 @@ impl Http2Client {
         if !status.is_success() {
             let body = response.collect().await?.to_bytes();
             let error_msg = String::from_utf8_lossy(&body);
-            return Err(anyhow::anyhow!("Request failed: {} - {}", status, error_msg));
+            return Err(anyhow::anyhow!(
+                "Request failed: {} - {}",
+                status,
+                error_msg
+            ));
         }
 
         // Check response type header
@@ -293,7 +297,8 @@ impl Http2Client {
             let cancel_clone = cancel.clone();
             let stream_timeout = self.config.stream_timeout;
             let body_stream = response.into_body();
-            let frame_stream = Self::body_to_frame_stream(body_stream, cancel_clone, stream_timeout);
+            let frame_stream =
+                Self::body_to_frame_stream(body_stream, cancel_clone, stream_timeout);
             let stream_handle = StreamHandle::new(frame_stream, cancel);
 
             let payload_stream = stream_handle.filter_map(|result| async move {

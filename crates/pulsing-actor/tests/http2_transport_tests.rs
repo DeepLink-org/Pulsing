@@ -780,7 +780,6 @@ async fn test_http2_concurrent_throughput_benchmark() {
     cancel.cancel();
 }
 
-
 #[tokio::test]
 async fn test_http2_latency_benchmark() {
     let handler = Arc::new(TestHandler::new());

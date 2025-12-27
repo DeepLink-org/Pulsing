@@ -4,7 +4,7 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Dict, Optional, Union, List
+from typing import Dict, List, Optional, Union
 
 from pulsing.actor import Actor, ActorId, Message, StreamMessage
 
@@ -21,7 +21,7 @@ class GenerationConfig:
 
 class TransformersWorker(Actor):
     """Transformers LLM 推理 Worker，支持同步和流式生成
-    
+
     支持流式负载订阅 (SubscribeLoad)，Router 可以订阅并实时接收负载更新。
     """
 
@@ -45,11 +45,11 @@ class TransformersWorker(Actor):
         self._model = None
         self._tokenizer = None
         self._is_loaded = False
-        
+
         # 负载跟踪
         self._current_load = 0
         self._request_count = 0
-        
+
         # 负载订阅者 (流式推送)
         self._load_subscribers: List = []
 
@@ -83,15 +83,15 @@ class TransformersWorker(Actor):
             "capacity": str(self.capacity),
             "is_loaded": str(self._is_loaded).lower(),
         }
-    
+
     @property
     def current_load(self) -> int:
         return self._current_load
-    
+
     @property
     def load_ratio(self) -> float:
         return self._current_load / max(1, self.capacity)
-    
+
     def _get_load_snapshot(self) -> dict:
         """获取负载快照"""
         return {
@@ -102,21 +102,21 @@ class TransformersWorker(Actor):
             "processed": self._request_count,
             "timestamp": time.time(),
         }
-    
+
     async def _push_load_update(self):
         """向所有订阅者推送负载更新"""
         if not self._load_subscribers:
             return
-        
+
         snapshot = self._get_load_snapshot()
         dead_writers = []
-        
+
         for writer in self._load_subscribers:
             try:
                 await writer.write_json(snapshot)
             except:
                 dead_writers.append(writer)
-        
+
         # 清理断开的连接
         for w in dead_writers:
             self._load_subscribers.remove(w)
@@ -172,19 +172,19 @@ class TransformersWorker(Actor):
         except Exception as e:
             print(f"[Worker] Error: {e}")
             return Message.from_json("Error", {"error": str(e)})
-    
+
     def _handle_subscribe_load(self) -> StreamMessage:
         """处理负载订阅请求，返回持续推送负载的流"""
         stream_msg, writer = StreamMessage.create("LoadStream")
         self._load_subscribers.append(writer)
-        
+
         worker = self
-        
+
         async def produce():
             try:
                 # 立即发送当前状态
                 await writer.write_json(worker._get_load_snapshot())
-                
+
                 # 定期推送 (每秒)
                 while True:
                     await asyncio.sleep(1.0)
@@ -195,7 +195,7 @@ class TransformersWorker(Actor):
                 if writer in worker._load_subscribers:
                     worker._load_subscribers.remove(writer)
                 writer.close()
-        
+
         asyncio.create_task(produce())
         return stream_msg
 
@@ -206,7 +206,7 @@ class TransformersWorker(Actor):
         data = msg.to_json()
         prompt = data.get("prompt", "")
         max_new_tokens = data.get("max_new_tokens", self.gen_config.max_new_tokens)
-        
+
         # 开始请求 - 增加负载
         self._current_load += 1
         self._request_count += 1
@@ -216,7 +216,9 @@ class TransformersWorker(Actor):
             loop = asyncio.get_running_loop()
 
             def _generate_sync():
-                inputs = self._tokenizer(prompt, return_tensors="pt").to(self._model.device)
+                inputs = self._tokenizer(prompt, return_tensors="pt").to(
+                    self._model.device
+                )
                 outputs = self._model.generate(
                     **inputs,
                     max_new_tokens=max_new_tokens,
@@ -256,14 +258,14 @@ class TransformersWorker(Actor):
         data = msg.to_json()
         prompt = data.get("prompt", "")
         max_new_tokens = data.get("max_new_tokens", self.gen_config.max_new_tokens)
-        
+
         # 开始请求 - 增加负载
         self._current_load += 1
         self._request_count += 1
         asyncio.create_task(self._push_load_update())
 
         stream_msg, writer = StreamMessage.create("GenerateStream")
-        
+
         # 保存引用用于在 produce 中减少负载
         worker = self
 

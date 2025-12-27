@@ -429,9 +429,7 @@ impl RemoteTransport for Http2RemoteTransport {
     /// the server's response type header.
     async fn send_message(&self, _actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!(
-                "Streaming requests not yet supported"
-            ));
+            return Err(anyhow::anyhow!("Streaming requests not yet supported"));
         };
         // Use unified send_message that auto-detects response type
         self.client

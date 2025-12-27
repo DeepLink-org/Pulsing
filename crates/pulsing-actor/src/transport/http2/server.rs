@@ -413,7 +413,6 @@ impl Http2Server {
                 .unwrap()),
         }
     }
-
 }
 
 // Body type aliases

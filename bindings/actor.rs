@@ -9,8 +9,8 @@ use pyo3::types::PyBytes;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::python_executor::python_executor;
 
@@ -111,7 +111,8 @@ impl PyActorId {
     fn __repr__(&self) -> String {
         format!(
             "ActorId(local_id={}, node={})",
-            self.inner.local_id(), self.inner.node()
+            self.inner.local_id(),
+            self.inner.node()
         )
     }
 
@@ -639,9 +640,8 @@ impl Actor for PythonActorWrapper {
     }
 
     async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
-        let (handler, event_loop) = Python::with_gil(|py| {
-            (self.handler.clone_ref(py), self.event_loop.clone_ref(py))
-        });
+        let (handler, event_loop) =
+            Python::with_gil(|py| (self.handler.clone_ref(py), self.event_loop.clone_ref(py)));
 
         let py_msg = PyMessage::from_rust_message(msg);
 
@@ -716,7 +716,9 @@ impl Actor for PythonActorWrapper {
 
         match response {
             PyActorResponse::Single(msg) => Ok(msg.to_message()),
-            PyActorResponse::StreamChannel(msg_type, rx) => Ok(Message::from_channel(&msg_type, rx)),
+            PyActorResponse::StreamChannel(msg_type, rx) => {
+                Ok(Message::from_channel(&msg_type, rx))
+            }
         }
     }
 }
@@ -851,20 +853,27 @@ impl PyActorSystem {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let all_named = system.all_named_actors().await;
-            
+
             Python::with_gil(|py| -> PyResult<PyObject> {
                 use pythonize::pythonize;
                 let result: Vec<std::collections::HashMap<String, serde_json::Value>> = all_named
                     .into_iter()
                     .map(|info| {
                         let mut map = std::collections::HashMap::new();
-                        map.insert("path".to_string(), serde_json::Value::String(info.path.as_str().to_string()));
+                        map.insert(
+                            "path".to_string(),
+                            serde_json::Value::String(info.path.as_str().to_string()),
+                        );
                         map.insert(
                             "instance_count".to_string(),
-                            serde_json::Value::Number(serde_json::Number::from(info.instance_count())),
+                            serde_json::Value::Number(serde_json::Number::from(
+                                info.instance_count(),
+                            )),
                         );
                         // Convert instances (HashSet<NodeId>) to list of node IDs as strings
-                        let instances: Vec<serde_json::Value> = info.instances.iter()
+                        let instances: Vec<serde_json::Value> = info
+                            .instances
+                            .iter()
                             .map(|id| serde_json::Value::String(id.to_string()))
                             .collect();
                         map.insert("instances".to_string(), serde_json::Value::Array(instances));
@@ -938,4 +947,3 @@ pub fn add_to_module(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyStreamMessage>()?;
     Ok(())
 }
-

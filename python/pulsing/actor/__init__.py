@@ -12,17 +12,9 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Union
 
-from pulsing._core import (
-    ActorSystem,
-    NodeId,
-    ActorId,
-    ActorRef,
-    SystemConfig,
-    StreamReader,
-    StreamWriter,
-    StreamMessage,
-    Message,
-)
+from pulsing._core import (ActorId, ActorRef, ActorSystem, Message, NodeId,
+                           StreamMessage, StreamReader, StreamWriter,
+                           SystemConfig)
 
 from . import helpers
 
@@ -103,4 +95,3 @@ class Actor(ABC):
                 return None
         """
         pass
-

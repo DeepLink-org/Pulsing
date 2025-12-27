@@ -118,11 +118,25 @@ pub enum GossipMessage {
     },
 
     // Legacy actor messages (kept for compatibility)
-    ActorRegistered { location: ActorLocation },
-    ActorUnregistered { actor_id: ActorId },
-    NamedActorRegistered { path: ActorPath, node_id: NodeId },
-    NamedActorUnregistered { path: ActorPath, node_id: NodeId },
-    NamedActorFailed { path: ActorPath, node_id: NodeId, reason: String },
+    ActorRegistered {
+        location: ActorLocation,
+    },
+    ActorUnregistered {
+        actor_id: ActorId,
+    },
+    NamedActorRegistered {
+        path: ActorPath,
+        node_id: NodeId,
+    },
+    NamedActorUnregistered {
+        path: ActorPath,
+        node_id: NodeId,
+    },
+    NamedActorFailed {
+        path: ActorPath,
+        node_id: NodeId,
+        reason: String,
+    },
 }
 
 // ============================================================================
@@ -217,23 +231,29 @@ impl ClusterState {
                 if remote.epoch > existing.epoch
                     || (remote.epoch == existing.epoch && remote.status > existing.status)
                 {
-                    nodes.insert(remote.node_id, ClusterNode {
+                    nodes.insert(
+                        remote.node_id,
+                        ClusterNode {
+                            node_id: remote.node_id,
+                            addr: fixed_addr,
+                            status: remote.status,
+                            epoch: remote.epoch,
+                            last_seen: remote.last_seen,
+                        },
+                    );
+                }
+            }
+            None => {
+                nodes.insert(
+                    remote.node_id,
+                    ClusterNode {
                         node_id: remote.node_id,
                         addr: fixed_addr,
                         status: remote.status,
                         epoch: remote.epoch,
                         last_seen: remote.last_seen,
-                    });
-                }
-            }
-            None => {
-                nodes.insert(remote.node_id, ClusterNode {
-                    node_id: remote.node_id,
-                    addr: fixed_addr,
-                    status: remote.status,
-                    epoch: remote.epoch,
-                    last_seen: remote.last_seen,
-                });
+                    },
+                );
                 tracing::debug!(node_id = %remote.node_id, "Added new node from gossip");
             }
         }
@@ -422,26 +442,44 @@ impl GossipCluster {
         peer_addr: SocketAddr,
     ) -> anyhow::Result<Option<GossipMessage>> {
         match msg {
-            GossipMessage::Meet { from, from_addr, current_epoch } => {
+            GossipMessage::Meet {
+                from,
+                from_addr,
+                current_epoch,
+            } => {
                 let fixed_addr = fix_addr(from_addr, peer_addr.ip());
-                
+
                 let mut nodes = self.state.cluster_nodes.write().await;
-                nodes.entry(from).and_modify(|n| {
-                    n.addr = fixed_addr;
-                    n.last_seen = now_millis();
-                    if n.epoch < current_epoch { n.epoch = current_epoch; }
-                    if n.status != NodeStatus::Online { n.status = NodeStatus::Online; }
-                }).or_insert_with(|| ClusterNode {
-                    node_id: from,
-                    addr: fixed_addr,
-                    status: NodeStatus::Online,
-                    epoch: current_epoch,
-                    last_seen: now_millis(),
-                });
+                nodes
+                    .entry(from)
+                    .and_modify(|n| {
+                        n.addr = fixed_addr;
+                        n.last_seen = now_millis();
+                        if n.epoch < current_epoch {
+                            n.epoch = current_epoch;
+                        }
+                        if n.status != NodeStatus::Online {
+                            n.status = NodeStatus::Online;
+                        }
+                    })
+                    .or_insert_with(|| ClusterNode {
+                        node_id: from,
+                        addr: fixed_addr,
+                        status: NodeStatus::Online,
+                        epoch: current_epoch,
+                        last_seen: now_millis(),
+                    });
                 drop(nodes);
 
                 // Return full cluster info to new node
-                let all_named = self.state.named_actors.read().await.values().cloned().collect();
+                let all_named = self
+                    .state
+                    .named_actors
+                    .read()
+                    .await
+                    .values()
+                    .cloned()
+                    .collect();
                 Ok(Some(GossipMessage::Pong {
                     from: self.state.local_node,
                     current_epoch: self.state.current_epoch(),
@@ -451,9 +489,15 @@ impl GossipCluster {
                 }))
             }
 
-            GossipMessage::Ping { from, current_epoch: _, partial_view, failures, named_actors } => {
+            GossipMessage::Ping {
+                from,
+                current_epoch: _,
+                partial_view,
+                failures,
+                named_actors,
+            } => {
                 self.state.touch_node(from).await;
-                
+
                 for node in &partial_view {
                     self.state.merge_node(node, peer_addr).await;
                 }
@@ -473,9 +517,15 @@ impl GossipCluster {
                 }))
             }
 
-            GossipMessage::Pong { from, current_epoch: _, partial_view, failures, named_actors } => {
+            GossipMessage::Pong {
+                from,
+                current_epoch: _,
+                partial_view,
+                failures,
+                named_actors,
+            } => {
                 self.state.touch_node(from).await;
-                
+
                 for node in &partial_view {
                     self.state.merge_node(node, peer_addr).await;
                 }
@@ -491,7 +541,11 @@ impl GossipCluster {
 
             // Legacy messages
             GossipMessage::ActorRegistered { location } => {
-                self.state.actors.write().await.insert(location.actor_id, location.node_id);
+                self.state
+                    .actors
+                    .write()
+                    .await
+                    .insert(location.actor_id, location.node_id);
                 Ok(None)
             }
             GossipMessage::ActorUnregistered { actor_id } => {
@@ -501,7 +555,8 @@ impl GossipCluster {
             GossipMessage::NamedActorRegistered { path, node_id } => {
                 let mut named = self.state.named_actors.write().await;
                 let key = path.as_str();
-                named.entry(key.clone())
+                named
+                    .entry(key.clone())
                     .and_modify(|info| info.add_instance(node_id))
                     .or_insert_with(|| NamedActorInfo::with_instance(path, node_id));
                 Ok(None)
@@ -511,17 +566,25 @@ impl GossipCluster {
                 let key = path.as_str();
                 if let Some(info) = named.get_mut(&key) {
                     info.remove_instance(&node_id);
-                    if info.is_empty() { named.remove(&key); }
+                    if info.is_empty() {
+                        named.remove(&key);
+                    }
                 }
                 Ok(None)
             }
-            GossipMessage::NamedActorFailed { path, node_id, reason } => {
+            GossipMessage::NamedActorFailed {
+                path,
+                node_id,
+                reason,
+            } => {
                 tracing::warn!(path = %path, node_id = %node_id, reason = %reason, "Named actor failed");
                 let mut named = self.state.named_actors.write().await;
                 let key = path.as_str();
                 if let Some(info) = named.get_mut(&key) {
                     info.remove_instance(&node_id);
-                    if info.is_empty() { named.remove(&key); }
+                    if info.is_empty() {
+                        named.remove(&key);
+                    }
                 }
                 Ok(None)
             }
@@ -533,7 +596,11 @@ impl GossipCluster {
     // ========================================================================
 
     pub async fn register_actor(&self, actor_id: ActorId) {
-        self.state.actors.write().await.insert(actor_id, self.state.local_node);
+        self.state
+            .actors
+            .write()
+            .await
+            .insert(actor_id, self.state.local_node);
         let msg = GossipMessage::ActorRegistered {
             location: ActorLocation::new(actor_id, self.state.local_node),
         };
@@ -542,7 +609,9 @@ impl GossipCluster {
 
     pub async fn unregister_actor(&self, actor_id: &ActorId) {
         self.state.actors.write().await.remove(actor_id);
-        let msg = GossipMessage::ActorUnregistered { actor_id: *actor_id };
+        let msg = GossipMessage::ActorUnregistered {
+            actor_id: *actor_id,
+        };
         let _ = self.broadcast(&msg).await;
     }
 
@@ -559,11 +628,17 @@ impl GossipCluster {
         let key = path.as_str();
         {
             let mut named = self.state.named_actors.write().await;
-            named.entry(key.clone())
+            named
+                .entry(key.clone())
                 .and_modify(|info| info.add_instance(self.state.local_node))
-                .or_insert_with(|| NamedActorInfo::with_instance(path.clone(), self.state.local_node));
+                .or_insert_with(|| {
+                    NamedActorInfo::with_instance(path.clone(), self.state.local_node)
+                });
         }
-        let msg = GossipMessage::NamedActorRegistered { path, node_id: self.state.local_node };
+        let msg = GossipMessage::NamedActorRegistered {
+            path,
+            node_id: self.state.local_node,
+        };
         let _ = self.broadcast(&msg).await;
     }
 
@@ -573,10 +648,15 @@ impl GossipCluster {
             let mut named = self.state.named_actors.write().await;
             if let Some(info) = named.get_mut(&key) {
                 info.remove_instance(&self.state.local_node);
-                if info.is_empty() { named.remove(&key); }
+                if info.is_empty() {
+                    named.remove(&key);
+                }
             }
         }
-        let msg = GossipMessage::NamedActorUnregistered { path: path.clone(), node_id: self.state.local_node };
+        let msg = GossipMessage::NamedActorUnregistered {
+            path: path.clone(),
+            node_id: self.state.local_node,
+        };
         let _ = self.broadcast(&msg).await;
     }
 
@@ -590,7 +670,12 @@ impl GossipCluster {
     }
 
     pub async fn lookup_named_actor(&self, path: &ActorPath) -> Option<NamedActorInfo> {
-        self.state.named_actors.read().await.get(&path.as_str()).cloned()
+        self.state
+            .named_actors
+            .read()
+            .await
+            .get(&path.as_str())
+            .cloned()
     }
 
     pub async fn select_named_actor_instance(&self, path: &ActorPath) -> Option<MemberInfo> {
@@ -618,7 +703,13 @@ impl GossipCluster {
     }
 
     pub async fn all_named_actors(&self) -> Vec<NamedActorInfo> {
-        self.state.named_actors.read().await.values().cloned().collect()
+        self.state
+            .named_actors
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect()
     }
 
     // ========================================================================
@@ -626,14 +717,20 @@ impl GossipCluster {
     // ========================================================================
 
     pub async fn all_members(&self) -> Vec<MemberInfo> {
-        self.state.cluster_nodes.read().await
+        self.state
+            .cluster_nodes
+            .read()
+            .await
             .values()
             .map(ClusterState::node_to_member)
             .collect()
     }
 
     pub async fn alive_members(&self) -> Vec<MemberInfo> {
-        self.state.cluster_nodes.read().await
+        self.state
+            .cluster_nodes
+            .read()
+            .await
             .values()
             .filter(|n| n.status == NodeStatus::Online && n.node_id != self.state.local_node)
             .map(ClusterState::node_to_member)
@@ -641,7 +738,10 @@ impl GossipCluster {
     }
 
     pub async fn get_member(&self, node_id: &NodeId) -> Option<MemberInfo> {
-        self.state.cluster_nodes.read().await
+        self.state
+            .cluster_nodes
+            .read()
+            .await
             .get(node_id)
             .map(ClusterState::node_to_member)
     }
@@ -701,7 +801,8 @@ impl GossipCluster {
         // Simplified: check if PFail nodes should become Fail
         let pfail_nodes: Vec<_> = {
             let nodes = self.state.cluster_nodes.read().await;
-            nodes.values()
+            nodes
+                .values()
                 .filter(|n| n.status == NodeStatus::PFail)
                 .map(|n| (n.node_id, n.last_seen))
                 .collect()
@@ -772,12 +873,15 @@ async fn gossip_loop(
 async fn gossip_round(state: &ClusterState, transport: &Http2Transport, config: &GossipConfig) {
     let targets: Vec<ClusterNode> = {
         let nodes = state.cluster_nodes.read().await;
-        let mut online: Vec<_> = nodes.values()
+        let mut online: Vec<_> = nodes
+            .values()
             .filter(|n| n.status == NodeStatus::Online && n.node_id != state.local_node)
             .cloned()
             .collect();
 
-        if online.is_empty() { return; }
+        if online.is_empty() {
+            return;
+        }
 
         use rand::prelude::SliceRandom;
         let mut rng = rand::rng();
@@ -793,12 +897,19 @@ async fn gossip_round(state: &ClusterState, transport: &Http2Transport, config: 
         named_actors: Some(state.get_partial_named_actors(10).await),
     };
 
-    let Ok(payload) = bincode::serialize(&msg) else { return };
+    let Ok(payload) = bincode::serialize(&msg) else {
+        return;
+    };
 
     for target in targets {
         if let Ok(Some(resp)) = transport.send_gossip(target.addr, payload.clone()).await {
-            if let Ok(GossipMessage::Pong { from: _, current_epoch: _, partial_view, failures, named_actors }) 
-                = bincode::deserialize(&resp) 
+            if let Ok(GossipMessage::Pong {
+                from: _,
+                current_epoch: _,
+                partial_view,
+                failures,
+                named_actors,
+            }) = bincode::deserialize(&resp)
             {
                 for node in &partial_view {
                     state.merge_node(node, target.addr).await;
@@ -814,7 +925,11 @@ async fn gossip_round(state: &ClusterState, transport: &Http2Transport, config: 
     }
 }
 
-async fn failure_detection_loop(state: Arc<ClusterState>, config: GossipConfig, cancel: CancellationToken) {
+async fn failure_detection_loop(
+    state: Arc<ClusterState>,
+    config: GossipConfig,
+    cancel: CancellationToken,
+) {
     let mut interval = tokio::time::interval(config.swim.ping_interval);
 
     loop {
@@ -843,7 +958,9 @@ async fn detect_failures(state: &ClusterState, config: &GossipConfig) {
     {
         let nodes = state.cluster_nodes.read().await;
         for node in nodes.values() {
-            if node.node_id == state.local_node { continue; }
+            if node.node_id == state.local_node {
+                continue;
+            }
 
             let elapsed = now.saturating_sub(node.last_seen);
 
@@ -904,7 +1021,11 @@ async fn detect_failures(state: &ClusterState, config: &GossipConfig) {
         let mut named = state.named_actors.write().await;
 
         for node_id in &remove_nodes {
-            if nodes.get(node_id).map(|n| n.status == NodeStatus::Fail).unwrap_or(false) {
+            if nodes
+                .get(node_id)
+                .map(|n| n.status == NodeStatus::Fail)
+                .unwrap_or(false)
+            {
                 tracing::info!(node_id = %node_id, "Removing failed node");
                 nodes.remove(node_id);
 
@@ -943,7 +1064,9 @@ async fn seed_rejoin_loop(
 
 async fn probe_seeds(state: &ClusterState, transport: &Http2Transport, _config: &GossipConfig) {
     let seeds = state.seed_addrs.read().await.clone();
-    if seeds.is_empty() { return; }
+    if seeds.is_empty() {
+        return;
+    }
 
     let msg = GossipMessage::Ping {
         from: state.local_node,
@@ -953,12 +1076,18 @@ async fn probe_seeds(state: &ClusterState, transport: &Http2Transport, _config: 
         named_actors: Some(state.get_partial_named_actors(10).await),
     };
 
-    let Ok(payload) = bincode::serialize(&msg) else { return };
+    let Ok(payload) = bincode::serialize(&msg) else {
+        return;
+    };
 
     for addr in &seeds {
         if let Ok(Some(resp)) = transport.send_gossip(*addr, payload.clone()).await {
-            if let Ok(GossipMessage::Pong { partial_view, failures, named_actors, .. }) 
-                = bincode::deserialize(&resp) 
+            if let Ok(GossipMessage::Pong {
+                partial_view,
+                failures,
+                named_actors,
+                ..
+            }) = bincode::deserialize(&resp)
             {
                 for node in &partial_view {
                     state.merge_node(node, *addr).await;
@@ -1013,7 +1142,7 @@ mod tests {
     fn test_gossip_message_serialization() {
         let node_id = NodeId::generate();
         let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
-        
+
         let msg = GossipMessage::Meet {
             from: node_id,
             from_addr: addr,
@@ -1024,7 +1153,11 @@ mod tests {
         let decoded: GossipMessage = bincode::deserialize(&payload).unwrap();
 
         match decoded {
-            GossipMessage::Meet { from, from_addr, current_epoch } => {
+            GossipMessage::Meet {
+                from,
+                from_addr,
+                current_epoch,
+            } => {
                 assert_eq!(from, node_id);
                 assert_eq!(from_addr, addr);
                 assert_eq!(current_epoch, 42);

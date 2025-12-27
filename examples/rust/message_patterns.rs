@@ -13,24 +13,36 @@ use tokio_stream::StreamExt;
 
 // Pattern 1: RPC
 #[derive(Serialize, Deserialize, Debug)]
-struct Greet { name: String }
+struct Greet {
+    name: String,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Greeting { message: String }
+struct Greeting {
+    message: String,
+}
 
 // Pattern 2: Server Streaming
 #[derive(Serialize, Deserialize, Debug)]
-struct CountTo { n: i32 }
+struct CountTo {
+    n: i32,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
-struct CountItem { value: i32 }
+struct CountItem {
+    value: i32,
+}
 
 // Pattern 3: Client Streaming
 #[derive(Serialize, Deserialize, Debug)]
-struct SumItem { value: i32 }
+struct SumItem {
+    value: i32,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
-struct SumResult { total: i32 }
+struct SumResult {
+    total: i32,
+}
 
 struct DemoActor;
 
@@ -42,7 +54,9 @@ impl Actor for DemoActor {
             t if t.ends_with("Greet") => {
                 let req: Greet = msg.unpack()?;
                 println!("[Actor] Greet: {}", req.name);
-                Message::pack(&Greeting { message: format!("Hello, {}!", req.name) })
+                Message::pack(&Greeting {
+                    message: format!("Hello, {}!", req.name),
+                })
             }
 
             // Pattern 2: Server Streaming - return a stream of items
@@ -53,7 +67,9 @@ impl Actor for DemoActor {
                 let (tx, rx) = tokio::sync::mpsc::channel(32);
                 tokio::spawn(async move {
                     for i in 1..=req.n {
-                        let _ = tx.send(Ok(bincode::serialize(&CountItem { value: i }).unwrap())).await;
+                        let _ = tx
+                            .send(Ok(bincode::serialize(&CountItem { value: i }).unwrap()))
+                            .await;
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     }
                 });
@@ -90,7 +106,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Pattern 1: RPC
     println!("--- Pattern 1: RPC ---");
-    let resp: Greeting = actor.ask(Greet { name: "Pulsing".into() }).await?;
+    let resp: Greeting = actor
+        .ask(Greet {
+            name: "Pulsing".into(),
+        })
+        .await?;
     println!("Response: {}\n", resp.message);
 
     // Pattern 2: Server Streaming
@@ -109,10 +129,15 @@ async fn main() -> anyhow::Result<()> {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
     tokio::spawn(async move {
         for v in [10, 20, 30] {
-            let _ = tx.send(Ok(bincode::serialize(&SumItem { value: v }).unwrap())).await;
+            let _ = tx
+                .send(Ok(bincode::serialize(&SumItem { value: v }).unwrap()))
+                .await;
         }
     });
-    let resp: SumResult = actor.send(Message::from_channel("StreamSum", rx)).await?.unpack()?;
+    let resp: SumResult = actor
+        .send(Message::from_channel("StreamSum", rx))
+        .await?
+        .unpack()?;
     println!("Sum: {}\n", resp.total);
 
     system.shutdown().await

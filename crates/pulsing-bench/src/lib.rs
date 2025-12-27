@@ -288,22 +288,37 @@ pub fn parse_tokenizer_options(s: &str) -> anyhow::Result<TokenizeOptions> {
         }
         match key_value[0].trim() {
             "num_tokens" => {
-                tokenizer_options.num_tokens = Some(key_value[1].trim().parse::<u64>()
-                    .map_err(|e| anyhow::anyhow!("Invalid num_tokens: {}", e))?)
+                tokenizer_options.num_tokens = Some(
+                    key_value[1]
+                        .trim()
+                        .parse::<u64>()
+                        .map_err(|e| anyhow::anyhow!("Invalid num_tokens: {}", e))?,
+                )
             }
             "min_tokens" => {
-                tokenizer_options.min_tokens = key_value[1].trim().parse::<u64>()
+                tokenizer_options.min_tokens = key_value[1]
+                    .trim()
+                    .parse::<u64>()
                     .map_err(|e| anyhow::anyhow!("Invalid min_tokens: {}", e))?
             }
             "max_tokens" => {
-                tokenizer_options.max_tokens = key_value[1].trim().parse::<u64>()
+                tokenizer_options.max_tokens = key_value[1]
+                    .trim()
+                    .parse::<u64>()
                     .map_err(|e| anyhow::anyhow!("Invalid max_tokens: {}", e))?
             }
             "variance" => {
-                tokenizer_options.variance = key_value[1].trim().parse::<u64>()
+                tokenizer_options.variance = key_value[1]
+                    .trim()
+                    .parse::<u64>()
                     .map_err(|e| anyhow::anyhow!("Invalid variance: {}", e))?
             }
-            _ => return Err(anyhow::anyhow!("Unknown tokenizer option: {}", key_value[0])),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unknown tokenizer option: {}",
+                    key_value[0]
+                ))
+            }
         }
     }
     if tokenizer_options.num_tokens.is_some()
@@ -311,10 +326,14 @@ pub fn parse_tokenizer_options(s: &str) -> anyhow::Result<TokenizeOptions> {
             || tokenizer_options.min_tokens == 0
             || tokenizer_options.max_tokens == 0)
     {
-        return Err(anyhow::anyhow!("Invalid tokenizer options: num_tokens, min_tokens, and max_tokens must be > 0"));
+        return Err(anyhow::anyhow!(
+            "Invalid tokenizer options: num_tokens, min_tokens, and max_tokens must be > 0"
+        ));
     }
     if tokenizer_options.min_tokens > tokenizer_options.max_tokens {
-        return Err(anyhow::anyhow!("Invalid tokenizer options: min_tokens > max_tokens"));
+        return Err(anyhow::anyhow!(
+            "Invalid tokenizer options: min_tokens > max_tokens"
+        ));
     }
     Ok(tokenizer_options)
 }
@@ -375,4 +394,3 @@ pub async fn benchmark_main_async(args: BenchmarkArgs) -> anyhow::Result<()> {
     };
     run(run_config, stop_sender_clone).await
 }
-

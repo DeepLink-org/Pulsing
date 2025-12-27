@@ -119,6 +119,7 @@ def inspect(seeds: Optional[str] = None):
 def _inspect_system(seeds: list):
     """Inspect the actor system state"""
     import asyncio
+
     from pulsing.actor import SystemConfig, create_actor_system
 
     async def run():
@@ -133,10 +134,10 @@ def _inspect_system(seeds: list):
         else:
             config = SystemConfig.standalone().with_seeds(seeds)
         system = await create_actor_system(config)
-        
+
         # Give some time for discovery
         await asyncio.sleep(1.5)
-        
+
         members = await system.members()
         print(f"\nCluster Status: {len(members)} nodes found")
         print("=" * 60)
@@ -167,7 +168,7 @@ def _inspect_system(seeds: list):
         for member in members:
             node_id = str(member.get("node_id"))
             print(f"\nNode: {node_id} ({member.get('addr')}) [{member.get('status')}]")
-            
+
             if member.get("status") != "Alive":
                 print("  [Node is not alive]")
                 continue
@@ -182,7 +183,7 @@ def _inspect_system(seeds: list):
             for name in actors:
                 base = name.rsplit("_", 1)[0] if "_" in name else name
                 actor_groups.setdefault(base, []).append(name)
-            
+
             print(f"  Named Actors ({len(actors)}):")
             for base, names in sorted(actor_groups.items()):
                 if len(names) == 1:
@@ -193,12 +194,14 @@ def _inspect_system(seeds: list):
                         print(f"        • {name}")
                     if len(names) > 5:
                         print(f"        ... and {len(names) - 5} more")
-        
+
         # Summary
         if all_named_actors:
             total = sum(len(instances) for instances in all_named_actors.values())
-            print(f"\nTotal Named Actors: {len(all_named_actors)} types, {total} instances")
-        
+            print(
+                f"\nTotal Named Actors: {len(all_named_actors)} types, {total} instances"
+            )
+
         print("\n" + "=" * 60)
         await system.shutdown()
 
@@ -218,7 +221,8 @@ def _start_router_actor(
     from pulsing.actor import SystemConfig, create_actor_system
     from pulsing.actor.helpers import run_until_signal
 
-    from ..actors import LeastConnectionScheduler, RandomScheduler, RoundRobinScheduler
+    from ..actors import (LeastConnectionScheduler, RandomScheduler,
+                          RoundRobinScheduler)
     from ..actors.router import start_router, stop_router
 
     # 选择调度器类
@@ -408,7 +412,7 @@ def bench(
         "dataset": dataset,
         "dataset_file": dataset_file,
     }
-    
+
     if model_name is not None:
         config["model_name"] = model_name
     if rates is not None:
@@ -425,7 +429,9 @@ def bench(
         config["run_id"] = run_id
 
     import asyncio
+
     import uvloop
+
     uvloop.run(benchmark_main(config))
 
 
@@ -435,4 +441,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

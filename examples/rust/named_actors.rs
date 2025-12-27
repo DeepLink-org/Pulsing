@@ -5,15 +5,20 @@
 //!
 //! Run: cargo run --example named_actors -p pulsing-actor
 
+use pulsing_actor::actor::{ActorAddress, ActorPath};
 use pulsing_actor::prelude::*;
-use pulsing_actor::actor::{ActorPath, ActorAddress};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Echo { message: String }
+struct Echo {
+    message: String,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
-struct EchoResponse { echo: String, actor_id: String }
+struct EchoResponse {
+    echo: String,
+    actor_id: String,
+}
 
 struct EchoActor;
 
@@ -49,14 +54,22 @@ async fn main() -> anyhow::Result<()> {
     // Method 1: Resolve by ActorPath
     println!("--- Resolve by ActorPath ---");
     let resolved = system.resolve_named(&path, None).await?;
-    let resp: EchoResponse = resolved.ask(Echo { message: "Hello!".into() }).await?;
+    let resp: EchoResponse = resolved
+        .ask(Echo {
+            message: "Hello!".into(),
+        })
+        .await?;
     println!("Response: {} (from {})\n", resp.echo, resp.actor_id);
 
     // Method 2: Resolve by ActorAddress (URI format)
     println!("--- Resolve by ActorAddress ---");
     let addr = ActorAddress::parse("actor:///services/echo")?;
     let resolved2 = system.resolve(&addr).await?;
-    let resp2: EchoResponse = resolved2.ask(Echo { message: "Via URI".into() }).await?;
+    let resp2: EchoResponse = resolved2
+        .ask(Echo {
+            message: "Via URI".into(),
+        })
+        .await?;
     println!("Response: {} (from {})\n", resp2.echo, resp2.actor_id);
 
     // List instances

@@ -146,11 +146,7 @@ impl Worker for PyWorkerWrapper {
 fn py_workers_to_rust(workers: &[PyWorkerInfo]) -> Vec<Arc<dyn Worker>> {
     workers
         .iter()
-        .map(|w| {
-            Arc::new(PyWorkerWrapper {
-                inner: w.clone(),
-            }) as Arc<dyn Worker>
-        })
+        .map(|w| Arc::new(PyWorkerWrapper { inner: w.clone() }) as Arc<dyn Worker>)
         .collect()
 }
 
@@ -175,7 +171,11 @@ impl PyRandomPolicy {
 
     /// Select a worker index from the list of workers
     #[pyo3(signature = (workers, request_text=None))]
-    fn select_worker(&self, workers: Vec<PyWorkerInfo>, request_text: Option<&str>) -> Option<usize> {
+    fn select_worker(
+        &self,
+        workers: Vec<PyWorkerInfo>,
+        request_text: Option<&str>,
+    ) -> Option<usize> {
         let rust_workers = py_workers_to_rust(&workers);
         self.inner.select_worker(&rust_workers, request_text)
     }
@@ -206,7 +206,11 @@ impl PyRoundRobinPolicy {
     }
 
     #[pyo3(signature = (workers, request_text=None))]
-    fn select_worker(&self, workers: Vec<PyWorkerInfo>, request_text: Option<&str>) -> Option<usize> {
+    fn select_worker(
+        &self,
+        workers: Vec<PyWorkerInfo>,
+        request_text: Option<&str>,
+    ) -> Option<usize> {
         let rust_workers = py_workers_to_rust(&workers);
         self.inner.select_worker(&rust_workers, request_text)
     }
@@ -241,7 +245,11 @@ impl PyPowerOfTwoPolicy {
     }
 
     #[pyo3(signature = (workers, request_text=None))]
-    fn select_worker(&self, workers: Vec<PyWorkerInfo>, request_text: Option<&str>) -> Option<usize> {
+    fn select_worker(
+        &self,
+        workers: Vec<PyWorkerInfo>,
+        request_text: Option<&str>,
+    ) -> Option<usize> {
         let rust_workers = py_workers_to_rust(&workers);
         self.inner.select_worker(&rust_workers, request_text)
     }
@@ -408,7 +416,11 @@ impl PyCacheAwarePolicy {
     }
 
     #[pyo3(signature = (workers, request_text=None))]
-    fn select_worker(&self, workers: Vec<PyWorkerInfo>, request_text: Option<&str>) -> Option<usize> {
+    fn select_worker(
+        &self,
+        workers: Vec<PyWorkerInfo>,
+        request_text: Option<&str>,
+    ) -> Option<usize> {
         let rust_workers = py_workers_to_rust(&workers);
         self.inner.select_worker(&rust_workers, request_text)
     }
@@ -446,4 +458,3 @@ pub fn add_to_module(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
 
     Ok(())
 }
-

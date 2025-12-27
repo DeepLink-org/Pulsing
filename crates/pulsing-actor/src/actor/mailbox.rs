@@ -27,12 +27,18 @@ pub struct Envelope {
 impl Envelope {
     /// Create envelope for fire-and-forget (tell pattern)
     pub fn tell(message: Message) -> Self {
-        Self { message, respond_to: None }
+        Self {
+            message,
+            respond_to: None,
+        }
     }
 
     /// Create envelope for request-response (ask pattern)
     pub fn ask(message: Message, respond_to: ResponseChannel) -> Self {
-        Self { message, respond_to: Some(respond_to) }
+        Self {
+            message,
+            respond_to: Some(respond_to),
+        }
     }
 
     /// Get the message type

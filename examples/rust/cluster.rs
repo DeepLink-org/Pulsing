@@ -6,8 +6,8 @@
 //!   Terminal 1: cargo run --example cluster -p pulsing-actor -- --node 1
 //!   Terminal 2: cargo run --example cluster -p pulsing-actor -- --node 2
 
-use pulsing_actor::prelude::*;
 use pulsing_actor::actor::ActorPath;
+use pulsing_actor::prelude::*;
 use std::time::Duration;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -17,7 +17,10 @@ struct GetCount;
 struct Increment(i32);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct CountResponse { count: i32, from_node: String }
+struct CountResponse {
+    count: i32,
+    from_node: String,
+}
 
 struct SharedCounter {
     count: i32,
@@ -33,14 +36,18 @@ impl Actor for SharedCounter {
 
     async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
         match msg.msg_type() {
-            t if t.ends_with("GetCount") => {
-                Message::pack(&CountResponse { count: self.count, from_node: self.node_id.clone() })
-            }
+            t if t.ends_with("GetCount") => Message::pack(&CountResponse {
+                count: self.count,
+                from_node: self.node_id.clone(),
+            }),
             t if t.ends_with("Increment") => {
                 let Increment(n) = msg.unpack()?;
                 self.count += n;
                 println!("[{}] +{} -> {}", self.node_id, n, self.count);
-                Message::pack(&CountResponse { count: self.count, from_node: self.node_id.clone() })
+                Message::pack(&CountResponse {
+                    count: self.count,
+                    from_node: self.node_id.clone(),
+                })
             }
             _ => Err(anyhow::anyhow!("Unknown: {}", msg.msg_type())),
         }
@@ -70,11 +77,16 @@ async fn main() -> anyhow::Result<()> {
 
     if node_num == 1 {
         // Node 1: Create actor and wait
-        system.spawn_named(
-            path.clone(),
-            "counter",
-            SharedCounter { count: 0, node_id: system.node_id().to_string() },
-        ).await?;
+        system
+            .spawn_named(
+                path.clone(),
+                "counter",
+                SharedCounter {
+                    count: 0,
+                    node_id: system.node_id().to_string(),
+                },
+            )
+            .await?;
         println!("✓ Created named actor: {}", path);
         println!("Start node 2: cargo run --example cluster -p pulsing-actor -- --node 2\n");
 
@@ -82,7 +94,9 @@ async fn main() -> anyhow::Result<()> {
             tokio::time::sleep(Duration::from_secs(5)).await;
             let members = system.members().await;
             println!("Cluster: {} members", members.len());
-            for m in &members { println!("  {} @ {} ({:?})", m.node_id, m.addr, m.status); }
+            for m in &members {
+                println!("  {} @ {} ({:?})", m.node_id, m.addr, m.status);
+            }
         }
     } else {
         // Node 2+: Join and interact
@@ -106,7 +120,12 @@ async fn main() -> anyhow::Result<()> {
 
         for i in 1..=3 {
             let resp: CountResponse = actor.ask(Increment(i * 10)).await?;
-            println!("After +{}: {} (from {})", i * 10, resp.count, resp.from_node);
+            println!(
+                "After +{}: {} (from {})",
+                i * 10,
+                resp.count,
+                resp.from_node
+            );
         }
 
         println!("\n✓ Done!");

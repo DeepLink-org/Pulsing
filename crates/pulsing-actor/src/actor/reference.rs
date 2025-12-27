@@ -70,7 +70,9 @@ pub trait RemoteTransport: Send + Sync {
     /// Send a one-way message (unified interface)
     async fn send_oneway(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<()> {
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming not supported for fire-and-forget"));
+            return Err(anyhow::anyhow!(
+                "Streaming not supported for fire-and-forget"
+            ));
         };
         self.send(actor_id, &msg_type, data).await
     }
