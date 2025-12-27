@@ -819,8 +819,9 @@ impl PyActorSystem {
         config: PySystemConfig,
         event_loop: PyObject,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let config_inner = config.inner;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let system = ActorSystem::new(config.inner).await.map_err(to_pyerr)?;
+            let system = ActorSystem::new(config_inner).await.map_err(to_pyerr)?;
             Ok(PyActorSystem {
                 inner: system,
                 event_loop,
