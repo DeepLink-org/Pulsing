@@ -931,6 +931,38 @@ impl PyActorSystem {
         })
     }
 
+    /// Get all named actors in the cluster
+    fn all_named_actors<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let system = self.inner.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let all_named = system.all_named_actors().await;
+            
+            Python::with_gil(|py| -> PyResult<PyObject> {
+                use pythonize::pythonize;
+                let result: Vec<std::collections::HashMap<String, serde_json::Value>> = all_named
+                    .into_iter()
+                    .map(|info| {
+                        let mut map = std::collections::HashMap::new();
+                        map.insert("path".to_string(), serde_json::Value::String(info.path.as_str().to_string()));
+                        map.insert(
+                            "instance_count".to_string(),
+                            serde_json::Value::Number(serde_json::Number::from(info.instance_count())),
+                        );
+                        // Convert instances (HashSet<NodeId>) to list of node IDs as strings
+                        let instances: Vec<serde_json::Value> = info.instances.iter()
+                            .map(|id| serde_json::Value::String(id.to_string()))
+                            .collect();
+                        map.insert("instances".to_string(), serde_json::Value::Array(instances));
+                        map
+                    })
+                    .collect();
+                let pyobj = pythonize(py, &result)?;
+                Ok(pyobj.into())
+            })
+        })
+    }
+
     /// Resolve a named actor (selects one instance using load balancing)
     #[pyo3(signature = (name, node_id=None))]
     fn resolve_named<'py>(

@@ -33,7 +33,9 @@ impl Default for SwimConfig {
             ping_interval: Duration::from_millis(500),
             ping_timeout: Duration::from_secs(2),
             indirect_probes: 3,
-            suspicion_timeout: Duration::from_secs(5),
+            // Increased from 5s to 15s for better tolerance in high-load scenarios
+            // This gives nodes more time to respond before being marked as failed
+            suspicion_timeout: Duration::from_secs(15),
         }
     }
 }

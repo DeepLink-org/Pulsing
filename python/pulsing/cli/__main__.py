@@ -141,38 +141,63 @@ def _inspect_system(seeds: list):
         print(f"\nCluster Status: {len(members)} nodes found")
         print("=" * 60)
 
-        # Try to get named actor instances from cluster
-        # Worker actors are registered under "actors/worker" path
+        # Get all named actors automatically
+        all_named_actors = {}
         try:
-            named_instances = await system.get_named_instances("worker")
-            worker_count = len(named_instances) if named_instances else 0
+            for info in await system.all_named_actors():
+                path = str(info.get("path", ""))
+                name = path[7:] if path.startswith("actors/") else path
+                if info.get("instance_count", 0) > 0:
+                    try:
+                        instances = await system.get_named_instances(name)
+                        if instances:
+                            all_named_actors[name] = instances
+                    except:
+                        pass
         except Exception as e:
-            print(f"  [Debug] get_named_instances error: {e}")
-            worker_count = 0
-            named_instances = []
+            print(f"  [Warning] Failed to get all named actors: {e}")
 
+        # Group named actors by node
+        node_actors = {}
+        for name, instances in all_named_actors.items():
+            for inst in instances:
+                node_actors.setdefault(str(inst.get("node_id")), []).append(name)
+
+        # Display nodes and their actors
         for member in members:
-            node_id = member.get("node_id")
-            addr = member.get("addr")
-            status = member.get("status")
+            node_id = str(member.get("node_id"))
+            print(f"\nNode: {node_id} ({member.get('addr')}) [{member.get('status')}]")
             
-            print(f"\nNode: {node_id} ({addr}) [{status}]")
-            
-            if status != "Alive":
+            if member.get("status") != "Alive":
                 print("  [Node is not alive]")
                 continue
 
-            # Check if this node has any named actor instances
-            node_workers = [w for w in named_instances if str(w.get("node_id")) == str(node_id)]
-            if node_workers:
-                print(f"  Named Actors: {len(node_workers)} worker(s)")
-                for w in node_workers:
-                    print(f"    - actors/worker")
-            else:
-                print("  [No worker actors on this node]")
+            actors = node_actors.get(node_id, [])
+            if not actors:
+                print("  [No named actors on this node]")
+                continue
+
+            # Group by base type
+            actor_groups = {}
+            for name in actors:
+                base = name.rsplit("_", 1)[0] if "_" in name else name
+                actor_groups.setdefault(base, []).append(name)
+            
+            print(f"  Named Actors ({len(actors)}):")
+            for base, names in sorted(actor_groups.items()):
+                if len(names) == 1:
+                    print(f"    - actors/{names[0]}")
+                else:
+                    print(f"    - actors/{base}_* ({len(names)} instances)")
+                    for name in sorted(names)[:5]:
+                        print(f"        • {name}")
+                    if len(names) > 5:
+                        print(f"        ... and {len(names) - 5} more")
         
-        if worker_count > 0:
-            print(f"\nTotal Workers: {worker_count}")
+        # Summary
+        if all_named_actors:
+            total = sum(len(instances) for instances in all_named_actors.values())
+            print(f"\nTotal Named Actors: {len(all_named_actors)} types, {total} instances")
         
         print("\n" + "=" * 60)
         await system.shutdown()
@@ -351,3 +376,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

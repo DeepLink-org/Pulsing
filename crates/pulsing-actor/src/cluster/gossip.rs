@@ -76,7 +76,9 @@ impl Default for GossipConfig {
             seed_probe_count: 3,
             seed_probe_interval: Duration::from_millis(100),
             seed_rejoin_interval: Some(Duration::from_secs(15)),
-            failure_timeout: Duration::from_secs(5),
+            // Increased from 5s to 15s for better tolerance in high-load scenarios
+            // In large-scale stress tests, gossip messages may be delayed due to high load
+            failure_timeout: Duration::from_secs(15),
             cleanup_grace_period: Duration::from_secs(30),
             swim: SwimConfig::default(),
         }
@@ -864,10 +866,15 @@ async fn detect_failures(state: &ClusterState, config: &GossipConfig) {
     for node_id in pfail_nodes {
         let mut nodes = state.cluster_nodes.write().await;
         if let Some(node) = nodes.get_mut(&node_id) {
+            // Only mark as PFail if still Online (may have been updated by another thread)
             if node.status == NodeStatus::Online {
                 node.status = NodeStatus::PFail;
                 node.epoch = state.increment_epoch();
-                tracing::warn!(node_id = %node_id, "Marked node as PFail");
+                tracing::debug!(
+                    node_id = %node_id,
+                    elapsed_ms = now.saturating_sub(node.last_seen),
+                    "Marked node as PFail"
+                );
             }
         }
     }
@@ -876,10 +883,17 @@ async fn detect_failures(state: &ClusterState, config: &GossipConfig) {
     for node_id in fail_nodes {
         let mut nodes = state.cluster_nodes.write().await;
         if let Some(node) = nodes.get_mut(&node_id) {
+            // Only mark as Fail if still in PFail state (may have recovered)
             if node.status == NodeStatus::PFail {
                 node.status = NodeStatus::Fail;
                 node.epoch = state.increment_epoch();
-                tracing::error!(node_id = %node_id, "Marked node as Fail");
+                // Use warn level instead of error to reduce log noise in high-load scenarios
+                // This is often a false positive during stress tests
+                tracing::warn!(
+                    node_id = %node_id,
+                    elapsed_ms = now.saturating_sub(node.last_seen),
+                    "Marked node as Fail (may be false positive in high-load scenarios)"
+                );
             }
         }
     }

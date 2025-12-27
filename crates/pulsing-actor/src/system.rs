@@ -485,6 +485,16 @@ impl ActorSystem {
         }
     }
 
+    /// Get all named actors in the cluster
+    pub async fn all_named_actors(&self) -> Vec<NamedActorInfo> {
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            cluster.all_named_actors().await
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Stop an actor
     pub async fn stop(&self, name: impl AsRef<str>) -> anyhow::Result<()> {
         self.stop_with_reason(name, StopReason::Killed).await
