@@ -78,36 +78,36 @@ fn benchmark_main<'py>(py: Python<'py>, config: PyObject) -> PyResult<Bound<'py,
         .ok_or_else(|| PyValueError::new_err("tokenizer_name is required"))?
         .extract::<String>()?;
 
-    let model_name = get_opt_str(&config_dict, "model_name")?;
+    let model_name = get_opt_str(config_dict, "model_name")?;
 
-    let max_vus = get_opt::<u64>(&config_dict, "max_vus")?.unwrap_or(128);
+    let max_vus = get_opt::<u64>(config_dict, "max_vus")?.unwrap_or(128);
 
-    let duration_str = get_opt_str(&config_dict, "duration")?.unwrap_or_else(|| "120s".to_string());
+    let duration_str = get_opt_str(config_dict, "duration")?.unwrap_or_else(|| "120s".to_string());
     let duration = pulsing_bench::parse_duration(&duration_str)
         .map_err(|e| PyValueError::new_err(format!("Invalid duration: {}", e)))?;
 
-    let rates: Option<Vec<f64>> = get_opt::<Vec<f64>>(&config_dict, "rates")?;
+    let rates: Option<Vec<f64>> = get_opt::<Vec<f64>>(config_dict, "rates")?;
 
-    let num_rates = get_opt::<u64>(&config_dict, "num_rates")?.unwrap_or(10);
+    let num_rates = get_opt::<u64>(config_dict, "num_rates")?.unwrap_or(10);
 
-    let profile = get_opt_str(&config_dict, "profile")?;
+    let profile = get_opt_str(config_dict, "profile")?;
 
     let benchmark_kind =
-        get_opt_str(&config_dict, "benchmark_kind")?.unwrap_or_else(|| "sweep".to_string());
+        get_opt_str(config_dict, "benchmark_kind")?.unwrap_or_else(|| "sweep".to_string());
 
-    let warmup_str = get_opt_str(&config_dict, "warmup")?.unwrap_or_else(|| "30s".to_string());
+    let warmup_str = get_opt_str(config_dict, "warmup")?.unwrap_or_else(|| "30s".to_string());
     let warmup = pulsing_bench::parse_duration(&warmup_str)
         .map_err(|e| PyValueError::new_err(format!("Invalid warmup duration: {}", e)))?;
 
     let url_str =
-        get_opt_str(&config_dict, "url")?.unwrap_or_else(|| "http://localhost:8000".to_string());
+        get_opt_str(config_dict, "url")?.unwrap_or_else(|| "http://localhost:8000".to_string());
     let url = url_str
         .parse::<Url>()
         .map_err(|e| PyValueError::new_err(format!("Invalid URL: {}", e)))?;
 
-    let api_key = get_opt_str(&config_dict, "api_key")?.unwrap_or_default();
+    let api_key = get_opt_str(config_dict, "api_key")?.unwrap_or_default();
 
-    let prompt_options_str = get_opt_str(&config_dict, "prompt_options")?;
+    let prompt_options_str = get_opt_str(config_dict, "prompt_options")?;
     let prompt_options = if let Some(s) = prompt_options_str {
         Some(
             pulsing_bench::parse_tokenizer_options(&s)
@@ -117,7 +117,7 @@ fn benchmark_main<'py>(py: Python<'py>, config: PyObject) -> PyResult<Bound<'py,
         None
     };
 
-    let decode_options_str = get_opt_str(&config_dict, "decode_options")?;
+    let decode_options_str = get_opt_str(config_dict, "decode_options")?;
     let decode_options = if let Some(s) = decode_options_str {
         Some(
             pulsing_bench::parse_tokenizer_options(&s)
@@ -127,13 +127,13 @@ fn benchmark_main<'py>(py: Python<'py>, config: PyObject) -> PyResult<Bound<'py,
         None
     };
 
-    let dataset = get_opt_str(&config_dict, "dataset")?
+    let dataset = get_opt_str(config_dict, "dataset")?
         .unwrap_or_else(|| "hlarcher/inference-benchmarker".to_string());
 
-    let dataset_file = get_opt_str(&config_dict, "dataset_file")?
+    let dataset_file = get_opt_str(config_dict, "dataset_file")?
         .unwrap_or_else(|| "share_gpt_filtered_small.json".to_string());
 
-    let extra_meta_str = get_opt_str(&config_dict, "extra_meta")?;
+    let extra_meta_str = get_opt_str(config_dict, "extra_meta")?;
     let extra_meta = if let Some(s) = extra_meta_str {
         Some(
             pulsing_bench::parse_key_val(&s)
@@ -143,7 +143,7 @@ fn benchmark_main<'py>(py: Python<'py>, config: PyObject) -> PyResult<Bound<'py,
         None
     };
 
-    let run_id = get_opt_str(&config_dict, "run_id")?;
+    let run_id = get_opt_str(config_dict, "run_id")?;
 
     let args = BenchmarkArgs {
         tokenizer_name,

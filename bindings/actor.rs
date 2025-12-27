@@ -482,7 +482,7 @@ impl PyActorRef {
     #[getter]
     fn actor_id(&self) -> PyActorId {
         PyActorId {
-            inner: self.inner.id().clone(),
+            inner: *self.inner.id(),
         }
     }
 
@@ -605,7 +605,7 @@ impl Actor for PythonActorWrapper {
 
     async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
         let handler = Python::with_gil(|py| self.handler.clone_ref(py));
-        let actor_id = ctx.id().clone();
+        let actor_id = *ctx.id();
 
         python_executor()
             .execute(move || {
@@ -751,7 +751,7 @@ impl PyActorSystem {
     #[getter]
     fn node_id(&self) -> PyNodeId {
         PyNodeId {
-            inner: self.inner.node_id().clone(),
+            inner: *self.inner.node_id(),
         }
     }
 
@@ -775,7 +775,7 @@ impl PyActorSystem {
             let actor = PythonActorWrapper::new(handler, event_loop);
 
             let actor_ref = if public {
-                let path = ActorPath::new(&format!("actors/{}", name)).map_err(to_pyerr)?;
+                let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
                 system
                     .spawn_named(path, &name, actor)
                     .await
@@ -830,7 +830,7 @@ impl PyActorSystem {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let path = ActorPath::new(&format!("actors/{}", name)).map_err(to_pyerr)?;
+            let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
             let instances: Vec<pulsing_actor::cluster::MemberInfo> =
                 system.get_named_instances(&path).await;
             let result: Vec<std::collections::HashMap<String, String>> = instances
@@ -897,7 +897,7 @@ impl PyActorSystem {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let path = ActorPath::new(&format!("actors/{}", name)).map_err(to_pyerr)?;
+            let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
             let node = node_id.map(NodeId::new);
             let actor_ref = system
                 .resolve_named(&path, node.as_ref())
