@@ -5,7 +5,7 @@
 use super::config::Http2Config;
 use super::stream::StreamFrame;
 use super::{headers, MessageMode};
-use crate::actor::{Message, MessageStream};
+use crate::actor::Message;
 use bytes::Bytes;
 use futures::StreamExt;
 use http_body_util::{BodyExt, Full, StreamBody};
@@ -23,25 +23,18 @@ use tokio_util::sync::CancellationToken;
 /// Handler trait for HTTP/2 server
 #[async_trait::async_trait]
 pub trait Http2ServerHandler: Send + Sync + 'static {
-    /// Handle ask (request-response) message
-    async fn handle_ask(
+    /// Unified message handler - returns Message (Single or Stream)
+    /// This is the primary method that should be implemented.
+    async fn handle_message(
         &self,
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>>;
+    ) -> anyhow::Result<Message>;
 
     /// Handle tell (fire-and-forget) message
     async fn handle_tell(&self, path: &str, msg_type: &str, payload: Vec<u8>)
         -> anyhow::Result<()>;
-
-    /// Handle stream request - returns a MessageStream
-    async fn handle_stream(
-        &self,
-        path: &str,
-        msg_type: &str,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<MessageStream>;
 
     /// Handle gossip message
     async fn handle_gossip(
@@ -303,14 +296,12 @@ impl Http2Server {
         }
 
         match mode {
-            MessageMode::Ask => {
-                Self::handle_ask_request(&handler, &path, &msg_type, body_bytes).await
-            }
             MessageMode::Tell => {
                 Self::handle_tell_request(&handler, &path, &msg_type, body_bytes).await
             }
-            MessageMode::Stream => {
-                Self::handle_stream_request(&handler, &path, &msg_type, body_bytes).await
+            // Ask and Stream now use unified handler
+            MessageMode::Ask | MessageMode::Stream => {
+                Self::handle_message_request(&handler, &path, &msg_type, body_bytes).await
             }
         }
     }
@@ -337,18 +328,67 @@ impl Http2Server {
         }
     }
 
-    async fn handle_ask_request(
+    /// Unified message handler - automatically detects response type
+    async fn handle_message_request(
         handler: &Arc<dyn Http2ServerHandler>,
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
     ) -> Result<Response<BoxBody>, Infallible> {
-        match handler.handle_ask(path, msg_type, payload).await {
-            Ok(response) => Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "application/octet-stream")
-                .body(full_body(response))
-                .unwrap()),
+        match handler.handle_message(path, msg_type, payload).await {
+            Ok(Message::Single { data, .. }) => {
+                // Single response - return directly with response type header
+                Ok(Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/octet-stream")
+                    .header(headers::RESPONSE_TYPE, "single")
+                    .body(full_body(data))
+                    .unwrap())
+            }
+            Ok(Message::Stream { stream, .. }) => {
+                // Stream response - convert to NDJSON stream
+                let (tx, rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, Infallible>>(32);
+
+                tokio::spawn(async move {
+                    let mut stream = std::pin::pin!(stream);
+                    let mut seq = 0u64;
+
+                    while let Some(result) = stream.next().await {
+                        let frame = match result {
+                            Ok(data) => StreamFrame::data(seq, "", &data),
+                            Err(e) => StreamFrame::error(seq, e.to_string()),
+                        };
+
+                        let bytes = match frame.to_ndjson() {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                let error_frame = StreamFrame::error(seq, e.to_string());
+                                error_frame.to_ndjson().unwrap_or_else(|_| Bytes::new())
+                            }
+                        };
+
+                        if tx.send(Ok(Frame::data(bytes))).await.is_err() {
+                            break;
+                        }
+                        seq += 1;
+                    }
+
+                    let end_frame = StreamFrame::end(seq);
+                    if let Ok(bytes) = end_frame.to_ndjson() {
+                        let _ = tx.send(Ok(Frame::data(bytes))).await;
+                    }
+                });
+
+                let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+                let body = StreamBody::new(body_stream);
+
+                Ok(Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/x-ndjson")
+                    .header(headers::RESPONSE_TYPE, "stream")
+                    .body(BoxBody::new(body))
+                    .unwrap())
+            }
             Err(e) => Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(full_body(e.to_string().into_bytes()))
@@ -374,71 +414,6 @@ impl Http2Server {
         }
     }
 
-    async fn handle_stream_request(
-        handler: &Arc<dyn Http2ServerHandler>,
-        path: &str,
-        msg_type: &str,
-        payload: Vec<u8>,
-    ) -> Result<Response<BoxBody>, Infallible> {
-        match handler.handle_stream(path, msg_type, payload).await {
-            Ok(stream) => {
-                // Collect stream into a channel that can be shared safely
-                let (tx, rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, Infallible>>(32);
-
-                // Spawn task to read from stream and send to channel
-                tokio::spawn(async move {
-                    let mut stream = std::pin::pin!(stream);
-                    let mut seq = 0u64;
-
-                    while let Some(result) = stream.next().await {
-                        let frame = match result {
-                            Ok(msg) => {
-                                let (msg_type, payload) = match msg {
-                                    Message::Single { msg_type, data } => (msg_type, data),
-                                    Message::Stream { msg_type, .. } => (msg_type, Vec::new()),
-                                };
-                                StreamFrame::data(seq, &msg_type, &payload)
-                            }
-                            Err(e) => StreamFrame::error(seq, e.to_string()),
-                        };
-
-                        let bytes = match frame.to_ndjson() {
-                            Ok(bytes) => bytes,
-                            Err(e) => {
-                                let error_frame = StreamFrame::error(seq, e.to_string());
-                                error_frame.to_ndjson().unwrap_or_else(|_| Bytes::new())
-                            }
-                        };
-
-                        if tx.send(Ok(Frame::data(bytes))).await.is_err() {
-                            break; // Receiver dropped
-                        }
-                        seq += 1;
-                    }
-
-                    // Send end frame
-                    let end_frame = StreamFrame::end(seq);
-                    if let Ok(bytes) = end_frame.to_ndjson() {
-                        let _ = tx.send(Ok(Frame::data(bytes))).await;
-                    }
-                });
-
-                // Convert receiver to stream
-                let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-                let body = StreamBody::new(body_stream);
-
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "application/x-ndjson")
-                    .body(BoxBody::new(body))
-                    .unwrap())
-            }
-            Err(e) => Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(full_body(e.to_string().into_bytes()))
-                .unwrap()),
-        }
-    }
 }
 
 // Body type aliases
@@ -461,14 +436,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Http2ServerHandler for MockHandler {
-        async fn handle_ask(
+        async fn handle_message(
             &self,
             _path: &str,
             _msg_type: &str,
             payload: Vec<u8>,
-        ) -> anyhow::Result<Vec<u8>> {
-            // Echo the payload
-            Ok(payload)
+        ) -> anyhow::Result<Message> {
+            // Echo the payload as single message
+            Ok(Message::single("", payload))
         }
 
         async fn handle_tell(
@@ -478,19 +453,6 @@ mod tests {
             _payload: Vec<u8>,
         ) -> anyhow::Result<()> {
             Ok(())
-        }
-
-        async fn handle_stream(
-            &self,
-            _path: &str,
-            _msg_type: &str,
-            _payload: Vec<u8>,
-        ) -> anyhow::Result<MessageStream> {
-            let stream = futures::stream::iter(vec![
-                Ok(Message::single("token", b"hello")),
-                Ok(Message::single("token", b"world")),
-            ]);
-            Ok(Box::pin(stream))
         }
 
         async fn handle_gossip(

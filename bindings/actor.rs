@@ -558,6 +558,8 @@ impl PyActorRef {
     }
 
     /// Send a message and expect a streaming response
+    /// Send a message and expect a streaming response
+    /// Note: Now uses unified send() which auto-detects response type
     fn ask_stream<'py>(&self, py: Python<'py>, msg: &PyMessage) -> PyResult<Bound<'py, PyAny>> {
         let actor_ref = self.inner.clone();
 
@@ -570,7 +572,8 @@ impl PyActorRef {
         };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let response = actor_ref.send_stream(actor_msg).await.map_err(to_pyerr)?;
+            // Use unified send() - server sets response type header
+            let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
             match response {
                 Message::Stream { stream, .. } => Ok(PyStreamReader::new(stream)),
                 Message::Single { .. } => Err(PyValueError::new_err(

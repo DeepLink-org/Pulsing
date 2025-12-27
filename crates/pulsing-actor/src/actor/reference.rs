@@ -1,7 +1,7 @@
 //! Actor reference - location-transparent handle to an actor
 
 use super::mailbox::Envelope;
-use super::traits::{ActorId, Message, PayloadStream};
+use super::traits::{ActorId, Message};
 use serde::{de::DeserializeOwned, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ pub struct RemoteActorRef {
 /// Trait for remote transport (HTTP/2, TCP, etc.)
 #[async_trait::async_trait]
 pub trait RemoteTransport: Send + Sync {
-    /// Send a request and wait for response
+    /// Send a request and wait for response (low-level)
     async fn request(
         &self,
         actor_id: &ActorId,
@@ -47,7 +47,7 @@ pub trait RemoteTransport: Send + Sync {
         payload: Vec<u8>,
     ) -> anyhow::Result<Vec<u8>>;
 
-    /// Send a one-way message
+    /// Send a one-way message (low-level)
     async fn send(
         &self,
         actor_id: &ActorId,
@@ -55,21 +55,13 @@ pub trait RemoteTransport: Send + Sync {
         payload: Vec<u8>,
     ) -> anyhow::Result<()>;
 
-    /// Send a request and receive a stream of responses
-    async fn request_stream(
-        &self,
-        actor_id: &ActorId,
-        msg_type: &str,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<PayloadStream> {
-        let _ = (actor_id, msg_type, payload);
-        Err(anyhow::anyhow!("Streaming not supported by this transport"))
-    }
-
     /// Send a message and receive response (unified interface)
+    ///
+    /// This is the primary method for communication. It automatically handles
+    /// both single and stream responses based on the server's response type.
     async fn send_message(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming not supported by this transport"));
+            return Err(anyhow::anyhow!("Streaming requests not yet supported"));
         };
         let response = self.request(actor_id, &msg_type, data).await?;
         Ok(Message::single("", response))
@@ -78,7 +70,7 @@ pub trait RemoteTransport: Send + Sync {
     /// Send a one-way message (unified interface)
     async fn send_oneway(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<()> {
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming not supported by this transport"));
+            return Err(anyhow::anyhow!("Streaming not supported for fire-and-forget"));
         };
         self.send(actor_id, &msg_type, data).await
     }
@@ -123,8 +115,10 @@ impl ActorRef {
     /// This is the primary method for actor communication. It handles all patterns:
     /// - Single request -> Single response
     /// - Single request -> Stream response
-    /// - Stream request -> Single response
-    /// - Stream request -> Stream response
+    ///
+    /// The response type (Single or Stream) is automatically determined by
+    /// the actor's return value. For remote actors, the server sets a response
+    /// type header that the client uses to properly decode the response.
     pub async fn send(&self, msg: Message) -> anyhow::Result<Message> {
         match &self.inner {
             ActorRefInner::Local(sender) => {
@@ -140,33 +134,6 @@ impl ActorRef {
             }
             ActorRefInner::Remote(remote) => {
                 remote.transport.send_message(&self.actor_id, msg).await
-            }
-        }
-    }
-
-    /// Send a message and expect a streaming response
-    pub async fn send_stream(&self, msg: Message) -> anyhow::Result<Message> {
-        match &self.inner {
-            ActorRefInner::Local(_) => {
-                // For local actors, send() already handles stream responses
-                // because the actor handler can return Message::Stream
-                self.send(msg).await
-            }
-            ActorRefInner::Remote(remote) => {
-                // For remote actors, we must use request_stream to set correct headers
-                let Message::Single { msg_type, data } = msg else {
-                    return Err(anyhow::anyhow!(
-                        "Streaming requests not yet supported for remote actors"
-                    ));
-                };
-                let stream = remote
-                    .transport
-                    .request_stream(&self.actor_id, &msg_type, data)
-                    .await?;
-                Ok(Message::Stream {
-                    msg_type: String::new(),
-                    stream,
-                })
             }
         }
     }

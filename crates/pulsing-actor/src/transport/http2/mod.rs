@@ -62,9 +62,8 @@ pub use retry::{RetryConfig, RetryExecutor, RetryableError};
 pub use server::{Http2Server, Http2ServerHandler};
 pub use stream::{StreamFrame, StreamHandle};
 
-use crate::actor::{ActorId, ActorPath, Message, PayloadStream, RemoteTransport};
+use crate::actor::{ActorId, ActorPath, Message, RemoteTransport};
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
-use futures::StreamExt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -244,7 +243,32 @@ impl MessageMode {
 pub mod headers {
     pub const MESSAGE_MODE: &str = "x-message-mode";
     pub const MESSAGE_TYPE: &str = "x-message-type";
+    pub const RESPONSE_TYPE: &str = "x-response-type";
     pub const REQUEST_ID: &str = "x-request-id";
+}
+
+/// Response type for unified message handling
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseType {
+    Single,
+    Stream,
+}
+
+impl ResponseType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ResponseType::Single => "single",
+            ResponseType::Stream => "stream",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "single" => Some(ResponseType::Single),
+            "stream" => Some(ResponseType::Stream),
+            _ => None,
+        }
+    }
 }
 
 /// HTTP/2 Remote Transport for ActorRef
@@ -398,45 +422,21 @@ impl RemoteTransport for Http2RemoteTransport {
         result
     }
 
-    async fn request_stream(
-        &self,
-        _actor_id: &ActorId,
-        msg_type: &str,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<PayloadStream> {
-        let msg_stream = self
-            .client
-            .ask_stream_raw(self.remote_addr, &self.path, msg_type, payload)
-            .await?;
-
-        // Convert MessageStream to PayloadStream by extracting payload
-        let payload_stream = msg_stream.map(|result| {
-            result.and_then(|msg| {
-                let Message::Single { data, .. } = msg else {
-                    return Err(anyhow::anyhow!("Expected single message in stream"));
-                };
-                Ok(data)
-            })
-        });
-        Ok(Box::pin(payload_stream))
-    }
-
     /// Send a message and receive response (unified interface)
     ///
     /// This method is the primary way ActorRef communicates with remote actors.
-    /// It automatically handles:
-    /// - Connection pooling
-    /// - Retry logic
-    /// - Timeout management
-    async fn send_message(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
+    /// It automatically handles both single and stream responses based on
+    /// the server's response type header.
+    async fn send_message(&self, _actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
         let Message::Single { msg_type, data } = msg else {
-            // For streaming requests, we need to use a different approach
             return Err(anyhow::anyhow!(
-                "Streaming requests require request_stream method"
+                "Streaming requests not yet supported"
             ));
         };
-        let response = self.request(actor_id, &msg_type, data).await?;
-        Ok(Message::single("", response))
+        // Use unified send_message that auto-detects response type
+        self.client
+            .send_message(self.remote_addr, &self.path, &msg_type, data)
+            .await
     }
 
     /// Send a one-way message (unified interface)

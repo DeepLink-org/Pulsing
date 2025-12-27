@@ -2,13 +2,12 @@
 
 use crate::actor::{
     Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Envelope,
-    EnvelopeResponse, Message, MessageStream, NodeId, StopReason,
+    EnvelopeResponse, Message, NodeId, StopReason,
 };
 use crate::cluster::{GossipCluster, GossipConfig, GossipMessage, MemberInfo, NamedActorInfo};
 use crate::transport::{Http2Config, Http2RemoteTransport, Http2ServerHandler, Http2Transport};
 use crate::watch::ActorLifecycle;
 use dashmap::DashMap;
-use futures::StreamExt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -834,19 +833,15 @@ impl SystemMessageHandler {
 
 #[async_trait::async_trait]
 impl Http2ServerHandler for SystemMessageHandler {
-    async fn handle_ask(
+    /// Unified message handler - returns Message (Single or Stream)
+    async fn handle_message(
         &self,
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> anyhow::Result<Message> {
         let msg = Message::single(msg_type, payload);
-        let response = self.dispatch_message(path, msg).await?;
-
-        let Message::Single { data, .. } = response else {
-            return Err(anyhow::anyhow!("Expected single response"));
-        };
-        Ok(data)
+        self.dispatch_message(path, msg).await
     }
 
     async fn handle_tell(
@@ -857,29 +852,6 @@ impl Http2ServerHandler for SystemMessageHandler {
     ) -> anyhow::Result<()> {
         let msg = Message::single(msg_type, payload);
         self.dispatch_tell(path, msg).await
-    }
-
-    async fn handle_stream(
-        &self,
-        path: &str,
-        msg_type: &str,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<MessageStream> {
-        let msg = Message::single(msg_type, payload);
-        let response = self.dispatch_message(path, msg).await?;
-
-        match response {
-            Message::Stream { stream, .. } => {
-                // Convert PayloadStream to MessageStream
-                let msg_stream = stream.map(|result| result.map(|data| Message::single("", data)));
-                Ok(Box::pin(msg_stream))
-            }
-            Message::Single { .. } => {
-                // If actor returns single message, convert to stream
-                let stream = futures::stream::once(async move { Ok(response) });
-                Ok(Box::pin(stream))
-            }
-        }
     }
 
     async fn handle_gossip(&self, payload: Vec<u8>, peer_addr: SocketAddr) -> anyhow::Result<Option<Vec<u8>>> {

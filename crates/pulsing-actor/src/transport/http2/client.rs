@@ -260,6 +260,76 @@ impl Http2Client {
         Ok(Box::pin(msg_stream))
     }
 
+    /// Unified send - automatically handles single and stream responses
+    /// based on the response header from server
+    pub async fn send_message(
+        &self,
+        addr: SocketAddr,
+        path: &str,
+        msg_type: &str,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<Message> {
+        let response = self
+            .send_request(addr, path, msg_type, payload, MessageMode::Ask)
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.collect().await?.to_bytes();
+            let error_msg = String::from_utf8_lossy(&body);
+            return Err(anyhow::anyhow!("Request failed: {} - {}", status, error_msg));
+        }
+
+        // Check response type header
+        let response_type = response
+            .headers()
+            .get(headers::RESPONSE_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("single");
+
+        if response_type == "stream" {
+            // Stream response - parse as NDJSON
+            let cancel = CancellationToken::new();
+            let cancel_clone = cancel.clone();
+            let stream_timeout = self.config.stream_timeout;
+            let body_stream = response.into_body();
+            let frame_stream = Self::body_to_frame_stream(body_stream, cancel_clone, stream_timeout);
+            let stream_handle = StreamHandle::new(frame_stream, cancel);
+
+            let payload_stream = stream_handle.filter_map(|result| async move {
+                match result {
+                    Ok(frame) => {
+                        if frame.end && frame.data.is_empty() {
+                            return None;
+                        }
+                        if let Some(error) = frame.error {
+                            return Some(Err(anyhow::anyhow!("{}", error)));
+                        }
+                        match frame.decode_data() {
+                            Ok(payload) => Some(Ok(payload)),
+                            Err(e) => Some(Err(e)),
+                        }
+                    }
+                    Err(e) => Some(Err(e)),
+                }
+            });
+
+            Ok(Message::Stream {
+                msg_type: String::new(),
+                stream: Box::pin(payload_stream),
+            })
+        } else {
+            // Single response - read body directly
+            let body = tokio::time::timeout(self.config.request_timeout, response.collect())
+                .await
+                .map_err(|_| anyhow::anyhow!("Response body read timeout"))?
+                .map_err(|e| anyhow::anyhow!("Failed to read body: {}", e))?
+                .to_bytes();
+
+            Ok(Message::single("", body.to_vec()))
+        }
+    }
+
     /// Convert response body to stream of StreamFrames with timeout
     fn body_to_frame_stream(
         body: Incoming,

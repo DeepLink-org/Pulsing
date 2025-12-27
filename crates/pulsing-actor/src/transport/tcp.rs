@@ -1,7 +1,7 @@
 //! TCP transport for actor communication
 
 use super::codec::{MessageCodec, TransportMessage};
-use crate::actor::{ActorId, PayloadStream, RemoteTransport};
+use crate::actor::{ActorId, RemoteTransport};
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
@@ -401,19 +401,6 @@ impl RemoteTransport for TcpRemoteTransport {
         self.transport
             .send_one_way(self.remote_addr, actor_id, msg_type, payload)
             .await
-    }
-
-    async fn request_stream(
-        &self,
-        _actor_id: &ActorId,
-        _msg_type: &str,
-        _payload: Vec<u8>,
-    ) -> anyhow::Result<PayloadStream> {
-        // TCP transport does not support streaming.
-        // Use HTTP/2 transport for streaming support.
-        Err(anyhow::anyhow!(
-            "Streaming not supported with TCP transport. Use HTTP/2 transport instead."
-        ))
     }
 }
 

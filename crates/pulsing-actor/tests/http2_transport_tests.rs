@@ -7,7 +7,7 @@
 //! - Tell (fire-and-forget) pattern
 //! - Http2RemoteTransport integration
 
-use pulsing_actor::actor::{ActorId, Message, MessageStream};
+use pulsing_actor::actor::{ActorId, Message};
 use pulsing_actor::transport::{
     Http2Client, Http2Config, Http2RemoteTransport, Http2Server, Http2ServerHandler,
 };
@@ -24,7 +24,6 @@ use tokio_util::sync::CancellationToken;
 struct TestCounters {
     ask_count: AtomicUsize,
     tell_count: AtomicUsize,
-    stream_count: AtomicUsize,
 }
 
 /// Test handler that echoes messages and counts calls
@@ -46,18 +45,18 @@ impl TestHandler {
 
 #[async_trait::async_trait]
 impl Http2ServerHandler for TestHandler {
-    async fn handle_ask(
+    async fn handle_message(
         &self,
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> anyhow::Result<Message> {
         self.counters.ask_count.fetch_add(1, Ordering::SeqCst);
 
         // Echo the payload with path and msg_type prepended
         let mut response = format!("{}:{}:", path, msg_type).into_bytes();
         response.extend(payload);
-        Ok(response)
+        Ok(Message::single("", response))
     }
 
     async fn handle_tell(
@@ -68,28 +67,6 @@ impl Http2ServerHandler for TestHandler {
     ) -> anyhow::Result<()> {
         self.counters.tell_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
-    }
-
-    async fn handle_stream(
-        &self,
-        _path: &str,
-        msg_type: &str,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<MessageStream> {
-        self.counters.stream_count.fetch_add(1, Ordering::SeqCst);
-
-        // Clone msg_type to avoid lifetime issues
-        let msg_type = msg_type.to_string();
-
-        // Generate a stream of 5 Message items
-        let stream = futures::stream::iter((0..5).map(move |i| {
-            Ok(Message::single(
-                format!("{}-{}", msg_type, i),
-                format!("chunk-{}-{:?}", i, payload).into_bytes(),
-            ))
-        }));
-
-        Ok(Box::pin(stream))
     }
 
     async fn handle_gossip(
@@ -105,7 +82,6 @@ impl Http2ServerHandler for TestHandler {
             "status": "healthy",
             "ask_count": self.counters.ask_count.load(Ordering::SeqCst),
             "tell_count": self.counters.tell_count.load(Ordering::SeqCst),
-            "stream_count": self.counters.stream_count.load(Ordering::SeqCst),
         })
     }
 }
@@ -633,13 +609,11 @@ fn test_message_mode_conversion() {
 }
 
 // ============================================================================
-// Streaming Response Tests
+// Unified Send Message Tests
 // ============================================================================
 
 #[tokio::test]
-async fn test_http2_stream_request() {
-    use futures::StreamExt;
-
+async fn test_http2_unified_send_message() {
     let counters = Arc::new(TestCounters::default());
     let handler = Arc::new(TestHandler::with_counters(counters.clone()));
     let cancel = CancellationToken::new();
@@ -656,182 +630,26 @@ async fn test_http2_stream_request() {
 
     let addr = server.local_addr();
 
-    // Create client and send stream request
+    // Create client and send using unified send_message
     let client = Http2Client::new(Http2Config::default());
-    let mut stream = client
-        .ask_stream(
-            addr,
-            "/actors/stream-test",
-            "StreamMsg",
-            b"test-payload".to_vec(),
-        )
+    let response = client
+        .send_message(addr, "/actors/test", "TestMsg", b"test-payload".to_vec())
         .await
         .unwrap();
 
-    // Collect all frames
-    let mut frames = Vec::new();
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(frame) => {
-                if !frame.end || !frame.data.is_empty() {
-                    frames.push(frame);
-                }
-            }
-            Err(e) => panic!("Stream error: {}", e),
-        }
-    }
+    // Should receive single response
+    assert!(response.is_single());
 
-    // Should receive 5 data frames (from TestHandler::handle_stream)
-    assert_eq!(frames.len(), 5, "Expected 5 frames, got {}", frames.len());
+    // Verify response content
+    let Message::Single { data, .. } = response else {
+        panic!("Expected single message");
+    };
+    let data_str = String::from_utf8_lossy(&data);
+    assert!(data_str.contains("/actors/test"));
+    assert!(data_str.contains("TestMsg"));
 
-    // Verify frame content
-    for (i, frame) in frames.iter().enumerate() {
-        assert!(frame.msg_type.contains(&format!("StreamMsg-{}", i)));
-        let data = frame.decode_data().unwrap();
-        let data_str = String::from_utf8_lossy(&data);
-        assert!(data_str.contains(&format!("chunk-{}", i)));
-    }
-
-    // Verify stream counter
-    assert_eq!(counters.stream_count.load(Ordering::SeqCst), 1);
-
-    // Cleanup
-    cancel.cancel();
-}
-
-#[tokio::test]
-async fn test_http2_stream_request_raw() {
-    use futures::StreamExt;
-
-    let handler = Arc::new(TestHandler::new());
-    let cancel = CancellationToken::new();
-
-    // Start server
-    let server = Http2Server::new(
-        "127.0.0.1:0".parse().unwrap(),
-        handler,
-        Http2Config::default(),
-        cancel.clone(),
-    )
-    .await
-    .unwrap();
-
-    let addr = server.local_addr();
-
-    // Create client and send stream request using ask_stream_raw
-    let client = Http2Client::new(Http2Config::default());
-    let mut stream = client
-        .ask_stream_raw(addr, "/actors/raw-stream", "RawStream", b"payload".to_vec())
-        .await
-        .unwrap();
-
-    // Collect all messages
-    let mut messages = Vec::new();
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(msg) => messages.push(msg),
-            Err(e) => panic!("Stream error: {}", e),
-        }
-    }
-
-    // Should receive 5 messages
-    assert_eq!(messages.len(), 5);
-
-    // Verify messages are single type
-    for msg in &messages {
-        assert!(msg.is_single());
-    }
-
-    // Cleanup
-    cancel.cancel();
-}
-
-#[tokio::test]
-async fn test_http2_stream_cancellation() {
-    use futures::StreamExt;
-
-    let handler = Arc::new(TestHandler::new());
-    let cancel = CancellationToken::new();
-
-    // Start server
-    let server = Http2Server::new(
-        "127.0.0.1:0".parse().unwrap(),
-        handler,
-        Http2Config::default(),
-        cancel.clone(),
-    )
-    .await
-    .unwrap();
-
-    let addr = server.local_addr();
-
-    // Create client and send stream request
-    let client = Http2Client::new(Http2Config::default());
-    let stream = client
-        .ask_stream(addr, "/actors/cancel-test", "StreamMsg", b"test".to_vec())
-        .await
-        .unwrap();
-
-    // Cancel after receiving first frame
-    let stream_cancel = stream.cancellation_token();
-
-    let mut pinned = std::pin::pin!(stream);
-    let first = pinned.next().await;
-    assert!(first.is_some());
-
-    // Cancel the stream
-    stream_cancel.cancel();
-
-    // Stream should be cancelled
-    assert!(stream_cancel.is_cancelled());
-
-    // Cleanup
-    cancel.cancel();
-}
-
-#[tokio::test]
-async fn test_http2_remote_transport_stream() {
-    use futures::StreamExt;
-
-    let handler = Arc::new(TestHandler::new());
-    let cancel = CancellationToken::new();
-
-    // Start server
-    let server = Http2Server::new(
-        "127.0.0.1:0".parse().unwrap(),
-        handler,
-        Http2Config::default(),
-        cancel.clone(),
-    )
-    .await
-    .unwrap();
-
-    let addr = server.local_addr();
-
-    // Create transport
-    let client = Arc::new(Http2Client::new(Http2Config::default()));
-    let transport = Http2RemoteTransport::new(client, addr, "stream-actor".to_string());
-
-    // Use the RemoteTransport trait
-    use pulsing_actor::actor::RemoteTransport;
-
-    let actor_id = ActorId::local(4);
-    let mut stream = transport
-        .request_stream(&actor_id, "StreamType", b"request".to_vec())
-        .await
-        .unwrap();
-
-    // Collect payloads
-    let mut payloads = Vec::new();
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(payload) => payloads.push(payload),
-            Err(e) => panic!("Stream error: {}", e),
-        }
-    }
-
-    // Should receive 5 payloads
-    assert_eq!(payloads.len(), 5);
+    // Verify ask counter
+    assert_eq!(counters.ask_count.load(Ordering::SeqCst), 1);
 
     // Cleanup
     cancel.cancel();
@@ -962,65 +780,6 @@ async fn test_http2_concurrent_throughput_benchmark() {
     cancel.cancel();
 }
 
-#[tokio::test]
-async fn test_http2_stream_throughput_benchmark() {
-    use futures::StreamExt;
-
-    let handler = Arc::new(TestHandler::new());
-    let cancel = CancellationToken::new();
-
-    // Start server
-    let server = Http2Server::new(
-        "127.0.0.1:0".parse().unwrap(),
-        handler,
-        Http2Config::streaming(),
-        cancel.clone(),
-    )
-    .await
-    .unwrap();
-
-    let addr = server.local_addr();
-
-    // Create client
-    let client = Http2Client::new(Http2Config::streaming());
-
-    let stream_count = 100;
-    let start = std::time::Instant::now();
-    let mut total_frames = 0;
-
-    // Send multiple stream requests
-    for _ in 0..stream_count {
-        let mut stream = client
-            .ask_stream(addr, "/actors/bench-stream", "Stream", b"payload".to_vec())
-            .await
-            .unwrap();
-
-        while let Some(result) = stream.next().await {
-            if result.is_ok() {
-                total_frames += 1;
-            }
-        }
-    }
-
-    let elapsed = start.elapsed();
-    let streams_per_sec = stream_count as f64 / elapsed.as_secs_f64();
-    let frames_per_sec = total_frames as f64 / elapsed.as_secs_f64();
-
-    println!(
-        "HTTP/2 Stream Throughput: {} streams, {} frames in {:?} ({:.0} streams/s, {:.0} frames/s)",
-        stream_count, total_frames, elapsed, streams_per_sec, frames_per_sec
-    );
-
-    // Should handle reasonable throughput
-    assert!(
-        streams_per_sec > 10.0,
-        "Stream throughput too low: {} streams/s",
-        streams_per_sec
-    );
-
-    // Cleanup
-    cancel.cancel();
-}
 
 #[tokio::test]
 async fn test_http2_latency_benchmark() {

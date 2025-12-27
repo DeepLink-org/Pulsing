@@ -14,7 +14,7 @@
 //! - `POST /cluster/gossip` - Gossip protocol
 //! - `GET /health` - Node health check
 
-use crate::actor::{ActorId, ActorPath, Message, PayloadStream};
+use crate::actor::{ActorId, ActorPath, Message};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -482,19 +482,6 @@ impl crate::actor::RemoteTransport for HttpRemoteTransport {
                     .await
             }
         }
-    }
-
-    async fn request_stream(
-        &self,
-        _actor_id: &ActorId,
-        _msg_type: &str,
-        _payload: Vec<u8>,
-    ) -> anyhow::Result<PayloadStream> {
-        // HTTP/1.1 transport does not support streaming.
-        // Use HTTP/2 transport for streaming support.
-        Err(anyhow::anyhow!(
-            "Streaming not supported with HTTP/1.1 transport. Use HTTP/2 transport instead."
-        ))
     }
 }
 
