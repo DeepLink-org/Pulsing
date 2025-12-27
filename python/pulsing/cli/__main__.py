@@ -4,7 +4,7 @@ import uvloop
 
 @hp.param("actor")
 def actor(
-    type: str,
+    actor_type: str,  # 位置参数，支持: router, transformers, vllm
     namespace: str = "pulsing",
     addr: str | None = None,
     seeds: str | None = None,
@@ -17,6 +17,9 @@ def actor(
     http_host: str = "0.0.0.0",
     http_port: int = 8080,
     scheduler: str = "random",
+    # macOS Metal/MLX 支持参数
+    mlx_device: str | None = None,  # 'gpu' 或 'cpu'，默认 'gpu'
+    metal_memory_fraction: float | None = None,  # 0.0-1.0，默认 0.8
 ):
     """
     Start an Actor-based service.
@@ -28,7 +31,7 @@ def actor(
     - vllm: vLLM-based high-performance inference worker
 
     Args:
-        type: Actor type. Options: 'router', 'transformers', 'vllm'
+        actor_type: Actor type (positional argument). Options: 'router', 'transformers', 'vllm'
         namespace: Service namespace. Default: 'pulsing'
         addr: Actor System bind address (e.g., '0.0.0.0:8000')
         seeds: Comma-separated list of seed nodes (e.g., '192.168.1.1:8000,192.168.1.2:8000')
@@ -41,33 +44,38 @@ def actor(
         preload_model: Preload model on startup. Default: False
         http_host: HTTP server host (for router). Default: '0.0.0.0'
         http_port: HTTP server port (for router). Default: 8080
+        mlx_device: MLX device type for macOS ('gpu' or 'cpu'). Default: 'gpu'
+        metal_memory_fraction: Metal memory fraction for macOS (0.0-1.0). Default: 0.8
 
     Examples:
         # Start a router with OpenAI-compatible API on port 8080
-        pulsing actor --type router --http_port 8080 --model_name my-llm
+        pulsing actor router --http_port 8080 --model_name my-llm
 
         # Test with curl
         curl http://localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"my-llm","messages":[{"role":"user","content":"Hello"}]}'
 
         # Start a vLLM worker
-        pulsing actor --type vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
+        pulsing actor vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
+
+        # Start a vLLM worker on macOS with Metal support
+        pulsing actor vllm --model Qwen/Qwen3-0.6B --mlx_device gpu --metal_memory_fraction 0.8 --addr 0.0.0.0:8001
 
         # Start a transformers worker
-        pulsing actor --type transformers --model Qwen/Qwen3-0.6B --addr 0.0.0.0:8001 --seeds 192.168.1.100:8000
+        pulsing actor transformers --model Qwen/Qwen3-0.6B --addr 0.0.0.0:8001 --seeds 192.168.1.100:8000
 
         # Start worker on CPU
-        pulsing actor --type transformers --model gpt2 --device cpu
+        pulsing actor transformers --model gpt2 --device cpu
     """
     # Parse seeds
     seed_list = []
     if seeds:
         seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
 
-    if type == "router":
+    if actor_type == "router":
         _start_router_actor(
             namespace, addr, seed_list, http_host, http_port, model_name, scheduler
         )
-    elif type == "transformers":
+    elif actor_type == "transformers":
         if not model:
             raise ValueError("--model is required for 'transformers' actor type")
         _start_transformers_actor(
@@ -79,7 +87,7 @@ def actor(
             max_new_tokens=max_new_tokens,
             preload_model=preload_model,
         )
-    elif type == "vllm":
+    elif actor_type == "vllm":
         if not model:
             raise ValueError("--model is required for 'vllm' actor type")
         _start_vllm_actor(
@@ -89,10 +97,12 @@ def actor(
             seeds=seed_list,
             max_new_tokens=max_new_tokens,
             role=role,
+            mlx_device=mlx_device,
+            metal_memory_fraction=metal_memory_fraction,
         )
     else:
         raise ValueError(
-            f"Unknown actor type: {type}. Supported types: router, transformers, vllm"
+            f"Unknown actor type: {actor_type}. Supported types: router, transformers, vllm"
         )
 
 
@@ -317,14 +327,42 @@ def _start_vllm_actor(
     seeds: list,
     max_new_tokens: int,
     role: str = "aggregated",
+    mlx_device: str | None = None,
+    metal_memory_fraction: float | None = None,
 ):
-    """Start vLLM Worker"""
+    """Start vLLM Worker
+    
+    Args:
+        model: Model path or name
+        namespace: Service namespace
+        addr: Actor System bind address
+        seeds: List of seed nodes
+        max_new_tokens: Maximum tokens to generate
+        role: Worker role ('aggregated', 'prefill', 'decode')
+        mlx_device: MLX device type for macOS ('gpu' or 'cpu')
+        metal_memory_fraction: Metal memory fraction for macOS (0.0-1.0)
+    """
     from pulsing.actor.helpers import spawn_and_run
 
     from ..actors import VllmWorker
 
     print(f"Starting vLLM Worker (model={model}, namespace={namespace}, role={role})")
     print(f"  Max tokens: {max_new_tokens}")
+    
+    # 显示 macOS Metal 配置（如果设置）
+    import platform
+    if platform.system() == "Darwin":
+        mlx_info = mlx_device or "gpu (default)"
+        if metal_memory_fraction is not None:
+            try:
+                # 确保是浮点数类型
+                memory_value = float(metal_memory_fraction)
+                memory_info = f"{memory_value:.2f}"
+            except (ValueError, TypeError):
+                memory_info = str(metal_memory_fraction)
+        else:
+            memory_info = "0.8 (default)"
+        print(f"  macOS Metal support: MLX device={mlx_info}, memory fraction={memory_info}")
 
     async def run():
         # 创建 Worker Actor
@@ -332,6 +370,8 @@ def _start_vllm_actor(
             model=model,
             role=role,
             max_new_tokens=max_new_tokens,
+            mlx_device=mlx_device,
+            metal_memory_fraction=metal_memory_fraction,
         )
 
         # spawn 并运行

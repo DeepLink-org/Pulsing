@@ -238,10 +238,10 @@ class _OpenAIHandler:
         is_chat: bool,
     ) -> web.StreamResponse:
         created = int(time.time())
-        response = web.StreamResponse(
+        stream_response = web.StreamResponse(
             headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}
         )
-        await response.prepare(request)
+        await stream_response.prepare(request)
 
         obj_type = "chat.completion.chunk" if is_chat else "text_completion"
 
@@ -250,13 +250,46 @@ class _OpenAIHandler:
                 "GenerateStreamRequest",
                 {"prompt": prompt, "max_new_tokens": max_tokens},
             )
-            response = await worker_ref.ask(req_msg)
-            reader = response.stream_reader()
+            stream_message = await worker_ref.ask(req_msg)
+            
+            # 检查返回的是否是流式消息
+            if not stream_message.is_stream:
+                # 如果不是流式消息，可能是错误消息
+                error_data = stream_message.to_json()
+                error_msg = error_data.get("error", "Unknown error")
+                await stream_response.write(
+                    f"data: {json.dumps({'error': error_msg})}\n\n".encode()
+                )
+                await stream_response.write(b"data: [DONE]\n\n")
+                return stream_response
+            
+            reader = stream_message.stream_reader()
 
             async for chunk_bytes in reader:
                 try:
                     chunk = json.loads(chunk_bytes)
+                    finish_reason = chunk.get("finish_reason")
                     text = chunk.get("text", "")
+                    
+                    # 检查是否结束
+                    if finish_reason:
+                        # 发送最后的 chunk（如果有文本）
+                        if text:
+                            data = {
+                                "id": request_id,
+                                "object": obj_type,
+                                "created": created,
+                                "model": model or self.model_name,
+                                "choices": [{"index": 0, "finish_reason": finish_reason}],
+                            }
+                            if is_chat:
+                                data["choices"][0]["delta"] = {"content": text}
+                            else:
+                                data["choices"][0]["text"] = text
+                            await stream_response.write(f"data: {json.dumps(data)}\n\n".encode())
+                        break
+                    
+                    # 只发送非空文本
                     if text:
                         data = {
                             "id": request_id,
@@ -269,13 +302,11 @@ class _OpenAIHandler:
                             data["choices"][0]["delta"] = {"content": text}
                         else:
                             data["choices"][0]["text"] = text
-                        await response.write(f"data: {json.dumps(data)}\n\n".encode())
-                    if chunk.get("finish_reason"):
-                        break
+                        await stream_response.write(f"data: {json.dumps(data)}\n\n".encode())
                 except json.JSONDecodeError:
                     continue
         except Exception as e:
-            await response.write(f"data: {json.dumps({'error': str(e)})}\n\n".encode())
+            await stream_response.write(f"data: {json.dumps({'error': str(e)})}\n\n".encode())
 
         final = {
             "id": request_id,
@@ -288,9 +319,9 @@ class _OpenAIHandler:
             final["choices"][0]["delta"] = {}
         else:
             final["choices"][0]["text"] = ""
-        await response.write(f"data: {json.dumps(final)}\n\n".encode())
-        await response.write(b"data: [DONE]\n\n")
-        return response
+        await stream_response.write(f"data: {json.dumps(final)}\n\n".encode())
+        await stream_response.write(b"data: [DONE]\n\n")
+        return stream_response
 
 
 async def start_router(

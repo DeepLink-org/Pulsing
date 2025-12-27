@@ -4,6 +4,7 @@ import asyncio
 import base64
 import logging
 import os
+import platform
 import uuid
 from io import BytesIO
 from typing import Any
@@ -25,6 +26,47 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _is_macos() -> bool:
+    """检测是否在 macOS 上运行"""
+    return platform.system() == "Darwin"
+
+
+def _setup_macos_metal_env(
+    mlx_device: str | None = None,
+    metal_memory_fraction: float | None = None,
+) -> None:
+    """设置 macOS Metal/MLX 环境变量
+    
+    Args:
+        mlx_device: MLX 设备类型 ('gpu' 或 'cpu')，默认 'gpu'
+        metal_memory_fraction: Metal 内存使用比例 (0.0-1.0)，默认 0.8
+    """
+    if not _is_macos():
+        return
+    
+    # 设置 MLX 设备
+    if mlx_device is None:
+        mlx_device = os.environ.get("VLLM_MLX_DEVICE", "gpu")
+    
+    if "VLLM_MLX_DEVICE" not in os.environ:
+        os.environ["VLLM_MLX_DEVICE"] = mlx_device
+        logger.info(f"Set VLLM_MLX_DEVICE={mlx_device} for macOS Metal support")
+    
+    # 设置 Metal 内存使用比例
+    if metal_memory_fraction is None:
+        metal_memory_fraction_str = os.environ.get("VLLM_METAL_MEMORY_FRACTION")
+        if metal_memory_fraction_str:
+            metal_memory_fraction = float(metal_memory_fraction_str)
+        else:
+            metal_memory_fraction = 0.8  # 默认 80%
+    
+    if "VLLM_METAL_MEMORY_FRACTION" not in os.environ:
+        os.environ["VLLM_METAL_MEMORY_FRACTION"] = str(metal_memory_fraction)
+        logger.info(
+            f"Set VLLM_METAL_MEMORY_FRACTION={metal_memory_fraction} for macOS Metal support"
+        )
+
+
 class VllmWorker(Actor):
     """vLLM 推理 Worker Actor
 
@@ -42,11 +84,17 @@ class VllmWorker(Actor):
         gpu_memory_utilization: float = 0.9,
         trust_remote_code: bool = True,
         max_new_tokens: int = 512,
+        # macOS Metal/MLX 支持参数
+        mlx_device: str | None = None,  # 'gpu' 或 'cpu'，默认从环境变量读取
+        metal_memory_fraction: float | None = None,  # 0.0-1.0，默认 0.8
         **kwargs,
     ):
         self.model = model
         self.role = role.lower()
         self.default_max_new_tokens = max_new_tokens
+
+        # 在 macOS 上设置 Metal/MLX 环境变量
+        _setup_macos_metal_env(mlx_device, metal_memory_fraction)
 
         self.engine_args_dict = engine_args or {}
         self.engine_args_dict.update(
@@ -65,41 +113,77 @@ class VllmWorker(Actor):
         self._engine: AsyncLLM | None = None
         self._is_ready = False
         self._actor_id: ActorId | None = None
+        self._init_task: asyncio.Task | None = None
 
     async def on_start(self, actor_id: ActorId) -> None:
+        """快速返回，在后台初始化引擎"""
         self._actor_id = actor_id
         if not VLLM_AVAILABLE:
             logger.error("vLLM not installed or version incompatible.")
+            self._is_ready = False
             return
 
-        try:
-            await self._init_engine()
-        except Exception as e:
-            logger.exception(f"Failed to initialize vLLM engine: {e}")
+        # 在后台任务中初始化引擎，避免阻塞 on_start
+        async def init_background():
+            try:
+                logger.info(f"Starting vLLM engine initialization for model: {self.model}")
+                await self._init_engine()
+                if self._is_ready:
+                    logger.info(f"vLLM engine initialized successfully for {self.worker_id}")
+                else:
+                    logger.error(f"vLLM engine initialization completed but engine is not ready")
+            except Exception as e:
+                logger.exception(f"Failed to initialize vLLM engine: {e}")
+                self._is_ready = False
+
+        self._init_task = asyncio.create_task(init_background())
+        logger.info(f"vLLM Worker {self.worker_id} started, engine initializing in background...")
 
     async def _init_engine(self):
         if self._is_ready:
             return
 
         logger.info(f"Initializing vLLM ({self.role}) for model: {self.model}")
+        
+        # 检测平台并记录信息
+        if _is_macos():
+            mlx_device = os.environ.get("VLLM_MLX_DEVICE", "not set")
+            metal_memory = os.environ.get("VLLM_METAL_MEMORY_FRACTION", "not set")
+            logger.info(
+                f"Running on macOS with Metal support: "
+                f"VLLM_MLX_DEVICE={mlx_device}, "
+                f"VLLM_METAL_MEMORY_FRACTION={metal_memory}"
+            )
 
         os.environ["VLLM_NO_USAGE_STATS"] = "1"
         os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
-        args = AsyncEngineArgs(**self.engine_args_dict)
-        usage_context = UsageContext.OPENAI_API_SERVER
-        engine_config = args.create_engine_config(usage_context=usage_context)
+        # 将整个初始化过程移到线程池中执行，避免阻塞事件循环
+        # vLLM 的初始化可能包含同步阻塞操作（如模型加载）
+        def init_sync():
+            """同步初始化函数，在线程池中执行"""
+            args = AsyncEngineArgs(**self.engine_args_dict)
+            usage_context = UsageContext.OPENAI_API_SERVER
+            engine_config = args.create_engine_config(usage_context=usage_context)
+            
+            return AsyncLLM.from_vllm_config(
+                vllm_config=engine_config,
+                usage_context=usage_context,
+                disable_log_requests=True,
+            )
 
-        self._engine = AsyncLLM.from_vllm_config(
-            vllm_config=engine_config,
-            usage_context=usage_context,
-            disable_log_requests=True,
-        )
-
+        loop = asyncio.get_event_loop()
+        logger.info(f"Starting vLLM engine initialization in thread pool...")
+        self._engine = await loop.run_in_executor(None, init_sync)
+        
         self._is_ready = True
         logger.info(f"vLLM Worker {self.worker_id} ready")
 
     def on_stop(self) -> None:
+        # 取消初始化任务（如果还在运行）
+        if hasattr(self, '_init_task') and self._init_task and not self._init_task.done():
+            self._init_task.cancel()
+        
         self._engine = None
         self._is_ready = False
 
@@ -132,8 +216,35 @@ class VllmWorker(Actor):
         return meta
 
     async def receive(self, msg: Message) -> Message | StreamMessage:
+        # 如果引擎未就绪，等待初始化完成（最多等待 60 秒）
         if not self._is_ready:
-            return Message.from_json("Error", {"error": "vLLM engine not ready"})
+            if not VLLM_AVAILABLE:
+                error_msg = "vLLM not installed or version incompatible"
+                if msg.msg_type in ("GenerateStreamRequest", "ChatCompletionStreamRequest"):
+                    stream_msg, writer = StreamMessage.create("Error")
+                    asyncio.create_task(writer.error(error_msg))
+                    writer.close()
+                    return stream_msg
+                return Message.from_json("Error", {"error": error_msg})
+            
+            # 等待引擎初始化完成
+            max_wait = 60.0  # 最多等待 60 秒
+            wait_interval = 0.5  # 每 0.5 秒检查一次
+            waited = 0.0
+            
+            while not self._is_ready and waited < max_wait:
+                await asyncio.sleep(wait_interval)
+                waited += wait_interval
+            
+            if not self._is_ready:
+                error_msg = f"vLLM engine initialization timeout after {max_wait}s"
+                logger.error(error_msg)
+                if msg.msg_type in ("GenerateStreamRequest", "ChatCompletionStreamRequest"):
+                    stream_msg, writer = StreamMessage.create("Error")
+                    asyncio.create_task(writer.error(error_msg))
+                    writer.close()
+                    return stream_msg
+                return Message.from_json("Error", {"error": error_msg})
 
         try:
             if msg.msg_type in ("GenerateRequest", "ChatCompletionRequest"):
@@ -149,11 +260,23 @@ class VllmWorker(Actor):
                 await self._engine.reset_prefix_cache()
                 return Message.from_json("Ok", {"message": "KV cache cleared"})
             else:
+                # 对于流式请求，返回流式错误消息
+                if msg.msg_type.endswith("StreamRequest"):
+                    stream_msg, writer = StreamMessage.create("Error")
+                    asyncio.create_task(writer.error(f"Unsupported type: {msg.msg_type}"))
+                    writer.close()
+                    return stream_msg
                 return Message.from_json(
                     "Error", {"error": f"Unsupported type: {msg.msg_type}"}
                 )
         except Exception as e:
             logger.exception(f"Error handling {msg.msg_type}: {e}")
+            # 对于流式请求，返回流式错误消息
+            if msg.msg_type in ("GenerateStreamRequest", "ChatCompletionStreamRequest"):
+                stream_msg, writer = StreamMessage.create("Error")
+                asyncio.create_task(writer.error(str(e)))
+                writer.close()
+                return stream_msg
             return Message.from_json("Error", {"error": str(e)})
 
     async def _build_prompt(self, data: dict[str, Any]) -> TokensPrompt | TextPrompt:
@@ -248,24 +371,45 @@ class VllmWorker(Actor):
         return Message.from_json("Error", {"error": "No output"})
 
     async def _handle_generate_stream(self, msg: Message) -> StreamMessage:
-        data = msg.to_json()
-        prompt = await self._build_prompt(data)
-        sampling_params = self._build_sampling_params(data)
-        request_id = f"req-stream-{uuid.uuid4().hex[:8]}"
-
+        # 先创建 StreamMessage，确保即使出错也能返回流式消息
         stream_msg, writer = StreamMessage.create("GenerateStream")
-
+        
         async def produce():
             try:
+                data = msg.to_json()
+                prompt = await self._build_prompt(data)
+                sampling_params = self._build_sampling_params(data)
+                request_id = f"req-stream-{uuid.uuid4().hex[:8]}"
+
                 results_generator = self._engine.generate(
                     prompt, sampling_params, request_id
                 )
                 last_pos = 0
+                last_text = ""  # 用于检测重复
+                repeat_count = 0
+                max_repeats = 10  # 最多允许重复次数
+                
                 async for res in results_generator:
                     if res.outputs:
                         output = res.outputs[0]
-                        text_delta = output.text[last_pos:]
-                        last_pos = len(output.text)
+                        current_text = output.text
+                        text_delta = current_text[last_pos:]
+                        last_pos = len(current_text)
+                        
+                        # 检测重复：如果新文本和上次一样，增加计数
+                        if text_delta == last_text and text_delta:
+                            repeat_count += 1
+                            if repeat_count >= max_repeats:
+                                logger.warning(f"Detected repetition, stopping generation. Text: {text_delta[:50]}...")
+                                chunk = {
+                                    "text": "",
+                                    "finish_reason": "length",  # 使用 length 作为重复结束的原因
+                                }
+                                await writer.write_json(chunk)
+                                break
+                        else:
+                            repeat_count = 0
+                            last_text = text_delta
 
                         chunk = {
                             "text": text_delta,
@@ -284,6 +428,7 @@ class VllmWorker(Actor):
                         if output.finish_reason:
                             break
             except Exception as e:
+                logger.exception(f"Error in stream generation: {e}")
                 await writer.error(str(e))
             finally:
                 writer.close()

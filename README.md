@@ -76,13 +76,16 @@ Pulsing 提供基于 Actor System 的 LLM 推理服务：
 
 ```bash
 # 启动 Router (OpenAI 兼容 API)
-pulsing actor --type router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
 
 # 启动 Transformers Worker
-pulsing actor --type transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
+pulsing actor transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
 
 # 启动 vLLM Worker
-pulsing actor --type vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+pulsing actor vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+
+# 启动 vLLM Worker (macOS Metal 支持)
+pulsing actor vllm --model Qwen/Qwen3-0.6B --mlx_device gpu --metal_memory_fraction 0.8 --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
 
 # 运行基准测试
 pulsing bench --tokenizer_name gpt2 --url http://localhost:8080
