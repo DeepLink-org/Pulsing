@@ -1,8 +1,13 @@
-//! Ping-Pong example demonstrating basic actor communication
+//! Ping-Pong Example - Basic Actor Communication
 //!
-//! Run with: cargo run --example ping_pong -p pulsing-actor
+//! Demonstrates:
+//! - Actor lifecycle (on_start, on_stop)
+//! - Request-response (ask) and fire-and-forget (tell) patterns
+//!
+//! Run: cargo run --example ping_pong -p pulsing-actor
 
 use pulsing_actor::prelude::*;
+use serde::{Deserialize, Serialize};
 
 // Messages
 #[derive(Serialize, Deserialize, Debug)]
@@ -11,7 +16,13 @@ struct Ping(i32);
 #[derive(Serialize, Deserialize, Debug)]
 struct Pong(i32);
 
-// Actor - minimal definition!
+#[derive(Serialize, Deserialize, Debug)]
+struct GetCount;
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Count(i32);
+
+// Actor
 struct Counter {
     count: i32,
 }
@@ -19,42 +30,53 @@ struct Counter {
 #[async_trait]
 impl Actor for Counter {
     async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
-        println!("[{}] started with count: {}", ctx.id(), self.count);
+        println!("[{}] Started with count: {}", ctx.id(), self.count);
         Ok(())
     }
 
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
-        if msg.msg_type().ends_with("Ping") {
-            let Ping(value) = msg.unpack()?;
-            self.count += value;
-            println!("Ping({}) -> count = {}", value, self.count);
-            return Message::pack(&Pong(self.count));
+    async fn on_stop(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+        println!("[{}] Stopped with count: {}", ctx.id(), self.count);
+        Ok(())
+    }
+
+    async fn receive(&mut self, msg: Message, ctx: &mut ActorContext) -> anyhow::Result<Message> {
+        match msg.msg_type() {
+            t if t.ends_with("Ping") => {
+                let Ping(value) = msg.unpack()?;
+                self.count += value;
+                println!("[{}] Ping({}) -> count = {}", ctx.id(), value, self.count);
+                Message::pack(&Pong(self.count))
+            }
+            t if t.ends_with("GetCount") => Message::pack(&Count(self.count)),
+            _ => Err(anyhow::anyhow!("Unknown: {}", msg.msg_type())),
         }
-        Err(anyhow::anyhow!("Unknown message"))
     }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("=== Ping-Pong Example ===\n");
+    println!("=== Pulsing Ping-Pong Example ===\n");
 
     // Create system and spawn actor
     let system = ActorSystem::new(SystemConfig::standalone()).await?;
     let actor = system.spawn("counter", Counter { count: 0 }).await?;
+    println!("✓ System started, actor spawned\n");
 
-    // Send messages
-    for i in 1..=5 {
+    // Request-Response (ask)
+    println!("--- Request-Response (ask) ---");
+    for i in 1..=3 {
         let Pong(result) = actor.ask(Ping(i * 10)).await?;
-        println!("Got Pong({})\n", result);
+        println!("Ping({}) -> Pong({})", i * 10, result);
     }
 
-    // Fire-and-forget
+    // Fire-and-Forget (tell)
+    println!("\n--- Fire-and-Forget (tell) ---");
     actor.tell(Ping(100)).await?;
+    println!("Sent Ping(100) without waiting");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    // Check final state
-    let Pong(final_count) = actor.ask(Ping(0)).await?;
-    println!("Final count: {}", final_count);
+    let Count(final_count) = actor.ask(GetCount).await?;
+    println!("Final count: {}\n", final_count);
 
     system.shutdown().await
 }
