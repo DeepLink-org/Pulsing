@@ -1,44 +1,43 @@
 [package]
 name = "pulsing-bench"
-version = "1.1.0"
-edition = "2021"
+version = "1.1.0"  # Keep original version for compatibility
+edition.workspace = true
 authors = ["Hugo Larcher <hugo.larcher@huggingface.co>"]
+license.workspace = true
 repository = "https://github.com/huggingface/inference-benchmarker"
 readme = "README.md"
-license = "Apache-2.0"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-reqwest-eventsource = "0.6.0"
-log = "0.4.22"
-serde_json = "1.0.127"
-serde = { version = "1.0.209", features = ["derive"] }
-tokio = { version = "1.40.0", features = ["rt", "rt-multi-thread", "macros", "signal"] }
-anyhow = "1.0.86"
-tokenizers = { version = "0.21.1", features = ["http"] }
-rand_distr = "0.5.1"
-rand = "0.9.0"
-futures-util = "0.3.30"
-env_logger = "0.11.5"
-async-trait = "0.1.82"
-reqwest = { version = "0.12.7", features = ["json"] }
-strum_macros = "0.27.1"
-clap = { version = "4.5.17", features = ["derive", "env"] }
-humantime = "2.1.0"
-colored = "2.1.0"
-chrono = "0.4.38"
-hf-hub = { version = "0.4.2", features = ["tokio"] }
-indicatif = "0.17.8"
-rayon = "1.10.0"
-serde_with = "3.9.0"
-sysinfo = "0.33.1"
-mockito = "1.5.0"
-tabled = "=0.14"
-uuid = { version = "1.11.0", features = ["v4", "fast-rng"] }
+# Use workspace dependencies where available
+reqwest-eventsource = { workspace = true }
+log = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tokenizers = { workspace = true }
+rand_distr = { workspace = true }
+rand = { workspace = true }
+futures-util = { workspace = true }
+env_logger = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+strum_macros = { workspace = true }
+clap = { workspace = true }
+humantime = { workspace = true }
+colored = { workspace = true }
+chrono = { workspace = true }
+hf-hub = { workspace = true }
+indicatif = { workspace = true }
+rayon = { workspace = true }
+serde_with = { workspace = true }
+sysinfo = { workspace = true }
+mockito = { workspace = true }
+tabled = { workspace = true }
+uuid = { workspace = true }
 
 [build-dependencies]
-vergen-gitcl = { version = "1.0.1" }
+vergen-gitcl = { workspace = true }
 
 [lib]
 name = "pulsing_bench"

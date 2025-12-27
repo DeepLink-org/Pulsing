@@ -1,8 +1,5 @@
 [workspace]
-members = [
-  "crates/pulsing-actor",
-  "crates/pulsing-bench",
-]
+members = ["crates/pulsing-actor", "crates/pulsing-bench"]
 resolver = "3"
 
 [workspace.package]
@@ -18,23 +15,24 @@ keywords = ["actor", "distributed", "async", "inference"]
 pulsing-actor = { path = "crates/pulsing-actor" }
 
 # Async runtime
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal"] }
 tokio-util = { version = "0.7", features = ["codec", "net", "rt"] }
 tokio-stream = { version = "0.1" }
+futures-util = { version = "0.3" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
+serde_with = "3.9"
 bytes = { version = "1" }
+bincode = "1.3"
 
 # Async utilities
 async-trait = { version = "0.1" }
-async-stream = { version = "0.3" }
 futures = { version = "0.3" }
 
 # Concurrent data structures
 dashmap = { version = "6.1" }
-parking_lot = { version = "0.12" }
 
 # Error handling
 anyhow = { version = "1" }
@@ -43,16 +41,47 @@ thiserror = { version = "2.0" }
 # Logging
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+log = "0.4"
+env_logger = "0.11"
 
 # Utilities
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "fast-rng"] }
 rand = { version = "0.9" }
+rand_distr = "0.5"
+chrono = "0.4"
+colored = "2.1"
+humantime = "2.1"
+indicatif = "0.17"
+rayon = "1.10"
+sysinfo = "0.33"
 
 # HTTP
-axum = { version = "0.8", features = ["macros"] }
-hyper = { version = "1.7" }
+# axum = { version = "0.8", features = ["macros"] }
+hyper = { version = "1.7", features = ["http2", "server", "client"] }
 hyper-util = { version = "0.1" }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+http-body-util = "0.1"
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
+reqwest-eventsource = "0.6"
+
+# Encoding
+base64 = "0.22"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+strum_macros = "0.27"
+
+# Testing
+tokio-test = "0.4"
+mockito = "1.5"
+tabled = "=0.14"
+
+# Other
+tokenizers = { version = "0.21", features = ["http"] }
+hf-hub = { version = "0.4", features = ["tokio"] }
+vergen-gitcl = "1.0"
 
 [package]
 name = "pulsing-py"
@@ -68,24 +97,25 @@ name = "_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pulsing-actor = { path = "crates/pulsing-actor" }
+pulsing-actor = { workspace = true }
 pulsing-bench = { path = "crates/pulsing-bench" }
 
-anyhow = { version = "1" }
-async-trait = { version = "0.1" }
-futures = { version = "0.3" }
-serde = { version = "1" }
-serde_json = { version = "1" }
-thiserror = { version = "2.0" }
-tokio = { version = "1", features = ["full"] }
-tracing = { version = "0.1" }
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+# Use workspace dependencies
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 # PyO3 dependencies
 pyo3 = { version = "0.23.4", default-features = false, features = [
   "macros",
   "experimental-async",
-  "experimental-inspect",
+  # "experimental-inspect",
   "extension-module",
   "py-clone",
   "abi3-py310",
@@ -93,7 +123,7 @@ pyo3 = { version = "0.23.4", default-features = false, features = [
 
 pyo3-async-runtimes = { version = "0.23.0", default-features = false, features = [
   "attributes",
-  "testing",
+  # "testing",
   "tokio-runtime",
   "unstable-streams",
 ] }
