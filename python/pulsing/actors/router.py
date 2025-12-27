@@ -251,7 +251,7 @@ class _OpenAIHandler:
                 {"prompt": prompt, "max_new_tokens": max_tokens},
             )
             stream_message = await worker_ref.ask(req_msg)
-            
+
             # 检查返回的是否是流式消息
             if not stream_message.is_stream:
                 # 如果不是流式消息，可能是错误消息
@@ -262,7 +262,7 @@ class _OpenAIHandler:
                 )
                 await stream_response.write(b"data: [DONE]\n\n")
                 return stream_response
-            
+
             reader = stream_message.stream_reader()
 
             async for chunk_bytes in reader:
@@ -270,7 +270,7 @@ class _OpenAIHandler:
                     chunk = json.loads(chunk_bytes)
                     finish_reason = chunk.get("finish_reason")
                     text = chunk.get("text", "")
-                    
+
                     # 检查是否结束
                     if finish_reason:
                         # 发送最后的 chunk（如果有文本）
@@ -280,15 +280,19 @@ class _OpenAIHandler:
                                 "object": obj_type,
                                 "created": created,
                                 "model": model or self.model_name,
-                                "choices": [{"index": 0, "finish_reason": finish_reason}],
+                                "choices": [
+                                    {"index": 0, "finish_reason": finish_reason}
+                                ],
                             }
                             if is_chat:
                                 data["choices"][0]["delta"] = {"content": text}
                             else:
                                 data["choices"][0]["text"] = text
-                            await stream_response.write(f"data: {json.dumps(data)}\n\n".encode())
+                            await stream_response.write(
+                                f"data: {json.dumps(data)}\n\n".encode()
+                            )
                         break
-                    
+
                     # 只发送非空文本
                     if text:
                         data = {
@@ -302,11 +306,15 @@ class _OpenAIHandler:
                             data["choices"][0]["delta"] = {"content": text}
                         else:
                             data["choices"][0]["text"] = text
-                        await stream_response.write(f"data: {json.dumps(data)}\n\n".encode())
+                        await stream_response.write(
+                            f"data: {json.dumps(data)}\n\n".encode()
+                        )
                 except json.JSONDecodeError:
                     continue
         except Exception as e:
-            await stream_response.write(f"data: {json.dumps({'error': str(e)})}\n\n".encode())
+            await stream_response.write(
+                f"data: {json.dumps({'error': str(e)})}\n\n".encode()
+            )
 
         final = {
             "id": request_id,

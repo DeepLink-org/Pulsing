@@ -331,7 +331,7 @@ def _start_vllm_actor(
     metal_memory_fraction: float | None = None,
 ):
     """Start vLLM Worker
-    
+
     Args:
         model: Model path or name
         namespace: Service namespace
@@ -348,9 +348,10 @@ def _start_vllm_actor(
 
     print(f"Starting vLLM Worker (model={model}, namespace={namespace}, role={role})")
     print(f"  Max tokens: {max_new_tokens}")
-    
+
     # 显示 macOS Metal 配置（如果设置）
     import platform
+
     if platform.system() == "Darwin":
         mlx_info = mlx_device or "gpu (default)"
         if metal_memory_fraction is not None:
@@ -362,7 +363,9 @@ def _start_vllm_actor(
                 memory_info = str(metal_memory_fraction)
         else:
             memory_info = "0.8 (default)"
-        print(f"  macOS Metal support: MLX device={mlx_info}, memory fraction={memory_info}")
+        print(
+            f"  macOS Metal support: MLX device={mlx_info}, memory fraction={memory_info}"
+        )
 
     async def run():
         # 创建 Worker Actor

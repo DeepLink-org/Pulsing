@@ -616,19 +616,20 @@ impl Actor for PythonActorWrapper {
                     if handler.getattr(py, "on_start").is_ok() {
                         let py_actor_id = PyActorId { inner: actor_id };
                         let result = handler.call_method1(py, "on_start", (py_actor_id,))?;
-                        
+
                         // 检查返回的是否是协程，如果是则等待它完成
                         let asyncio = py.import("asyncio")?;
                         let is_coro = asyncio
                             .call_method1("iscoroutine", (&result,))?
                             .extract::<bool>()?;
-                        
+
                         if is_coro {
-                            let run_coroutine_threadsafe = asyncio.getattr("run_coroutine_threadsafe")?;
+                            let run_coroutine_threadsafe =
+                                asyncio.getattr("run_coroutine_threadsafe")?;
                             let future = run_coroutine_threadsafe.call1((&result, &event_loop))?;
                             future.call_method0("result")?;
                         }
-                        
+
                         Ok(())
                     } else {
                         Ok(())
@@ -649,19 +650,20 @@ impl Actor for PythonActorWrapper {
                 Python::with_gil(|py| -> PyResult<()> {
                     if handler.getattr(py, "on_stop").is_ok() {
                         let result = handler.call_method0(py, "on_stop")?;
-                        
+
                         // 检查返回的是否是协程，如果是则等待它完成
                         let asyncio = py.import("asyncio")?;
                         let is_coro = asyncio
                             .call_method1("iscoroutine", (&result,))?
                             .extract::<bool>()?;
-                        
+
                         if is_coro {
-                            let run_coroutine_threadsafe = asyncio.getattr("run_coroutine_threadsafe")?;
+                            let run_coroutine_threadsafe =
+                                asyncio.getattr("run_coroutine_threadsafe")?;
                             let future = run_coroutine_threadsafe.call1((&result, &event_loop))?;
                             future.call_method0("result")?;
                         }
-                        
+
                         Ok(())
                     } else {
                         Ok(())
