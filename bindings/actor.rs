@@ -534,7 +534,7 @@ impl PyActorRef {
         let actor_msg = msg.to_message();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            actor_ref.fire(actor_msg).await.map_err(to_pyerr)?;
+            actor_ref.send_oneway(actor_msg).await.map_err(to_pyerr)?;
             Ok(())
         })
     }
@@ -596,7 +596,7 @@ impl PyActorRef {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let actor_msg = Message::single(&msg_type, payload);
-            actor_ref.fire(actor_msg).await.map_err(to_pyerr)?;
+            actor_ref.send_oneway(actor_msg).await.map_err(to_pyerr)?;
             Ok(())
         })
     }

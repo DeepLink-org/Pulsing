@@ -2,7 +2,7 @@
 
 use crate::actor::{
     Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Envelope,
-    EnvelopeResponse, Message, NodeId, StopReason,
+    Message, NodeId, StopReason,
 };
 use crate::cluster::{GossipCluster, GossipConfig, GossipMessage, MemberInfo, NamedActorInfo};
 use crate::transport::{Http2Config, Http2RemoteTransport, Http2ServerHandler, Http2Transport};
@@ -672,28 +672,13 @@ async fn run_actor_loop<A: Actor>(
                 match msg {
                     Some(envelope) => {
                         stats.inc_message();
+                        let (message, responder) = envelope.into_parts();
 
-                        // Destructure envelope to take ownership of message and respond_to
-                        let Envelope { message, respond_to, .. } = envelope;
-
-                        // Always call receive() - tell pattern just ignores the response
                         match actor.receive(message, &mut ctx).await {
-                            Ok(response) => {
-                                // Send response if caller expects one
-                                if let Some(EnvelopeResponse::Unified(tx)) = respond_to {
-                                    let _ = tx.send(Ok(response));
-                                }
-                            }
+                            Ok(response) => responder.send(Ok(response)),
                             Err(e) => {
-                                tracing::error!(
-                                    actor_id = ?ctx.id(),
-                                    error = %e,
-                                    "Actor handler error"
-                                );
-                                // Send error if caller expects response
-                                if let Some(EnvelopeResponse::Unified(tx)) = respond_to {
-                                    let _ = tx.send(Err(anyhow::anyhow!("Handler error: {}", e)));
-                                }
+                                tracing::error!(actor_id = ?ctx.id(), error = %e, "Actor error");
+                                responder.send(Err(anyhow::anyhow!("Handler error: {}", e)));
                             }
                         }
                     }
@@ -800,7 +785,7 @@ impl SystemMessageHandler {
             return Err(anyhow::anyhow!("Actor not found: {}", actor_name));
         };
 
-        let envelope = Envelope::tell_msg(msg);
+        let envelope = Envelope::tell(msg);
 
         sender
             .send(envelope)

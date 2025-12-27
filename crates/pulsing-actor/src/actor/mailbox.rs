@@ -1,55 +1,38 @@
-//! Actor mailbox - message queue implementation
+//! Actor mailbox - message envelope and queue
 
 use super::traits::Message;
 use tokio::sync::{mpsc, oneshot};
 
-/// Response channel for envelope
+/// Response channel type
 pub type ResponseChannel = oneshot::Sender<anyhow::Result<Message>>;
 
-/// Response type for envelope
-pub enum EnvelopeResponse {
-    /// Unified response channel
-    Unified(ResponseChannel),
+/// Responder - sends response back to caller (no-op for tell pattern)
+pub struct Responder(Option<ResponseChannel>);
+
+impl Responder {
+    /// Send response (no-op if this was a tell)
+    pub fn send(self, result: anyhow::Result<Message>) {
+        if let Some(tx) = self.0 {
+            let _ = tx.send(result);
+        }
+    }
 }
 
 /// Message envelope with optional response channel
 pub struct Envelope {
-    /// The message
-    pub message: Message,
-
-    /// Correlation ID for request tracking
-    pub correlation_id: Option<u64>,
-
-    /// Response channel (for ask pattern)
-    pub respond_to: Option<EnvelopeResponse>,
+    message: Message,
+    respond_to: Option<ResponseChannel>,
 }
 
 impl Envelope {
-    /// Create a new envelope for tell (fire-and-forget)
-    pub fn tell(msg_type: String, payload: Vec<u8>) -> Self {
-        Self {
-            message: Message::single(msg_type, payload),
-            correlation_id: None,
-            respond_to: None,
-        }
+    /// Create envelope for fire-and-forget (tell pattern)
+    pub fn tell(message: Message) -> Self {
+        Self { message, respond_to: None }
     }
 
-    /// Create a new envelope for tell with Message
-    pub fn tell_msg(message: Message) -> Self {
-        Self {
-            message,
-            correlation_id: None,
-            respond_to: None,
-        }
-    }
-
-    /// Create a new envelope for ask
+    /// Create envelope for request-response (ask pattern)
     pub fn ask(message: Message, respond_to: ResponseChannel) -> Self {
-        Self {
-            message,
-            correlation_id: Some(rand::random()),
-            respond_to: Some(EnvelopeResponse::Unified(respond_to)),
-        }
+        Self { message, respond_to: Some(respond_to) }
     }
 
     /// Get the message type
@@ -57,19 +40,9 @@ impl Envelope {
         self.message.msg_type()
     }
 
-    /// Get payload as bytes (only for single message)
-    pub fn payload(&self) -> anyhow::Result<&[u8]> {
-        match &self.message {
-            Message::Single { data, .. } => Ok(data),
-            Message::Stream { .. } => Err(anyhow::anyhow!("Cannot get bytes from stream message")),
-        }
-    }
-
-    /// Send a response
-    pub fn respond(self, result: anyhow::Result<Message>) {
-        if let Some(EnvelopeResponse::Unified(tx)) = self.respond_to {
-            let _ = tx.send(result);
-        }
+    /// Decompose into message and responder
+    pub fn into_parts(self) -> (Message, Responder) {
+        (self.message, Responder(self.respond_to))
     }
 
     /// Check if this envelope expects a response
@@ -81,9 +54,8 @@ impl Envelope {
 impl std::fmt::Debug for Envelope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Envelope")
-            .field("message", &self.message)
-            .field("correlation_id", &self.correlation_id)
-            .field("has_respond_to", &self.respond_to.is_some())
+            .field("msg_type", &self.message.msg_type())
+            .field("expects_response", &self.respond_to.is_some())
             .finish()
     }
 }
@@ -176,7 +148,7 @@ mod tests {
         let mut mailbox = Mailbox::new();
         let sender = mailbox.sender();
 
-        let envelope = Envelope::tell("test".to_string(), vec![1, 2, 3]);
+        let envelope = Envelope::tell(Message::single("test", vec![1, 2, 3]));
         sender.send(envelope).await.unwrap();
 
         let mut receiver = mailbox.take_receiver();
@@ -191,7 +163,8 @@ mod tests {
         let envelope = Envelope::ask(msg, tx);
 
         assert!(envelope.expects_response());
-        envelope.respond(Ok(Message::single("", b"world")));
+        let (_, responder) = envelope.into_parts();
+        responder.send(Ok(Message::single("", b"world")));
 
         let result = rx.await.unwrap().unwrap();
         assert!(result.is_single());

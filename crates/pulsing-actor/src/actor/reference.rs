@@ -110,26 +110,18 @@ impl ActorRef {
         matches!(self.inner, ActorRefInner::Local(_))
     }
 
-    /// Send a message and receive a response (unified interface)
+    /// Send a raw message and receive response (low-level API)
     ///
-    /// This is the primary method for actor communication. It handles all patterns:
-    /// - Single request -> Single response
-    /// - Single request -> Stream response
-    ///
-    /// The response type (Single or Stream) is automatically determined by
-    /// the actor's return value. For remote actors, the server sets a response
-    /// type header that the client uses to properly decode the response.
+    /// Use this when you need direct access to `Message`, e.g., for streaming.
+    /// For type-safe communication, prefer `ask()` and `tell()`.
     pub async fn send(&self, msg: Message) -> anyhow::Result<Message> {
         match &self.inner {
             ActorRefInner::Local(sender) => {
                 let (tx, rx) = oneshot::channel();
-                let envelope = Envelope::ask(msg, tx);
-
                 sender
-                    .send(envelope)
+                    .send(Envelope::ask(msg, tx))
                     .await
                     .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
-
                 rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
             }
             ActorRefInner::Remote(remote) => {
@@ -138,57 +130,44 @@ impl ActorRef {
         }
     }
 
-    /// Send a fire-and-forget message (no response expected)
-    pub async fn fire(&self, msg: Message) -> anyhow::Result<()> {
+    /// Send a raw message without waiting for response (low-level fire-and-forget)
+    pub async fn send_oneway(&self, msg: Message) -> anyhow::Result<()> {
         match &self.inner {
-            ActorRefInner::Local(sender) => {
-                let envelope = Envelope::tell_msg(msg);
-
-                sender
-                    .send(envelope)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
-            }
+            ActorRefInner::Local(sender) => sender
+                .send(Envelope::tell(msg))
+                .await
+                .map_err(|_| anyhow::anyhow!("Actor mailbox closed")),
             ActorRefInner::Remote(remote) => {
-                remote.transport.send_oneway(&self.actor_id, msg).await?;
+                remote.transport.send_oneway(&self.actor_id, msg).await
             }
         }
-
-        Ok(())
     }
 
-    /// Ask pattern - send a typed message and wait for typed response
-    ///
-    /// Automatically uses `type_name` to identify the message type.
+    /// Ask - send typed message and wait for typed response
     ///
     /// # Example
     /// ```ignore
-    /// let pong: Pong = actor_ref.ask(Ping { value: 42 }).await?;
+    /// let pong: Pong = actor.ask(Ping { value: 42 }).await?;
     /// ```
     pub async fn ask<M, R>(&self, msg: M) -> anyhow::Result<R>
     where
         M: Serialize + 'static,
         R: DeserializeOwned,
     {
-        let actor_msg = Message::pack(&msg)?;
-        let response = self.send(actor_msg).await?;
-        response.unpack()
+        self.send(Message::pack(&msg)?).await?.unpack()
     }
 
-    /// Tell pattern - send a message without waiting for response
-    ///
-    /// Automatically uses `type_name` to identify the message type.
+    /// Tell - send typed message without waiting for response (fire-and-forget)
     ///
     /// # Example
     /// ```ignore
-    /// actor_ref.tell(Ping { value: 42 }).await?;
+    /// actor.tell(Ping { value: 42 }).await?;
     /// ```
     pub async fn tell<M>(&self, msg: M) -> anyhow::Result<()>
     where
         M: Serialize + 'static,
     {
-        let actor_msg = Message::pack(&msg)?;
-        self.fire(actor_msg).await
+        self.send_oneway(Message::pack(&msg)?).await
     }
 }
 
@@ -227,13 +206,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_local_actor_ref_fire() {
+    async fn test_local_actor_ref_send_oneway() {
         let (tx, mut rx) = mpsc::channel(16);
         let actor_id = ActorId::local(1);
         let actor_ref = ActorRef::local(actor_id, tx);
 
         let msg = Message::single("TestMsg", b"hello");
-        actor_ref.fire(msg).await.unwrap();
+        actor_ref.send_oneway(msg).await.unwrap();
 
         let envelope = rx.recv().await.unwrap();
         assert_eq!(envelope.msg_type(), "TestMsg");

@@ -31,7 +31,7 @@ async fn test_mailbox_send_receive() {
     let mut receiver = mailbox.take_receiver();
 
     // Send
-    let envelope = Envelope::tell("test".to_string(), vec![1, 2, 3]);
+    let envelope = Envelope::tell(Message::single("test", vec![1, 2, 3]));
     sender.send(envelope).await.unwrap();
 
     // Receive
@@ -39,7 +39,8 @@ async fn test_mailbox_send_receive() {
     assert_eq!(received.msg_type(), "test");
 
     // Extract payload from message
-    if let Message::Single { data, .. } = received.message {
+    let (message, _) = received.into_parts();
+    if let Message::Single { data, .. } = message {
         assert_eq!(data, vec![1, 2, 3]);
     } else {
         panic!("Expected single message");
@@ -56,8 +57,8 @@ async fn test_mailbox_ask_pattern() {
     let receiver_task = tokio::spawn(async move {
         if let Some(envelope) = receiver.recv().await {
             assert!(envelope.expects_response());
-            // Respond with a Message
-            envelope.respond(Ok(Message::single("", vec![42, 43, 44])));
+            let (_, responder) = envelope.into_parts();
+            responder.send(Ok(Message::single("", vec![42, 43, 44])));
         }
     });
 
@@ -87,7 +88,7 @@ async fn test_mailbox_closed_detection() {
     drop(receiver);
 
     // Try to send - should fail
-    let envelope = Envelope::tell("test".to_string(), vec![]);
+    let envelope = Envelope::tell(Message::single("test", vec![]));
     let result = sender.send(envelope).await;
     assert!(result.is_err());
     assert!(sender.is_closed());
@@ -118,7 +119,7 @@ async fn test_mailbox_high_throughput() {
     // Send many messages
     let start = std::time::Instant::now();
     for i in 0..message_count {
-        let envelope = Envelope::tell(format!("msg-{}", i), vec![i as u8]);
+        let envelope = Envelope::tell(Message::single(format!("msg-{}", i), vec![i as u8]));
         sender.send(envelope).await.unwrap();
     }
     let send_time = start.elapsed();
@@ -166,8 +167,10 @@ async fn test_mailbox_concurrent_senders() {
         let sender_clone = MailboxSender::new(sender.clone());
         let handle = tokio::spawn(async move {
             for i in 0..messages_per_sender {
-                let envelope =
-                    Envelope::tell(format!("sender-{}-msg-{}", s, i), vec![s as u8, i as u8]);
+                let envelope = Envelope::tell(Message::single(
+                    format!("sender-{}-msg-{}", s, i),
+                    vec![s as u8, i as u8],
+                ));
                 sender_clone.send(envelope).await.unwrap();
             }
         });
@@ -218,7 +221,7 @@ async fn test_mailbox_backpressure() {
     // Fast sender (will hit backpressure)
     let start = std::time::Instant::now();
     for i in 0..message_count {
-        let envelope = Envelope::tell(format!("msg-{}", i), vec![]);
+        let envelope = Envelope::tell(Message::single(format!("msg-{}", i), vec![]));
         sender.send(envelope).await.unwrap();
     }
     let send_time = start.elapsed();
@@ -244,14 +247,14 @@ async fn test_mailbox_try_send() {
 
     // Fill the mailbox
     sender
-        .try_send(Envelope::tell("msg1".to_string(), vec![]))
+        .try_send(Envelope::tell(Message::single("msg1", vec![])))
         .unwrap();
     sender
-        .try_send(Envelope::tell("msg2".to_string(), vec![]))
+        .try_send(Envelope::tell(Message::single("msg2", vec![])))
         .unwrap();
 
     // Third should fail (mailbox full)
-    let result = sender.try_send(Envelope::tell("msg3".to_string(), vec![]));
+    let result = sender.try_send(Envelope::tell(Message::single("msg3", vec![])));
     assert!(result.is_err());
 }
 
@@ -272,8 +275,8 @@ async fn test_mailbox_no_message_loss() {
     // Receiver collects all message IDs
     let receiver_task = tokio::spawn(async move {
         while let Some(envelope) = receiver.recv().await {
-            // Extract ID from payload
-            if let Message::Single { data, .. } = envelope.message {
+            let (message, _) = envelope.into_parts();
+            if let Message::Single { data, .. } = message {
                 if data.len() >= 4 {
                     let id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
                     received_ids.push(id);
@@ -286,7 +289,7 @@ async fn test_mailbox_no_message_loss() {
     // Send messages with sequential IDs
     for i in 0..message_count {
         let payload = (i as u32).to_le_bytes().to_vec();
-        let envelope = Envelope::tell("numbered".to_string(), payload);
+        let envelope = Envelope::tell(Message::single("numbered", payload));
         sender.send(envelope).await.unwrap();
     }
 
@@ -317,11 +320,13 @@ async fn test_mailbox_response_delivery() {
     // Receiver responds to all requests
     let receiver_task = tokio::spawn(async move {
         while let Some(envelope) = receiver.recv().await {
-            if envelope.expects_response() {
+            let expects = envelope.expects_response();
+            let (message, responder) = envelope.into_parts();
+            if expects {
                 // Echo back the payload doubled
-                if let Message::Single { ref data, .. } = envelope.message {
+                if let Message::Single { ref data, .. } = message {
                     let response: Vec<u8> = data.iter().map(|b| b * 2).collect();
-                    envelope.respond(Ok(Message::single("", response)));
+                    responder.send(Ok(Message::single("", response)));
                 }
             }
         }
@@ -360,13 +365,14 @@ async fn test_mailbox_empty_payload() {
     let sender = MailboxSender::new(mailbox.sender());
     let mut receiver = mailbox.take_receiver();
 
-    let envelope = Envelope::tell("empty".to_string(), vec![]);
+    let envelope = Envelope::tell(Message::single("empty", vec![]));
     sender.send(envelope).await.unwrap();
 
     let received = receiver.recv().await.unwrap();
     assert_eq!(received.msg_type(), "empty");
 
-    if let Message::Single { data, .. } = received.message {
+    let (message, _) = received.into_parts();
+    if let Message::Single { data, .. } = message {
         assert!(data.is_empty());
     } else {
         panic!("Expected single message");
@@ -381,12 +387,13 @@ async fn test_mailbox_large_payload() {
 
     // 1MB payload
     let large_payload: Vec<u8> = (0..1_000_000).map(|i| (i % 256) as u8).collect();
-    let envelope = Envelope::tell("large".to_string(), large_payload.clone());
+    let envelope = Envelope::tell(Message::single("large", large_payload.clone()));
     sender.send(envelope).await.unwrap();
 
     let received = receiver.recv().await.unwrap();
+    let (message, _) = received.into_parts();
 
-    if let Message::Single { data, .. } = received.message {
+    if let Message::Single { data, .. } = message {
         assert_eq!(data.len(), 1_000_000);
         assert_eq!(data, large_payload);
     } else {

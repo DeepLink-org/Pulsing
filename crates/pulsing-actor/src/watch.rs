@@ -214,7 +214,7 @@ impl ActorLifecycle {
         // Send to all watchers
         for watcher_name in watcher_names {
             if let Some(sender) = get_sender(&watcher_name) {
-                let envelope = Envelope::tell(msg_type.clone(), payload_bytes.clone());
+                let envelope = Envelope::tell(Message::single(&msg_type, payload_bytes.clone()));
                 if let Err(e) = sender.try_send(envelope) {
                     tracing::warn!(
                         watcher = watcher_name,
