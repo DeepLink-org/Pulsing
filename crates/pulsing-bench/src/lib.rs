@@ -5,8 +5,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Local;
-use clap::error::ErrorKind::InvalidValue;
-use clap::{ArgGroup, Error, Parser};
 use log::{debug, error, info, warn, Level, LevelFilter};
 use reqwest::Url;
 use tokenizers::{FromPretrainedParameters, Tokenizer};
@@ -113,7 +111,7 @@ pub async fn run(mut run_config: RunConfiguration, stop_sender: Sender<()>) -> a
         run_id: run_config.run_id.clone(),
     };
     config.validate()?;
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     // Always use console interface, send logs to file for debugging
     let target = Box::new(File::create("log.txt").expect("Can't create file"));
     env_logger::Builder::new()
@@ -215,155 +213,97 @@ pub async fn run(mut run_config: RunConfiguration, stop_sender: Sender<()>) -> a
     Ok(())
 }
 
-#[derive(Parser, Debug)]
-#[clap(
-    author,
-    version,
-    about,
-    long_about = None,
-    group(ArgGroup::new("group_profile").multiple(true)),
-    group(ArgGroup::new("group_manual").multiple(true).conflicts_with("group_profile"))
-)]
-pub struct Args {
-    /// The name of the tokenizer to use
-    #[clap(short, long, env)]
+#[derive(Debug, Clone)]
+pub struct BenchmarkArgs {
     pub tokenizer_name: String,
-
-    /// The name of the model to use. If not provided, the same name as the tokenizer will be used.
-    #[clap(long, env)]
     pub model_name: Option<String>,
-
-    /// The maximum number of virtual users to use
-    #[clap(default_value = "128", short, long, env, group = "group_manual")]
     pub max_vus: u64,
-    /// The duration of each benchmark step
-    #[clap(default_value = "120s", short, long, env, group = "group_manual")]
-    #[arg(value_parser = parse_duration)]
     pub duration: std::time::Duration,
-    /// A list of rates of requests to send per second (only valid for the ConstantArrivalRate benchmark).
-    #[clap(short, long, env)]
     pub rates: Option<Vec<f64>>,
-    /// The number of rates to sweep through (only valid for the "sweep" benchmark)
-    /// The rates will be linearly spaced up to the detected maximum rate
-    #[clap(default_value = "10", long, env)]
     pub num_rates: u64,
-    /// A benchmark profile to use
-    #[clap(long, env, group = "group_profile")]
     pub profile: Option<String>,
-    /// The kind of benchmark to run (throughput, sweep, csweep, rate)
-    #[clap(default_value = "sweep", short, long, env, group = "group_manual")]
     pub benchmark_kind: String,
-    /// The duration of the prewarm step ran before the benchmark to warm up the backend (JIT, caches, etc.)
-    #[clap(default_value = "30s", short, long, env, group = "group_manual")]
-    #[arg(value_parser = parse_duration)]
     pub warmup: std::time::Duration,
-    /// The URL of the backend to benchmark. Must be compatible with OpenAI Message API
-    #[clap(default_value = "http://localhost:8000", short, long, env)]
     pub url: Url,
-
-    /// The api key send to the [`url`] as Header "Authorization: Bearer {API_KEY}".
-    #[clap(default_value = "", short, long, env)]
     pub api_key: String,
-
-    /// Constraints for prompt length.
-    /// No value means use the input prompt as defined in input dataset.
-    /// We sample the number of tokens to generate from a normal distribution.
-    /// Specified as a comma-separated list of key=value pairs.
-    /// * num_tokens: target number of prompt tokens
-    /// * min_tokens: minimum number of prompt tokens
-    /// * max_tokens: maximum number of prompt tokens
-    /// * variance: variance in the number of prompt tokens
-    ///
-    /// Example: num_tokens=200,max_tokens=210,min_tokens=190,variance=10
-    #[clap(
-        long,
-        env,
-        value_parser(parse_tokenizer_options),
-        group = "group_manual"
-    )]
     pub prompt_options: Option<TokenizeOptions>,
-    /// Constraints for the generated text.
-    /// We sample the number of tokens to generate from a normal distribution.
-    /// Specified as a comma-separated list of key=value pairs.
-    /// * num_tokens: target number of generated tokens
-    /// * min_tokens: minimum number of generated tokens
-    /// * max_tokens: maximum number of generated tokens
-    /// * variance: variance in the number of generated tokens
-    ///
-    /// Example: num_tokens=200,max_tokens=210,min_tokens=190,variance=10
-    #[clap(
-        long,
-        env,
-        value_parser(parse_tokenizer_options),
-        group = "group_manual"
-    )]
     pub decode_options: Option<TokenizeOptions>,
-    /// Hugging Face dataset to use for prompt generation
-    #[clap(
-        default_value = "hlarcher/inference-benchmarker",
-        long,
-        env,
-        group = "group_manual"
-    )]
     pub dataset: String,
-    /// File to use in the Dataset
-    #[clap(
-        default_value = "share_gpt_filtered_small.json",
-        long,
-        env,
-        group = "group_manual"
-    )]
     pub dataset_file: String,
-    /// Extra metadata to include in the benchmark results file, comma-separated key-value pairs.
-    /// It can be, for example, used to include information about the configuration of the
-    /// benched server.
-    /// Example: --extra-meta "key1=value1,key2=value2"
-    #[clap(long, env, value_parser(parse_key_val))]
     pub extra_meta: Option<HashMap<String, String>>,
-    // A run identifier to use for the benchmark. This is used to identify the benchmark in the
-    // results file.
-    #[clap(long, env)]
     pub run_id: Option<String>,
 }
 
-fn parse_duration(s: &str) -> Result<std::time::Duration, Error> {
-    humantime::parse_duration(s).map_err(|_| Error::new(InvalidValue))
+impl Default for BenchmarkArgs {
+    fn default() -> Self {
+        Self {
+            tokenizer_name: String::new(),
+            model_name: None,
+            max_vus: 128,
+            duration: std::time::Duration::from_secs(120),
+            rates: None,
+            num_rates: 10,
+            profile: None,
+            benchmark_kind: "sweep".to_string(),
+            warmup: std::time::Duration::from_secs(30),
+            url: "http://localhost:8000".parse().unwrap(),
+            api_key: String::new(),
+            prompt_options: None,
+            decode_options: None,
+            dataset: "hlarcher/inference-benchmarker".to_string(),
+            dataset_file: "share_gpt_filtered_small.json".to_string(),
+            extra_meta: None,
+            run_id: None,
+        }
+    }
 }
 
-fn parse_key_val(s: &str) -> Result<HashMap<String, String>, Error> {
+pub fn parse_duration(s: &str) -> anyhow::Result<std::time::Duration> {
+    humantime::parse_duration(s).map_err(|e| anyhow::anyhow!("Invalid duration: {}", e))
+}
+
+pub fn parse_key_val(s: &str) -> anyhow::Result<HashMap<String, String>> {
     let mut key_val_map = HashMap::new();
     let items = s.split(',').collect::<Vec<&str>>();
     for item in items.iter() {
         let key_value = item.split('=').collect::<Vec<&str>>();
-        if key_value.len() % 2 != 0 {
-            return Err(Error::new(InvalidValue));
+        if key_value.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid key-value pair: {}", item));
         }
-        for i in 0..key_value.len() / 2 {
-            key_val_map.insert(
-                key_value[i * 2].to_string(),
-                key_value[i * 2 + 1].to_string(),
-            );
-        }
+        key_val_map.insert(
+            key_value[0].trim().to_string(),
+            key_value[1].trim().to_string(),
+        );
     }
     Ok(key_val_map)
 }
 
-fn parse_tokenizer_options(s: &str) -> Result<TokenizeOptions, Error> {
+pub fn parse_tokenizer_options(s: &str) -> anyhow::Result<TokenizeOptions> {
     let mut tokenizer_options = TokenizeOptions::new();
     let items = s.split(",").collect::<Vec<&str>>();
     for item in items.iter() {
         let key_value = item.split("=").collect::<Vec<&str>>();
         if key_value.len() != 2 {
-            return Err(Error::new(InvalidValue));
+            return Err(anyhow::anyhow!("Invalid tokenizer option: {}", item));
         }
-        match key_value[0] {
+        match key_value[0].trim() {
             "num_tokens" => {
-                tokenizer_options.num_tokens = Some(key_value[1].parse::<u64>().unwrap())
+                tokenizer_options.num_tokens = Some(key_value[1].trim().parse::<u64>()
+                    .map_err(|e| anyhow::anyhow!("Invalid num_tokens: {}", e))?)
             }
-            "min_tokens" => tokenizer_options.min_tokens = key_value[1].parse::<u64>().unwrap(),
-            "max_tokens" => tokenizer_options.max_tokens = key_value[1].parse::<u64>().unwrap(),
-            "variance" => tokenizer_options.variance = key_value[1].parse::<u64>().unwrap(),
-            _ => return Err(Error::new(InvalidValue)),
+            "min_tokens" => {
+                tokenizer_options.min_tokens = key_value[1].trim().parse::<u64>()
+                    .map_err(|e| anyhow::anyhow!("Invalid min_tokens: {}", e))?
+            }
+            "max_tokens" => {
+                tokenizer_options.max_tokens = key_value[1].trim().parse::<u64>()
+                    .map_err(|e| anyhow::anyhow!("Invalid max_tokens: {}", e))?
+            }
+            "variance" => {
+                tokenizer_options.variance = key_value[1].trim().parse::<u64>()
+                    .map_err(|e| anyhow::anyhow!("Invalid variance: {}", e))?
+            }
+            _ => return Err(anyhow::anyhow!("Unknown tokenizer option: {}", key_value[0])),
         }
     }
     if tokenizer_options.num_tokens.is_some()
@@ -371,17 +311,15 @@ fn parse_tokenizer_options(s: &str) -> Result<TokenizeOptions, Error> {
             || tokenizer_options.min_tokens == 0
             || tokenizer_options.max_tokens == 0)
     {
-        return Err(Error::new(InvalidValue));
+        return Err(anyhow::anyhow!("Invalid tokenizer options: num_tokens, min_tokens, and max_tokens must be > 0"));
     }
     if tokenizer_options.min_tokens > tokenizer_options.max_tokens {
-        return Err(Error::new(InvalidValue));
+        return Err(anyhow::anyhow!("Invalid tokenizer options: min_tokens > max_tokens"));
     }
     Ok(tokenizer_options)
 }
 
-#[tokio::main]
-pub async fn benchmark_main(args: Vec<String>) {
-    let args = Args::parse_from(args);
+pub async fn benchmark_main_async(args: BenchmarkArgs) -> anyhow::Result<()> {
     let git_sha = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
     println!(
         "Text Generation Inference Benchmark {} ({})",
@@ -397,9 +335,7 @@ pub async fn benchmark_main(args: Vec<String>) {
             .await
             .expect("Failed to listen for ctrl-c");
         debug!("Received stop signal, stopping benchmark");
-        stop_sender_clone
-            .send(())
-            .expect("Failed to send stop signal");
+        let _ = stop_sender_clone.send(());
     });
 
     let stop_sender_clone = stop_sender.clone();
@@ -437,14 +373,6 @@ pub async fn benchmark_main(args: Vec<String>) {
         model_name,
         run_id,
     };
-    let main_thread = tokio::spawn(async move {
-        match run(run_config, stop_sender_clone).await {
-            Ok(_) => {}
-            Err(e) => {
-                error!("Fatal: {:?}", e);
-                println!("Fatal: {:?}", e)
-            }
-        };
-    });
-    let _ = main_thread.await;
+    run(run_config, stop_sender_clone).await
 }
+

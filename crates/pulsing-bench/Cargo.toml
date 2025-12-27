@@ -23,7 +23,6 @@ env_logger = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 strum_macros = { workspace = true }
-clap = { workspace = true }
 humantime = { workspace = true }
 colored = { workspace = true }
 chrono = { workspace = true }

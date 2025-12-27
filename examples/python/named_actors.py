@@ -14,7 +14,7 @@ from pulsing.actor import create_actor_system, SystemConfig, Message, Actor, Act
 
 class EchoActor(Actor):
     def on_start(self, actor_id: ActorId):
-        print(f"[{actor_id.name}] Started")
+        print(f"[{actor_id}] Started")
 
     def receive(self, msg: Message) -> Message:
         message = msg.to_json().get("message", "")
@@ -39,7 +39,7 @@ async def main():
     # Resolve by service path
     print("--- Resolve by path ---")
     actor = await system.resolve_named(path)
-    resp = await actor.ask_json("Echo", {"message": "Hello!"})
+    resp = (await actor.ask(Message.from_json("Echo", {"message": "Hello!"}))).to_json()
     print(f"Response: {resp['echo']}\n")
 
     # List instances

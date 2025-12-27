@@ -56,21 +56,21 @@ async def main():
 
     # Pattern 1: RPC
     print("--- Pattern 1: RPC ---")
-    resp = await actor.ask_json("Greet", {"name": "Pulsing"})
+    resp = (await actor.ask(Message.from_json("Greet", {"name": "Pulsing"}))).to_json()
     print(f"Response: {resp['message']}\n")
 
     # Pattern 2: Server Streaming
     print("--- Pattern 2: Server Streaming ---")
     req = Message.from_json("CountTo", {"n": 3})
-    reader = await actor.ask_stream(req)
-    async for chunk in reader:
+    response = await actor.ask(req)
+    async for chunk in response.stream_reader():
         item = json.loads(chunk)
         print(f"Received: {item['value']}")
     print()
 
     # Pattern 3: Client Streaming (batch mode)
     print("--- Pattern 3: Client Streaming (batch) ---")
-    resp = await actor.ask_json("Sum", {"items": [10, 20, 30]})
+    resp = (await actor.ask(Message.from_json("Sum", {"items": [10, 20, 30]}))).to_json()
     print(f"Sum: {resp['total']}\n")
 
     await system.shutdown()

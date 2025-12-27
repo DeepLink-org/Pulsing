@@ -199,9 +199,8 @@ class _OpenAIHandler:
         created = int(time.time())
 
         try:
-            result = await worker_ref.ask_json(
-                "GenerateRequest", {"prompt": prompt, "max_new_tokens": max_tokens}
-            )
+            msg = Message.from_json("GenerateRequest", {"prompt": prompt, "max_new_tokens": max_tokens})
+            result = (await worker_ref.ask(msg)).to_json()
             text = result.get("text", "")
             prompt_tokens = result.get("prompt_tokens", 0)
             completion_tokens = result.get("completion_tokens", 0)
@@ -250,7 +249,8 @@ class _OpenAIHandler:
                 "GenerateStreamRequest",
                 {"prompt": prompt, "max_new_tokens": max_tokens},
             )
-            reader = await worker_ref.ask_stream(req_msg)
+            response = await worker_ref.ask(req_msg)
+            reader = response.stream_reader()
 
             async for chunk_bytes in reader:
                 try:

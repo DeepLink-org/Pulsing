@@ -259,11 +259,6 @@ impl PyMessage {
             },
         }
     }
-
-    /// Legacy: Create from single message only
-    fn from_single(msg: Message) -> Self {
-        Self::from_rust_message(msg)
-    }
 }
 
 // ============================================================================
@@ -277,6 +272,7 @@ pub struct PyStreamReader {
 }
 
 impl PyStreamReader {
+    #[allow(dead_code)]
     fn new(stream: PayloadStream) -> Self {
         Self {
             stream: Arc::new(TokioMutex::new(Some(stream))),
@@ -493,63 +489,14 @@ impl PyActorRef {
         self.inner.is_local()
     }
 
+    /// Send a message and wait for response (supports both single and stream responses)
+    ///
+    /// Returns a Message that can be either:
+    /// - Single response: use `msg.payload` or `msg.to_json()`
+    /// - Stream response: use `msg.is_stream` to check, then `msg.stream_reader()` to consume
     fn ask<'py>(&self, py: Python<'py>, msg: PyMessage) -> PyResult<Bound<'py, PyAny>> {
         let actor_ref = self.inner.clone();
         let actor_msg = msg.to_message();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
-            Ok(PyMessage::from_single(response))
-        })
-    }
-
-    #[pyo3(signature = (msg_type, data))]
-    fn ask_json<'py>(
-        &self,
-        py: Python<'py>,
-        msg_type: String,
-        data: PyObject,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let json_value: serde_json::Value = pythonize::depythonize(&data.into_bound(py))?;
-        let payload = serde_json::to_vec(&json_value).map_err(to_pyerr)?;
-        let actor_ref = self.inner.clone();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let actor_msg = Message::single(&msg_type, payload);
-            let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
-
-            Python::with_gil(|py| -> PyResult<PyObject> {
-                let py_msg = PyMessage::from_single(response);
-                let payload = py_msg.payload.as_deref().unwrap_or(&[]);
-                let value: serde_json::Value =
-                    serde_json::from_slice(payload).map_err(to_pyerr)?;
-                let pyobj = pythonize::pythonize(py, &value)?;
-                Ok(pyobj.into())
-            })
-        })
-    }
-
-    fn tell<'py>(&self, py: Python<'py>, msg: PyMessage) -> PyResult<Bound<'py, PyAny>> {
-        let actor_ref = self.inner.clone();
-        let actor_msg = msg.to_message();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            actor_ref.send_oneway(actor_msg).await.map_err(to_pyerr)?;
-            Ok(())
-        })
-    }
-
-    /// Send a message and get a unified response
-    fn send<'py>(&self, py: Python<'py>, msg: &PyMessage) -> PyResult<Bound<'py, PyAny>> {
-        let actor_ref = self.inner.clone();
-
-        let actor_msg = if let Some(ref data) = msg.payload {
-            Message::single(&msg.msg_type, data.clone())
-        } else {
-            return Err(PyValueError::new_err(
-                "Cannot send stream message as request (stream input not yet supported)",
-            ));
-        };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
@@ -557,45 +504,12 @@ impl PyActorRef {
         })
     }
 
-    /// Send a message and expect a streaming response
-    /// Send a message and expect a streaming response
-    /// Note: Now uses unified send() which auto-detects response type
-    fn ask_stream<'py>(&self, py: Python<'py>, msg: &PyMessage) -> PyResult<Bound<'py, PyAny>> {
+    /// Send a message without waiting for response (fire-and-forget)
+    fn tell<'py>(&self, py: Python<'py>, msg: PyMessage) -> PyResult<Bound<'py, PyAny>> {
         let actor_ref = self.inner.clone();
-
-        let actor_msg = if let Some(ref data) = msg.payload {
-            Message::single(&msg.msg_type, data.clone())
-        } else {
-            return Err(PyValueError::new_err(
-                "Cannot send stream message as request (stream input not yet supported)",
-            ));
-        };
+        let actor_msg = msg.to_message();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            // Use unified send() - server sets response type header
-            let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
-            match response {
-                Message::Stream { stream, .. } => Ok(PyStreamReader::new(stream)),
-                Message::Single { .. } => Err(PyValueError::new_err(
-                    "Expected stream response but got single message",
-                )),
-            }
-        })
-    }
-
-    #[pyo3(signature = (msg_type, data))]
-    fn tell_json<'py>(
-        &self,
-        py: Python<'py>,
-        msg_type: String,
-        data: PyObject,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let json_value: serde_json::Value = pythonize::depythonize(&data.into_bound(py))?;
-        let payload = serde_json::to_vec(&json_value).map_err(to_pyerr)?;
-        let actor_ref = self.inner.clone();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let actor_msg = Message::single(&msg_type, payload);
             actor_ref.send_oneway(actor_msg).await.map_err(to_pyerr)?;
             Ok(())
         })

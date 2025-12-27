@@ -20,7 +20,7 @@ class SharedCounter(Actor):
         self.node_id = node_id
 
     def on_start(self, actor_id: ActorId):
-        print(f"[{actor_id.name}] Started on {self.node_id}")
+        print(f"[{actor_id}] Started on {self.node_id}")
 
     def receive(self, msg: Message) -> Message:
         if msg.msg_type == "GetCount":
@@ -85,11 +85,11 @@ async def run_node(port: int, seed: str | None):
         print("✓ Resolved\n")
 
         # Interact
-        resp = await actor.ask_json("GetCount", {})
+        resp = (await actor.ask(Message.from_json("GetCount", {}))).to_json()
         print(f"Initial: {resp['count']} (from {resp['from_node']})")
 
         for i in range(1, 4):
-            resp = await actor.ask_json("Increment", {"n": i * 10})
+            resp = (await actor.ask(Message.from_json("Increment", {"n": i * 10}))).to_json()
             print(f"After +{i * 10}: {resp['count']} (from {resp['from_node']})")
 
         print("\n✓ Done!")

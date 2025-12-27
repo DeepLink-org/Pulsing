@@ -69,8 +69,7 @@ reqwest-eventsource = "0.6"
 # Encoding
 base64 = "0.22"
 
-# CLI
-clap = { version = "4.5", features = ["derive", "env"] }
+# CLI (removed clap - now using Python hyperparameter)
 strum_macros = "0.27"
 
 # Testing
@@ -110,6 +109,8 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+humantime = { workspace = true }
+reqwest = { workspace = true }
 
 # PyO3 dependencies
 pyo3 = { version = "0.23.4", default-features = false, features = [
