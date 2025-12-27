@@ -119,8 +119,6 @@ def inspect(seeds: Optional[str] = None):
 def _inspect_system(seeds: list):
     """Inspect the actor system state"""
     import asyncio
-    import json
-    import aiohttp
     from pulsing.actor import SystemConfig, create_actor_system
 
     async def run():
@@ -129,56 +127,52 @@ def _inspect_system(seeds: list):
             return
 
         print(f"Connecting to cluster via seeds: {seeds}...")
-        config = SystemConfig.standalone().with_seeds(seeds)
+        # If seeds are local, bind to 127.0.0.1 to ensure connectivity
+        if any(s.startswith("127.0.0.1") or s.startswith("localhost") for s in seeds):
+            config = SystemConfig.with_addr("127.0.0.1:0").with_seeds(seeds)
+        else:
+            config = SystemConfig.standalone().with_seeds(seeds)
         system = await create_actor_system(config)
         
         # Give some time for discovery
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(1.5)
         
         members = await system.members()
         print(f"\nCluster Status: {len(members)} nodes found")
         print("=" * 60)
 
-        async with aiohttp.ClientSession() as session:
-            for member in members:
-                node_id = member.get("node_id")
-                addr = member.get("addr")
-                status = member.get("status")
-                
-                print(f"\nNode: {node_id} ({addr}) [{status}]")
-                
-                if status != "Alive":
-                    print("  [Node is not alive, skipping details]")
-                    continue
+        # Try to get named actor instances from cluster
+        # Worker actors are registered under "actors/worker" path
+        try:
+            named_instances = await system.get_named_instances("worker")
+            worker_count = len(named_instances) if named_instances else 0
+        except Exception as e:
+            print(f"  [Debug] get_named_instances error: {e}")
+            worker_count = 0
+            named_instances = []
 
-                # Fetch health info from the node
-                try:
-                    health_url = f"http://{addr}/health"
-                    async with session.get(health_url, timeout=2.0) as resp:
-                        if resp.status == 200:
-                            health_info = await resp.json()
-                            
-                            # Print Named Actors
-                            named_actors = health_info.get("named_actors", [])
-                            if named_actors:
-                                print("  Named Actors:")
-                                for a in named_actors:
-                                    print(f"    - {a.get('path')} -> {a.get('actor_name')}")
-                            
-                            # Print Anonymous Actors (filter out system/internal if needed, but for now print all)
-                            actors = health_info.get("actors", [])
-                            if actors:
-                                print(f"  Local Actors ({len(actors)} total):")
-                                for a in actors:
-                                    name = a.get("name")
-                                    # If it has a named_path, it's already listed in Named Actors
-                                    is_named = "named_path" in a
-                                    prefix = "[Named]" if is_named else "[Anon] "
-                                    print(f"    - {prefix} {name}")
-                        else:
-                            print(f"  [Error fetching health: HTTP {resp.status}]")
-                except Exception as e:
-                    print(f"  [Error connecting to node: {e}]")
+        for member in members:
+            node_id = member.get("node_id")
+            addr = member.get("addr")
+            status = member.get("status")
+            
+            print(f"\nNode: {node_id} ({addr}) [{status}]")
+            
+            if status != "Alive":
+                print("  [Node is not alive]")
+                continue
+
+            # Check if this node has any named actor instances
+            node_workers = [w for w in named_instances if str(w.get("node_id")) == str(node_id)]
+            if node_workers:
+                print(f"  Named Actors: {len(node_workers)} worker(s)")
+                for w in node_workers:
+                    print(f"    - actors/worker")
+            else:
+                print("  [No worker actors on this node]")
+        
+        if worker_count > 0:
+            print(f"\nTotal Workers: {worker_count}")
         
         print("\n" + "=" * 60)
         await system.shutdown()

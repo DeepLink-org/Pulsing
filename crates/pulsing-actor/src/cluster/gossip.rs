@@ -15,6 +15,7 @@ use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -106,6 +107,16 @@ pub enum GossipMessage {
     },
 }
 
+/// Tombstone entry for a removed node
+/// Used to prevent "resurrection" of dead/leaving nodes via stale gossip
+#[derive(Clone, Debug)]
+struct Tombstone {
+    /// Last known incarnation number
+    incarnation: u64,
+    /// When the node was removed
+    removed_at: std::time::Instant,
+}
+
 /// Gossip cluster state
 pub struct GossipCluster {
     /// Local node ID
@@ -116,6 +127,9 @@ pub struct GossipCluster {
 
     /// Cluster members
     members: Arc<RwLock<HashMap<NodeId, MemberInfo>>>,
+
+    /// Tombstones for recently removed nodes (prevents resurrection from stale gossip)
+    tombstones: Arc<RwLock<HashMap<NodeId, Tombstone>>>,
 
     /// Legacy actor registry (actor_id -> node_id) for backward compatibility
     actors: Arc<RwLock<HashMap<ActorId, NodeId>>>,
@@ -137,8 +151,7 @@ pub struct GossipCluster {
     swim: SwimDetector,
 
     /// Incarnation number (for refuting suspicion)
-    #[allow(dead_code)]
-    incarnation: Arc<std::sync::atomic::AtomicU64>,
+    incarnation: Arc<AtomicU64>,
 }
 
 impl GossipCluster {
@@ -164,6 +177,7 @@ impl GossipCluster {
             local_node,
             local_addr,
             members: Arc::new(RwLock::new(members)),
+            tombstones: Arc::new(RwLock::new(HashMap::new())),
             actors: Arc::new(RwLock::new(HashMap::new())),
             named_actors: Arc::new(RwLock::new(HashMap::new())),
             transport,
@@ -223,7 +237,9 @@ impl GossipCluster {
                         if let Ok(response) =
                             bincode::deserialize::<GossipMessage>(&response_payload)
                         {
-                            self.handle_gossip(response).await?;
+                            // Use seed addr as peer_addr for response handling
+                            // (Welcome/Sync messages don't create new members from peer_addr)
+                            self.handle_gossip(response, *addr).await?;
                         }
                     }
                     Ok(None) => {}
@@ -288,6 +304,7 @@ impl GossipCluster {
             local_node: self.local_node,
             local_addr: self.local_addr,
             members: self.members.clone(),
+            tombstones: self.tombstones.clone(),
             actors: self.actors.clone(),
             named_actors: self.named_actors.clone(),
             transport: self.transport.clone(),
@@ -299,22 +316,39 @@ impl GossipCluster {
     }
 
     /// Handle incoming gossip message (called by HTTP handler)
-    pub async fn handle_gossip(&self, msg: GossipMessage) -> anyhow::Result<Option<GossipMessage>> {
+    ///
+    /// The `peer_addr` is the actual remote address seen in the TCP connection,
+    /// which may differ from the address the remote node advertises (e.g., when
+    /// the remote binds to 0.0.0.0).
+    pub async fn handle_gossip(
+        &self,
+        msg: GossipMessage,
+        peer_addr: SocketAddr,
+    ) -> anyhow::Result<Option<GossipMessage>> {
         match msg {
             GossipMessage::Join { node_id, addr } => {
-                tracing::info!(node_id = %node_id, "Node joining cluster");
+                // Use the IP from the actual TCP connection, but keep the port the remote advertised.
+                // This handles the case where remote binds to 0.0.0.0 but we need a routable IP.
+                let real_addr = SocketAddr::new(peer_addr.ip(), addr.port());
+                tracing::info!(
+                    node_id = %node_id,
+                    advertised_addr = %addr,
+                    real_addr = %real_addr,
+                    "Node joining cluster"
+                );
 
-                // Add new member (same addr for both since we use single port)
-                let member = MemberInfo::new(node_id, addr, addr);
+                // Add new member with the corrected address
+                let member = MemberInfo::new(node_id, real_addr, real_addr);
                 {
                     let mut members = self.members.write().await;
                     members.insert(node_id, member);
                 }
 
                 // Return welcome with current state (only sync named actors to reduce traffic)
+                // Only include Alive/Suspect members - exclude Leaving/Dead to prevent spreading stale info
                 let welcome = GossipMessage::Welcome {
                     from: self.local_node,
-                    members: self.members.read().await.values().cloned().collect(),
+                    members: self.gossip_members().await,
                     named_actors: self.named_actors.read().await.values().cloned().collect(),
                 };
 
@@ -331,7 +365,8 @@ impl GossipCluster {
                     named_actor_count = named_actors.len(),
                     "Received welcome"
                 );
-                self.merge_members(members).await;
+                // Fix 0.0.0.0 addresses using peer_addr
+                self.merge_members_with_peer(members, peer_addr).await;
                 self.merge_named_actors(named_actors).await;
                 Ok(None)
             }
@@ -341,7 +376,8 @@ impl GossipCluster {
                 members,
                 named_actors,
             } => {
-                self.merge_members(members).await;
+                // Fix 0.0.0.0 addresses using peer_addr
+                self.merge_members_with_peer(members, peer_addr).await;
                 self.merge_named_actors(named_actors).await;
                 Ok(None)
             }
@@ -478,11 +514,74 @@ impl GossipCluster {
         }
     }
 
-    /// Merge received member list with local state
-    async fn merge_members(&self, remote_members: Vec<MemberInfo>) {
+    /// Merge received member list with local state, fixing 0.0.0.0 addresses using peer_addr
+    ///
+    /// When a node binds to 0.0.0.0, it advertises that address to other nodes.
+    /// This method replaces any 0.0.0.0 addresses with the actual peer IP from the connection.
+    ///
+    /// Uses tombstone mechanism to prevent resurrection of dead/leaving nodes from stale gossip.
+    async fn merge_members_with_peer(
+        &self,
+        remote_members: Vec<MemberInfo>,
+        peer_addr: SocketAddr,
+    ) {
         let mut local = self.members.write().await;
+        let tombstones = self.tombstones.read().await;
 
-        for remote in remote_members {
+        for mut remote in remote_members {
+            // Fix 0.0.0.0 addresses: replace with actual peer IP
+            if remote.addr.ip().is_unspecified() {
+                let fixed_addr = SocketAddr::new(peer_addr.ip(), remote.addr.port());
+                tracing::debug!(
+                    node_id = %remote.node_id,
+                    original_addr = %remote.addr,
+                    fixed_addr = %fixed_addr,
+                    "Fixing unspecified address in member info"
+                );
+                remote.addr = fixed_addr;
+                remote.gossip_addr = fixed_addr;
+            }
+
+            // Self-suspicion refutation
+            if remote.node_id == self.local_node {
+                if remote.status == MemberStatus::Suspect || remote.status == MemberStatus::Dead {
+                    if let Some(local_info) = local.get_mut(&self.local_node) {
+                        if remote.incarnation >= local_info.incarnation {
+                            let new_inc = remote.incarnation + 1;
+                            self.incarnation.store(new_inc, Ordering::SeqCst);
+                            local_info.incarnation = new_inc;
+                            local_info.status = MemberStatus::Alive;
+                            tracing::info!(
+                                node_id = %self.local_node,
+                                incarnation = new_inc,
+                                "Refuting self suspicion/death"
+                            );
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Check tombstone: reject stale info about removed nodes
+            if let Some(tombstone) = tombstones.get(&remote.node_id) {
+                // Only accept if remote has higher incarnation than when we removed it
+                if remote.incarnation <= tombstone.incarnation {
+                    tracing::debug!(
+                        node_id = %remote.node_id,
+                        remote_incarnation = remote.incarnation,
+                        tombstone_incarnation = tombstone.incarnation,
+                        "Rejecting stale gossip about removed node"
+                    );
+                    continue;
+                }
+                // Node came back with higher incarnation - it's a legitimate rejoin
+                tracing::info!(
+                    node_id = %remote.node_id,
+                    incarnation = remote.incarnation,
+                    "Node rejoined with higher incarnation"
+                );
+            }
+
             match local.get(&remote.node_id) {
                 Some(existing) if existing.supersedes(&remote) => {
                     // Local version is newer, ignore
@@ -675,6 +774,18 @@ impl GossipCluster {
         self.members.read().await.values().cloned().collect()
     }
 
+    /// Get members eligible for gossip propagation (Alive or Suspect only)
+    /// Excludes Leaving and Dead nodes to prevent spreading stale info
+    async fn gossip_members(&self) -> Vec<MemberInfo> {
+        self.members
+            .read()
+            .await
+            .values()
+            .filter(|m| m.status == MemberStatus::Alive || m.status == MemberStatus::Suspect)
+            .cloned()
+            .collect()
+    }
+
     /// Get member by node ID
     pub async fn get_member(&self, node_id: &NodeId) -> Option<MemberInfo> {
         self.members.read().await.get(node_id).cloned()
@@ -719,6 +830,7 @@ struct GossipClusterInner {
     local_node: NodeId,
     local_addr: SocketAddr,
     members: Arc<RwLock<HashMap<NodeId, MemberInfo>>>,
+    tombstones: Arc<RwLock<HashMap<NodeId, Tombstone>>>,
     actors: Arc<RwLock<HashMap<ActorId, NodeId>>>,
     named_actors: Arc<RwLock<HashMap<String, NamedActorInfo>>>,
     transport: Arc<Http2Transport>,
@@ -730,6 +842,199 @@ struct GossipClusterInner {
 }
 
 impl GossipClusterInner {
+    /// Get members eligible for gossip propagation (Alive or Suspect only)
+    /// Excludes Leaving and Dead nodes to prevent spreading stale info
+    async fn gossip_members(&self) -> Vec<MemberInfo> {
+        self.members
+            .read()
+            .await
+            .values()
+            .filter(|m| m.status == MemberStatus::Alive || m.status == MemberStatus::Suspect)
+            .cloned()
+            .collect()
+    }
+
+    /// Handle incoming gossip message (called by HTTP handler)
+    pub async fn handle_gossip(&self, msg: GossipMessage) -> anyhow::Result<Option<GossipMessage>> {
+        match msg {
+            GossipMessage::Join { node_id, addr } => {
+                tracing::info!(node_id = %node_id, "Node joining cluster");
+
+                // Add new member (same addr for both since we use single port)
+                let member = MemberInfo::new(node_id, addr, addr);
+                {
+                    let mut members = self.members.write().await;
+                    members.insert(node_id, member);
+                }
+
+                // Return welcome with current state (only sync named actors to reduce traffic)
+                // Only include Alive/Suspect members - exclude Leaving/Dead to prevent spreading stale info
+                let welcome = GossipMessage::Welcome {
+                    from: self.local_node,
+                    members: self.gossip_members().await,
+                    named_actors: self.named_actors.read().await.values().cloned().collect(),
+                };
+
+                Ok(Some(welcome))
+            }
+
+            GossipMessage::Welcome {
+                from: _,
+                members,
+                named_actors,
+            } => {
+                tracing::debug!(
+                    member_count = members.len(),
+                    named_actor_count = named_actors.len(),
+                    "Received welcome"
+                );
+                self.merge_members(members).await;
+                self.merge_named_actors(named_actors).await;
+                Ok(None)
+            }
+
+            GossipMessage::Sync {
+                from: _,
+                members,
+                named_actors,
+            } => {
+                self.merge_members(members).await;
+                self.merge_named_actors(named_actors).await;
+                Ok(None)
+            }
+
+            GossipMessage::Leave { node_id } => {
+                tracing::info!(node_id = %node_id, "Node leaving cluster");
+
+                // Update member status
+                {
+                    let mut members = self.members.write().await;
+                    if let Some(member) = members.get_mut(&node_id) {
+                        member.status = MemberStatus::Leaving;
+                    }
+                }
+
+                // Remove all named actor instances from this node
+                {
+                    let mut named_actors = self.named_actors.write().await;
+                    let mut empty_paths = Vec::new();
+
+                    for (path, info) in named_actors.iter_mut() {
+                        info.remove_instance(&node_id);
+                        if info.is_empty() {
+                            empty_paths.push(path.clone());
+                        }
+                    }
+
+                    for path in empty_paths {
+                        named_actors.remove(&path);
+                    }
+                }
+
+                Ok(None)
+            }
+
+            GossipMessage::Swim(swim_msg) => self.handle_swim(swim_msg).await,
+
+            GossipMessage::ActorRegistered { location } => {
+                let mut actors = self.actors.write().await;
+                actors.insert(location.actor_id, location.node_id);
+                Ok(None)
+            }
+
+            GossipMessage::ActorUnregistered { actor_id } => {
+                let mut actors = self.actors.write().await;
+                actors.remove(&actor_id);
+                Ok(None)
+            }
+
+            GossipMessage::NamedActorRegistered { path, node_id } => {
+                tracing::debug!(path = %path, node_id = %node_id, "Named actor registered");
+                let mut named_actors = self.named_actors.write().await;
+                let key = path.as_str();
+
+                if let Some(info) = named_actors.get_mut(&key) {
+                    info.add_instance(node_id);
+                } else {
+                    named_actors.insert(key, NamedActorInfo::with_instance(path, node_id));
+                }
+                Ok(None)
+            }
+
+            GossipMessage::NamedActorUnregistered { path, node_id } => {
+                tracing::debug!(path = %path, node_id = %node_id, "Named actor unregistered");
+                let mut named_actors = self.named_actors.write().await;
+                let key = path.as_str();
+
+                if let Some(info) = named_actors.get_mut(&key) {
+                    info.remove_instance(&node_id);
+                    if info.is_empty() {
+                        named_actors.remove(&key);
+                    }
+                }
+                Ok(None)
+            }
+
+            GossipMessage::NamedActorFailed {
+                path,
+                node_id,
+                reason,
+            } => {
+                tracing::warn!(
+                    path = %path,
+                    node_id = %node_id,
+                    reason = %reason,
+                    "Named actor failed on remote node"
+                );
+
+                // Remove the failed instance from registry
+                let mut named_actors = self.named_actors.write().await;
+                let key = path.as_str();
+
+                if let Some(info) = named_actors.get_mut(&key) {
+                    info.remove_instance(&node_id);
+                    if info.is_empty() {
+                        named_actors.remove(&key);
+                        tracing::info!(
+                            path = %path,
+                            "Named actor has no remaining instances"
+                        );
+                    }
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    /// Handle SWIM protocol message
+    async fn handle_swim(&self, msg: SwimMessage) -> anyhow::Result<Option<GossipMessage>> {
+        match msg {
+            SwimMessage::Ping { seq, from: _ } => {
+                let ack = self.swim.create_ack(seq);
+                Ok(Some(GossipMessage::Swim(ack)))
+            }
+
+            SwimMessage::Ack { seq, from: _ } => {
+                self.swim.ack_received(seq).await;
+                Ok(None)
+            }
+
+            SwimMessage::PingReq { .. } => {
+                // TODO: Implement indirect ping
+                Ok(None)
+            }
+
+            SwimMessage::PingReqAck {
+                seq,
+                from: _,
+                target: _,
+            } => {
+                self.swim.ack_received(seq).await;
+                Ok(None)
+            }
+        }
+    }
+
     /// Gossip loop - periodically sync with random members
     async fn gossip_loop(&self, cancel: CancellationToken) {
         let mut interval = tokio::time::interval(self.config.gossip_interval);
@@ -772,18 +1077,25 @@ impl GossipClusterInner {
         };
 
         // Build sync message (only sync named actors to reduce gossip traffic)
+        // Only include Alive/Suspect members - exclude Leaving/Dead to prevent spreading stale info
         let msg = GossipMessage::Sync {
             from: self.local_node,
-            members: self.members.read().await.values().cloned().collect(),
+            members: self.gossip_members().await,
             named_actors: self.named_actors.read().await.values().cloned().collect(),
         };
 
         if let Ok(payload) = bincode::serialize(&msg) {
             for member in targets {
-                let _ = self
-                    .transport
-                    .send_gossip(member.addr, payload.clone())
-                    .await;
+                match self.transport.send_gossip(member.addr, payload.clone()).await {
+                    Ok(Some(response_payload)) => {
+                        if let Ok(response) =
+                            bincode::deserialize::<GossipMessage>(&response_payload)
+                        {
+                            let _ = self.handle_gossip(response).await;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -808,6 +1120,89 @@ impl GossipClusterInner {
                                 tracing::warn!(node_id = %node_id, "Suspecting node");
                             }
                         }
+                    }
+
+                    // Check for suspect nodes that should be marked dead
+                    let mut dead_nodes = Vec::new();
+                    {
+                        let members = self.members.read().await;
+                        let now = std::time::Instant::now();
+                        for member in members.values() {
+                            if member.status == MemberStatus::Suspect {
+                                if let Some(last_update) = member.last_update {
+                                    if now.duration_since(last_update) > self.config.swim.suspicion_timeout {
+                                        dead_nodes.push(member.node_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if !dead_nodes.is_empty() {
+                        let mut members = self.members.write().await;
+                        for node_id in dead_nodes {
+                            if let Some(member) = members.get_mut(&node_id) {
+                                // If still suspect, mark as dead
+                                if member.status == MemberStatus::Suspect {
+                                    member.mark_dead();
+                                    tracing::error!(node_id = %node_id, "Node marked as dead after suspicion timeout");
+                                }
+                            }
+                        }
+                    }
+
+                    // Cleanup: Remove Leaving and Dead nodes after a grace period
+                    // This prevents the member list from growing indefinitely
+                    const CLEANUP_GRACE_PERIOD: Duration = Duration::from_secs(30);
+                    const TOMBSTONE_TTL: Duration = Duration::from_secs(300); // 5 minutes
+
+                    let mut nodes_to_remove: Vec<(NodeId, u64)> = Vec::new();
+                    {
+                        let members = self.members.read().await;
+                        let now = std::time::Instant::now();
+                        for member in members.values() {
+                            if member.status == MemberStatus::Leaving || member.status == MemberStatus::Dead {
+                                if let Some(last_update) = member.last_update {
+                                    if now.duration_since(last_update) > CLEANUP_GRACE_PERIOD {
+                                        nodes_to_remove.push((member.node_id, member.incarnation));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if !nodes_to_remove.is_empty() {
+                        let mut members = self.members.write().await;
+                        let mut tombstones = self.tombstones.write().await;
+                        let now = std::time::Instant::now();
+
+                        for (node_id, incarnation) in nodes_to_remove {
+                            if let Some(member) = members.get(&node_id) {
+                                // Double-check status before removing
+                                if member.status == MemberStatus::Leaving || member.status == MemberStatus::Dead {
+                                    tracing::info!(node_id = %node_id, "Removing {:?} node from member list", member.status);
+                                    // Add tombstone to prevent resurrection from stale gossip
+                                    tombstones.insert(node_id, Tombstone {
+                                        incarnation,
+                                        removed_at: now,
+                                    });
+                                    members.remove(&node_id);
+                                }
+                            }
+                        }
+                    }
+
+                    // Cleanup expired tombstones
+                    {
+                        let mut tombstones = self.tombstones.write().await;
+                        let now = std::time::Instant::now();
+                        tombstones.retain(|node_id, ts| {
+                            let keep = now.duration_since(ts.removed_at) < TOMBSTONE_TTL;
+                            if !keep {
+                                tracing::debug!(node_id = %node_id, "Removing expired tombstone");
+                            }
+                            keep
+                        });
                     }
                 }
                 _ = cancel.cancelled() => {
@@ -851,9 +1246,10 @@ impl GossipClusterInner {
         }
 
         // Build sync message (only sync named actors to reduce gossip traffic)
+        // Only include Alive/Suspect members - exclude Leaving/Dead to prevent spreading stale info
         let msg = GossipMessage::Sync {
             from: self.local_node,
-            members: self.members.read().await.values().cloned().collect(),
+            members: self.gossip_members().await,
             named_actors: self.named_actors.read().await.values().cloned().collect(),
         };
 
@@ -932,7 +1328,16 @@ impl GossipClusterInner {
 
             if let Ok(payload) = bincode::serialize(&msg) {
                 self.swim.ping_sent(seq, target.node_id.clone()).await;
-                let _ = self.transport.send_gossip(target.addr, payload).await;
+                match self.transport.send_gossip(target.addr, payload).await {
+                    Ok(Some(response_payload)) => {
+                        if let Ok(response) =
+                            bincode::deserialize::<GossipMessage>(&response_payload)
+                        {
+                            let _ = self.handle_gossip(response).await;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -942,6 +1347,26 @@ impl GossipClusterInner {
         let mut local = self.members.write().await;
 
         for remote in remote_members {
+            // Self-suspicion refutation
+            if remote.node_id == self.local_node {
+                if remote.status == MemberStatus::Suspect || remote.status == MemberStatus::Dead {
+                    if let Some(local_info) = local.get_mut(&self.local_node) {
+                        if remote.incarnation >= local_info.incarnation {
+                            let new_inc = remote.incarnation + 1;
+                            self.incarnation.store(new_inc, Ordering::SeqCst);
+                            local_info.incarnation = new_inc;
+                            local_info.status = MemberStatus::Alive;
+                            tracing::info!(
+                                node_id = %self.local_node,
+                                incarnation = new_inc,
+                                "Refuting self suspicion/death"
+                            );
+                        }
+                    }
+                }
+                continue;
+            }
+
             match local.get(&remote.node_id) {
                 Some(existing) if existing.supersedes(&remote) => {
                     // Local version is newer, ignore

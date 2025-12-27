@@ -31,7 +31,7 @@ impl Default for SwimConfig {
     fn default() -> Self {
         Self {
             ping_interval: Duration::from_millis(500),
-            ping_timeout: Duration::from_millis(200),
+            ping_timeout: Duration::from_secs(2),
             indirect_probes: 3,
             suspicion_timeout: Duration::from_secs(5),
         }
@@ -170,7 +170,7 @@ mod tests {
     fn test_swim_config_default() {
         let config = SwimConfig::default();
         assert_eq!(config.ping_interval, Duration::from_millis(500));
-        assert_eq!(config.ping_timeout, Duration::from_millis(200));
+        assert_eq!(config.ping_timeout, Duration::from_secs(2));
         assert_eq!(config.indirect_probes, 3);
     }
 

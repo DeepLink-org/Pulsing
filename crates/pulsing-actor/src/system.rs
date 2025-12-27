@@ -882,11 +882,11 @@ impl Http2ServerHandler for SystemMessageHandler {
         }
     }
 
-    async fn handle_gossip(&self, payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
+    async fn handle_gossip(&self, payload: Vec<u8>, peer_addr: SocketAddr) -> anyhow::Result<Option<Vec<u8>>> {
         let cluster_guard = self.cluster.read().await;
         if let Some(cluster) = cluster_guard.as_ref() {
             let msg: GossipMessage = bincode::deserialize(&payload)?;
-            let response = cluster.handle_gossip(msg).await?;
+            let response = cluster.handle_gossip(msg, peer_addr).await?;
             if let Some(resp) = response {
                 Ok(Some(bincode::serialize(&resp)?))
             } else {

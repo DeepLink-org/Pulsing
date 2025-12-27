@@ -44,7 +44,11 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
     ) -> anyhow::Result<MessageStream>;
 
     /// Handle gossip message
-    async fn handle_gossip(&self, payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>>;
+    async fn handle_gossip(
+        &self,
+        payload: Vec<u8>,
+        peer_addr: SocketAddr,
+    ) -> anyhow::Result<Option<Vec<u8>>>;
 
     /// Get health status
     async fn health_check(&self) -> serde_json::Value {
@@ -170,7 +174,7 @@ impl Http2Server {
 
         let service = service_fn(move |req| {
             let handler = handler.clone();
-            async move { Self::handle_request(req, handler).await }
+            async move { Self::handle_request(req, handler, peer_addr).await }
         });
 
         // Try HTTP/2 first, fall back to HTTP/1.1
@@ -210,7 +214,7 @@ impl Http2Server {
     ) -> anyhow::Result<()> {
         let service = service_fn(move |req| {
             let handler = handler.clone();
-            async move { Self::handle_request(req, handler).await }
+            async move { Self::handle_request(req, handler, peer_addr).await }
         });
 
         let mut h2_builder = http2::Builder::new(TokioExecutor::new());
@@ -241,6 +245,7 @@ impl Http2Server {
     async fn handle_request(
         req: Request<Incoming>,
         handler: Arc<dyn Http2ServerHandler>,
+        peer_addr: SocketAddr,
     ) -> Result<Response<BoxBody>, Infallible> {
         let path = req.uri().path().to_string();
         let method = req.method().clone();
@@ -294,7 +299,7 @@ impl Http2Server {
 
         // Dispatch based on mode
         if path == "/cluster/gossip" {
-            return Self::handle_gossip_request(&handler, body_bytes).await;
+            return Self::handle_gossip_request(&handler, body_bytes, peer_addr).await;
         }
 
         match mode {
@@ -313,8 +318,9 @@ impl Http2Server {
     async fn handle_gossip_request(
         handler: &Arc<dyn Http2ServerHandler>,
         payload: Vec<u8>,
+        peer_addr: SocketAddr,
     ) -> Result<Response<BoxBody>, Infallible> {
-        match handler.handle_gossip(payload).await {
+        match handler.handle_gossip(payload, peer_addr).await {
             Ok(Some(response)) => Ok(Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "application/octet-stream")
@@ -487,7 +493,11 @@ mod tests {
             Ok(Box::pin(stream))
         }
 
-        async fn handle_gossip(&self, _payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
+        async fn handle_gossip(
+            &self,
+            _payload: Vec<u8>,
+            _peer_addr: SocketAddr,
+        ) -> anyhow::Result<Option<Vec<u8>>> {
             Ok(None)
         }
     }

@@ -92,7 +92,11 @@ impl Http2ServerHandler for TestHandler {
         Ok(Box::pin(stream))
     }
 
-    async fn handle_gossip(&self, _payload: Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
+    async fn handle_gossip(
+        &self,
+        _payload: Vec<u8>,
+        _peer_addr: std::net::SocketAddr,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
         Ok(None)
     }
 
