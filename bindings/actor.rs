@@ -357,6 +357,7 @@ impl PyStreamReader {
 /// Stream writer for producing streaming responses.
 #[pyclass(name = "StreamWriter")]
 pub struct PyStreamWriter {
+    #[allow(clippy::type_complexity)]
     sender: Arc<TokioMutex<Option<mpsc::Sender<anyhow::Result<Vec<u8>>>>>>,
 }
 
@@ -433,6 +434,7 @@ impl PyStreamWriter {
 #[pyclass(name = "StreamMessage")]
 pub struct PyStreamMessage {
     msg_type: String,
+    #[allow(clippy::type_complexity)]
     receiver: Arc<StdMutex<Option<mpsc::Receiver<anyhow::Result<Vec<u8>>>>>>,
 }
 

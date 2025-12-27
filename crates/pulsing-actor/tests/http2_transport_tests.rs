@@ -602,10 +602,10 @@ fn test_message_mode_conversion() {
     assert_eq!(MessageMode::Tell.as_str(), "tell");
     assert_eq!(MessageMode::Stream.as_str(), "stream");
 
-    assert_eq!(MessageMode::from_str("ask"), Some(MessageMode::Ask));
-    assert_eq!(MessageMode::from_str("TELL"), Some(MessageMode::Tell));
-    assert_eq!(MessageMode::from_str("Stream"), Some(MessageMode::Stream));
-    assert_eq!(MessageMode::from_str("invalid"), None);
+    assert_eq!(MessageMode::parse("ask"), Some(MessageMode::Ask));
+    assert_eq!(MessageMode::parse("TELL"), Some(MessageMode::Tell));
+    assert_eq!(MessageMode::parse("Stream"), Some(MessageMode::Stream));
+    assert_eq!(MessageMode::parse("invalid"), None);
 }
 
 // ============================================================================

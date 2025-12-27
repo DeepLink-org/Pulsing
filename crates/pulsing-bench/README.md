@@ -252,7 +252,7 @@ $ make build
   iterations. **Constant arrival rate** is an open-loop model more representative of real-life workloads.
 
 
-* **Why do I get high error rate when running `thoughput` benchmark?**
+* **Why do I get high error rate when running `throughput` benchmark?**
 
   Throughput bench tries to saturate the server with a high request rate. The error rate is high because the server is
   not able to handle the request rate or rate limiting the requests.

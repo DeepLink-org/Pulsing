@@ -212,7 +212,7 @@ impl TextGenerationBackend for OpenAITextGenerationBackend {
                     }
 
                     // Additional validation: check if content makes sense
-                    if content.len() > 0 && num_tokens == 0 {
+                    if !content.is_empty() && num_tokens == 0 {
                         warn!(
                             "Tokenizer returned 0 tokens for non-empty content: '{content}'",
                             content = content
@@ -280,6 +280,7 @@ impl TextGenerationBackend for OpenAITextGenerationBackend {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DummyTextGenerationBackend {
     time_to_generate: time::Duration,
@@ -666,8 +667,10 @@ impl TextRequestGenerator for ConversationTextRequestGenerator {
     }
 }
 
+#[allow(dead_code)]
 pub struct DummyTextRequestGenerator {}
 
+#[allow(dead_code)]
 impl DummyTextRequestGenerator {
     pub fn new() -> Self {
         Self {}
@@ -1205,15 +1208,15 @@ mod tests {
         tokio::spawn(async move {
             backend.generate(request.clone(), tx.clone()).await;
         });
-        let reponses = Arc::new(RwLock::new(Vec::new()));
-        let responses_clone = reponses.clone();
+        let responses = Arc::new(RwLock::new(Vec::new()));
+        let responses_clone = responses.clone();
         let t = tokio::spawn(async move {
             while let Some(item) = rx.recv().await {
                 responses_clone.write().await.push(item);
             }
         });
         t.await.unwrap();
-        let responses = reponses.read().await;
+        let responses = responses.read().await;
         assert_eq!(responses.len(), 1);
         assert_eq!(responses[0].failed, true);
     }

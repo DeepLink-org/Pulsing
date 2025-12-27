@@ -6,6 +6,8 @@ use chrono::Utc;
 use std::fmt::{Debug, Display, Formatter};
 use std::time::Duration;
 
+#[allow(clippy::enum_variant_names)]
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum BenchmarkErrors {
     NoEndTime,
@@ -59,6 +61,7 @@ impl BenchmarkResults {
             .and_then(|response| response.start_time)
     }
 
+    #[allow(clippy::double_ended_iterator_last)]
     pub fn end_time(&self) -> Option<tokio::time::Instant> {
         // First filter out valid responses (those with end_time), then take the last one
         self.aggregated_responses

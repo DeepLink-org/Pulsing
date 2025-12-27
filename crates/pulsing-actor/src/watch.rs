@@ -85,6 +85,7 @@ impl ActorLifecycle {
     /// * `named_actor_paths` - Routing table to clean up
     /// * `cluster` - Cluster reference for broadcasting
     /// * `get_sender` - Function to get sender for notifying watchers
+    #[allow(clippy::too_many_arguments)]
     pub async fn handle_termination<F>(
         &self,
         actor_id: &ActorId,

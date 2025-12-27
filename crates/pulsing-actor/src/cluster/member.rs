@@ -290,7 +290,7 @@ impl NamedActorInfo {
     /// Merge with another NamedActorInfo (union of instances)
     pub fn merge(&mut self, other: &NamedActorInfo) {
         for node_id in &other.instances {
-            self.instances.insert(node_id.clone());
+            self.instances.insert(*node_id);
         }
         self.version = self.version.max(other.version) + 1;
     }

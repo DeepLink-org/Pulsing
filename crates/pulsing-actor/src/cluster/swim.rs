@@ -152,7 +152,7 @@ impl SwimDetector {
         let timed_out: Vec<_> = pending
             .iter()
             .filter(|(_, p)| now.duration_since(p.sent_at) > self.config.ping_timeout)
-            .map(|(seq, p)| (*seq, p.target.clone()))
+            .map(|(seq, p)| (*seq, p.target))
             .collect();
 
         for (seq, target) in timed_out {

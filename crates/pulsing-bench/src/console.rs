@@ -46,6 +46,7 @@ pub enum BenchmarkStatus {
     Completed,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, strum_macros::Display)]
 pub enum LogLevel {
     Info,

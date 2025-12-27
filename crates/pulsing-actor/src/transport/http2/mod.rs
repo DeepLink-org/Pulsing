@@ -75,8 +75,8 @@ use tokio_util::sync::CancellationToken;
 pub struct Http2Transport {
     local_addr: SocketAddr,
     client: Arc<Http2Client>,
-    server: Option<Http2Server>,
-    config: Http2Config,
+    // server: Option<Http2Server>,
+    // config: Http2Config,
 }
 
 impl Http2Transport {
@@ -98,8 +98,8 @@ impl Http2Transport {
         let transport = Arc::new(Self {
             local_addr,
             client,
-            server: Some(server),
-            config,
+            // server: Some(server),
+            // config,
         });
 
         Ok((transport, local_addr))
@@ -113,8 +113,8 @@ impl Http2Transport {
         Arc::new(Self {
             local_addr: "0.0.0.0:0".parse().unwrap(),
             client,
-            server: None,
-            config,
+            // server: None,
+            // config,
         })
     }
 
@@ -229,7 +229,7 @@ impl MessageMode {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "ask" => Some(MessageMode::Ask),
             "tell" => Some(MessageMode::Tell),
@@ -262,7 +262,7 @@ impl ResponseType {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "single" => Some(ResponseType::Single),
             "stream" => Some(ResponseType::Stream),
@@ -458,10 +458,10 @@ mod tests {
         assert_eq!(MessageMode::Tell.as_str(), "tell");
         assert_eq!(MessageMode::Stream.as_str(), "stream");
 
-        assert_eq!(MessageMode::from_str("ask"), Some(MessageMode::Ask));
-        assert_eq!(MessageMode::from_str("TELL"), Some(MessageMode::Tell));
-        assert_eq!(MessageMode::from_str("Stream"), Some(MessageMode::Stream));
-        assert_eq!(MessageMode::from_str("invalid"), None);
+        assert_eq!(MessageMode::parse("ask"), Some(MessageMode::Ask));
+        assert_eq!(MessageMode::parse("TELL"), Some(MessageMode::Tell));
+        assert_eq!(MessageMode::parse("Stream"), Some(MessageMode::Stream));
+        assert_eq!(MessageMode::parse("invalid"), None);
     }
 
     #[test]

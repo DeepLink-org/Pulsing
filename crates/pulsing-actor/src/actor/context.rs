@@ -104,7 +104,7 @@ impl ActorContext {
         // Get from system
         if let Some(ref system) = self.system {
             let r = system.actor_ref(id).await?;
-            self.actor_refs.insert(id.clone(), r.clone());
+            self.actor_refs.insert(*id, r.clone());
             return Ok(r);
         }
 

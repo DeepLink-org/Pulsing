@@ -253,12 +253,12 @@ impl ActorSystem {
         let metadata = actor.metadata();
 
         // Create context
-        let ctx = ActorContext::new(actor_id.clone());
+        let ctx = ActorContext::new(actor_id);
 
         // Spawn actor loop
         let stats_clone = stats.clone();
         let cancel = self.cancel_token.clone();
-        let actor_id_for_log = actor_id.clone();
+        let actor_id_for_log = actor_id;
         let join_handle = tokio::spawn(async move {
             let reason = run_actor_loop(actor, receiver, ctx, cancel, stats_clone).await;
             tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Actor stopped");
@@ -271,7 +271,7 @@ impl ActorSystem {
             stats: stats.clone(),
             metadata,
             named_path: None,
-            actor_id: actor_id.clone(),
+            actor_id,
         };
 
         self.local_actors.insert(name.to_string(), handle);
@@ -314,12 +314,12 @@ impl ActorSystem {
         let metadata = actor.metadata();
 
         // Create context
-        let ctx = ActorContext::new(actor_id.clone());
+        let ctx = ActorContext::new(actor_id);
 
         // Spawn actor loop
         let stats_clone = stats.clone();
         let cancel = self.cancel_token.clone();
-        let actor_id_for_log = actor_id.clone();
+        let actor_id_for_log = actor_id;
 
         let join_handle = tokio::spawn(async move {
             let reason = run_actor_loop(actor, receiver, ctx, cancel, stats_clone).await;
@@ -333,7 +333,7 @@ impl ActorSystem {
             stats: stats.clone(),
             metadata,
             named_path: Some(path.clone()),
-            actor_id: actor_id.clone(),
+            actor_id,
         };
 
         self.local_actors.insert(local_name.to_string(), handle);
@@ -698,11 +698,9 @@ impl SystemMessageHandler {
     /// Dispatch a message to an actor (ask pattern)
     async fn dispatch_message(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
         // Check if path is /actors/{name} or /named/{path}
-        if path.starts_with("/actors/") {
-            let actor_name = &path[8..]; // Remove "/actors/"
+        if let Some(actor_name) = path.strip_prefix("/actors/") {
             self.send_to_local_actor(actor_name, msg).await
-        } else if path.starts_with("/named/") {
-            let named_path = &path[7..]; // Remove "/named/"
+        } else if let Some(named_path) = path.strip_prefix("/named/") {
             self.send_to_named_actor(named_path, msg).await
         } else {
             Err(anyhow::anyhow!("Invalid path: {}", path))
@@ -712,11 +710,9 @@ impl SystemMessageHandler {
     /// Dispatch a fire-and-forget message
     async fn dispatch_tell(&self, path: &str, msg: Message) -> anyhow::Result<()> {
         // Check if path is /actors/{name} or /named/{path}
-        if path.starts_with("/actors/") {
-            let actor_name = &path[8..];
+        if let Some(actor_name) = path.strip_prefix("/actors/") {
             self.tell_local_actor(actor_name, msg).await
-        } else if path.starts_with("/named/") {
-            let named_path = &path[7..];
+        } else if let Some(named_path) = path.strip_prefix("/named/") {
             self.tell_named_actor(named_path, msg).await
         } else {
             Err(anyhow::anyhow!("Invalid path: {}", path))

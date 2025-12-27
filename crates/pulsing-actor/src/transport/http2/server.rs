@@ -267,7 +267,7 @@ impl Http2Server {
             .headers()
             .get(headers::MESSAGE_MODE)
             .and_then(|v| v.to_str().ok())
-            .and_then(MessageMode::from_str)
+            .and_then(MessageMode::parse)
             .unwrap_or(MessageMode::Ask);
 
         let msg_type = req

@@ -1,8 +1,7 @@
 //! Streaming response support for HTTP/2 transport
 
-use crate::actor::{Message, MessageStream};
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::task::{Context, Poll};
