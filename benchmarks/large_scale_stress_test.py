@@ -325,7 +325,8 @@ class StressTestClient:
             msg_type = msg_types.get(base_type, "Echo")
             payload = self._generate_payload(base_type, msg_type)
             
-            resp = await worker_ref.ask_json(msg_type, payload)
+            msg = Message.from_json(msg_type, payload)
+            resp = (await worker_ref.ask(msg)).to_json()
             
             # 验证响应不为空
             if resp is None:
@@ -375,7 +376,8 @@ class StressTestClient:
             }
             
             msg = Message.from_json("GenerateStream", payload)
-            reader = await worker_ref.ask_stream(msg)
+            response = await worker_ref.ask(msg)
+            reader = response.stream_reader()
             
             chunk_count = 0
             async for chunk_bytes in reader:
