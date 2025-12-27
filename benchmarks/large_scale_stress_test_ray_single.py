@@ -245,20 +245,18 @@ class StressTestClient:
 
         try:
             if worker_type == "echo":
-                result = await worker.echo.remote(f"echo_{random.randint(1, 1000)}")
+                await worker.echo.remote(f"echo_{random.randint(1, 1000)}")
             elif worker_type == "compute":
-                result = await worker.compute.remote(random.randint(100, 10000))
+                await worker.compute.remote(random.randint(100, 10000))
             elif worker_type == "batch":
-                result = await worker.batch_add.remote(random.randint(1, 100))
+                await worker.batch_add.remote(random.randint(1, 100))
             elif worker_type == "stateful":
                 if random.random() < 0.5:
-                    result = await worker.set_state.remote(
+                    await worker.set_state.remote(
                         f"key_{random.randint(1, 100)}", random.randint(1, 1000)
                     )
                 else:
-                    result = await worker.get_state.remote(
-                        f"key_{random.randint(1, 100)}"
-                    )
+                    await worker.get_state.remote(f"key_{random.randint(1, 100)}")
 
             latency_ms = (time.time() - start_time) * 1000
             self.stats.add_request(True, latency_ms)
@@ -299,7 +297,6 @@ class StressTestClient:
     async def run_stress_test(self, duration: float):
         """运行压测"""
         end_time = time.time() + duration
-        last_report_time = time.time()
         report_interval = 10.0
 
         print(f"[StressTest] Starting stress test for {duration}s at {self.rate} req/s")
@@ -371,7 +368,6 @@ async def main():
     # 设置日志
     log_dir = args.log_dir
     os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, "stress_test_ray_single.log")
 
     print(f"\n{'='*60}")
     print("Ray Stress Test (Single Process Mode)")

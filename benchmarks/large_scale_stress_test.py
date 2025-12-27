@@ -396,7 +396,7 @@ class StressTestClient:
 
             chunk_count = 0
             async for chunk_bytes in reader:
-                chunk = json.loads(chunk_bytes)
+                _ = json.loads(chunk_bytes)  # Parse to validate JSON
                 chunk_count += 1
 
             latency_ms = (time.time() - start_time) * 1000
@@ -466,7 +466,7 @@ class StressTestClient:
                                 if worker_type not in node_workers:
                                     node_workers.append(worker_type)
                                 break
-                    except:
+                    except Exception:
                         pass
 
                 # 检查是否缺少worker类型
@@ -490,7 +490,6 @@ class StressTestClient:
     async def run_stress_test(self, duration: float):
         """运行压测"""
         end_time = time.time() + duration
-        last_report_time = time.time()
         last_health_check = time.time()
         report_interval = 10.0  # 每10秒报告一次
 
@@ -524,20 +523,16 @@ class StressTestClient:
             while self.running and time.time() < end_time:
                 # 根据概率选择本地或远程worker
                 # 70%概率选择远程worker，30%概率选择本地worker
-                is_remote = False
                 if remote_workers and (
                     not local_workers or random.random() < use_remote_probability
                 ):
                     worker_type = random.choice(remote_workers)
-                    is_remote = True
                     self.remote_requests += 1
                 elif local_workers:
                     worker_type = random.choice(local_workers)
-                    is_remote = False
                     self.local_requests += 1
                 else:
                     worker_type = random.choice(remote_workers)
-                    is_remote = True
                     self.remote_requests += 1
 
                 # 随机选择single或stream（70% single, 30% stream）
@@ -566,7 +561,6 @@ class StressTestClient:
             nonlocal last_health_check
             while self.running and time.time() < end_time:
                 await asyncio.sleep(report_interval)
-                elapsed = time.time() - last_report_time
                 summary = self.stats.get_summary()
                 print("\n[StressTest] Progress Report:")
                 print(
@@ -694,29 +688,29 @@ async def main():
             try:
                 self.file.write(text)
                 self.file.flush()
-            except:
+            except Exception:
                 pass
             # 写入原始stdout（控制台）
             try:
                 self.original_stdout.write(text)
                 self.original_stdout.flush()
-            except:
+            except Exception:
                 pass
 
         def flush(self):
             try:
                 self.file.flush()
-            except:
+            except Exception:
                 pass
             try:
                 self.original_stdout.flush()
-            except:
+            except Exception:
                 pass
 
         def close(self):
             try:
                 self.file.close()
-            except:
+            except Exception:
                 pass
 
     # 保存原始stdout/stderr
@@ -907,7 +901,7 @@ async def main():
     if hasattr(sys.stdout, "close"):
         try:
             sys.stdout.close()
-        except:
+        except Exception:
             pass
     sys.stdout = original_stdout
     sys.stderr = original_stderr

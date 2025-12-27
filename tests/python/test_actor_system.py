@@ -387,7 +387,7 @@ async def test_streaming_response_large(actor_system):
 
     reader = response.stream_reader()
     count = 0
-    async for chunk in reader:
+    async for _chunk in reader:
         count += 1
 
     assert count == 100
@@ -430,7 +430,7 @@ async def test_streaming_response_cancel(actor_system):
     reader = response.stream_reader()
     count = 0
 
-    async for chunk in reader:
+    async for _chunk in reader:
         count += 1
         if count >= 3:
             await reader.cancel()
@@ -553,7 +553,7 @@ async def test_actor_not_found(actor_system):
     # Create a fake ActorId with a random local_id that doesn't exist
     fake_id = ActorId(99999999, actor_system.node_id)
 
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError):
         await actor_system.actor_ref(fake_id)
 
 
@@ -566,7 +566,7 @@ async def test_message_to_stopped_actor(actor_system):
     await actor_system.stop("temp_actor")
 
     # Try to send message - should fail
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError):
         await actor_ref.ask(Message.from_json("test", {}))
 
 
@@ -583,7 +583,7 @@ async def test_high_throughput_messages(actor_system):
     # Send many increments
     num_messages = 100
     tasks = []
-    for i in range(num_messages):
+    for _i in range(num_messages):
         tasks.append(actor_ref.ask(Message.from_json("increment", {"value": 1})))
 
     await asyncio.gather(*tasks)
@@ -603,7 +603,7 @@ async def test_concurrent_streaming(actor_system):
         response = await actor_ref.ask(request)
         reader = response.stream_reader()
         count = 0
-        async for chunk in reader:
+        async for _chunk in reader:
             count += 1
         return stream_id, count
 

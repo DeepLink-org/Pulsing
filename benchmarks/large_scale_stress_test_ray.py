@@ -365,7 +365,7 @@ class StressTestClient:
             stream_items = await worker_ref.generate_stream.remote(count, delay)
 
             chunk_count = 0
-            for chunk in stream_items:
+            for _chunk in stream_items:
                 chunk_count += 1
 
             latency_ms = (time.time() - start_time) * 1000
@@ -383,7 +383,7 @@ class StressTestClient:
         try:
             # Ray集群信息
             cluster_resources = ray.cluster_resources()
-            available_resources = ray.available_resources()
+            _available_resources = ray.available_resources()  # noqa: F841
 
             # 检查节点数量（通过资源信息推断）
             num_nodes = cluster_resources.get("node:__internal__:__head_node__", 0)
@@ -410,7 +410,6 @@ class StressTestClient:
     async def run_stress_test(self, duration: float):
         """运行压测"""
         end_time = time.time() + duration
-        last_report_time = time.time()
         last_health_check = time.time()
         report_interval = 10.0
 
@@ -440,20 +439,16 @@ class StressTestClient:
 
             while self.running and time.time() < end_time:
                 # 选择worker
-                is_remote = False
                 if remote_workers and (
                     not local_workers or random.random() < use_remote_probability
                 ):
                     worker_type = random.choice(remote_workers)
-                    is_remote = True
                     self.remote_requests += 1
                 elif local_workers:
                     worker_type = random.choice(local_workers)
-                    is_remote = False
                     self.local_requests += 1
                 else:
                     worker_type = random.choice(remote_workers)
-                    is_remote = True
                     self.remote_requests += 1
 
                 # 随机选择single或stream
@@ -479,7 +474,6 @@ class StressTestClient:
             nonlocal last_health_check
             while self.running and time.time() < end_time:
                 await asyncio.sleep(report_interval)
-                elapsed = time.time() - last_report_time
                 summary = self.stats.get_summary()
                 print("\n[StressTest] Progress Report:")
                 print(
@@ -597,22 +591,22 @@ async def main():
             try:
                 self.file.write(text)
                 self.file.flush()
-            except:
+            except Exception:
                 pass
             try:
                 self.original_stdout.write(text)
                 self.original_stdout.flush()
-            except:
+            except Exception:
                 pass
 
         def flush(self):
             try:
                 self.file.flush()
-            except:
+            except Exception:
                 pass
             try:
                 self.original_stdout.flush()
-            except:
+            except Exception:
                 pass
 
         def fileno(self):
@@ -638,7 +632,7 @@ async def main():
         def close(self):
             try:
                 self.file.close()
-            except:
+            except Exception:
                 pass
 
     original_stdout = sys.stdout
@@ -666,7 +660,6 @@ async def main():
         else:
             # 本地模式：每个进程创建独立的Ray实例，但严格限制资源
             # 关键：限制CPU、内存、禁用不必要的功能
-            cpu_count = os.cpu_count() or 8
             # 每个进程最多使用1个CPU核心，避免资源耗尽
             num_cpus = 1
             # 限制对象存储内存为100MB（非常保守）
@@ -789,7 +782,7 @@ async def main():
     if hasattr(sys.stdout, "close"):
         try:
             sys.stdout.close()
-        except:
+        except Exception:
             pass
     sys.stdout = original_stdout
     sys.stderr = original_stderr

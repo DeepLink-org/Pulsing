@@ -66,7 +66,7 @@ class TransformersWorker(Actor):
         for writer in self._load_subscribers:
             try:
                 writer.close()
-            except:
+            except Exception:
                 pass
         self._load_subscribers.clear()
 
@@ -113,7 +113,7 @@ class TransformersWorker(Actor):
         for writer in self._load_subscribers:
             try:
                 await writer.write_json(snapshot)
-            except:
+            except Exception:
                 dead_writers.append(writer)
 
         # 清理断开的连接
@@ -188,7 +188,7 @@ class TransformersWorker(Actor):
                 while True:
                     await asyncio.sleep(1.0)
                     await writer.write_json(worker._get_load_snapshot())
-            except:
+            except Exception:
                 pass
             finally:
                 if writer in worker._load_subscribers:
@@ -315,7 +315,7 @@ class TransformersWorker(Actor):
                 print(f"[Worker] produce error: {e}")
                 try:
                     await writer.error(str(e))
-                except:
+                except Exception:
                     pass
             finally:
                 # 请求完成 - 减少负载

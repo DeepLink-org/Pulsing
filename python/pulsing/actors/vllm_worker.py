@@ -183,7 +183,7 @@ class VllmWorker(Actor):
                 image_bytes = base64.b64decode(data)
                 return await asyncio.to_thread(Image.open, BytesIO(image_bytes))
             except Exception as e:
-                raise ValueError(f"Failed to decode base64 image: {e}")
+                raise ValueError(f"Failed to decode base64 image: {e}") from e
 
         # 暂时不支持 HTTP URL 下载，建议由前端/Processor 转换成 Base64
         raise ValueError(f"Unsupported image source: {image_source[:20]}...")

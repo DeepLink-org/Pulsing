@@ -150,7 +150,7 @@ def _inspect_system(seeds: list):
                         instances = await system.get_named_instances(name)
                         if instances:
                             all_named_actors[name] = instances
-                    except:
+                    except Exception:
                         pass
         except Exception as e:
             print(f"  [Warning] Failed to get all named actors: {e}")

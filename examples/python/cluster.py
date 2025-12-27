@@ -77,7 +77,7 @@ async def run_node(port: int, seed: str | None):
             try:
                 actor = await system.resolve_named(path)
                 break
-            except:
+            except Exception:
                 print(".", end="", flush=True)
                 await asyncio.sleep(0.5)
 

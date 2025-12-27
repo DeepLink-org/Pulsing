@@ -87,11 +87,11 @@ class LoadStreamConsumer:
                     if self._on_update:
                         try:
                             self._on_update(snapshot)
-                        except:
+                        except Exception:
                             pass
             except asyncio.CancelledError:
                 pass
-            except:
+            except Exception:
                 pass
             finally:
                 async with self._lock:
@@ -99,7 +99,7 @@ class LoadStreamConsumer:
                 if self._on_disconnect:
                     try:
                         self._on_disconnect(wid)
-                    except:
+                    except Exception:
                         pass
 
         task = asyncio.create_task(consume())
@@ -189,7 +189,7 @@ class StreamLoadScheduler:
         if self._on_worker_removed:
             try:
                 self._on_worker_removed(node_id)
-            except:
+            except Exception:
                 pass
 
     async def stop(self):
@@ -240,7 +240,7 @@ class StreamLoadScheduler:
                 if self._on_worker_added:
                     try:
                         self._on_worker_added(node_id)
-                    except:
+                    except Exception:
                         pass
         except Exception as e:
             print(f"[StreamLoadScheduler] Subscribe error for node {node_id}: {e}")
@@ -255,7 +255,7 @@ class StreamLoadScheduler:
         if self._on_worker_removed:
             try:
                 self._on_worker_removed(node_id)
-            except:
+            except Exception:
                 pass
 
     async def _auto_discover_loop(self):

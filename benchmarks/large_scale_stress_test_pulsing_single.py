@@ -292,7 +292,7 @@ class StressTestClient:
                         "GetState", {"key": f"key_{random.randint(1, 100)}"}
                     )
 
-            resp = await worker.ask(msg)
+            await worker.ask(msg)
 
             latency_ms = (time.time() - start_time) * 1000
             self.stats.add_request(True, latency_ms)
@@ -322,7 +322,7 @@ class StressTestClient:
             reader = response.stream_reader()
 
             chunk_count = 0
-            async for chunk_bytes in reader:
+            async for _chunk_bytes in reader:
                 chunk_count += 1
 
             latency_ms = (time.time() - start_time) * 1000
