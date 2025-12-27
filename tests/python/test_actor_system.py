@@ -509,7 +509,6 @@ async def test_remote_actor_communication(cluster_systems):
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="Remote streaming not yet implemented in HTTP transport")
 async def test_remote_streaming_response(cluster_systems):
     """Test streaming response from remote actor."""
     system1, system2 = cluster_systems
