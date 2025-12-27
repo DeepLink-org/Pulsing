@@ -10,16 +10,15 @@ Covers:
 
 import asyncio
 import json
-import pytest
 
+import pytest
 from pulsing.actor import (
     Actor,
-    create_actor_system,
-    SystemConfig,
+    ActorId,
     Message,
     StreamMessage,
-    ActorRef,
-    ActorId,
+    SystemConfig,
+    create_actor_system,
 )
 
 # Actor system tests are standalone and don't require NATS/ETCD
@@ -243,7 +242,9 @@ async def test_ask_json(actor_system):
     actor_ref = await actor_system.spawn("counter", CounterActor())
 
     # Test increment
-    response = (await actor_ref.ask(Message.from_json("increment", {"value": 5}))).to_json()
+    response = (
+        await actor_ref.ask(Message.from_json("increment", {"value": 5}))
+    ).to_json()
     assert response["count"] == 5
 
     # Test get
@@ -251,7 +252,9 @@ async def test_ask_json(actor_system):
     assert response["count"] == 5
 
     # Test decrement
-    response = (await actor_ref.ask(Message.from_json("decrement", {"value": 2}))).to_json()
+    response = (
+        await actor_ref.ask(Message.from_json("decrement", {"value": 2}))
+    ).to_json()
     assert response["count"] == 3
 
 
@@ -514,7 +517,9 @@ async def test_remote_streaming_response(cluster_systems):
     system1, system2 = cluster_systems
 
     # Spawn streaming actor on system1
-    actor_ref1 = await system1.spawn("remote_generator", StreamingGeneratorActor(), public=True)
+    actor_ref1 = await system1.spawn(
+        "remote_generator", StreamingGeneratorActor(), public=True
+    )
 
     # Wait for propagation
     await asyncio.sleep(1.0)
@@ -613,4 +618,3 @@ async def test_concurrent_streaming(actor_system):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

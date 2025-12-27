@@ -6,7 +6,7 @@ import logging
 import os
 import uuid
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from pulsing.actor import Actor, ActorId, Message, StreamMessage
 
@@ -38,7 +38,7 @@ class VllmWorker(Actor):
         self,
         model: str,
         role: str = "aggregated",  # Options: aggregated, prefill, decode
-        engine_args: Optional[Dict[str, Any]] = None,
+        engine_args: dict[str, Any] | None = None,
         gpu_memory_utilization: float = 0.9,
         trust_remote_code: bool = True,
         max_new_tokens: int = 512,
@@ -62,9 +62,9 @@ class VllmWorker(Actor):
         self.engine_args_dict.update(kwargs)
 
         self.worker_id = f"vllm-{self.role}-{uuid.uuid4().hex[:8]}"
-        self._engine: Optional[AsyncLLM] = None
+        self._engine: AsyncLLM | None = None
         self._is_ready = False
-        self._actor_id: Optional[ActorId] = None
+        self._actor_id: ActorId | None = None
 
     async def on_start(self, actor_id: ActorId) -> None:
         self._actor_id = actor_id
@@ -103,7 +103,7 @@ class VllmWorker(Actor):
         self._engine = None
         self._is_ready = False
 
-    def metadata(self) -> Dict[str, str]:
+    def metadata(self) -> dict[str, str]:
         meta = {
             "type": "vllm_worker",
             "role": self.role,
@@ -131,7 +131,7 @@ class VllmWorker(Actor):
 
         return meta
 
-    async def receive(self, msg: Message) -> Union[Message, StreamMessage]:
+    async def receive(self, msg: Message) -> Message | StreamMessage:
         if not self._is_ready:
             return Message.from_json("Error", {"error": "vLLM engine not ready"})
 
@@ -156,9 +156,7 @@ class VllmWorker(Actor):
             logger.exception(f"Error handling {msg.msg_type}: {e}")
             return Message.from_json("Error", {"error": str(e)})
 
-    async def _build_prompt(
-        self, data: Dict[str, Any]
-    ) -> Union[TokensPrompt, TextPrompt]:
+    async def _build_prompt(self, data: dict[str, Any]) -> TokensPrompt | TextPrompt:
         """构建 vLLM 输入 Prompt，支持多模态"""
         prompt_text = data.get("prompt")
         token_ids = data.get("token_ids")
@@ -190,7 +188,7 @@ class VllmWorker(Actor):
         # 暂时不支持 HTTP URL 下载，建议由前端/Processor 转换成 Base64
         raise ValueError(f"Unsupported image source: {image_source[:20]}...")
 
-    def _build_sampling_params(self, data: Dict[str, Any]) -> SamplingParams:
+    def _build_sampling_params(self, data: dict[str, Any]) -> SamplingParams:
         """解析采样参数，支持 PD 分离相关参数"""
         sampling_dict = {
             "n": data.get("n", 1),

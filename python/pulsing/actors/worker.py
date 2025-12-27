@@ -4,7 +4,6 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Union
 
 from pulsing.actor import Actor, ActorId, Message, StreamMessage
 
@@ -29,7 +28,7 @@ class TransformersWorker(Actor):
         self,
         model_name: str,
         device: str = "cuda",
-        gen_config: Optional[GenerationConfig] = None,
+        gen_config: GenerationConfig | None = None,
         preload: bool = False,
         capacity: int = 100,
     ):
@@ -40,8 +39,8 @@ class TransformersWorker(Actor):
         self.capacity = capacity
         self.worker_id = f"worker-{uuid.uuid4().hex[:8]}"
 
-        self._actor_id: Optional[ActorId] = None
-        self._node_id: Optional[str] = None
+        self._actor_id: ActorId | None = None
+        self._node_id: str | None = None
         self._model = None
         self._tokenizer = None
         self._is_loaded = False
@@ -51,7 +50,7 @@ class TransformersWorker(Actor):
         self._request_count = 0
 
         # 负载订阅者 (流式推送)
-        self._load_subscribers: List = []
+        self._load_subscribers: list = []
 
     async def on_start(self, actor_id: ActorId) -> None:
         self._actor_id = actor_id
@@ -71,7 +70,7 @@ class TransformersWorker(Actor):
                 pass
         self._load_subscribers.clear()
 
-    def metadata(self) -> Dict[str, str]:
+    def metadata(self) -> dict[str, str]:
         """返回 worker 元数据"""
         return {
             "type": "worker",
@@ -148,7 +147,7 @@ class TransformersWorker(Actor):
         self._is_loaded = True
         print(f"[Worker] Model ready on {self.device}")
 
-    async def receive(self, msg: Message) -> Union[Message, StreamMessage]:
+    async def receive(self, msg: Message) -> Message | StreamMessage:
         try:
             if msg.msg_type == "GenerateRequest":
                 return await self._handle_generate(msg)

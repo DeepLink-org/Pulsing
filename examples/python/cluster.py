@@ -9,9 +9,10 @@ Usage:
     Terminal 2: python examples/python/cluster.py --port 8001 --seed 127.0.0.1:8000
 """
 
-import asyncio
 import argparse
-from pulsing.actor import create_actor_system, SystemConfig, Message, Actor, ActorId
+import asyncio
+
+from pulsing.actor import Actor, ActorId, Message, SystemConfig, create_actor_system
 
 
 class SharedCounter(Actor):
@@ -24,16 +25,16 @@ class SharedCounter(Actor):
 
     def receive(self, msg: Message) -> Message:
         if msg.msg_type == "GetCount":
-            return Message.from_json("CountResponse", {
-                "count": self.count, "from_node": self.node_id
-            })
+            return Message.from_json(
+                "CountResponse", {"count": self.count, "from_node": self.node_id}
+            )
         elif msg.msg_type == "Increment":
             n = msg.to_json().get("n", 1)
             self.count += n
             print(f"[{self.node_id}] +{n} -> {self.count}")
-            return Message.from_json("CountResponse", {
-                "count": self.count, "from_node": self.node_id
-            })
+            return Message.from_json(
+                "CountResponse", {"count": self.count, "from_node": self.node_id}
+            )
         return Message.empty()
 
 
@@ -52,7 +53,9 @@ async def run_node(port: int, seed: str | None):
 
     if seed is None:
         # Node 1: Create actor
-        await system.spawn_named(path, "counter", SharedCounter(str(system.node_id)), public=True)
+        await system.spawn_named(
+            path, "counter", SharedCounter(str(system.node_id)), public=True
+        )
         print(f"✓ Created: {path}")
         print("Start node 2: python cluster.py --port 8001 --seed 127.0.0.1:8000\n")
 
@@ -77,7 +80,7 @@ async def run_node(port: int, seed: str | None):
             except:
                 print(".", end="", flush=True)
                 await asyncio.sleep(0.5)
-        
+
         if not actor:
             print("\n✗ Failed to resolve actor")
             return
@@ -89,7 +92,9 @@ async def run_node(port: int, seed: str | None):
         print(f"Initial: {resp['count']} (from {resp['from_node']})")
 
         for i in range(1, 4):
-            resp = (await actor.ask(Message.from_json("Increment", {"n": i * 10}))).to_json()
+            resp = (
+                await actor.ask(Message.from_json("Increment", {"n": i * 10}))
+            ).to_json()
             print(f"After +{i * 10}: {resp['count']} (from {resp['from_node']})")
 
         print("\n✓ Done!")

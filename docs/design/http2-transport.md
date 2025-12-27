@@ -36,11 +36,11 @@ h2c 有两种建立方式：
    Connection: Upgrade, HTTP2-Settings
    Upgrade: h2c
    HTTP2-Settings: ...
-   
+
    HTTP/1.1 101 Switching Protocols
    Connection: Upgrade
    Upgrade: h2c
-   
+
    [HTTP/2 frames]
    ```
 
@@ -194,7 +194,7 @@ impl Http2Server {
         handler: Arc<dyn Http2MessageHandler>,
         cancel: CancellationToken,
     ) -> anyhow::Result<(Self, SocketAddr)>;
-    
+
     pub fn local_addr(&self) -> SocketAddr;
 }
 ```
@@ -223,7 +223,7 @@ pub struct Http2Client {
 
 impl Http2Client {
     pub fn new(config: Http2ClientConfig) -> Self;
-    
+
     /// 发送 ask 请求
     pub async fn ask(
         &self,
@@ -232,7 +232,7 @@ impl Http2Client {
         msg_type: &str,
         payload: Vec<u8>,
     ) -> anyhow::Result<Vec<u8>>;
-    
+
     /// 发送 tell 请求
     pub async fn tell(
         &self,
@@ -241,7 +241,7 @@ impl Http2Client {
         msg_type: &str,
         payload: Vec<u8>,
     ) -> anyhow::Result<()>;
-    
+
     /// 发送流式请求
     pub async fn ask_stream(
         &self,
@@ -266,7 +266,7 @@ pub trait Http2MessageHandler: Send + Sync + 'static {
         msg_type: &str,
         payload: Vec<u8>,
     ) -> anyhow::Result<Vec<u8>>;
-    
+
     /// 处理 tell 消息
     async fn handle_tell(
         &self,
@@ -274,7 +274,7 @@ pub trait Http2MessageHandler: Send + Sync + 'static {
         msg_type: &str,
         payload: Vec<u8>,
     ) -> anyhow::Result<()>;
-    
+
     /// 处理流式请求
     async fn handle_stream(
         &self,
@@ -307,18 +307,18 @@ pub async fn serve_h2c(
                 let io = TokioIo::new(stream);
                 let handler = handler.clone();
                 let cancel = cancel.clone();
-                
+
                 tokio::spawn(async move {
                     let service = hyper::service::service_fn(move |req| {
                         handle_request(req, handler.clone())
                     });
-                    
+
                     // 使用 HTTP/2 prior knowledge
                     let conn = http2::Builder::new(TokioExecutor::new())
                         .max_concurrent_streams(100)
                         .initial_window_size(65535)
                         .serve_connection(io, service);
-                    
+
                     tokio::select! {
                         result = conn => {
                             if let Err(e) = result {
@@ -374,9 +374,9 @@ async fn handle_stream_request(
                         }
                     }
                 });
-            
+
             let body = Body::from_stream(body_stream);
-            
+
             Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "application/x-ndjson")
@@ -405,7 +405,7 @@ impl Http2Client {
         payload: Vec<u8>,
     ) -> anyhow::Result<impl Stream<Item = anyhow::Result<StreamFrame>>> {
         let url = format!("http://{}{}", addr, path);
-        
+
         let response = self.client
             .post(&url)
             .header("x-message-mode", "stream")
@@ -413,11 +413,11 @@ impl Http2Client {
             .body(payload)
             .send()
             .await?;
-        
+
         if !response.status().is_success() {
             return Err(anyhow::anyhow!("Request failed: {}", response.status()));
         }
-        
+
         // 将响应 body 转换为 StreamFrame 流
         let stream = response
             .bytes_stream()
@@ -428,7 +428,7 @@ impl Http2Client {
                 let frame: StreamFrame = serde_json::from_str(line.trim())?;
                 Ok(frame)
             });
-        
+
         Ok(stream)
     }
 }
@@ -460,7 +460,7 @@ impl<T> Drop for StreamHandle<T> {
 
 impl<T> Stream for StreamHandle<T> {
     type Item = anyhow::Result<T>;
-    
+
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.cancel.is_cancelled() {
             return Poll::Ready(None);
@@ -522,7 +522,7 @@ pub struct Http2TransportConfig {
     pub max_frame_size: u32,
     /// 最大头部列表大小 (默认: 16KB)
     pub max_header_list_size: u32,
-    
+
     // ========== 客户端配置 ==========
     /// 连接超时 (默认: 5s)
     pub connect_timeout: Duration,
@@ -532,7 +532,7 @@ pub struct Http2TransportConfig {
     pub stream_timeout: Duration,
     /// 每主机最大连接数 (默认: 10)
     pub max_connections_per_host: usize,
-    
+
     // ========== 通用配置 ==========
     /// Keep-alive 间隔 (默认: 30s)
     pub keepalive_interval: Duration,
@@ -618,4 +618,3 @@ impl Default for Http2TransportConfig {
 - [RFC 7540 - HTTP/2](https://tools.ietf.org/html/rfc7540)
 - [hyper HTTP/2 支持](https://docs.rs/hyper/latest/hyper/server/conn/http2/)
 - [h2 crate](https://docs.rs/h2/)
-

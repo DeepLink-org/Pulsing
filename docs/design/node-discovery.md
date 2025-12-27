@@ -40,7 +40,7 @@ Pulsing Actor System 采用基于 **Gossip 协议** 的去中心化节点发现�
 └──────────────────────────────────────────────────────────────────┘
 
 1. 启动时多次探测 (seed_probe_count = 3)
-   
+
    Node X 启动
       │
       ├─→ Probe 1: Service IP → Pod A → Welcome(members: [A])
@@ -48,7 +48,7 @@ Pulsing Actor System 采用基于 **Gossip 协议** 的去中心化节点发现�
       ├─→ Probe 2: Service IP → Pod B → Welcome(members: [A,B])
       │
       └─→ Probe 3: Service IP → Pod C → Welcome(members: [A,B,C])
-      
+
    结果: 发现 3 个节点，开始正常 Gossip
 
 2. 周期性重探测 (seed_rejoin_interval = 15s)
@@ -126,21 +126,21 @@ Worker 配置:
 pub struct GossipConfig {
     /// Gossip 同步间隔 (默认 200ms)
     pub gossip_interval: Duration,
-    
+
     /// 每轮 Gossip 的目标节点数 (默认 3)
     pub fanout: usize,
-    
+
     /// 启动时每个 seed 探测次数 (默认 3)
     /// 通过负载均衡可发现不同 Pod
     pub seed_probe_count: usize,
-    
+
     /// 探测间隔 (默认 100ms)
     pub seed_probe_interval: Duration,
-    
+
     /// 周期性 seed 重探测间隔 (默认 15s)
     /// 设为 None 禁用
     pub seed_rejoin_interval: Option<Duration>,
-    
+
     /// SWIM 故障检测配置
     pub swim: SwimConfig,
 }
@@ -171,7 +171,7 @@ Node A                    Node B
    │                         │
    │←─── Ack ────────────────│
    │                         │
-   
+
 超时未收到 Ack → 标记为 Suspect → 超时后标记为 Dead
 ```
 
@@ -254,6 +254,3 @@ let config = SystemConfig {
    - 观察 `members` 数量变化
    - 监控 Gossip 同步延迟
    - 关注 Suspect/Dead 状态的节点
-
-
-

@@ -18,4 +18,3 @@ cargo test --workspace
 - `crates/pulsing-actor/src/**/*.rs` - Unit tests (inline `#[cfg(test)]` modules)
 - `crates/pulsing-actor/tests/` - Integration tests
 - `crates/pulsing-bench/src/**/*.rs` - Unit tests
-

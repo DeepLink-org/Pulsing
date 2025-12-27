@@ -3,14 +3,14 @@
 import asyncio
 import signal
 import sys
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from . import Actor, ActorSystem
 
 
 async def run_until_signal(
-    system: "ActorSystem", actor_name: Optional[str] = None
+    system: "ActorSystem", actor_name: str | None = None
 ) -> None:
     """
     Run until shutdown signal (SIGTERM or SIGINT)
@@ -59,8 +59,8 @@ async def run_until_signal(
 async def spawn_and_run(
     actor: "Actor",
     name: str,
-    addr: Optional[str] = None,
-    seeds: Optional[List[str]] = None,
+    addr: str | None = None,
+    seeds: list[str] | None = None,
     public: bool = True,
 ) -> None:
     """

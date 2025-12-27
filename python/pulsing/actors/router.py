@@ -4,23 +4,23 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Union
 
 from aiohttp import web
+
 from pulsing.actor import ActorSystem, Message
 
 
 @dataclass
 class ChatCompletionRequest:
     model: str
-    messages: List[Dict[str, str]]
+    messages: list[dict[str, str]]
     temperature: float = 1.0
     top_p: float = 1.0
     stream: bool = False
-    max_tokens: Optional[int] = None
+    max_tokens: int | None = None
 
     @classmethod
-    def from_dict(cls, data: Dict) -> "ChatCompletionRequest":
+    def from_dict(cls, data: dict) -> "ChatCompletionRequest":
         return cls(
             model=data.get("model", ""),
             messages=data.get("messages", []),
@@ -34,13 +34,13 @@ class ChatCompletionRequest:
 @dataclass
 class CompletionRequest:
     model: str
-    prompt: Union[str, List[str]]
+    prompt: str | list[str]
     max_tokens: int = 16
     temperature: float = 1.0
     stream: bool = False
 
     @classmethod
-    def from_dict(cls, data: Dict) -> "CompletionRequest":
+    def from_dict(cls, data: dict) -> "CompletionRequest":
         return cls(
             model=data.get("model", ""),
             prompt=data.get("prompt", ""),
@@ -179,7 +179,7 @@ class _OpenAIHandler:
                 request_id, req.model, prompt, worker_ref, req.max_tokens, is_chat=False
             )
 
-    def _build_chat_prompt(self, messages: List[Dict]) -> str:
+    def _build_chat_prompt(self, messages: list[dict]) -> str:
         parts = [
             f"{msg.get('role', 'user').capitalize()}: {msg.get('content', '')}"
             for msg in messages
@@ -324,9 +324,13 @@ async def start_router(
         AppRunner 实例
     """
     from .load_stream import StreamLoadScheduler
-    from .scheduler import (RUST_POLICIES_AVAILABLE, RandomScheduler,
-                            RoundRobinScheduler, RustCacheAwareScheduler,
-                            RustPowerOfTwoScheduler)
+    from .scheduler import (
+        RUST_POLICIES_AVAILABLE,
+        RandomScheduler,
+        RoundRobinScheduler,
+        RustCacheAwareScheduler,
+        RustPowerOfTwoScheduler,
+    )
 
     # 向后兼容: scheduler_class -> scheduler
     if scheduler_class is not None and scheduler is None:

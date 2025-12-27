@@ -42,10 +42,10 @@ async def main():
     # 创建 Actor System
     config = SystemConfig.standalone()
     system = await create_actor_system(config)
-    
+
     # 生成 Actor
     actor_ref = await system.spawn(EchoActor(), "echo")
-    
+
     # 发送消息
     response = await actor_ref.ask(Message.single("hello", b"world"))
     print(f"Response: {response.payload}")

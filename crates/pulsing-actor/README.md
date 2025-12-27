@@ -141,13 +141,13 @@ let result: Pong = remote_ref.ask(Ping { value: 10 }).await?;
 pub trait Actor: Send + Sync + 'static {
     /// Actor 唯一标识
     fn id(&self) -> &ActorId;
-    
+
     /// 启动回调
     async fn on_start(&mut self, ctx: &mut ActorContext) -> Result<()>;
-    
+
     /// 停止回调
     async fn on_stop(&mut self, ctx: &mut ActorContext) -> Result<()>;
-    
+
     /// 处理消息
     async fn receive(&mut self, msg: RawMessage, ctx: &mut ActorContext) -> Result<RawMessage>;
 }
@@ -197,16 +197,16 @@ cargo run --example cluster -p pulsing-actor -- --node 2
 pub struct SystemConfig {
     /// TCP 地址 (用于 Actor 通信)
     pub tcp_addr: SocketAddr,
-    
+
     /// Gossip 地址 (用于集群成员管理)
     pub gossip_addr: SocketAddr,
-    
+
     /// 种子节点 (加入集群时使用)
     pub seed_nodes: Vec<SocketAddr>,
-    
+
     /// Gossip 配置
     pub gossip_config: GossipConfig,
-    
+
     /// TCP 传输配置
     pub tcp_config: TcpTransportConfig,
 }
@@ -218,10 +218,10 @@ pub struct SystemConfig {
 pub struct GossipConfig {
     /// Gossip 间隔 (默认 200ms)
     pub gossip_interval: Duration,
-    
+
     /// 每轮 Gossip 的目标节点数 (默认 3)
     pub fanout: usize,
-    
+
     /// SWIM 故障检测配置
     pub swim: SwimConfig,
 }
@@ -238,4 +238,3 @@ pub struct GossipConfig {
 ## License
 
 Apache-2.0
-

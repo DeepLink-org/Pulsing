@@ -12,7 +12,14 @@ Usage: python examples/python/message_patterns.py
 
 import asyncio
 import json
-from pulsing.actor import create_actor_system, SystemConfig, Message, StreamMessage, Actor
+
+from pulsing.actor import (
+    Actor,
+    Message,
+    StreamMessage,
+    SystemConfig,
+    create_actor_system,
+)
 
 
 class DemoActor(Actor):
@@ -70,7 +77,9 @@ async def main():
 
     # Pattern 3: Client Streaming (batch mode)
     print("--- Pattern 3: Client Streaming (batch) ---")
-    resp = (await actor.ask(Message.from_json("Sum", {"items": [10, 20, 30]}))).to_json()
+    resp = (
+        await actor.ask(Message.from_json("Sum", {"items": [10, 20, 30]}))
+    ).to_json()
     print(f"Sum: {resp['total']}\n")
 
     await system.shutdown()

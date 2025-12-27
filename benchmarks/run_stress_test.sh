@@ -72,4 +72,3 @@ echo "  ./benchmarks/view_logs.sh errors   - Show errors"
 echo "  ./benchmarks/view_logs.sh summary  - Show summary"
 echo "  ./benchmarks/view_logs.sh 0        - Show rank 0 log"
 echo "=========================================="
-

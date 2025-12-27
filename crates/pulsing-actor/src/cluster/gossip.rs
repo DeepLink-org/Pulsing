@@ -2,7 +2,7 @@
 //!
 //! Implements a Redis Cluster-style gossip protocol with:
 //! - MEET/PING/PONG message exchange
-//! - Configuration epoch for conflict resolution  
+//! - Configuration epoch for conflict resolution
 //! - Partial view propagation to reduce message size
 //! - PFail/Fail failure detection
 

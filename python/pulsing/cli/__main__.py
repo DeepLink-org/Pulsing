@@ -1,6 +1,3 @@
-import sys
-from typing import Optional
-
 import hyperparameter as hp
 import uvloop
 
@@ -9,9 +6,9 @@ import uvloop
 def actor(
     type: str,
     namespace: str = "pulsing",
-    addr: Optional[str] = None,
-    seeds: Optional[str] = None,
-    model: Optional[str] = None,
+    addr: str | None = None,
+    seeds: str | None = None,
+    model: str | None = None,
     model_name: str = "pulsing-model",
     device: str = "cuda",
     max_new_tokens: int = 512,
@@ -100,7 +97,7 @@ def actor(
 
 
 @hp.param("inspect")
-def inspect(seeds: Optional[str] = None):
+def inspect(seeds: str | None = None):
     """
     Inspect the actor system state.
 
@@ -210,7 +207,7 @@ def _inspect_system(seeds: list):
 
 def _start_router_actor(
     namespace: str,
-    addr: Optional[str],
+    addr: str | None,
     seeds: list,
     http_host: str,
     http_port: int,
@@ -221,8 +218,7 @@ def _start_router_actor(
     from pulsing.actor import SystemConfig, create_actor_system
     from pulsing.actor.helpers import run_until_signal
 
-    from ..actors import (LeastConnectionScheduler, RandomScheduler,
-                          RoundRobinScheduler)
+    from ..actors import LeastConnectionScheduler, RandomScheduler, RoundRobinScheduler
     from ..actors.router import start_router, stop_router
 
     # 选择调度器类
@@ -276,7 +272,7 @@ def _start_router_actor(
 def _start_transformers_actor(
     model: str,
     namespace: str,
-    addr: Optional[str],
+    addr: str | None,
     seeds: list,
     device: str,
     max_new_tokens: int,
@@ -317,7 +313,7 @@ def _start_transformers_actor(
 def _start_vllm_actor(
     model: str,
     namespace: str,
-    addr: Optional[str],
+    addr: str | None,
     seeds: list,
     max_new_tokens: int,
     role: str = "aggregated",
@@ -354,22 +350,22 @@ def _start_vllm_actor(
 @hp.param("bench")
 def bench(
     tokenizer_name: str,
-    model_name: Optional[str] = None,
+    model_name: str | None = None,
     max_vus: int = 128,
     duration: str = "120s",
-    rates: Optional[list] = None,
+    rates: list | None = None,
     num_rates: int = 10,
-    profile: Optional[str] = None,
+    profile: str | None = None,
     benchmark_kind: str = "sweep",
     warmup: str = "30s",
     url: str = "http://localhost:8000",
     api_key: str = "",
-    prompt_options: Optional[str] = None,
-    decode_options: Optional[str] = None,
+    prompt_options: str | None = None,
+    decode_options: str | None = None,
     dataset: str = "hlarcher/inference-benchmarker",
     dataset_file: str = "share_gpt_filtered_small.json",
-    extra_meta: Optional[str] = None,
-    run_id: Optional[str] = None,
+    extra_meta: str | None = None,
+    run_id: str | None = None,
 ):
     """
     Run inference benchmarks.
@@ -427,8 +423,6 @@ def bench(
         config["extra_meta"] = extra_meta
     if run_id is not None:
         config["run_id"] = run_id
-
-    import asyncio
 
     import uvloop
 

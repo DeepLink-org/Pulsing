@@ -328,7 +328,7 @@ pub struct NamedActorInfo {
 pub struct GlobalRegistry {
     /// 节点成员信息 (node_id -> MemberInfo)
     pub members: HashMap<NodeId, MemberInfo>,
-    
+
     /// 具名 Actor 注册表 (path -> NamedActorInfo)
     /// 只有具名 Actor 在此注册
     pub named_actors: HashMap<String, NamedActorInfo>,
@@ -340,19 +340,19 @@ pub struct GlobalRegistry {
 ```rust
 pub enum GossipMessage {
     // ... 现有消息 ...
-    
+
     /// 具名 Actor 实例注册
     NamedActorRegistered {
         path: ActorPath,
         node_id: NodeId,
     },
-    
+
     /// 具名 Actor 实例注销
     NamedActorUnregistered {
         path: ActorPath,
         node_id: NodeId,
     },
-    
+
     /// 同步消息
     Sync {
         from: NodeId,
@@ -364,7 +364,7 @@ pub enum GossipMessage {
 
 ### 注册流程
 
-1. **创建具名 Actor**：调用 `spawn_named(path, actor)` 
+1. **创建具名 Actor**：调用 `spawn_named(path, actor)`
 2. **本地注册**：Actor 创建成功后注册到本地
 3. **Gossip 广播**：发送 `NamedActorRegistered` 消息
 4. **集群同步**：其他节点更新注册表
@@ -391,19 +391,19 @@ pub struct ActorPath {
 impl ActorPath {
     /// 预留的系统命名空间
     pub const SYSTEM_NAMESPACES: &[&str] = &["system"];
-    
+
     /// 创建新路径（至少需要 namespace/name 两段）
     pub fn new(path: impl AsRef<str>) -> Result<Self, ParseError>;
-    
+
     /// 获取命名空间（第一段）
     pub fn namespace(&self) -> &str;
-    
+
     /// 获取名称（最后一段）
     pub fn name(&self) -> &str;
-    
+
     /// 获取完整路径字符串
     pub fn as_str(&self) -> String;
-    
+
     /// 检查是否为系统命名空间
     pub fn is_system(&self) -> bool;
 }
@@ -423,7 +423,7 @@ pub enum ActorAddress {
         path: ActorPath,
         instance: Option<NodeId>,
     },
-    
+
     /// 全局地址 - actor://node_id/actor_id
     Global {
         node_id: NodeId,
@@ -434,16 +434,16 @@ pub enum ActorAddress {
 impl ActorAddress {
     /// 解析 URI 格式地址
     pub fn parse(uri: &str) -> Result<Self, ParseError>;
-    
+
     /// 转换为 URI 字符串
     pub fn to_uri(&self) -> String;
-    
+
     /// 解析 localhost 为实际 node_id
     pub fn resolve_localhost(self, current_node: &NodeId) -> Self;
-    
+
     /// 检查是否为本地引用
     pub fn is_localhost(&self) -> bool;
-    
+
     /// 为具名地址添加实例定位
     pub fn with_instance(self, node_id: NodeId) -> Self;
 }
@@ -503,7 +503,7 @@ let result = system.ask(&local_addr, task).await?;
 // === 地址传递 ===
 
 // Worker 将自己的地址告诉 Manager
-manager.tell(RegisterWorker { 
+manager.tell(RegisterWorker {
     addr: worker.address()  // actor://node_a/worker_xyz123
 }).await?;
 
@@ -564,4 +564,3 @@ node-id         = "localhost" | identifier
 actor-id        = identifier
 identifier      = 1*( ALPHA | DIGIT | "_" | "-" )
 ```
-

@@ -31,4 +31,3 @@ echo "=========================================="
 echo "Log: stress_test_logs_ray/stress_test_ray_single.log"
 echo "Stats: stress_test_logs_ray/stress_test_stats_ray_single.json"
 echo "=========================================="
-

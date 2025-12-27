@@ -12,9 +12,17 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Union
 
-from pulsing._core import (ActorId, ActorRef, ActorSystem, Message, NodeId,
-                           StreamMessage, StreamReader, StreamWriter,
-                           SystemConfig)
+from pulsing._core import (
+    ActorId,
+    ActorRef,
+    ActorSystem,
+    Message,
+    NodeId,
+    StreamMessage,
+    StreamReader,
+    StreamWriter,
+    SystemConfig,
+)
 
 from . import helpers
 
@@ -70,12 +78,12 @@ class Actor(ABC):
         """Called when actor stops"""
         pass
 
-    def metadata(self) -> Dict[str, str]:
+    def metadata(self) -> dict[str, str]:
         """Return actor metadata for diagnostics"""
         return {}
 
     @abstractmethod
-    async def receive(self, msg: Message) -> Optional[Union[Message, StreamMessage]]:
+    async def receive(self, msg: Message) -> Message | StreamMessage | None:
         """
         Handle incoming message
 

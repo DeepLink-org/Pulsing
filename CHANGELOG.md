@@ -40,4 +40,3 @@
 
 [Unreleased]: https://github.com/reiase/pulsing/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/reiase/pulsing/releases/tag/v0.1.0
-

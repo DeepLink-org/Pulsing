@@ -147,7 +147,7 @@ pub struct ActorContext {
 impl ActorContext {
     /// 获取其他 Actor 的引用
     pub async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef>;
-    
+
     /// 检查是否应该停止
     pub fn is_cancelled(&self) -> bool;
 }
@@ -192,16 +192,16 @@ pub struct ActorSystem {
 impl ActorSystem {
     /// 创建新系统
     pub async fn new(config: SystemConfig) -> anyhow::Result<Arc<Self>>;
-    
+
     /// 创建 Actor
     pub async fn spawn<A: Actor>(&self, actor: A) -> anyhow::Result<ActorRef>;
-    
+
     /// 获取 Actor 引用
     pub async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef>;
-    
+
     /// 停止 Actor
     pub async fn stop(&self, actor_name: &str) -> anyhow::Result<()>;
-    
+
     /// 关闭系统
     pub async fn shutdown(&self) -> anyhow::Result<()>;
 }
@@ -272,13 +272,13 @@ pub struct GossipCluster {
 pub struct SystemConfig {
     /// HTTP 绑定地址
     pub addr: SocketAddr,
-    
+
     /// Seed 节点地址
     pub seed_nodes: Vec<SocketAddr>,
-    
+
     /// Gossip 配置
     pub gossip_config: GossipConfig,
-    
+
     /// HTTP 传输配置
     pub http_config: HttpTransportConfig,
 }
@@ -286,13 +286,13 @@ pub struct SystemConfig {
 pub struct HttpTransportConfig {
     /// 请求超时 (默认 30s)
     pub request_timeout: Duration,
-    
+
     /// 连接超时 (默认 5s)
     pub connect_timeout: Duration,
-    
+
     /// Keep-alive 超时 (默认 60s)
     pub keepalive_timeout: Duration,
-    
+
     /// 每主机最大连接数 (默认 32)
     pub max_connections_per_host: usize,
 }
@@ -349,15 +349,15 @@ impl Actor for EchoActor {
 async fn main() -> anyhow::Result<()> {
     // 创建系统
     let system = ActorSystem::new(SystemConfig::standalone()).await?;
-    
+
     // 创建 Actor
     let actor = EchoActor { id: ActorId::local("echo") };
     let actor_ref = system.spawn(actor).await?;
-    
+
     // 发送消息
     let response: Pong = actor_ref.ask(Ping { value: 21 }).await?;
     assert_eq!(response.result, 42);
-    
+
     // 关闭
     system.shutdown().await?;
     Ok(())
@@ -424,8 +424,8 @@ pulsing/actor_system/
 
 ```rust
 // Actor 内部错误
-async fn receive(&mut self, msg: RawMessage, _ctx: &mut ActorContext) 
-    -> anyhow::Result<RawMessage> 
+async fn receive(&mut self, msg: RawMessage, _ctx: &mut ActorContext)
+    -> anyhow::Result<RawMessage>
 {
     // 返回 Err 会通过响应通道传递给调用者
     Err(anyhow::anyhow!("Processing failed"))
@@ -452,6 +452,3 @@ match actor_ref.ask::<Ping, Pong>(msg).await {
 - [ ] 更完善的 Leader Election
 - [ ] Metrics 和 Tracing 集成
 - [ ] Actor 迁移支持
-
-
-

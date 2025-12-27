@@ -15,13 +15,19 @@
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any
 
 # Import Rust policies if available
 try:
-    from pulsing._core import (CacheAwareConfig, CacheAwarePolicy,
-                               ConsistentHashPolicy, PowerOfTwoPolicy,
-                               RandomPolicy, RoundRobinPolicy, WorkerInfo)
+    from pulsing._core import (
+        CacheAwareConfig,
+        CacheAwarePolicy,
+        ConsistentHashPolicy,
+        PowerOfTwoPolicy,
+        RandomPolicy,
+        RoundRobinPolicy,
+        WorkerInfo,
+    )
 
     RUST_POLICIES_AVAILABLE = True
 except ImportError:
@@ -57,7 +63,7 @@ class Scheduler(ABC):
         workers = await self.get_available_workers()
         return sum(1 for w in workers if w.get("status") == "Alive")
 
-    async def _resolve_worker(self, node_id: Optional[str] = None):
+    async def _resolve_worker(self, node_id: str | None = None):
         try:
             # node_id 在 MemberInfo 中被序列化为字符串，需要转回 int 以匹配 resolve_named
             nid_int = int(node_id) if node_id else None
@@ -68,8 +74,8 @@ class Scheduler(ABC):
     @abstractmethod
     async def select_worker(
         self,
-        request_text: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        request_text: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         """选择一个 worker，返回 ActorRef 或 None
 
@@ -94,8 +100,8 @@ class RoundRobinScheduler(Scheduler):
 
     async def select_worker(
         self,
-        request_text: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        request_text: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         workers = await self.get_available_workers()
         if not workers:
@@ -113,8 +119,8 @@ class RandomScheduler(Scheduler):
 
     async def select_worker(
         self,
-        request_text: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        request_text: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         import random
 
@@ -135,8 +141,8 @@ class LeastConnectionScheduler(Scheduler):
 
     async def select_worker(
         self,
-        request_text: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        request_text: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         workers = await self.get_available_workers()
         if not workers:
@@ -162,7 +168,7 @@ class RustSchedulerBase(Scheduler):
 
     def __init__(self, actor_system, worker_name: str = "worker"):
         super().__init__(actor_system, worker_name)
-        self._worker_info_cache: Dict[str, WorkerInfo] = {}
+        self._worker_info_cache: dict[str, WorkerInfo] = {}
 
     def _get_worker_info(self, worker_data: dict) -> WorkerInfo:
         """获取或创建 WorkerInfo 对象"""
@@ -205,8 +211,8 @@ class RustRandomScheduler(RustSchedulerBase):
 
     async def select_worker(
         self,
-        request_text: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        request_text: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         workers = await self.get_available_workers()
         if not workers:
@@ -236,8 +242,8 @@ class RustRoundRobinScheduler(RustSchedulerBase):
 
     async def select_worker(
         self,
-        request_text: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        request_text: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         workers = await self.get_available_workers()
         if not workers:
@@ -275,8 +281,8 @@ class RustPowerOfTwoScheduler(RustSchedulerBase):
 
     async def select_worker(
         self,
-        request_text: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        request_text: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         workers = await self.get_available_workers()
         if not workers:
@@ -291,7 +297,7 @@ class RustPowerOfTwoScheduler(RustSchedulerBase):
         selected_worker = workers[selected_idx]
         return await self._resolve_worker(node_id=selected_worker.get("node_id"))
 
-    def update_loads(self, loads: Dict[str, int]):
+    def update_loads(self, loads: dict[str, int]):
         """更新缓存的负载信息
 
         Args:
@@ -332,8 +338,8 @@ class RustConsistentHashScheduler(RustSchedulerBase):
 
     async def select_worker(
         self,
-        request_text: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        request_text: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         workers = await self.get_available_workers()
         if not workers:
@@ -398,8 +404,8 @@ class RustCacheAwareScheduler(RustSchedulerBase):
 
     async def select_worker(
         self,
-        request_text: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        request_text: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         workers = await self.get_available_workers()
         if not workers:

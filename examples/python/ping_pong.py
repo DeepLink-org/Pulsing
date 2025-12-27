@@ -10,7 +10,8 @@ Usage: python examples/python/ping_pong.py
 """
 
 import asyncio
-from pulsing.actor import create_actor_system, SystemConfig, Message, Actor, ActorId
+
+from pulsing.actor import Actor, ActorId, Message, SystemConfig, create_actor_system
 
 
 class Counter(Actor):

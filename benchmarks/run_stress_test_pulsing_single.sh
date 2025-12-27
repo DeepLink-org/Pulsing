@@ -29,4 +29,3 @@ echo "=========================================="
 echo "Log: stress_test_logs/stress_test_pulsing_single.log"
 echo "Stats: stress_test_logs/stress_test_stats_pulsing_single.json"
 echo "=========================================="
-

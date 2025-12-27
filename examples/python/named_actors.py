@@ -9,7 +9,8 @@ Usage: python examples/python/named_actors.py
 """
 
 import asyncio
-from pulsing.actor import create_actor_system, SystemConfig, Message, Actor, ActorId
+
+from pulsing.actor import Actor, ActorId, Message, SystemConfig, create_actor_system
 
 
 class EchoActor(Actor):
@@ -19,10 +20,10 @@ class EchoActor(Actor):
     def receive(self, msg: Message) -> Message:
         message = msg.to_json().get("message", "")
         print(f"[Echo] {message}")
-        return Message.from_json("EchoResponse", {
-            "echo": message,
-            "actor": msg.to_json().get("_actor_id", "unknown")
-        })
+        return Message.from_json(
+            "EchoResponse",
+            {"echo": message, "actor": msg.to_json().get("_actor_id", "unknown")},
+        )
 
 
 async def main():
@@ -54,4 +55,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

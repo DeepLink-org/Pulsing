@@ -29,17 +29,17 @@ class TransformersWorker(Actor):
         if msg.msg_type == "SubscribeLoad":
             return self._handle_subscribe_load()
         # ...
-    
+
     def _handle_subscribe_load(self) -> StreamMessage:
         """返回持续推送负载的流"""
         stream_msg, writer = StreamMessage.create("LoadStream")
         self._load_subscribers.append(writer)
-        
+
         async def produce():
             while True:
                 await writer.write_json(self._get_load_snapshot())
                 await asyncio.sleep(1.0)
-        
+
         asyncio.create_task(produce())
         return stream_msg
 ```

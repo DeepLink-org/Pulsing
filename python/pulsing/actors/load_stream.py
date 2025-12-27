@@ -22,8 +22,8 @@
 
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional
 
 from pulsing.actor import ActorRef, Message
 
@@ -63,11 +63,11 @@ class LoadStreamConsumer:
 
     def __init__(self, stale_timeout: float = 10.0):
         self._stale_timeout = stale_timeout
-        self._loads: Dict[str, LoadSnapshot] = {}
-        self._subscriptions: Dict[str, asyncio.Task] = {}
+        self._loads: dict[str, LoadSnapshot] = {}
+        self._subscriptions: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
-        self._on_update: Optional[Callable[[LoadSnapshot], None]] = None
-        self._on_disconnect: Optional[Callable[[str], None]] = None
+        self._on_update: Callable[[LoadSnapshot], None] | None = None
+        self._on_disconnect: Callable[[str], None] | None = None
 
     async def subscribe(self, worker_ref: ActorRef, worker_id: str = None):
         """订阅 Worker 的负载流"""
@@ -123,13 +123,13 @@ class LoadStreamConsumer:
         for wid in list(self._subscriptions.keys()):
             await self.unsubscribe(wid)
 
-    def get_load(self, worker_id: str) -> Optional[LoadSnapshot]:
+    def get_load(self, worker_id: str) -> LoadSnapshot | None:
         snapshot = self._loads.get(worker_id)
         if snapshot and time.time() - snapshot.timestamp <= self._stale_timeout:
             return snapshot
         return None
 
-    def get_all_loads(self) -> Dict[str, LoadSnapshot]:
+    def get_all_loads(self) -> dict[str, LoadSnapshot]:
         now = time.time()
         return {
             wid: snap
@@ -137,7 +137,7 @@ class LoadStreamConsumer:
             if now - snap.timestamp <= self._stale_timeout
         }
 
-    def get_lowest_load_worker(self) -> Optional[str]:
+    def get_lowest_load_worker(self) -> str | None:
         valid = self.get_all_loads()
         return min(valid.keys(), key=lambda w: valid[w].load) if valid else None
 
@@ -166,14 +166,14 @@ class StreamLoadScheduler:
         self._discover_interval = discover_interval
 
         self._consumer = LoadStreamConsumer()
-        self._worker_refs: Dict[str, ActorRef] = {}
+        self._worker_refs: dict[str, ActorRef] = {}
         self._subscribed_workers: set = set()
         self._running = False
-        self._discover_task: Optional[asyncio.Task] = None
+        self._discover_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
-        self._on_worker_added: Optional[Callable[[str], None]] = None
-        self._on_worker_removed: Optional[Callable[[str], None]] = None
+        self._on_worker_added: Callable[[str], None] | None = None
+        self._on_worker_removed: Callable[[str], None] | None = None
 
     async def start(self):
         """启动调度器"""
@@ -266,8 +266,8 @@ class StreamLoadScheduler:
     async def select_worker(
         self,
         request_text: str = None,
-        headers: Dict[str, str] = None,
-    ) -> Optional[ActorRef]:
+        headers: dict[str, str] = None,
+    ) -> ActorRef | None:
         """选择负载最低的 Worker"""
         worker_id = self._consumer.get_lowest_load_worker()
         if worker_id and worker_id in self._worker_refs:
@@ -278,7 +278,7 @@ class StreamLoadScheduler:
             return random.choice(list(self._worker_refs.values()))
         return None
 
-    def get_all_loads(self) -> Dict[str, LoadSnapshot]:
+    def get_all_loads(self) -> dict[str, LoadSnapshot]:
         return self._consumer.get_all_loads()
 
     def get_worker_count(self) -> int:
