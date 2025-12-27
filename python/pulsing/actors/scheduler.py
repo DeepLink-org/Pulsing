@@ -19,15 +19,9 @@ from typing import Any
 
 # Import Rust policies if available
 try:
-    from pulsing._core import (
-        CacheAwareConfig,
-        CacheAwarePolicy,
-        ConsistentHashPolicy,
-        PowerOfTwoPolicy,
-        RandomPolicy,
-        RoundRobinPolicy,
-        WorkerInfo,
-    )
+    from pulsing._core import (CacheAwareConfig, CacheAwarePolicy,
+                               ConsistentHashPolicy, PowerOfTwoPolicy,
+                               RandomPolicy, RoundRobinPolicy, WorkerInfo)
 
     RUST_POLICIES_AVAILABLE = True
 except ImportError:

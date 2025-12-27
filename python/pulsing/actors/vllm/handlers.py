@@ -21,14 +21,8 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from .sampling import build_sampling_params, build_sampling_params_openai
-from .utils import (
-    IMAGE_URL_KEY,
-    URL_VARIANT_KEY,
-    VIDEO_URL_KEY,
-    ImageLoader,
-    VllmEngineMonitor,
-    lora_name_to_id,
-)
+from .utils import (IMAGE_URL_KEY, URL_VARIANT_KEY, VIDEO_URL_KEY, ImageLoader,
+                    VllmEngineMonitor, lora_name_to_id)
 
 try:
     from vllm.inputs import TextPrompt, TokensPrompt
@@ -551,9 +545,9 @@ class DecodeWorkerHandler(BaseWorkerHandler):
                 lora_request=lora_request,
             ):
                 if prefill_result is not None and "completion_usage" in tok:
-                    tok["completion_usage"]["prompt_tokens_details"] = (
-                        prefill_prompt_tokens_details
-                    )
+                    tok["completion_usage"][
+                        "prompt_tokens_details"
+                    ] = prefill_prompt_tokens_details
                 yield tok
         except Exception as e:
             logger.exception(f"Error in decode generation: {e}")

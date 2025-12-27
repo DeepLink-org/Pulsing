@@ -16,12 +16,8 @@ def start_router(
     from pulsing.actor import SystemConfig, create_actor_system
     from pulsing.actor.helpers import run_until_signal
 
-    from ..actors import (
-        LeastConnectionScheduler,
-        RandomScheduler,
-        RoundRobinScheduler,
-        StreamLoadScheduler,
-    )
+    from ..actors import (LeastConnectionScheduler, RandomScheduler,
+                          RoundRobinScheduler, StreamLoadScheduler)
     from ..actors.router import start_router as start_router_service
     from ..actors.router import stop_router
 
