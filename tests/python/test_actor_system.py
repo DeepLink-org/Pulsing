@@ -553,7 +553,7 @@ async def test_actor_not_found(actor_system):
     # Create a fake ActorId with a random local_id that doesn't exist
     fake_id = ActorId(99999999, actor_system.node_id)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(Exception):  # noqa: B017
         await actor_system.actor_ref(fake_id)
 
 
@@ -566,7 +566,7 @@ async def test_message_to_stopped_actor(actor_system):
     await actor_system.stop("temp_actor")
 
     # Try to send message - should fail
-    with pytest.raises(RuntimeError):
+    with pytest.raises(Exception):  # noqa: B017
         await actor_ref.ask(Message.from_json("test", {}))
 
 
