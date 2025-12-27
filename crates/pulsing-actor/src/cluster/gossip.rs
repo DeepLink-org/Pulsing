@@ -9,7 +9,7 @@
 use super::member::{
     ActorLocation, ClusterNode, FailureInfo, MemberInfo, MemberStatus, NamedActorInfo, NodeStatus,
 };
-use super::swim::{SwimConfig, SwimDetector};
+use super::swim::SwimConfig;
 use crate::actor::{ActorId, ActorPath, NodeId, StopReason};
 use crate::transport::http2::Http2Transport;
 use rand::prelude::IndexedRandom;
@@ -301,8 +301,6 @@ pub struct GossipCluster {
     state: Arc<ClusterState>,
     transport: Arc<Http2Transport>,
     config: GossipConfig,
-    #[allow(dead_code)]
-    swim: SwimDetector,
 }
 
 impl GossipCluster {
@@ -317,7 +315,6 @@ impl GossipCluster {
         Self {
             state: Arc::new(ClusterState::new(local_node, local_addr)),
             transport,
-            swim: SwimDetector::new(local_node, config.swim.clone()),
             config,
         }
     }

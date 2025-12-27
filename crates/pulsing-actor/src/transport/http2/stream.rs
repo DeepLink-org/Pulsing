@@ -153,61 +153,6 @@ impl<T> Drop for StreamHandle<T> {
     }
 }
 
-/// Convert a MessageStream to StreamFrame stream
-pub fn to_frame_stream(stream: MessageStream) -> impl Stream<Item = anyhow::Result<StreamFrame>> {
-    stream.enumerate().map(|(seq, result)| {
-        result.and_then(|msg| {
-            let Message::Single { msg_type, data } = msg else {
-                return Err(anyhow::anyhow!("Expected single message in stream"));
-            };
-            Ok(StreamFrame::data(seq as u64, &msg_type, &data))
-        })
-    })
-}
-
-/// Convert a stream of StreamFrames to NDJSON bytes
-pub fn to_ndjson_stream(
-    stream: impl Stream<Item = anyhow::Result<StreamFrame>>,
-) -> impl Stream<Item = anyhow::Result<Bytes>> {
-    stream.map(|result| result.and_then(|frame| frame.to_ndjson()))
-}
-
-/// Parse an NDJSON stream back into MessageStream
-pub fn from_ndjson_stream(
-    stream: impl Stream<Item = anyhow::Result<Bytes>> + Send + 'static,
-) -> MessageStream {
-    let parsed = stream.filter_map(|result| async move {
-        match result {
-            Ok(bytes) => {
-                let line = match std::str::from_utf8(&bytes) {
-                    Ok(s) => s,
-                    Err(e) => return Some(Err(anyhow::anyhow!("Invalid UTF-8: {}", e))),
-                };
-
-                match StreamFrame::from_ndjson(line) {
-                    Ok(frame) => {
-                        if frame.end && frame.data.is_empty() {
-                            // End frame with no data
-                            None
-                        } else if let Some(error) = frame.error {
-                            Some(Err(anyhow::anyhow!("{}", error)))
-                        } else {
-                            match frame.decode_data() {
-                                Ok(payload) => Some(Ok(Message::single(&frame.msg_type, payload))),
-                                Err(e) => Some(Err(e)),
-                            }
-                        }
-                    }
-                    Err(e) => Some(Err(e)),
-                }
-            }
-            Err(e) => Some(Err(e)),
-        }
-    });
-
-    Box::pin(parsed)
-}
-
 // Base64 encoding/decoding helpers
 use base64::{engine::general_purpose::STANDARD, Engine};
 

@@ -28,9 +28,6 @@ pub struct ActorStats {
 }
 
 impl ActorStats {
-    fn inc_start(&self) {
-        self.start_count.fetch_add(1, Ordering::Relaxed);
-    }
 
     fn inc_stop(&self) {
         self.stop_count.fetch_add(1, Ordering::Relaxed);
@@ -521,32 +518,6 @@ impl ActorSystem {
         Ok(())
     }
 
-    /// Handle actor termination (called by actor loop on exit)
-    async fn handle_actor_termination(
-        &self,
-        actor_id: &ActorId,
-        actor_name: &str,
-        named_path: Option<ActorPath>,
-        reason: StopReason,
-    ) {
-        // Only process if actor is still registered (not already stopped via stop())
-        if self.local_actors.remove(actor_name).is_none() {
-            return;
-        }
-
-        let local_actors = self.local_actors.clone();
-        self.lifecycle
-            .handle_termination(
-                actor_id,
-                actor_name,
-                named_path,
-                reason,
-                &self.named_actor_paths,
-                &self.cluster,
-                |name| local_actors.get(name).map(|h| h.sender.clone()),
-            )
-            .await;
-    }
 
     /// Stop a named actor by path
     pub async fn stop_named(&self, path: &ActorPath) -> anyhow::Result<()> {
