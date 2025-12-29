@@ -23,14 +23,22 @@ class SyncQueue:
     def _run(self, coro):
         """同步运行协程"""
         if self._loop is None or not self._loop.is_running():
-            raise RuntimeError("Event loop not running. Sync wrapper requires a running event loop.")
+            raise RuntimeError(
+                "Event loop not running. Sync wrapper requires a running event loop."
+            )
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
     def put(self, record: dict[str, Any] | list[dict[str, Any]]):
         return self._run(self._queue.put(record))
 
-    def get(self, bucket_id: int | None = None, limit: int = 100, offset: int = 0,
-            wait: bool = False, timeout: float | None = None) -> list[dict[str, Any]]:
+    def get(
+        self,
+        bucket_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        wait: bool = False,
+        timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
         return self._run(self._queue.get(bucket_id, limit, offset, wait, timeout))
 
     def flush(self) -> None:
@@ -49,7 +57,9 @@ class SyncQueueWriter:
 
     def _run(self, coro):
         if self._loop is None or not self._loop.is_running():
-            raise RuntimeError("Event loop not running. Sync wrapper requires a running event loop.")
+            raise RuntimeError(
+                "Event loop not running. Sync wrapper requires a running event loop."
+            )
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
     def put(self, record: dict[str, Any] | list[dict[str, Any]]):
@@ -68,7 +78,9 @@ class SyncQueueReader:
 
     def _run(self, coro):
         if self._loop is None or not self._loop.is_running():
-            raise RuntimeError("Event loop not running. Sync wrapper requires a running event loop.")
+            raise RuntimeError(
+                "Event loop not running. Sync wrapper requires a running event loop."
+            )
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
     def get(self, limit: int = 100, wait: bool = False, timeout: float | None = None):

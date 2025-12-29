@@ -311,6 +311,11 @@ async def write_queue(
     storage_path: str | None = None,
 ) -> QueueWriter:
     """打开队列用于写入"""
+    # 确保集群中所有节点都有 StorageManager
+    from .manager import ensure_storage_managers
+
+    await ensure_storage_managers(system)
+
     queue = Queue(
         system=system,
         topic=topic,
@@ -364,6 +369,11 @@ async def read_queue(
         reader0 = await read_queue(system, "q", rank=0, world_size=2)  # bucket 0, 2
         reader1 = await read_queue(system, "q", rank=1, world_size=2)  # bucket 1, 3
     """
+    # 确保集群中所有节点都有 StorageManager
+    from .manager import ensure_storage_managers
+
+    await ensure_storage_managers(system)
+
     # 确定要读取的 bucket 列表
     if rank is not None and world_size is not None:
         # 分布式消费模式

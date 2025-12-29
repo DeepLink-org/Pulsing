@@ -360,7 +360,7 @@ async def main():
     parser.add_argument("--num-cpus", type=int, default=None, help="Ray使用的CPU数量")
     parser.add_argument("--address", type=str, default=None, help="Ray集群地址")
     parser.add_argument(
-        "--log-dir", type=str, default="stress_test_logs_ray", help="日志目录"
+        "--log-dir", type=str, default="benchmark_logs", help="日志目录"
     )
 
     args = parser.parse_args()

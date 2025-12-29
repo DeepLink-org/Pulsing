@@ -110,6 +110,5 @@ profiling_results*
 # Direnv
 .envrc
 .VSCodeCounter/
-stress_test_logs_ray/
-stress_test_logs/
+benchmark_logs/
 queue_storage/

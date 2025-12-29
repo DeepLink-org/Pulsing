@@ -122,6 +122,13 @@ class StorageManager(Actor):
             return self._buckets[key]
 
     async def receive(self, msg: Message) -> Message | None:
+        try:
+            return await self._handle_message(msg)
+        except Exception as e:
+            logger.exception(f"Error handling message: {e}")
+            return Message.from_json("Error", {"error": str(e)})
+
+    async def _handle_message(self, msg: Message) -> Message | None:
         msg_type = msg.msg_type
         data = msg.to_json()
 
@@ -152,10 +159,12 @@ class StorageManager(Actor):
                 return Message.from_json(
                     "BucketReady",
                     {
+                        "_type": "BucketReady",  # 备用：跨节点时 msg_type 可能丢失
                         "topic": topic,
                         "bucket_id": bucket_id,
                         "actor_id": bucket_ref.actor_id.local_id,
-                        "node_id": local_node_id,
+                        # 用十六进制字符串传输 node_id，避免 JSON 大整数精度丢失
+                        "node_id_hex": hex(local_node_id),
                     },
                 )
             else:
@@ -172,9 +181,11 @@ class StorageManager(Actor):
                 return Message.from_json(
                     "Redirect",
                     {
+                        "_type": "Redirect",  # 备用：跨节点时 msg_type 可能丢失
                         "topic": topic,
                         "bucket_id": bucket_id,
-                        "owner_node_id": owner_node_id,
+                        # 用十六进制字符串传输 node_id，避免 JSON 大整数精度丢失
+                        "owner_node_id_hex": hex(owner_node_id),
                         "owner_addr": owner_addr,
                     },
                 )
@@ -212,15 +223,20 @@ _manager_lock = asyncio.Lock()
 
 async def get_storage_manager(system: ActorSystem) -> ActorRef:
     """获取本节点的 StorageManager，如果不存在则创建"""
+    local_node_id = system.node_id.id
+
+    # 尝试解析本地节点的 StorageManager
     try:
-        return await system.resolve_named(STORAGE_MANAGER_NAME)
+        return await system.resolve_named(STORAGE_MANAGER_NAME, node_id=local_node_id)
     except Exception:
         pass
 
     async with _manager_lock:
-        # 再次检查
+        # 再次检查本地节点
         try:
-            return await system.resolve_named(STORAGE_MANAGER_NAME)
+            return await system.resolve_named(
+                STORAGE_MANAGER_NAME, node_id=local_node_id
+            )
         except Exception:
             pass
 
@@ -230,8 +246,21 @@ async def get_storage_manager(system: ActorSystem) -> ActorRef:
             return await system.spawn(STORAGE_MANAGER_NAME, manager, public=True)
         except Exception as e:
             if "already exists" in str(e).lower():
-                return await system.resolve_named(STORAGE_MANAGER_NAME)
+                return await system.resolve_named(
+                    STORAGE_MANAGER_NAME, node_id=local_node_id
+                )
             raise
+
+
+async def ensure_storage_managers(system: ActorSystem) -> None:
+    """确保本地节点有 StorageManager
+
+    每个节点需要有自己的 StorageManager 来处理 bucket 请求。
+    此函数确保本地节点创建了 StorageManager。
+    远程节点的 StorageManager 会在它们调用 write_queue 或 read_queue 时自动创建。
+    """
+    await get_storage_manager(system)
+    logger.debug(f"Local StorageManager ensured on node {system.node_id.id}")
 
 
 async def get_bucket_ref(
@@ -271,18 +300,23 @@ async def get_bucket_ref(
         response = await manager.ask(Message.from_json("GetBucket", msg_data))
 
         resp_data = response.to_json()
+        # 跨节点时 msg_type 可能丢失，使用 _type 字段作为备用
+        msg_type = response.msg_type or resp_data.get("_type", "")
 
-        if response.msg_type == "BucketReady":
+        if msg_type == "BucketReady":
             # 成功获取 bucket
             actor_id = resp_data["actor_id"]
-            node_id = resp_data["node_id"]
+            # node_id 用十六进制字符串传输，转为 int
+            node_id = int(resp_data["node_id_hex"], 16)
 
             bucket_actor_id = ActorId(actor_id, NodeId(node_id))
             return await system.actor_ref(bucket_actor_id)
 
-        elif response.msg_type == "Redirect":
+        elif msg_type == "Redirect":
             # 需要重定向到其他节点
-            owner_node_id = resp_data["owner_node_id"]
+            # owner_node_id 用十六进制字符串传输，转为 int
+            hex_str = resp_data.get("owner_node_id_hex")
+            owner_node_id = int(hex_str, 16)
             owner_addr = resp_data.get("owner_addr")
 
             logger.debug(
@@ -298,20 +332,31 @@ async def get_bucket_ref(
                     f"Redirect loop detected for bucket {topic}:{bucket_id}"
                 )
 
-            # 获取 owner 节点的 StorageManager
-            try:
-                manager = await system.resolve_named(
-                    STORAGE_MANAGER_NAME, node_id=int(owner_node_id)
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to connect to owner node {owner_node_id}: {e}"
-                ) from e
+            # 获取 owner 节点的 StorageManager（带重试，等待远程节点初始化）
+            max_resolve_retries = 10
+            for resolve_retry in range(max_resolve_retries):
+                try:
+                    manager = await system.resolve_named(
+                        STORAGE_MANAGER_NAME, node_id=owner_node_id
+                    )
+                    break
+                except Exception as e:
+                    if resolve_retry < max_resolve_retries - 1:
+                        logger.debug(
+                            f"StorageManager not found on node {owner_node_id}, "
+                            f"retry {resolve_retry + 1}/{max_resolve_retries}"
+                        )
+                        await asyncio.sleep(0.5)
+                    else:
+                        raise RuntimeError(
+                            f"StorageManager not found on node {owner_node_id} after "
+                            f"{max_resolve_retries} retries: {e}"
+                        ) from e
 
-        elif response.msg_type == "Error":
+        elif msg_type == "Error":
             raise RuntimeError(f"GetBucket failed: {resp_data.get('error')}")
 
         else:
-            raise RuntimeError(f"Unexpected response: {response.msg_type}")
+            raise RuntimeError(f"Unexpected response: {msg_type}")
 
     raise RuntimeError(f"Failed to get bucket {topic}:{bucket_id}")

@@ -30,13 +30,15 @@ async def main():
 
     try:
         # 生产者：打开队列用于写入，获取同步包装器
-        writer = (await write_queue(
-            system,
-            topic="my_queue",
-            partition_column="user_id",  # 按照 user_id 进行分桶
-            num_buckets=4,
-            batch_size=10,
-        )).sync()
+        writer = (
+            await write_queue(
+                system,
+                topic="my_queue",
+                partition_column="user_id",  # 按照 user_id 进行分桶
+                num_buckets=4,
+                batch_size=10,
+            )
+        ).sync()
         logger.info("✓ 队列已创建（同步写入器）\n")
 
         # 消费者：打开队列用于读取，获取同步包装器

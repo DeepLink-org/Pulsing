@@ -563,8 +563,8 @@ async def main():
     parser.add_argument(
         "--log-dir",
         type=str,
-        default="stress_test_logs_ray",
-        help="日志文件目录，默认stress_test_logs_ray",
+        default="benchmark_logs",
+        help="日志文件目录，默认benchmark_logs",
     )
 
     args = parser.parse_args()

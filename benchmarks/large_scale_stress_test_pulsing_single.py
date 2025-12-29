@@ -396,7 +396,7 @@ async def main():
     )
     parser.add_argument("--port", type=int, default=8000, help="Pulsing端口")
     parser.add_argument(
-        "--log-dir", type=str, default="stress_test_logs", help="日志目录"
+        "--log-dir", type=str, default="benchmark_logs", help="日志目录"
     )
 
     args = parser.parse_args()

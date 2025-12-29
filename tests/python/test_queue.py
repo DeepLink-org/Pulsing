@@ -991,7 +991,7 @@ async def test_bucket_storage_direct(actor_system, temp_storage_path):
 
 def test_sync_queue_standalone():
     """Test sync queue wrapper.
-    
+
     Note: Sync wrappers are designed for non-async code. Event loop runs
     in background thread while sync operations are called from main thread.
     """
@@ -999,57 +999,64 @@ def test_sync_queue_standalone():
     import shutil
     import threading
     import asyncio
-    
+
     temp_dir = tempfile.mkdtemp(prefix="sync_test_")
-    
+
     try:
         # Create event loop in background thread
         loop = asyncio.new_event_loop()
         loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
         loop_thread.start()
-        
+
         try:
             # Setup in background loop
             async def setup():
                 from pulsing.actor import SystemConfig, create_actor_system
                 from pulsing.queue import write_queue, read_queue
-                
+
                 system = await create_actor_system(SystemConfig.standalone())
                 writer = await write_queue(
-                    system, "sync_test", partition_column="id",
-                    num_buckets=2, batch_size=10, storage_path=temp_dir,
+                    system,
+                    "sync_test",
+                    partition_column="id",
+                    num_buckets=2,
+                    batch_size=10,
+                    storage_path=temp_dir,
                 )
-                reader = await read_queue(system, "sync_test", num_buckets=2, storage_path=temp_dir)
+                reader = await read_queue(
+                    system, "sync_test", num_buckets=2, storage_path=temp_dir
+                )
                 return system, writer, reader
-            
+
             future = asyncio.run_coroutine_threadsafe(setup(), loop)
             system, writer, reader = future.result(timeout=10)
-            
+
             # Get sync wrappers (they will use the background loop)
             sync_writer = writer.sync()
             sync_reader = reader.sync()
-            
+
             # Test sync put (from main thread)
             for i in range(5):
                 result = sync_writer.put({"id": f"sync_{i}", "value": i})
                 assert result["status"] == "ok"
-            
+
             sync_writer.flush()
-            
+
             # Test sync get
             records = sync_reader.get(limit=10)
             assert len(records) == 5
-            
+
             # Cleanup
             async def cleanup():
                 await system.shutdown()
+
             future = asyncio.run_coroutine_threadsafe(cleanup(), loop)
             future.result(timeout=10)
-            
+
         finally:
             loop.call_soon_threadsafe(loop.stop)
             loop_thread.join(timeout=5)
-        
+
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -1060,55 +1067,63 @@ def test_sync_writer_reader_standalone():
     import shutil
     import threading
     import asyncio
-    
+
     temp_dir = tempfile.mkdtemp(prefix="sync_wr_test_")
-    
+
     try:
         loop = asyncio.new_event_loop()
         loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
         loop_thread.start()
-        
+
         try:
+
             async def setup():
                 from pulsing.actor import SystemConfig, create_actor_system
                 from pulsing.queue import write_queue, read_queue
-                
+
                 system = await create_actor_system(SystemConfig.standalone())
                 writer = await write_queue(
-                    system, "sync_wr", partition_column="id",
-                    num_buckets=2, batch_size=10, storage_path=temp_dir,
+                    system,
+                    "sync_wr",
+                    partition_column="id",
+                    num_buckets=2,
+                    batch_size=10,
+                    storage_path=temp_dir,
                 )
-                reader = await read_queue(system, "sync_wr", num_buckets=2, storage_path=temp_dir)
+                reader = await read_queue(
+                    system, "sync_wr", num_buckets=2, storage_path=temp_dir
+                )
                 return system, writer, reader
-            
+
             future = asyncio.run_coroutine_threadsafe(setup(), loop)
             system, writer, reader = future.result(timeout=10)
-            
+
             sync_writer = writer.sync()
             sync_reader = reader.sync()
-            
+
             # Write
             for i in range(10):
                 sync_writer.put({"id": f"item_{i}", "data": f"value_{i}"})
             sync_writer.flush()
-            
+
             # Read
             records = sync_reader.get(limit=20)
             assert len(records) == 10
-            
+
             ids = {r["id"] for r in records}
             assert ids == {f"item_{i}" for i in range(10)}
-            
+
             # Cleanup
             async def cleanup():
                 await system.shutdown()
+
             future = asyncio.run_coroutine_threadsafe(cleanup(), loop)
             future.result(timeout=10)
-            
+
         finally:
             loop.call_soon_threadsafe(loop.stop)
             loop_thread.join(timeout=5)
-        
+
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -1119,61 +1134,69 @@ def test_sync_reader_offset_standalone():
     import shutil
     import threading
     import asyncio
-    
+
     temp_dir = tempfile.mkdtemp(prefix="sync_offset_test_")
-    
+
     try:
         loop = asyncio.new_event_loop()
         loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
         loop_thread.start()
-        
+
         try:
+
             async def setup():
                 from pulsing.actor import SystemConfig, create_actor_system
                 from pulsing.queue import write_queue, read_queue
-                
+
                 system = await create_actor_system(SystemConfig.standalone())
                 writer = await write_queue(
-                    system, "offset_test", partition_column="id",
-                    num_buckets=1, batch_size=100, storage_path=temp_dir,
+                    system,
+                    "offset_test",
+                    partition_column="id",
+                    num_buckets=1,
+                    batch_size=100,
+                    storage_path=temp_dir,
                 )
-                reader = await read_queue(system, "offset_test", num_buckets=1, storage_path=temp_dir)
+                reader = await read_queue(
+                    system, "offset_test", num_buckets=1, storage_path=temp_dir
+                )
                 return system, writer, reader
-            
+
             future = asyncio.run_coroutine_threadsafe(setup(), loop)
             system, writer, reader = future.result(timeout=10)
-            
+
             sync_writer = writer.sync()
             sync_reader = reader.sync()
-            
+
             # Write 10 records
             for i in range(10):
                 sync_writer.put({"id": "same_key", "seq": i})
             sync_writer.flush()
-            
+
             # Read first 5
             records1 = sync_reader.get(limit=5)
             assert len(records1) == 5
-            
+
             # Read next 5
             records2 = sync_reader.get(limit=5)
             assert len(records2) == 5
-            
+
             # Reset and read all
             sync_reader.reset()
             all_records = sync_reader.get(limit=20)
             assert len(all_records) == 10
-            
+
             # Cleanup
             async def cleanup():
                 await system.shutdown()
+
             future = asyncio.run_coroutine_threadsafe(cleanup(), loop)
             future.result(timeout=10)
-            
+
         finally:
             loop.call_soon_threadsafe(loop.stop)
             loop_thread.join(timeout=5)
-        
+
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
