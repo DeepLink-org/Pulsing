@@ -294,4 +294,3 @@ _actor_class_registry["__main__.Counter"] = Counter
 - [ ] 支持负载均衡策略（轮询、最小负载等）
 - [ ] 支持资源约束 `Counter.local(system, num_cpus=2)`
 - [ ] 支持 Actor 池 `CounterPool.local(system, size=4)`
-

@@ -108,8 +108,7 @@ async def main():
         # --- 并行调用 ---
         print("\n--- 并行调用 ---")
         workers = [
-            await AsyncWorker.local(system, worker_id=f"worker-{i}")
-            for i in range(3)
+            await AsyncWorker.local(system, worker_id=f"worker-{i}") for i in range(3)
         ]
 
         tasks = [w.process(f"task-{i}") for i, w in enumerate(workers)]

@@ -175,7 +175,8 @@ class SystemActor(_ActorBase):
             actor_ref = await self.system.spawn(actor_name, actor, public=public)
 
             method_names = [
-                n for n, _ in inspect.getmembers(cls, predicate=inspect.isfunction)
+                n
+                for n, _ in inspect.getmembers(cls, predicate=inspect.isfunction)
                 if not n.startswith("_")
             ]
 
@@ -215,7 +216,8 @@ class ActorClass:
         self._cls = cls
         self._class_name = f"{cls.__module__}.{cls.__name__}"
         self._methods = [
-            n for n, _ in inspect.getmembers(cls, predicate=inspect.isfunction)
+            n
+            for n, _ in inspect.getmembers(cls, predicate=inspect.isfunction)
             if not n.startswith("_")
         ]
         # 注册类
