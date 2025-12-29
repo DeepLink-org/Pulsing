@@ -224,7 +224,8 @@ mod stress_tests {
             refs.push(system.spawn(format!("acc-{}", i), actor).await.unwrap());
         }
 
-        assert_eq!(system.local_actor_names().len(), actor_count);
+        // +1 for SystemActor (_system_internal)
+        assert_eq!(system.local_actor_names().len(), actor_count + 1);
 
         // Send one message to each
         for (i, actor_ref) in refs.iter().enumerate() {

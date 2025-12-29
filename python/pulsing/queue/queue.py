@@ -1,14 +1,19 @@
 """队列 API - 基于 topic/path 的高级接口"""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pulsing.actor import ActorRef, ActorSystem, Message
 
 from .manager import get_bucket_ref, get_storage_manager
+
+if TYPE_CHECKING:
+    from .sync_queue import SyncQueue, SyncQueueReader, SyncQueueWriter
 
 logger = logging.getLogger(__name__)
 

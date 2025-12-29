@@ -1,7 +1,7 @@
 """
-@as_actor 装饰器 - 类似 Ray 的分布式对象封装
+@as_actor decorator - Ray-like distributed object wrapper
 
-用法：
+Usage:
     from pulsing.actor import as_actor, create_actor_system, SystemConfig
 
     @as_actor
@@ -15,14 +15,14 @@
 
     system = await create_actor_system(config)
 
-    # 本地创建
+    # Local creation
     counter = await Counter.local(system, init_value=10)
 
-    # 远程创建（随机选择一个远程节点）
+    # Remote creation (randomly selects a remote node)
     counter = await Counter.remote(system, init_value=10)
 
-    # 调用方法（自动转为 Actor 消息）
-    result = await counter.increment(5)  # 返回 15
+    # Call methods (automatically converted to actor messages)
+    result = await counter.increment(5)  # Returns 15
 """
 
 import asyncio
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 class _ActorBase(ABC):
-    """Actor 基类（避免循环导入）"""
+    """Actor base class (avoids circular imports)"""
 
     def on_start(self, actor_id) -> None:
         pass
@@ -57,15 +57,15 @@ class _ActorBase(ABC):
 
 T = TypeVar("T")
 
-# 全局类注册表
+# Global class registry
 _actor_class_registry: dict[str, type] = {}
 
-# SystemActor 名称
-SYSTEM_ACTOR_NAME = "_pulsing_system_actor"
+# Python actor service name (different from Rust SystemActor "system/core")
+PYTHON_ACTOR_SERVICE_NAME = "_python_actor_service"
 
 
 class ActorProxy:
-    """Actor 代理：将方法调用自动转为 ask 消息"""
+    """Actor proxy: automatically converts method calls to ask messages"""
 
     def __init__(self, actor_ref: ActorRef, method_names: list[str]):
         self._ref = actor_ref
@@ -80,12 +80,12 @@ class ActorProxy:
 
     @property
     def ref(self) -> ActorRef:
-        """获取底层 ActorRef"""
+        """Get underlying ActorRef"""
         return self._ref
 
 
 class _MethodCaller:
-    """方法调用器：执行远程方法调用"""
+    """Method caller: executes remote method calls"""
 
     def __init__(self, actor_ref: ActorRef, method_name: str):
         self._ref = actor_ref
@@ -105,7 +105,7 @@ class _MethodCaller:
 
 
 class _WrappedActor(_ActorBase):
-    """将用户类包装为 Actor"""
+    """Wraps user class as an Actor"""
 
     def __init__(self, instance: Any):
         self._instance = instance
@@ -143,8 +143,12 @@ class _WrappedActor(_ActorBase):
             return Message.from_json("Error", {"error": str(e)})
 
 
-class SystemActor(_ActorBase):
-    """系统 Actor - 每个节点一个，处理远程 Actor 创建请求"""
+class PythonActorService(_ActorBase):
+    """Python Actor creation service - one per node, handles Python actor creation requests.
+
+    Note: Rust SystemActor (path "system/core") handles system-level operations,
+    this service specifically handles Python actor creation.
+    """
 
     def __init__(self, system: ActorSystem):
         self.system = system
@@ -154,6 +158,12 @@ class SystemActor(_ActorBase):
 
         if msg.msg_type == "CreateActor":
             return await self._create_actor(data)
+        elif msg.msg_type == "ListRegistry":
+            # List registered actor classes
+            return Message.from_json(
+                "Registry",
+                {"classes": list(_actor_class_registry.keys())},
+            )
         return Message.from_json("Error", {"error": f"Unknown: {msg.msg_type}"})
 
     async def _create_actor(self, data: dict) -> Message:
@@ -193,24 +203,8 @@ class SystemActor(_ActorBase):
             return Message.from_json("Error", {"error": str(e)})
 
 
-async def _ensure_system_actor(system: ActorSystem) -> ActorRef:
-    """确保本节点有 SystemActor"""
-    try:
-        return await system.resolve_named(SYSTEM_ACTOR_NAME)
-    except Exception:
-        pass
-
-    try:
-        actor = SystemActor(system)
-        return await system.spawn(SYSTEM_ACTOR_NAME, actor, public=True)
-    except Exception as e:
-        if "already exists" in str(e).lower():
-            return await system.resolve_named(SYSTEM_ACTOR_NAME)
-        raise
-
-
 class ActorClass:
-    """Actor 类包装器"""
+    """Actor class wrapper"""
 
     def __init__(self, cls: type):
         self._cls = cls
@@ -220,7 +214,7 @@ class ActorClass:
             for n, _ in inspect.getmembers(cls, predicate=inspect.isfunction)
             if not n.startswith("_")
         ]
-        # 注册类
+        # Register class
         _actor_class_registry[self._class_name] = cls
 
     async def local(
@@ -230,9 +224,11 @@ class ActorClass:
         name: str | None = None,
         **kwargs,
     ) -> ActorProxy:
-        """本地创建 Actor"""
-        await _ensure_system_actor(system)
+        """Create actor locally.
 
+        Note: Use create_actor_system() to create ActorSystem,
+        which automatically registers PythonActorService.
+        """
         instance = self._cls(*args, **kwargs)
         actor = _WrappedActor(instance)
         actor_name = name or f"{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
@@ -247,31 +243,36 @@ class ActorClass:
         name: str | None = None,
         **kwargs,
     ) -> ActorProxy:
-        """远程创建 Actor（随机选择一个远程节点）"""
-        await _ensure_system_actor(system)
+        """Create actor remotely (randomly selects a remote node).
+
+        Note: Use create_actor_system() to create ActorSystem,
+        which automatically registers PythonActorService.
+        """
 
         members = await system.members()
         local_id = system.node_id.id
 
-        # 过滤出远程节点
+        # Filter out remote nodes
         remote_nodes = [m for m in members if int(m["node_id"]) != local_id]
 
         if not remote_nodes:
-            # 没有远程节点，回退到本地创建
+            # No remote nodes, fallback to local creation
             logger.warning("No remote nodes, fallback to local")
             return await self.local(system, *args, name=name, **kwargs)
 
-        # 随机选一个
+        # Randomly select one
         target = random.choice(remote_nodes)
         target_id = int(target["node_id"])
 
-        # 获取目标节点的 SystemActor
-        system_actor = await system.resolve_named(SYSTEM_ACTOR_NAME, node_id=target_id)
+        # Get target node's Python actor creation service
+        service_ref = await system.resolve_named(
+            PYTHON_ACTOR_SERVICE_NAME, node_id=target_id
+        )
 
         actor_name = name or f"{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
 
-        # 发送创建请求
-        resp = await system_actor.ask(
+        # Send creation request
+        resp = await service_ref.ask(
             Message.from_json(
                 "CreateActor",
                 {
@@ -288,7 +289,7 @@ class ActorClass:
         if resp.msg_type == "Error":
             raise RuntimeError(f"Remote create failed: {data.get('error')}")
 
-        # 构建远程 ActorRef
+        # Build remote ActorRef
         from pulsing._core import ActorId, NodeId
 
         remote_id = ActorId(data["actor_id"], NodeId(data["node_id"]))
@@ -297,14 +298,14 @@ class ActorClass:
         return ActorProxy(actor_ref, data.get("methods", self._methods))
 
     def __call__(self, *args, **kwargs):
-        """直接调用返回本地实例（非 Actor）"""
+        """Direct call returns local instance (not an Actor)"""
         return self._cls(*args, **kwargs)
 
 
 def as_actor(cls: type[T]) -> ActorClass:
-    """@as_actor 装饰器
+    """@as_actor decorator
 
-    将普通类转换为可分布式部署的 Actor。
+    Converts a regular class into a distributed deployable Actor.
 
     Example:
         @as_actor
@@ -316,18 +317,80 @@ def as_actor(cls: type[T]) -> ActorClass:
                 self.value += n
                 return self.value
 
-        # 本地创建
+        # Local creation
         counter = await Counter.local(system, init_value=10)
 
-        # 远程创建
+        # Remote creation
         counter = await Counter.remote(system, init_value=10)
 
-        # 调用
+        # Call
         result = await counter.increment(5)
     """
     return ActorClass(cls)
 
 
-# 保留 remote 作为别名（向后兼容）
+# ============================================================================
+# System operation helper functions (calls Rust SystemActor)
+# ============================================================================
+
+
+async def list_actors(system: ActorSystem) -> list[dict]:
+    """List all actors on the current node."""
+    sys_actor = await system.system()
+    # SystemMessage uses serde tag format
+    resp = await sys_actor.ask(
+        Message.from_json("SystemMessage", {"type": "ListActors"})
+    )
+    data = resp.to_json()
+    if data.get("type") == "Error":
+        raise RuntimeError(data.get("message"))
+    return data.get("actors", [])
+
+
+async def get_metrics(system: ActorSystem) -> dict:
+    """Get system metrics."""
+    sys_actor = await system.system()
+    resp = await sys_actor.ask(
+        Message.from_json("SystemMessage", {"type": "GetMetrics"})
+    )
+    return resp.to_json()
+
+
+async def get_node_info(system: ActorSystem) -> dict:
+    """Get node info."""
+    sys_actor = await system.system()
+    resp = await sys_actor.ask(
+        Message.from_json("SystemMessage", {"type": "GetNodeInfo"})
+    )
+    return resp.to_json()
+
+
+async def health_check(system: ActorSystem) -> dict:
+    """Health check."""
+    sys_actor = await system.system()
+    resp = await sys_actor.ask(
+        Message.from_json("SystemMessage", {"type": "HealthCheck"})
+    )
+    return resp.to_json()
+
+
+async def ping(system: ActorSystem, node_id: int | None = None) -> dict:
+    """Ping node.
+
+    Args:
+        system: ActorSystem instance
+        node_id: Target node ID (None means local node)
+    """
+    if node_id is None:
+        sys_actor = await system.system()
+    else:
+        sys_actor = await system.remote_system(node_id)
+    resp = await sys_actor.ask(Message.from_json("SystemMessage", {"type": "Ping"}))
+    return resp.to_json()
+
+
+# Keep `remote` as alias (backward compatibility)
 remote = as_actor
 RemoteClass = ActorClass
+# Keep old name as alias (backward compatibility)
+SystemActor = PythonActorService

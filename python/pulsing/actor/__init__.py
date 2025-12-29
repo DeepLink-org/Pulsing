@@ -24,7 +24,19 @@ from pulsing._core import (
 )
 
 from . import helpers
-from .remote import ActorClass, ActorProxy, as_actor, remote
+from .remote import (
+    PYTHON_ACTOR_SERVICE_NAME,
+    ActorClass,
+    ActorProxy,
+    PythonActorService,
+    as_actor,
+    get_metrics,
+    get_node_info,
+    health_check,
+    list_actors,
+    ping,
+    remote,
+)
 
 __all__ = [
     # Core types
@@ -47,7 +59,13 @@ __all__ = [
     "as_actor",
     "ActorClass",
     "ActorProxy",
-    "remote",  # 别名，向后兼容
+    "remote",  # Alias for backward compatibility
+    # System helper functions
+    "list_actors",
+    "get_metrics",
+    "get_node_info",
+    "health_check",
+    "ping",
 ]
 
 
@@ -57,6 +75,8 @@ async def create_actor_system(config: SystemConfig) -> ActorSystem:
 
     This is a convenience function that wraps ActorSystem.create() to automatically
     inject the current event loop, making it easier to use.
+
+    The function also automatically registers PythonActorService for remote actor creation.
 
     Args:
         config: SystemConfig instance (use SystemConfig.standalone() or SystemConfig.with_addr())
@@ -69,7 +89,13 @@ async def create_actor_system(config: SystemConfig) -> ActorSystem:
         system = await create_actor_system(config)
     """
     loop = asyncio.get_running_loop()
-    return await ActorSystem.create(config, loop)
+    system = await ActorSystem.create(config, loop)
+
+    # Automatically register PythonActorService (for remote actor creation)
+    service = PythonActorService(system)
+    await system.spawn(PYTHON_ACTOR_SERVICE_NAME, service, public=True)
+
+    return system
 
 
 class Actor(ABC):

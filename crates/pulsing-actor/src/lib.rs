@@ -106,6 +106,7 @@ pub mod circuit_breaker;
 pub mod cluster;
 pub mod policies;
 pub mod system;
+pub mod system_actor;
 pub mod transport;
 pub mod watch;
 

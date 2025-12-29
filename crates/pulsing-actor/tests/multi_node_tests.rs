@@ -206,10 +206,10 @@ mod multi_node_tests {
 
         let _ref3 = system3.spawn("actor-on-node3", Echo).await.unwrap();
 
-        // Each node has exactly one actor
-        assert_eq!(system1.local_actor_names().len(), 1);
-        assert_eq!(system2.local_actor_names().len(), 1);
-        assert_eq!(system3.local_actor_names().len(), 1);
+        // Each node has exactly one user actor + SystemActor
+        assert_eq!(system1.local_actor_names().len(), 2); // _system_internal + actor-on-node1
+        assert_eq!(system2.local_actor_names().len(), 2); // _system_internal + actor-on-node2
+        assert_eq!(system3.local_actor_names().len(), 2); // _system_internal + actor-on-node3
 
         system1.shutdown().await.unwrap();
         system2.shutdown().await.unwrap();
@@ -431,7 +431,11 @@ mod edge_case_tests {
     async fn test_empty_cluster() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        assert_eq!(system.local_actor_names().len(), 0);
+        // SystemActor (_system_internal) is always present
+        assert_eq!(system.local_actor_names().len(), 1);
+        assert!(system
+            .local_actor_names()
+            .contains(&"_system_internal".to_string()));
 
         system.shutdown().await.unwrap();
     }
@@ -469,7 +473,11 @@ mod edge_case_tests {
             system.stop(&format!("rapid-{}", i)).await.unwrap();
         }
 
-        assert_eq!(system.local_actor_names().len(), 0);
+        // Only SystemActor (_system_internal) should remain
+        assert_eq!(system.local_actor_names().len(), 1);
+        assert!(system
+            .local_actor_names()
+            .contains(&"_system_internal".to_string()));
 
         system.shutdown().await.unwrap();
     }

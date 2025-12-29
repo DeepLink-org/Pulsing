@@ -961,6 +961,30 @@ impl PyActorSystem {
         })
     }
 
+    /// Get the SystemActor reference
+    fn system<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let system = self.inner.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let actor_ref = system.system().await.map_err(to_pyerr)?;
+            Ok(PyActorRef { inner: actor_ref })
+        })
+    }
+
+    /// Get remote SystemActor reference (for remote nodes)
+    fn remote_system<'py>(&self, py: Python<'py>, node_id: u64) -> PyResult<Bound<'py, PyAny>> {
+        let system = self.inner.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let path = ActorPath::new("system").map_err(to_pyerr)?;
+            let actor_ref = system
+                .resolve_named(&path, Some(&NodeId::new(node_id)))
+                .await
+                .map_err(to_pyerr)?;
+            Ok(PyActorRef { inner: actor_ref })
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "ActorSystem(node_id='{}', addr='{}')",

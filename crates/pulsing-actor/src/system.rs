@@ -5,6 +5,9 @@ use crate::actor::{
     Message, NodeId, StopReason,
 };
 use crate::cluster::{GossipCluster, GossipConfig, GossipMessage, MemberInfo, NamedActorInfo};
+use crate::system_actor::{
+    BoxedActorFactory, SystemActor, SystemRef, SYSTEM_ACTOR_LOCAL_NAME, SYSTEM_ACTOR_PATH,
+};
 use crate::transport::{Http2Config, Http2RemoteTransport, Http2ServerHandler, Http2Transport};
 use crate::watch::ActorLifecycle;
 use dashmap::DashMap;
@@ -196,14 +199,19 @@ impl ActorSystem {
         let system = Arc::new(Self {
             node_id,
             addr: actual_addr,
-            local_actors,
-            named_actor_paths,
+            local_actors: local_actors.clone(),
+            named_actor_paths: named_actor_paths.clone(),
             cluster: cluster_holder,
             transport,
             cancel_token: cancel_token.clone(),
             lifecycle,
             actor_id_counter: AtomicU64::new(1),
         });
+
+        // Start the builtin SystemActor with path "system"
+        system
+            .start_system_actor(local_actors, named_actor_paths)
+            .await?;
 
         tracing::info!(
             node_id = %node_id,
@@ -212,6 +220,75 @@ impl ActorSystem {
         );
 
         Ok(system)
+    }
+
+    /// Start the builtin SystemActor
+    async fn start_system_actor(
+        self: &Arc<Self>,
+        local_actors: Arc<DashMap<String, LocalActorHandle>>,
+        named_actor_paths: Arc<DashMap<String, String>>,
+    ) -> anyhow::Result<()> {
+        // Create SystemRef for SystemActor
+        let system_ref = Arc::new(SystemRef {
+            node_id: self.node_id,
+            addr: self.addr,
+            local_actors: local_actors
+                .iter()
+                .map(|e| (e.key().clone(), e.sender.clone()))
+                .collect::<DashMap<_, _>>()
+                .into(),
+            named_actor_paths,
+        });
+
+        // Create SystemActor with default factory
+        let system_actor = SystemActor::with_default_factory(system_ref);
+
+        // Spawn as named actor with path "system"
+        let path = ActorPath::new(SYSTEM_ACTOR_PATH)?;
+        self.spawn_named(path, SYSTEM_ACTOR_LOCAL_NAME, system_actor)
+            .await?;
+
+        tracing::debug!(path = SYSTEM_ACTOR_PATH, "SystemActor started");
+        Ok(())
+    }
+
+    /// Start SystemActor with custom factory (for Python extension)
+    pub async fn start_system_actor_with_factory(
+        self: &Arc<Self>,
+        factory: BoxedActorFactory,
+    ) -> anyhow::Result<()> {
+        // Check if already started
+        if self.local_actors.contains_key(SYSTEM_ACTOR_LOCAL_NAME) {
+            return Err(anyhow::anyhow!("SystemActor already started"));
+        }
+
+        // Create SystemRef
+        let system_ref = Arc::new(SystemRef {
+            node_id: self.node_id,
+            addr: self.addr,
+            local_actors: Arc::new(DashMap::new()), // Will be updated
+            named_actor_paths: self.named_actor_paths.clone(),
+        });
+
+        // Create SystemActor with custom factory
+        let system_actor = SystemActor::new(system_ref, factory);
+
+        // Spawn as named actor
+        let path = ActorPath::new(SYSTEM_ACTOR_PATH)?;
+        self.spawn_named(path, SYSTEM_ACTOR_LOCAL_NAME, system_actor)
+            .await?;
+
+        tracing::debug!(
+            path = SYSTEM_ACTOR_PATH,
+            "SystemActor started with custom factory"
+        );
+        Ok(())
+    }
+
+    /// Get SystemActor reference
+    pub async fn system(&self) -> anyhow::Result<ActorRef> {
+        self.resolve_named(&ActorPath::new(SYSTEM_ACTOR_PATH)?, None)
+            .await
     }
 
     /// Get node ID
