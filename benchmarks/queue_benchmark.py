@@ -375,7 +375,7 @@ async def main():
     writer = await write_queue(
         system,
         topic=topic,
-        partition_column="id",
+        bucket_column="id",
         num_buckets=args.num_buckets,
         batch_size=args.batch_size,
         storage_path=args.storage_path,

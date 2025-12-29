@@ -84,7 +84,7 @@
 ```
 Queue.put(record)
     │
-    ├─ bucket_id = hash(record[partition_column]) % num_buckets
+    ├─ bucket_id = hash(record[bucket_column]) % num_buckets
     │
     ▼
 get_bucket_ref(system, topic, bucket_id)
@@ -149,7 +149,7 @@ async def main():
     writer = await write_queue(
         system,
         topic="my_queue",
-        partition_column="user_id",
+        bucket_column="user_id",
         num_buckets=4,
     )
 
@@ -199,7 +199,7 @@ records = sync_reader.get(limit=100)  # 同步读取
 writer = await write_queue(
     system,
     topic="my_queue",
-    partition_column="user_id",  # 分桶列
+    bucket_column="user_id",  # 分桶列
     num_buckets=4,               # 桶数量
     batch_size=100,              # 批处理大小
 )
@@ -287,7 +287,7 @@ pip install lance pyarrow
    - 可以考虑虚拟节点或一致性哈希环来减少影响
 
 2. **元数据持久化**
-   - Queue 配置（partition_column, num_buckets）目前不持久化
+   - Queue 配置（bucket_column, num_buckets）目前不持久化
    - 消费者需要知道这些参数
    - 可以考虑将元数据存储在集群中
 

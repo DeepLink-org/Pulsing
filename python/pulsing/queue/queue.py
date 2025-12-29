@@ -23,14 +23,14 @@ class Queue:
         self,
         system: ActorSystem,
         topic: str,
-        partition_column: str = "id",
+        bucket_column: str = "id",
         num_buckets: int = 4,
         batch_size: int = 100,
         storage_path: str | None = None,
     ):
         self.system = system
         self.topic = topic
-        self.partition_column = partition_column
+        self.bucket_column = bucket_column
         self.num_buckets = num_buckets
         self.batch_size = batch_size
         self.storage_path = storage_path or f"./queue_storage/{topic}"
@@ -94,10 +94,10 @@ class Queue:
 
         results = []
         for rec in records:
-            if self.partition_column not in rec:
-                raise ValueError(f"Missing partition column '{self.partition_column}'")
+            if self.bucket_column not in rec:
+                raise ValueError(f"Missing partition column '{self.bucket_column}'")
 
-            bucket_id = self._hash_partition(rec[self.partition_column])
+            bucket_id = self._hash_partition(rec[self.bucket_column])
             bucket_ref = await self._ensure_bucket(bucket_id)
 
             response = await bucket_ref.ask(Message.from_json("Put", {"record": rec}))
@@ -195,7 +195,7 @@ class Queue:
 
         return {
             "topic": self.topic,
-            "partition_column": self.partition_column,
+            "bucket_column": self.bucket_column,
             "num_buckets": self.num_buckets,
             "buckets": bucket_stats,
         }
@@ -305,7 +305,7 @@ class QueueReader:
 async def write_queue(
     system: ActorSystem,
     topic: str,
-    partition_column: str = "id",
+    bucket_column: str = "id",
     num_buckets: int = 4,
     batch_size: int = 100,
     storage_path: str | None = None,
@@ -319,7 +319,7 @@ async def write_queue(
     queue = Queue(
         system=system,
         topic=topic,
-        partition_column=partition_column,
+        bucket_column=bucket_column,
         num_buckets=num_buckets,
         batch_size=batch_size,
         storage_path=storage_path,
@@ -392,7 +392,7 @@ async def read_queue(
     queue = Queue(
         system=system,
         topic=topic,
-        partition_column="id",
+        bucket_column="id",
         num_buckets=num_buckets,
         batch_size=100,
         storage_path=storage_path,

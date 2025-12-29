@@ -33,7 +33,7 @@ async def main():
         writer = await write_queue(
             system,
             topic="my_queue",
-            partition_column="user_id",  # 按照 user_id 进行分桶
+            bucket_column="user_id",  # 按照 user_id 进行分桶
             num_buckets=4,
             batch_size=10,
         )

@@ -61,7 +61,7 @@ async def queue(actor_system, temp_storage_path):
     q = Queue(
         system=actor_system,
         topic="test_queue",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=4,
         batch_size=10,
         storage_path=temp_storage_path,
@@ -81,13 +81,13 @@ async def test_queue_creation(actor_system, temp_storage_path):
     q = Queue(
         system=actor_system,
         topic="test_queue",
-        partition_column="user_id",
+        bucket_column="user_id",
         num_buckets=4,
         batch_size=100,
         storage_path=temp_storage_path,
     )
     assert q.topic == "test_queue"
-    assert q.partition_column == "user_id"
+    assert q.bucket_column == "user_id"
     assert q.num_buckets == 4
 
 
@@ -113,7 +113,7 @@ async def test_put_multiple_records(queue):
 
 
 @pytest.mark.asyncio
-async def test_put_missing_partition_column(queue):
+async def test_put_missing_bucket_column(queue):
     """Test error when partition column is missing."""
     record = {"value": 100}  # Missing 'id' column
 
@@ -280,7 +280,7 @@ async def test_write_queue_api(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="writer_test",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=4,
         storage_path=temp_storage_path,
     )
@@ -301,7 +301,7 @@ async def test_read_queue_api(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="reader_test",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=4,
         storage_path=temp_storage_path,
     )
@@ -332,7 +332,7 @@ async def test_reader_offset_management(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="offset_test",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=2,
         storage_path=temp_storage_path,
     )
@@ -377,7 +377,7 @@ async def test_distributed_consumption_rank_assignment(actor_system, temp_storag
     writer = await write_queue(
         actor_system,
         topic="distributed_test",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=4,
         storage_path=temp_storage_path,
     )
@@ -417,7 +417,7 @@ async def test_distributed_consumption_no_overlap(actor_system, temp_storage_pat
     writer = await write_queue(
         actor_system,
         topic="no_overlap_test",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=4,
         storage_path=temp_storage_path,
     )
@@ -464,7 +464,7 @@ async def test_explicit_bucket_ids(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="explicit_bucket_test",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=4,
         storage_path=temp_storage_path,
     )
@@ -502,7 +502,7 @@ async def test_blocking_read_with_timeout(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="blocking_test",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=1,
         storage_path=temp_storage_path,
     )
@@ -535,7 +535,7 @@ async def test_blocking_read_wakes_on_data(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="wake_test",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=1,
         batch_size=100,
         storage_path=temp_storage_path,
@@ -580,7 +580,7 @@ async def test_high_concurrency_writes(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="stress_write",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=8,
         batch_size=100,
         storage_path=temp_storage_path,
@@ -628,7 +628,7 @@ async def test_high_concurrency_reads(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="stress_read",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=4,
         batch_size=50,
         storage_path=temp_storage_path,
@@ -674,7 +674,7 @@ async def test_large_records(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="large_records",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=4,
         batch_size=10,
         storage_path=temp_storage_path,
@@ -719,7 +719,7 @@ async def test_producer_consumer_stress(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic=topic,
-        partition_column="id",
+        bucket_column="id",
         num_buckets=num_buckets,
         batch_size=50,
         storage_path=temp_storage_path,
@@ -808,7 +808,7 @@ async def test_many_buckets(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="many_buckets",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=num_buckets,
         batch_size=20,
         storage_path=temp_storage_path,
@@ -838,7 +838,7 @@ async def test_rapid_flush_cycles(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="rapid_flush",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=4,
         batch_size=5,  # Small batch size for frequent auto-flush
         storage_path=temp_storage_path,
@@ -884,7 +884,7 @@ async def test_data_integrity_under_stress(actor_system, temp_storage_path):
     writer = await write_queue(
         actor_system,
         topic="integrity_test",
-        partition_column="id",
+        bucket_column="id",
         num_buckets=4,
         batch_size=20,
         storage_path=temp_storage_path,
@@ -1018,7 +1018,7 @@ def test_sync_queue_standalone():
                 writer = await write_queue(
                     system,
                     "sync_test",
-                    partition_column="id",
+                    bucket_column="id",
                     num_buckets=2,
                     batch_size=10,
                     storage_path=temp_dir,
@@ -1085,7 +1085,7 @@ def test_sync_writer_reader_standalone():
                 writer = await write_queue(
                     system,
                     "sync_wr",
-                    partition_column="id",
+                    bucket_column="id",
                     num_buckets=2,
                     batch_size=10,
                     storage_path=temp_dir,
@@ -1152,7 +1152,7 @@ def test_sync_reader_offset_standalone():
                 writer = await write_queue(
                     system,
                     "offset_test",
-                    partition_column="id",
+                    bucket_column="id",
                     num_buckets=1,
                     batch_size=100,
                     storage_path=temp_dir,
