@@ -23,4 +23,3 @@ __all__ = [
     "get_storage_manager",
     "get_bucket_ref",
 ]
-

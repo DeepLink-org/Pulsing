@@ -96,7 +96,7 @@ async def test_put_single_record(queue):
     """Test writing a single record."""
     record = {"id": "test_1", "value": 100}
     result = await queue.put(record)
-    
+
     assert result["status"] == "ok"
     assert "bucket_id" in result
 
@@ -106,7 +106,7 @@ async def test_put_multiple_records(queue):
     """Test writing multiple records."""
     records = [{"id": f"test_{i}", "value": i} for i in range(10)]
     results = await queue.put(records)
-    
+
     assert len(results) == 10
     for result in results:
         assert result["status"] == "ok"
@@ -116,7 +116,7 @@ async def test_put_multiple_records(queue):
 async def test_put_missing_partition_column(queue):
     """Test error when partition column is missing."""
     record = {"value": 100}  # Missing 'id' column
-    
+
     with pytest.raises(ValueError, match="Missing partition column"):
         await queue.put(record)
 
@@ -127,10 +127,10 @@ async def test_get_records(queue):
     # Write records
     for i in range(20):
         await queue.put({"id": f"test_{i}", "value": i})
-    
+
     # Read records (should get from memory buffer)
     records = await queue.get(limit=20)
-    
+
     assert len(records) > 0
     assert len(records) <= 20
 
@@ -141,10 +141,10 @@ async def test_get_from_specific_bucket(queue):
     # Write records
     for i in range(20):
         await queue.put({"id": f"test_{i}", "value": i})
-    
+
     # Read from bucket 0
     records = await queue.get(bucket_id=0, limit=100)
-    
+
     # All records should hash to bucket 0
     for record in records:
         bucket_id = queue.get_bucket_id(record["id"])
@@ -157,10 +157,10 @@ async def test_flush_and_persistence(queue, temp_storage_path):
     # Write records
     for i in range(5):
         await queue.put({"id": f"test_{i}", "value": i})
-    
+
     # Flush to persist
     await queue.flush()
-    
+
     # Check Lance files exist
     storage_path = Path(temp_storage_path)
     lance_files = list(storage_path.rglob("*.lance"))
@@ -173,9 +173,9 @@ async def test_stats(queue):
     # Write records
     for i in range(15):
         await queue.put({"id": f"test_{i}", "value": i})
-    
+
     stats = await queue.stats()
-    
+
     assert stats["topic"] == "test_queue"
     assert stats["num_buckets"] == 4
     assert "buckets" in stats
@@ -190,12 +190,12 @@ async def test_stats(queue):
 async def test_hash_partitioning(queue):
     """Test that records are distributed across buckets."""
     bucket_counts = {i: 0 for i in range(queue.num_buckets)}
-    
+
     # Write many records with different IDs
     for i in range(100):
         result = await queue.put({"id": f"user_{i}", "value": i})
         bucket_counts[result["bucket_id"]] += 1
-    
+
     # All buckets should have some records (probabilistic)
     non_empty_buckets = sum(1 for count in bucket_counts.values() if count > 0)
     assert non_empty_buckets >= 2  # At least 2 buckets should have data
@@ -205,12 +205,12 @@ async def test_hash_partitioning(queue):
 async def test_same_key_same_bucket(queue):
     """Test that same key always goes to same bucket."""
     key = "consistent_key"
-    
+
     results = []
     for i in range(10):
         result = await queue.put({"id": key, "value": i})
         results.append(result["bucket_id"])
-    
+
     # All should go to the same bucket
     assert len(set(results)) == 1
 
@@ -235,10 +235,10 @@ async def test_immediate_visibility(queue):
     """Test that data is immediately visible after write (before flush)."""
     # Write a record
     await queue.put({"id": "immediate_test", "value": 42})
-    
+
     # Read immediately (no flush)
     records = await queue.get(limit=10)
-    
+
     # Should find the record in memory buffer
     found = any(r.get("id") == "immediate_test" for r in records)
     assert found, "Record should be visible immediately after write"
@@ -251,18 +251,20 @@ async def test_combined_visibility(queue):
     for i in range(15):
         await queue.put({"id": f"persisted_{i}", "value": i})
     await queue.flush()
-    
+
     # Write more records (in buffer)
     for i in range(5):
         await queue.put({"id": f"buffered_{i}", "value": i + 100})
-    
+
     # Read all
     records = await queue.get(limit=100)
-    
+
     # Should have both persisted and buffered
-    persisted_count = sum(1 for r in records if r.get("id", "").startswith("persisted_"))
+    persisted_count = sum(
+        1 for r in records if r.get("id", "").startswith("persisted_")
+    )
     buffered_count = sum(1 for r in records if r.get("id", "").startswith("buffered_"))
-    
+
     assert persisted_count > 0, "Should have persisted records"
     assert buffered_count > 0, "Should have buffered records"
 
@@ -282,13 +284,13 @@ async def test_write_queue_api(actor_system, temp_storage_path):
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     assert isinstance(writer, QueueWriter)
-    
+
     # Write data
     result = await writer.put({"id": "test", "value": 1})
     assert result["status"] == "ok"
-    
+
     await writer.flush()
 
 
@@ -303,11 +305,11 @@ async def test_read_queue_api(actor_system, temp_storage_path):
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     for i in range(10):
         await writer.put({"id": f"test_{i}", "value": i})
     await writer.flush()
-    
+
     # Open reader
     reader = await read_queue(
         actor_system,
@@ -315,9 +317,9 @@ async def test_read_queue_api(actor_system, temp_storage_path):
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     assert isinstance(reader, QueueReader)
-    
+
     # Read data
     records = await reader.get(limit=10)
     assert len(records) > 0
@@ -334,11 +336,11 @@ async def test_reader_offset_management(actor_system, temp_storage_path):
         num_buckets=2,
         storage_path=temp_storage_path,
     )
-    
+
     for i in range(20):
         await writer.put({"id": f"test_{i}", "value": i})
     await writer.flush()
-    
+
     # Create reader
     reader = await read_queue(
         actor_system,
@@ -346,17 +348,17 @@ async def test_reader_offset_management(actor_system, temp_storage_path):
         num_buckets=2,
         storage_path=temp_storage_path,
     )
-    
+
     # Read first batch
     records1 = await reader.get(limit=5)
-    
+
     # Read second batch (should not overlap)
-    records2 = await reader.get(limit=5)
-    
+    await reader.get(limit=5)
+
     # Reset and read again
     reader.reset()
     records3 = await reader.get(limit=5)
-    
+
     # First and third should have same records
     ids1 = set(r["id"] for r in records1)
     ids3 = set(r["id"] for r in records3)
@@ -379,11 +381,11 @@ async def test_distributed_consumption_rank_assignment(actor_system, temp_storag
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     for i in range(40):
         await writer.put({"id": f"test_{i}", "value": i})
     await writer.flush()
-    
+
     # Create two readers with different ranks
     reader0 = await read_queue(
         actor_system,
@@ -393,7 +395,7 @@ async def test_distributed_consumption_rank_assignment(actor_system, temp_storag
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     reader1 = await read_queue(
         actor_system,
         topic="distributed_test",
@@ -402,7 +404,7 @@ async def test_distributed_consumption_rank_assignment(actor_system, temp_storag
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     # Verify bucket assignments
     assert reader0.bucket_ids == [0, 2]
     assert reader1.bucket_ids == [1, 3]
@@ -419,12 +421,12 @@ async def test_distributed_consumption_no_overlap(actor_system, temp_storage_pat
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     # Write data
     for i in range(100):
         await writer.put({"id": f"record_{i}", "value": i})
     await writer.flush()
-    
+
     # Create two readers
     reader0 = await read_queue(
         actor_system,
@@ -434,7 +436,7 @@ async def test_distributed_consumption_no_overlap(actor_system, temp_storage_pat
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     reader1 = await read_queue(
         actor_system,
         topic="no_overlap_test",
@@ -443,15 +445,15 @@ async def test_distributed_consumption_no_overlap(actor_system, temp_storage_pat
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     # Read all data from both readers
     records0 = await reader0.get(limit=100)
     records1 = await reader1.get(limit=100)
-    
+
     # No overlap
     ids0 = set(r["id"] for r in records0)
     ids1 = set(r["id"] for r in records1)
-    
+
     overlap = ids0 & ids1
     assert len(overlap) == 0, f"Readers should not have overlapping data: {overlap}"
 
@@ -466,11 +468,11 @@ async def test_explicit_bucket_ids(actor_system, temp_storage_path):
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     for i in range(40):
         await writer.put({"id": f"test_{i}", "value": i})
     await writer.flush()
-    
+
     # Read only from bucket 0
     reader = await read_queue(
         actor_system,
@@ -479,9 +481,9 @@ async def test_explicit_bucket_ids(actor_system, temp_storage_path):
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     records = await reader.get(limit=100)
-    
+
     # All records should be from bucket 0
     q = writer.queue
     for record in records:
@@ -504,25 +506,25 @@ async def test_blocking_read_with_timeout(actor_system, temp_storage_path):
         num_buckets=1,
         storage_path=temp_storage_path,
     )
-    
+
     # Write some data so bucket exists
     await writer.put({"id": "seed", "value": 0})
-    
+
     reader = await read_queue(
         actor_system,
         topic="blocking_test",
         num_buckets=1,
         storage_path=temp_storage_path,
     )
-    
+
     # Read existing data first
     await reader.get(limit=10)
-    
+
     # Now blocking read should timeout
     start = time.time()
     records = await reader.get(limit=10, wait=True, timeout=0.5)
     elapsed = time.time() - start
-    
+
     assert elapsed >= 0.4  # Should have waited
     assert len(records) == 0  # No new data
 
@@ -538,29 +540,29 @@ async def test_blocking_read_wakes_on_data(actor_system, temp_storage_path):
         batch_size=100,
         storage_path=temp_storage_path,
     )
-    
+
     # Seed the queue
     await writer.put({"id": "seed", "value": 0})
-    
+
     reader = await read_queue(
         actor_system,
         topic="wake_test",
         num_buckets=1,
         storage_path=temp_storage_path,
     )
-    
+
     # Read seed data
     await reader.get(limit=10)
-    
+
     # Write data first, then read with wait
     await writer.put({"id": "new_data", "value": 42})
-    
+
     # Reset reader to read from beginning
     reader.reset()
-    
+
     # Should get all data including new data
     records = await reader.get(limit=20, wait=False)
-    
+
     assert len(records) >= 2  # seed + new_data
     ids = [r.get("id") for r in records]
     assert "seed" in ids
@@ -583,37 +585,41 @@ async def test_high_concurrency_writes(actor_system, temp_storage_path):
         batch_size=100,
         storage_path=temp_storage_path,
     )
-    
+
     num_writers = 10
     records_per_writer = 100
-    
+
     async def write_batch(writer_id: int):
         results = []
         for i in range(records_per_writer):
-            result = await writer.put({
-                "id": f"writer_{writer_id}_record_{i}",
-                "writer_id": writer_id,
-                "seq": i,
-            })
+            result = await writer.put(
+                {
+                    "id": f"writer_{writer_id}_record_{i}",
+                    "writer_id": writer_id,
+                    "seq": i,
+                }
+            )
             results.append(result)
         return results
-    
+
     # Concurrent writes
     start = time.time()
     tasks = [write_batch(i) for i in range(num_writers)]
     all_results = await asyncio.gather(*tasks)
     elapsed = time.time() - start
-    
+
     # Verify all writes succeeded
     total_writes = sum(len(r) for r in all_results)
     assert total_writes == num_writers * records_per_writer
-    
+
     for results in all_results:
         for result in results:
             assert result["status"] == "ok"
-    
-    print(f"\nHigh concurrency writes: {total_writes} records in {elapsed:.2f}s "
-          f"({total_writes/elapsed:.0f} records/s)")
+
+    print(
+        f"\nHigh concurrency writes: {total_writes} records in {elapsed:.2f}s "
+        f"({total_writes/elapsed:.0f} records/s)"
+    )
 
 
 @pytest.mark.asyncio
@@ -627,14 +633,14 @@ async def test_high_concurrency_reads(actor_system, temp_storage_path):
         batch_size=50,
         storage_path=temp_storage_path,
     )
-    
+
     # Write test data
     for i in range(500):
         await writer.put({"id": f"record_{i}", "value": i})
     await writer.flush()
-    
+
     num_readers = 10
-    
+
     async def read_all(reader_id: int):
         reader = await read_queue(
             actor_system,
@@ -644,20 +650,22 @@ async def test_high_concurrency_reads(actor_system, temp_storage_path):
         )
         records = await reader.get(limit=500)
         return reader_id, len(records)
-    
+
     # Concurrent reads
     start = time.time()
     tasks = [read_all(i) for i in range(num_readers)]
     results = await asyncio.gather(*tasks)
     elapsed = time.time() - start
-    
+
     # All readers should get data
     for reader_id, count in results:
         assert count > 0, f"Reader {reader_id} got no data"
-    
+
     total_records = sum(count for _, count in results)
-    print(f"\nHigh concurrency reads: {num_readers} readers, {total_records} total records "
-          f"in {elapsed:.2f}s")
+    print(
+        f"\nHigh concurrency reads: {num_readers} readers, {total_records} total records "
+        f"in {elapsed:.2f}s"
+    )
 
 
 @pytest.mark.asyncio
@@ -671,7 +679,7 @@ async def test_large_records(actor_system, temp_storage_path):
         batch_size=10,
         storage_path=temp_storage_path,
     )
-    
+
     # Generate large records (1KB each)
     def generate_large_record(i: int) -> dict:
         return {
@@ -679,17 +687,17 @@ async def test_large_records(actor_system, temp_storage_path):
             "data": "".join(random.choices(string.ascii_letters, k=1000)),
             "seq": i,
         }
-    
+
     num_records = 100
-    
+
     start = time.time()
     for i in range(num_records):
         await writer.put(generate_large_record(i))
     await writer.flush()
     elapsed = time.time() - start
-    
+
     print(f"\nLarge records: {num_records} x 1KB records in {elapsed:.2f}s")
-    
+
     # Verify read
     reader = await read_queue(
         actor_system,
@@ -697,7 +705,7 @@ async def test_large_records(actor_system, temp_storage_path):
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     records = await reader.get(limit=num_records)
     assert len(records) == num_records
 
@@ -707,7 +715,7 @@ async def test_producer_consumer_stress(actor_system, temp_storage_path):
     """Stress test: concurrent producers and consumers."""
     topic = "producer_consumer_stress"
     num_buckets = 4
-    
+
     writer = await write_queue(
         actor_system,
         topic=topic,
@@ -716,16 +724,16 @@ async def test_producer_consumer_stress(actor_system, temp_storage_path):
         batch_size=50,
         storage_path=temp_storage_path,
     )
-    
+
     num_producers = 5
     records_per_producer = 100
     num_consumers = 3
-    
+
     produced_ids = set()
     consumed_ids = set()
     produce_done = asyncio.Event()
     lock = asyncio.Lock()
-    
+
     async def producer(producer_id: int):
         nonlocal produced_ids
         for i in range(records_per_producer):
@@ -737,7 +745,7 @@ async def test_producer_consumer_stress(actor_system, temp_storage_path):
         if producer_id == num_producers - 1:
             await writer.flush()
             produce_done.set()
-    
+
     async def consumer(consumer_id: int):
         nonlocal consumed_ids
         reader = await read_queue(
@@ -748,7 +756,7 @@ async def test_producer_consumer_stress(actor_system, temp_storage_path):
             num_buckets=num_buckets,
             storage_path=temp_storage_path,
         )
-        
+
         while True:
             records = await reader.get(limit=50, wait=True, timeout=0.5)
             if records:
@@ -762,33 +770,33 @@ async def test_producer_consumer_stress(actor_system, temp_storage_path):
                     for r in records:
                         consumed_ids.add(r["id"])
                 break
-    
+
     # Start producers and consumers
     start = time.time()
-    
+
     producer_tasks = [asyncio.create_task(producer(i)) for i in range(num_producers)]
     consumer_tasks = [asyncio.create_task(consumer(i)) for i in range(num_consumers)]
-    
+
     # Wait for producers
     await asyncio.gather(*producer_tasks)
-    
+
     # Give consumers time to finish
     await asyncio.sleep(1.0)
-    
+
     # Cancel remaining consumer tasks
     for task in consumer_tasks:
         task.cancel()
-    
+
     elapsed = time.time() - start
-    
+
     total_produced = num_producers * records_per_producer
-    
-    print(f"\nProducer-Consumer stress test:")
+
+    print("\nProducer-Consumer stress test:")
     print(f"  Produced: {len(produced_ids)} records")
     print(f"  Consumed: {len(consumed_ids)} records")
     print(f"  Elapsed: {elapsed:.2f}s")
     print(f"  Throughput: {len(produced_ids)/elapsed:.0f} records/s")
-    
+
     assert len(produced_ids) == total_produced
 
 
@@ -796,7 +804,7 @@ async def test_producer_consumer_stress(actor_system, temp_storage_path):
 async def test_many_buckets(actor_system, temp_storage_path):
     """Stress test: many buckets."""
     num_buckets = 32
-    
+
     writer = await write_queue(
         actor_system,
         topic="many_buckets",
@@ -805,21 +813,21 @@ async def test_many_buckets(actor_system, temp_storage_path):
         batch_size=20,
         storage_path=temp_storage_path,
     )
-    
+
     # Write to fill all buckets
     num_records = 500
     for i in range(num_records):
         await writer.put({"id": f"record_{i}", "value": i})
     await writer.flush()
-    
+
     # Get stats
     stats = await writer.queue.stats()
-    
+
     # Count non-empty buckets
     non_empty = sum(1 for b in stats["buckets"].values() if b.get("total_count", 0) > 0)
-    
+
     print(f"\nMany buckets test: {num_buckets} buckets, {non_empty} non-empty")
-    
+
     # Most buckets should have data (probabilistic)
     assert non_empty >= num_buckets // 2
 
@@ -835,21 +843,23 @@ async def test_rapid_flush_cycles(actor_system, temp_storage_path):
         batch_size=5,  # Small batch size for frequent auto-flush
         storage_path=temp_storage_path,
     )
-    
+
     num_cycles = 50
     records_per_cycle = 10
-    
+
     start = time.time()
     for cycle in range(num_cycles):
         for i in range(records_per_cycle):
             await writer.put({"id": f"c{cycle}_r{i}", "cycle": cycle, "seq": i})
         await writer.flush()
     elapsed = time.time() - start
-    
+
     total_records = num_cycles * records_per_cycle
-    
-    print(f"\nRapid flush: {num_cycles} cycles, {total_records} records in {elapsed:.2f}s")
-    
+
+    print(
+        f"\nRapid flush: {num_cycles} cycles, {total_records} records in {elapsed:.2f}s"
+    )
+
     # Verify all data readable
     reader = await read_queue(
         actor_system,
@@ -857,14 +867,14 @@ async def test_rapid_flush_cycles(actor_system, temp_storage_path):
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     all_records = []
     while True:
         records = await reader.get(limit=100)
         if not records:
             break
         all_records.extend(records)
-    
+
     assert len(all_records) == total_records
 
 
@@ -879,25 +889,27 @@ async def test_data_integrity_under_stress(actor_system, temp_storage_path):
         batch_size=20,
         storage_path=temp_storage_path,
     )
-    
+
     # Write records with unique checksums
     num_records = 200
     expected_data = {}
-    
+
     for i in range(num_records):
         record_id = f"integrity_{i}"
         value = random.randint(0, 1000000)
         checksum = hashlib.md5(f"{record_id}:{value}".encode()).hexdigest()
-        
-        await writer.put({
-            "id": record_id,
-            "value": value,
-            "checksum": checksum,
-        })
+
+        await writer.put(
+            {
+                "id": record_id,
+                "value": value,
+                "checksum": checksum,
+            }
+        )
         expected_data[record_id] = (value, checksum)
-    
+
     await writer.flush()
-    
+
     # Read and verify
     reader = await read_queue(
         actor_system,
@@ -905,24 +917,28 @@ async def test_data_integrity_under_stress(actor_system, temp_storage_path):
         num_buckets=4,
         storage_path=temp_storage_path,
     )
-    
+
     all_records = []
     while True:
         records = await reader.get(limit=100)
         if not records:
             break
         all_records.extend(records)
-    
+
     # Verify integrity
     assert len(all_records) == num_records
-    
+
     for record in all_records:
         record_id = record["id"]
         expected_value, expected_checksum = expected_data[record_id]
-        
+
         # Verify checksum
-        actual_checksum = hashlib.md5(f"{record_id}:{record['value']}".encode()).hexdigest()
-        assert record["checksum"] == expected_checksum, f"Checksum mismatch for {record_id}"
+        actual_checksum = hashlib.md5(
+            f"{record_id}:{record['value']}".encode()
+        ).hexdigest()
+        assert (
+            record["checksum"] == expected_checksum
+        ), f"Checksum mismatch for {record_id}"
         assert actual_checksum == expected_checksum, f"Value corruption for {record_id}"
 
 
@@ -939,29 +955,29 @@ async def test_bucket_storage_direct(actor_system, temp_storage_path):
         storage_path=f"{temp_storage_path}/direct_bucket",
         batch_size=5,
     )
-    
+
     # Spawn actor
     actor_ref = await actor_system.spawn("test_bucket", storage)
-    
+
     from pulsing.actor import Message
-    
+
     # Put records
     for i in range(10):
         response = await actor_ref.ask(
             Message.from_json("Put", {"record": {"id": f"test_{i}", "value": i}})
         )
         assert response.to_json().get("status") == "ok"
-    
+
     # Get stats
     stats_response = await actor_ref.ask(Message.from_json("Stats", {}))
     stats = stats_response.to_json()
-    
+
     assert stats["bucket_id"] == 0
     assert stats["total_count"] == 10
-    
+
     # Flush
     await actor_ref.ask(Message.from_json("Flush", {}))
-    
+
     # Verify persisted count
     stats_response = await actor_ref.ask(Message.from_json("Stats", {}))
     stats = stats_response.to_json()
@@ -970,4 +986,3 @@ async def test_bucket_storage_direct(actor_system, temp_storage_path):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
-

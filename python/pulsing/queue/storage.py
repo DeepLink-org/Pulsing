@@ -113,7 +113,9 @@ class BucketStorage(Actor):
                 lance.write_dataset(table, self._dataset_path, mode="create")
 
             self.persisted_count += len(records)
-            logger.debug(f"BucketStorage[{self.bucket_id}] flushed {len(records)} records")
+            logger.debug(
+                f"BucketStorage[{self.bucket_id}] flushed {len(records)} records"
+            )
 
         except Exception as e:
             logger.error(f"BucketStorage[{self.bucket_id}] flush error: {e}")
@@ -125,7 +127,11 @@ class BucketStorage(Actor):
         records = []
 
         # 1. 从持久化数据读取
-        if offset < self.persisted_count and self._dataset_path.exists() and LANCE_AVAILABLE:
+        if (
+            offset < self.persisted_count
+            and self._dataset_path.exists()
+            and LANCE_AVAILABLE
+        ):
             try:
                 dataset = lance.dataset(self._dataset_path)
                 persisted_limit = min(limit, self.persisted_count - offset)
@@ -212,13 +218,17 @@ class BucketStorage(Actor):
                                     return
 
                             # 读取数据
-                            records = self._read_records(current_offset, min(remaining, 100))
+                            records = self._read_records(
+                                current_offset, min(remaining, 100)
+                            )
 
                         if records:
-                            await writer.write_json({
-                                "records": records,
-                                "offset": current_offset,
-                            })
+                            await writer.write_json(
+                                {
+                                    "records": records,
+                                    "offset": current_offset,
+                                }
+                            )
                             current_offset += len(records)
                             remaining -= len(records)
                         elif not wait:

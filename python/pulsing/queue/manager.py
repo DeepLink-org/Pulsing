@@ -99,7 +99,9 @@ class StorageManager(Actor):
             if storage_path:
                 bucket_storage_path = f"{storage_path}/bucket_{bucket_id}"
             else:
-                bucket_storage_path = f"{self.base_storage_path}/{topic}/bucket_{bucket_id}"
+                bucket_storage_path = (
+                    f"{self.base_storage_path}/{topic}/bucket_{bucket_id}"
+                )
 
             try:
                 # 尝试解析已存在的
@@ -199,7 +201,9 @@ class StorageManager(Actor):
             )
 
         else:
-            return Message.from_json("Error", {"error": f"Unknown message type: {msg_type}"})
+            return Message.from_json(
+                "Error", {"error": f"Unknown message type: {msg_type}"}
+            )
 
 
 # 用于防止并发创建 StorageManager 的锁
@@ -254,7 +258,6 @@ async def get_bucket_ref(
 
     # 先从本地 StorageManager 请求
     manager = await get_storage_manager(system)
-    current_node_id: int | None = None  # None 表示本地
 
     for redirect_count in range(max_redirects + 1):
         msg_data = {
@@ -287,9 +290,7 @@ async def get_bucket_ref(
             )
 
             if redirect_count >= max_redirects:
-                raise RuntimeError(
-                    f"Too many redirects for bucket {topic}:{bucket_id}"
-                )
+                raise RuntimeError(f"Too many redirects for bucket {topic}:{bucket_id}")
 
             # 检查是否重定向到自己（避免无限循环）
             if owner_node_id == system.node_id.id:
@@ -302,7 +303,6 @@ async def get_bucket_ref(
                 manager = await system.resolve_named(
                     STORAGE_MANAGER_NAME, node_id=int(owner_node_id)
                 )
-                current_node_id = owner_node_id
             except Exception as e:
                 raise RuntimeError(
                     f"Failed to connect to owner node {owner_node_id}: {e}"
@@ -315,4 +315,3 @@ async def get_bucket_ref(
             raise RuntimeError(f"Unexpected response: {response.msg_type}")
 
     raise RuntimeError(f"Failed to get bucket {topic}:{bucket_id}")
-

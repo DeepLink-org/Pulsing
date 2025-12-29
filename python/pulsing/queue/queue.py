@@ -337,7 +337,9 @@ async def read_queue(
     if rank is not None and world_size is not None:
         # 分布式消费模式
         assigned_buckets = _assign_buckets(num_buckets, rank, world_size)
-        logger.info(f"Reader rank={rank}/{world_size} assigned buckets: {assigned_buckets}")
+        logger.info(
+            f"Reader rank={rank}/{world_size} assigned buckets: {assigned_buckets}"
+        )
     elif bucket_id is not None:
         assigned_buckets = [bucket_id]
     elif bucket_ids is not None:

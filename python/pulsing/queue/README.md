@@ -5,40 +5,105 @@
 ## 架构概览
 
 ```
-                           ┌─────────────────────────────────────────┐
-                           │              Queue (协调层)              │
-                           │  - hash 路由                            │
-                           │  - bucket Actor 管理                    │
-                           └────────────┬────────────────────────────┘
-                                        │
-        ┌───────────────┬───────────────┼───────────────┬───────────────┐
-        ▼               ▼               ▼               ▼               
-   bucket_0        bucket_1        bucket_2        bucket_3        
-        │               │               │               │
-        ▼               ▼               ▼               ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│BucketStorage │ │BucketStorage │ │BucketStorage │ │BucketStorage │
-│  Actor       │ │  Actor       │ │  Actor       │ │  Actor       │
-│              │ │              │ │              │ │              │
-│  - buffer[]  │ │  - buffer[]  │ │  - buffer[]  │ │  - buffer[]  │
-│  - Lance     │ │  - Lance     │ │  - Lance     │ │  - Lance     │
-│  - Condition │ │  - Condition │ │  - Condition │ │  - Condition │
-└──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              应用层                                          │
+│                                                                             │
+│     Queue / QueueWriter / QueueReader                                       │
+│       │                                                                     │
+│       │  get_bucket_ref(topic, bucket_id)                                   │
+│       ▼                                                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    StorageManager (每节点一个)                               │
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  GetBucket(topic, bucket_id)                                        │   │
+│   │       │                                                             │   │
+│   │       ├─ owner = hash(topic:bucket_id) % nodes  ← 一致性哈希        │   │
+│   │       │                                                             │   │
+│   │       ├─ owner == self?                                             │   │
+│   │       │      ├─ Yes → 创建/返回 BucketStorage                       │   │
+│   │       │      │        → BucketReady(actor_id, node_id)              │   │
+│   │       │      │                                                      │   │
+│   │       │      └─ No  → Redirect(owner_node_id)                       │   │
+│   │       │              客户端重定向到正确节点                           │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        ▼                           ▼                           ▼
+┌──────────────┐           ┌──────────────┐           ┌──────────────┐
+│BucketStorage │           │BucketStorage │           │BucketStorage │
+│   bucket_0   │           │   bucket_1   │           │   bucket_2   │
+│              │           │              │           │              │
+│  - buffer[]  │           │  - buffer[]  │           │  - buffer[]  │
+│  - Lance     │           │  - Lance     │           │  - Lance     │
+│  - Condition │           │  - Condition │           │  - Condition │
+└──────────────┘           └──────────────┘           └──────────────┘
+     Node A                     Node B                     Node A
 ```
+
+## 核心组件
+
+### 1. StorageManager（存储管理器）
+
+**每个节点一个实例**，负责：
+- 接收 `GetBucket` 请求
+- 使用**一致性哈希**判断 bucket 的 owner 节点
+- Owner 节点：创建并返回 `BucketStorage` Actor
+- 非 Owner 节点：返回 `Redirect`，指向正确节点
+
+### 2. BucketStorage（桶存储）
+
+每个 bucket 一个实例，负责：
+- 数据缓冲（内存）
+- 数据持久化（Lance）
+- 消费者阻塞/唤醒（asyncio.Condition）
+
+### 3. Queue / QueueWriter / QueueReader
+
+高级 API，对用户隐藏底层复杂性。
 
 ## 设计特点
 
 | 特性 | 说明 |
 |------|------|
-| **每 bucket 独立 Actor** | 真正分布式，可部署在不同节点 |
-| **独立锁和条件变量** | 无跨 bucket 竞争，高并发 |
-| **命名 Actor 发现** | `queues/{topic}/bucket_{id}` 支持跨节点发现 |
+| **集群唯一性** | StorageManager + 一致性哈希，确保每个 bucket 在集群中只有一个 Actor |
+| **智能路由** | 错误请求自动重定向到正确节点 |
+| **独立锁/条件变量** | 每个 bucket 独立，无跨 bucket 竞争 |
 | **流式传输** | 消费者通过 StreamMessage 接收，内存友好 |
 | **实时通知** | 新数据通过 condition + 流推送，无轮询 |
 
-## 数据传输机制
+## 请求流程
 
-### 流式传输 + 实时通知
+### Bucket 获取流程
+
+```
+Queue.put(record)
+    │
+    ├─ bucket_id = hash(record[partition_column]) % num_buckets
+    │
+    ▼
+get_bucket_ref(system, topic, bucket_id)
+    │
+    ├─ 本地 StorageManager.GetBucket(...)
+    │       │
+    │       ├─ owner == self?
+    │       │      ├─ Yes → BucketReady(actor_id) → 返回 ActorRef
+    │       │      └─ No  → Redirect(owner_node_id)
+    │       │                    │
+    │       │                    ▼
+    │       │              owner 节点的 StorageManager.GetBucket(...)
+    │       │                    │
+    │       │                    └─ BucketReady → 返回 ActorRef
+    │
+    └─ bucket_ref.ask(Put, {record})
+```
+
+### 数据传输流程
 
 ```
 生产者                    BucketStorage                   消费者 (wait=True)
@@ -48,14 +113,10 @@
    │                           │ condition.notify_all() ──────▶│ 唤醒
    │◀── PutResponse ───────────│                               │
    │                           │                               │
-   │                           │◀──────────────────────────────│ 继续循环
+   │                           │◀── GetStream ─────────────────│
    │                           │                               │
    │                           │── StreamMessage chunk ───────▶│ 流式发送
 ```
-
-- **消费者读取**：通过 `StreamMessage` 流式接收，支持大数据量
-- **新数据通知**：生产者写入后 `condition.notify_all()` 唤醒等待的流
-- **流保持打开**：`wait=True` 时流不关闭，持续等待新数据
 
 ## 数据可见性模型
 
@@ -83,7 +144,7 @@ from pulsing.queue import read_queue, write_queue
 
 async def main():
     system = await create_actor_system(SystemConfig.standalone())
-    
+
     # 生产者
     writer = await write_queue(
         system,
@@ -91,19 +152,19 @@ async def main():
         partition_column="user_id",
         num_buckets=4,
     )
-    
+
     # 写入数据（立即对消费者可见）
     await writer.put({"user_id": "u1", "message": "Hello"})
-    
+
     # 消费者
     reader = await read_queue(system, topic="my_queue")
-    
+
     # 读取数据（内存 + 持久化同时可见）
     records = await reader.get(limit=100)
-    
+
     # 阻塞等待新数据
     records = await reader.get(limit=100, wait=True, timeout=10.0)
-    
+
     await system.shutdown()
 
 asyncio.run(main())
@@ -142,27 +203,12 @@ reader = await read_queue(system, topic="my_queue", bucket_id=0)
 reader = await read_queue(system, topic="my_queue", bucket_ids=[0, 2])
 
 # 3. 分布式消费：通过 rank/world_size 自动分配 bucket
-# 4 个 bucket，2 个消费者
 reader0 = await read_queue(system, "q", rank=0, world_size=2, num_buckets=4)  # bucket 0, 2
 reader1 = await read_queue(system, "q", rank=1, world_size=2, num_buckets=4)  # bucket 1, 3
 
 # 读取数据
 records = await reader.get(limit=100)
 records = await reader.get(limit=100, wait=True, timeout=10.0)  # 阻塞等待
-```
-
-### `Queue` 类
-
-直接使用 Queue 类进行更细粒度控制：
-
-```python
-from pulsing.queue import Queue
-
-queue = Queue(system, topic="my_queue", partition_column="user_id", num_buckets=4)
-
-await queue.put({"user_id": "u1", "msg": "hello"})
-records = await queue.get(bucket_id=0, limit=100)
-stats = await queue.stats()
 ```
 
 ## 分布式消费
@@ -178,31 +224,71 @@ Consumer (rank=0)           Consumer (rank=1)
       └─▶ bucket_2                └─▶ bucket_3
 ```
 
-**优点：**
-- 每个消费者只连接部分 bucket，减少连接数
-- 负载均衡，数据均匀分配
-- 适合分布式训练场景
-
-```python
-# 4 个 bucket，2 个消费者并行消费
-async def consume(rank: int, world_size: int):
-    reader = await read_queue(
-        system, "my_queue",
-        rank=rank, world_size=world_size, num_buckets=4,
-    )
-    while True:
-        records = await reader.get(limit=100, wait=True)
-        process(records)
-
-# 启动 2 个消费者
-await asyncio.gather(
-    consume(rank=0, world_size=2),  # 处理 bucket 0, 2
-    consume(rank=1, world_size=2),  # 处理 bucket 1, 3
-)
-```
-
 ## 依赖
 
 ```bash
 pip install lance pyarrow
 ```
+
+---
+
+## 设计点评
+
+### ✅ 优点
+
+1. **集群唯一性保证**
+   - StorageManager 使用一致性哈希确定 bucket owner
+   - 非 owner 节点返回 Redirect，避免创建重复 Actor
+   - 解决了分布式环境下的竞态条件问题
+
+2. **架构清晰**
+   - 三层架构：应用层 (Queue) → 管理层 (StorageManager) → 存储层 (BucketStorage)
+   - 职责分离，每层只关注自己的逻辑
+
+3. **智能路由**
+   - 客户端无需知道 bucket 在哪个节点
+   - 自动重定向到正确节点
+
+4. **高并发支持**
+   - 每个 bucket 独立的锁和条件变量
+   - 无跨 bucket 竞争
+
+5. **数据实时可见**
+   - 写入后立即可读（内存缓冲）
+   - 无需等待持久化
+
+6. **流式传输**
+   - 大数据量传输内存友好
+   - 支持阻塞等待新数据
+
+### ⚠️ 潜在改进点
+
+1. **节点变化处理**
+   - 当前一致性哈希在节点加入/退出时可能导致 bucket 重分布
+   - 可以考虑虚拟节点或一致性哈希环来减少影响
+
+2. **元数据持久化**
+   - Queue 配置（partition_column, num_buckets）目前不持久化
+   - 消费者需要知道这些参数
+   - 可以考虑将元数据存储在集群中
+
+3. **故障恢复**
+   - 节点故障时，其 bucket 数据可能丢失（内存部分）
+   - 可以考虑副本或 WAL 机制
+
+4. **Lance Schema 演化**
+   - 当前不支持 schema 变化
+   - 新字段可能导致写入失败
+
+5. **性能优化**
+   - `get_bucket_ref` 每次都查询 StorageManager
+   - 可以增加客户端缓存，减少 RPC 调用
+
+### 📊 适用场景
+
+- ✅ 分布式数据管道
+- ✅ 生产者-消费者模式
+- ✅ 分布式训练数据分发
+- ✅ 实时数据流处理
+- ⚠️ 不适合需要强一致性的场景
+- ⚠️ 不适合需要事务的场景
