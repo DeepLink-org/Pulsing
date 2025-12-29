@@ -24,6 +24,7 @@ from pulsing._core import (
 )
 
 from . import helpers
+from .remote import ActorClass, ActorProxy, as_actor, remote
 
 __all__ = [
     # Core types
@@ -42,6 +43,11 @@ __all__ = [
     # Helper functions
     "create_actor_system",
     "helpers",
+    # Actor decorator
+    "as_actor",
+    "ActorClass",
+    "ActorProxy",
+    "remote",  # 别名，向后兼容
 ]
 
 
