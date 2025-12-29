@@ -170,6 +170,25 @@ async def main():
 asyncio.run(main())
 ```
 
+### 同步 API
+
+通过 `.sync()` 获取同步包装器，可与异步混用：
+
+```python
+# 生产者用同步，消费者用异步
+sync_writer = writer.sync()
+sync_writer.put({"user_id": "u1", "message": "Hello"})
+sync_writer.flush()
+
+records = await reader.get(limit=100)  # 异步读取
+
+# 或者反过来
+await writer.put({"user_id": "u2", "message": "World"})
+
+sync_reader = reader.sync()
+records = sync_reader.get(limit=100)  # 同步读取
+```
+
 ## API
 
 ### `write_queue(system, topic, ...)`

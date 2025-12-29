@@ -39,6 +39,12 @@ class Queue:
         self._bucket_refs: dict[int, ActorRef] = {}
         self._init_lock = asyncio.Lock()
 
+        # 保存事件循环引用（用于 sync 包装器）
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+
     def _hash_partition(self, value: Any) -> int:
         """根据值计算分桶 ID"""
         if value is None:
@@ -198,6 +204,19 @@ class Queue:
         """根据分桶列的值计算 bucket ID"""
         return self._hash_partition(partition_value)
 
+    def sync(self) -> "SyncQueue":
+        """返回同步包装器
+
+        Example:
+            queue = Queue(system, topic="test")
+            sync_queue = queue.sync()
+            sync_queue.put({"id": "1", "value": 100})  # 同步写入
+            records = sync_queue.get(limit=10)  # 同步读取
+        """
+        from .sync_queue import SyncQueue
+
+        return SyncQueue(self)
+
 
 class QueueWriter:
     """队列写入句柄"""
@@ -212,6 +231,12 @@ class QueueWriter:
 
     async def flush(self) -> None:
         await self.queue.flush()
+
+    def sync(self) -> "SyncQueueWriter":
+        """返回同步包装器"""
+        from .sync_queue import SyncQueueWriter
+
+        return SyncQueueWriter(self)
 
 
 class QueueReader:
@@ -269,6 +294,12 @@ class QueueReader:
         else:
             for bid in self._get_bucket_ids():
                 self._offsets[bid] = offset
+
+    def sync(self) -> "SyncQueueReader":
+        """返回同步包装器"""
+        from .sync_queue import SyncQueueReader
+
+        return SyncQueueReader(self)
 
 
 async def write_queue(
