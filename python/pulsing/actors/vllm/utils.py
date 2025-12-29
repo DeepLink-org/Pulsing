@@ -1,25 +1,9 @@
-"""vLLM Worker Actor - 基于 vLLM V1 引擎的高性能推理 Worker
+"""vLLM Worker 工具函数和辅助类
 
-参考 Dynamo 实现，支持：
-1. Prefill/Decode 分离 (PD Disaggregation)
-2. 多模态输入处理（图片）
-3. KV Cache 管理和清理
-4. LoRA 动态加载/卸载
-5. OpenAI 兼容的文本输入输出模式
-6. 引擎监控和健康检查
-"""
-
-# 工具函数和辅助类
-
-"""vLLM Worker Actor - 基于 vLLM V1 引擎的高性能推理 Worker
-
-参考 Dynamo 实现，支持：
-1. Prefill/Decode 分离 (PD Disaggregation)
-2. 多模态输入处理（图片）
-3. KV Cache 管理和清理
-4. LoRA 动态加载/卸载
-5. OpenAI 兼容的文本输入输出模式
-6. 引擎监控和健康检查
+包含：
+- VllmEngineMonitor: 引擎健康监控
+- ImageLoader: 多模态图片加载
+- 环境变量设置函数
 """
 
 import asyncio
@@ -28,6 +12,7 @@ import hashlib
 import logging
 import os
 import platform
+from collections.abc import Callable
 from io import BytesIO
 from typing import Any, Final
 
@@ -48,6 +33,31 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+
+# ===== EngineDeadError 统一处理 =====
+
+
+def handle_engine_dead_error(
+    error: Exception,
+    context: str,
+    on_engine_dead: Callable[[], None] | None = None,
+) -> None:
+    """统一处理 EngineDeadError
+
+    Args:
+        error: 捕获的异常
+        context: 错误发生的上下文描述
+        on_engine_dead: 引擎死亡回调函数
+    """
+    logger.error(f"vLLM EngineDeadError during {context}: {error}")
+    if on_engine_dead is not None:
+        logger.warning(f"Calling on_engine_dead callback from {context}...")
+        try:
+            on_engine_dead()
+        except Exception as callback_error:
+            logger.exception(f"Error in on_engine_dead callback: {callback_error}")
+
 
 # 多模态数据字典键
 IMAGE_URL_KEY: Final = "image_url"
@@ -82,10 +92,133 @@ def _is_macos() -> bool:
 
 
 class VllmEngineMonitor:
-    """vLLM 引擎监控器，用于收集引擎运行时统计信息"""
+    """vLLM 引擎监控器，用于收集引擎运行时统计信息和持续健康检查
 
-    def __init__(self, engine: "AsyncLLM"):
+    参考 Dynamo engine_monitor.py 实现，支持：
+    1. 静态配置信息获取
+    2. 持续的后台健康检查
+    3. 引擎死亡检测和回调通知
+    """
+
+    # 健康检查间隔（秒）
+    HEALTH_CHECK_INTERVAL = 2
+    # 引擎关闭超时（秒）
+    ENGINE_SHUTDOWN_TIMEOUT = 30
+
+    def __init__(
+        self,
+        engine: "AsyncLLM",
+        on_engine_dead: "Callable[[], None] | None" = None,
+    ):
+        """初始化引擎监控器
+
+        Args:
+            engine: vLLM AsyncLLM 引擎实例
+            on_engine_dead: 引擎死亡时的回调函数 (可选)
+        """
         self.engine = engine
+        self._on_engine_dead = on_engine_dead
+        self._monitor_task: asyncio.Task | None = None
+        self._is_healthy = True
+        self._last_error: str | None = None
+
+    def start_monitoring(
+        self, on_engine_dead: "Callable[[], None] | None" = None
+    ) -> None:
+        """启动后台健康检查任务
+
+        Args:
+            on_engine_dead: 引擎死亡时的回调函数 (可选，会覆盖构造函数中的设置)
+        """
+        if on_engine_dead is not None:
+            self._on_engine_dead = on_engine_dead
+
+        if self._monitor_task is not None and not self._monitor_task.done():
+            logger.warning("Health check task already running")
+            return
+
+        self._monitor_task = asyncio.create_task(self._health_check_loop())
+        logger.info(
+            f"VllmEngineMonitor started, health check interval: {self.HEALTH_CHECK_INTERVAL}s"
+        )
+
+    def stop_monitoring(self) -> None:
+        """停止后台健康检查任务"""
+        if self._monitor_task is not None and not self._monitor_task.done():
+            self._monitor_task.cancel()
+            logger.info("VllmEngineMonitor stopped")
+
+    async def _health_check_loop(self) -> None:
+        """持续的健康检查循环 (参考 Dynamo engine_monitor.py)"""
+        while True:
+            try:
+                # 调用 vLLM 引擎的健康检查方法
+                await self.engine.check_health()
+                self._is_healthy = True
+                self._last_error = None
+                await asyncio.sleep(self.HEALTH_CHECK_INTERVAL)
+
+            except Exception as e:
+                # 检查是否是 EngineDeadError
+                error_name = type(e).__name__
+                if error_name == "EngineDeadError" or "EngineDeadError" in str(type(e)):
+                    logger.error(f"vLLM EngineDeadError detected: {e}")
+                    self._is_healthy = False
+                    self._last_error = str(e)
+
+                    # 尝试关闭引擎
+                    await self._shutdown_engine()
+
+                    # 调用回调函数
+                    if self._on_engine_dead is not None:
+                        logger.warning("Calling on_engine_dead callback...")
+                        try:
+                            self._on_engine_dead()
+                        except Exception as callback_error:
+                            logger.exception(
+                                f"Error in on_engine_dead callback: {callback_error}"
+                            )
+
+                    # 退出健康检查循环
+                    break
+                else:
+                    # 其他异常，记录但继续检查
+                    logger.warning(f"Health check failed with non-fatal error: {e}")
+                    self._is_healthy = False
+                    self._last_error = str(e)
+                    await asyncio.sleep(self.HEALTH_CHECK_INTERVAL)
+
+            except asyncio.CancelledError:
+                logger.debug("Health check loop cancelled")
+                break
+
+    async def _shutdown_engine(self) -> None:
+        """关闭 vLLM 引擎 (带超时保护)"""
+        logger.warning("Initiating vLLM engine shutdown...")
+
+        try:
+            # 使用 asyncio.wait_for 添加超时保护
+            await asyncio.wait_for(
+                asyncio.to_thread(self.engine.shutdown),
+                timeout=self.ENGINE_SHUTDOWN_TIMEOUT,
+            )
+            logger.info("vLLM engine shutdown completed")
+        except asyncio.TimeoutError:
+            logger.error(
+                f"vLLM engine shutdown timed out after {self.ENGINE_SHUTDOWN_TIMEOUT}s"
+            )
+        except Exception as e:
+            logger.warning(f"vLLM engine shutdown failed: {e}")
+
+    @property
+    def is_healthy(self) -> bool:
+        """返回引擎是否健康"""
+        return self._is_healthy
+
+    @property
+    def last_error(self) -> str | None:
+        """返回最后一次错误信息"""
+        return self._last_error
 
     def get_cache_info(self) -> dict[str, Any]:
         """获取缓存配置信息"""
@@ -118,21 +251,31 @@ class VllmEngineMonitor:
     def get_health_status(self) -> dict[str, Any]:
         """获取引擎健康状态"""
         try:
-            # 基本健康检查
             cache_info = self.get_cache_info()
             model_config = self.get_model_config()
 
-            return {
-                "status": "healthy",
+            status = "healthy" if self._is_healthy else "unhealthy"
+
+            result = {
+                "status": status,
                 "cache_info": cache_info,
                 "model_config": model_config,
             }
+
+            if self._last_error:
+                result["last_error"] = self._last_error
+
+            return result
         except Exception as e:
             logger.exception(f"Failed to get health status: {e}")
             return {
                 "status": "unhealthy",
                 "error": str(e),
             }
+
+    def __del__(self):
+        """析构函数，确保停止监控任务"""
+        self.stop_monitoring()
 
 
 def _setup_macos_metal_env(

@@ -19,8 +19,7 @@ from typing import Any
 
 from pulsing.actor import Actor, ActorId, Message, StreamMessage
 
-from .handlers import (BaseWorkerHandler, DecodeWorkerHandler,
-                       PrefillWorkerHandler)
+from .handlers import BaseWorkerHandler, DecodeWorkerHandler, PrefillWorkerHandler
 from .utils import _is_macos, _setup_macos_metal_env
 
 try:
@@ -57,6 +56,13 @@ class VllmWorker(Actor):
         max_new_tokens: int = 512,
         enable_multimodal: bool = False,
         use_vllm_tokenizer: bool = False,
+        # 分布式推理参数 (参考 Dynamo 实现)
+        tensor_parallel_size: int = 1,  # TP: 张量并行，切分模型到多个 GPU
+        pipeline_parallel_size: int = 1,  # PP: 流水线并行，分布模型层
+        data_parallel_size: int = 1,  # DP: 数据并行
+        data_parallel_rank: int | None = None,  # DP rank，用于多副本部署
+        enable_expert_parallel: bool = False,  # EP: MoE 模型专家并行
+        distributed_executor_backend: str | None = None,  # "mp" 或 "ray"
         # macOS Metal/MLX 支持参数
         mlx_device: str | None = None,  # 'gpu' 或 'cpu'，默认从环境变量读取
         metal_memory_fraction: float | None = None,  # 0.0-1.0，默认 0.8
@@ -68,34 +74,105 @@ class VllmWorker(Actor):
         self.enable_multimodal = enable_multimodal
         self.use_vllm_tokenizer = use_vllm_tokenizer
 
-        # 在 macOS 上设置 Metal/MLX 环境变量
+        # 分布式配置
+        self.tensor_parallel_size = tensor_parallel_size
+        self.pipeline_parallel_size = pipeline_parallel_size
+        self.data_parallel_size = data_parallel_size
+        self.data_parallel_rank = data_parallel_rank or 0
+        self.enable_expert_parallel = enable_expert_parallel
+        self._is_primary_rank = data_parallel_rank is None or data_parallel_rank == 0
+
+        # macOS Metal/MLX 环境
         _setup_macos_metal_env(mlx_device, metal_memory_fraction)
 
-        self.engine_args_dict = engine_args or {}
-        self.engine_args_dict.update(
-            {
-                "model": model,
-                "gpu_memory_utilization": gpu_memory_utilization,
-                "trust_remote_code": trust_remote_code,
-                # 关键修复：使用 vllm 的生成配置而不是从 HuggingFace 加载
-                # 这可以避免默认的 repetition_penalty=1.1 导致 AssertionError
-                # 参考警告信息：Default sampling parameters have been overridden by the model's Hugging Face generation config
-                "generation_config": "vllm",
-            }
+        # 构建引擎参数
+        self.engine_args_dict = self._build_engine_args(
+            engine_args=engine_args,
+            model=model,
+            gpu_memory_utilization=gpu_memory_utilization,
+            trust_remote_code=trust_remote_code,
+            tensor_parallel_size=tensor_parallel_size,
+            pipeline_parallel_size=pipeline_parallel_size,
+            data_parallel_size=data_parallel_size,
+            data_parallel_rank=data_parallel_rank,
+            enable_expert_parallel=enable_expert_parallel,
+            distributed_executor_backend=distributed_executor_backend,
+            **kwargs,
         )
-
-        # Cleanup kwargs for AsyncEngineArgs
-        kwargs.pop("max_new_tokens", None)
-        kwargs.pop("enable_multimodal", None)
-        kwargs.pop("use_vllm_tokenizer", None)
-        self.engine_args_dict.update(kwargs)
 
         self.worker_id = f"vllm-{self.role}-{uuid.uuid4().hex[:8]}"
         self._engine: AsyncLLM | None = None
         self._handler: BaseWorkerHandler | None = None
         self._is_ready = False
+        self._engine_is_dead = False
         self._actor_id: ActorId | None = None
         self._init_task: asyncio.Task | None = None
+
+    @staticmethod
+    def _build_engine_args(
+        engine_args: dict[str, Any] | None,
+        model: str,
+        gpu_memory_utilization: float,
+        trust_remote_code: bool,
+        tensor_parallel_size: int,
+        pipeline_parallel_size: int,
+        data_parallel_size: int,
+        data_parallel_rank: int | None,
+        enable_expert_parallel: bool,
+        distributed_executor_backend: str | None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """构建 vLLM 引擎参数
+
+        整合基础参数和分布式参数的处理逻辑。
+        """
+        args = engine_args.copy() if engine_args else {}
+
+        # 基础参数
+        args.update(
+            {
+                "model": model,
+                "gpu_memory_utilization": gpu_memory_utilization,
+                "trust_remote_code": trust_remote_code,
+                "generation_config": "vllm",  # 使用 vllm 默认配置，避免 HF 的 repetition_penalty
+            }
+        )
+
+        # 分布式参数 (仅在非默认值时添加)
+        if tensor_parallel_size > 1:
+            args["tensor_parallel_size"] = tensor_parallel_size
+        if pipeline_parallel_size > 1:
+            args["pipeline_parallel_size"] = pipeline_parallel_size
+        if data_parallel_size > 1:
+            args["data_parallel_size"] = data_parallel_size
+        if data_parallel_rank is not None:
+            args["data_parallel_rank"] = data_parallel_rank
+        if enable_expert_parallel:
+            args["enable_expert_parallel"] = enable_expert_parallel
+
+        # 分布式执行后端 (TP=1 时默认用 mp 避免 GIL 问题)
+        if distributed_executor_backend:
+            args["distributed_executor_backend"] = distributed_executor_backend
+        elif tensor_parallel_size == 1:
+            args["distributed_executor_backend"] = "mp"
+
+        # 过滤掉自定义参数，只保留 vLLM 支持的参数
+        excluded_keys = {
+            "max_new_tokens",
+            "enable_multimodal",
+            "use_vllm_tokenizer",
+            "tensor_parallel_size",
+            "pipeline_parallel_size",
+            "data_parallel_size",
+            "data_parallel_rank",
+            "enable_expert_parallel",
+            "distributed_executor_backend",
+        }
+        for key, value in kwargs.items():
+            if key not in excluded_keys:
+                args[key] = value
+
+        return args
 
     async def on_start(self, actor_id: ActorId) -> None:
         """快速返回，在后台初始化引擎"""
@@ -216,6 +293,7 @@ class VllmWorker(Actor):
                 model_max_len=model_max_len,
                 enable_multimodal=self.enable_multimodal,
                 use_vllm_tokenizer=self.use_vllm_tokenizer,
+                on_engine_dead=self._on_engine_dead,
             )
         else:
             # aggregated 或 decode 角色都使用 DecodeWorkerHandler
@@ -225,12 +303,55 @@ class VllmWorker(Actor):
                 model_max_len=model_max_len,
                 enable_multimodal=self.enable_multimodal,
                 use_vllm_tokenizer=self.use_vllm_tokenizer,
+                on_engine_dead=self._on_engine_dead,
             )
 
+        # 启动引擎健康监控 (参考 Dynamo engine_monitor.py)
+        self._handler.engine_monitor.start_monitoring(
+            on_engine_dead=self._on_engine_dead
+        )
+        logger.info(f"Engine health monitoring started for {self.worker_id}")
+
         self._is_ready = True
-        logger.info(f"vLLM Worker {self.worker_id} ready")
+
+        # 记录 DP rank 条件注册状态 (参考 Dynamo main.py)
+        if self.data_parallel_size > 1:
+            if self._is_primary_rank:
+                logger.info(
+                    f"vLLM Worker {self.worker_id} ready (primary rank, will register model)"
+                )
+            else:
+                logger.info(
+                    f"vLLM Worker {self.worker_id} ready (rank {self.data_parallel_rank}, "
+                    f"will NOT register model - only primary rank registers)"
+                )
+        else:
+            logger.info(f"vLLM Worker {self.worker_id} ready")
+
+    def _on_engine_dead(self) -> None:
+        """引擎死亡回调函数 (参考 Dynamo handlers.py)
+
+        当 vLLM 引擎检测到 EngineDeadError 时调用此方法。
+        这通常意味着引擎已经崩溃，需要进行清理和可能的重启。
+        """
+        logger.error(f"Engine dead callback triggered for {self.worker_id}")
+        self._engine_is_dead = True
+        self._is_ready = False
+
+        # 注意：在 Actor 模式下，我们不直接调用 os._exit(1)
+        # 而是设置状态，让上层 Actor 系统处理
+        # 如果需要强制退出，可以在这里添加逻辑
+
+    @property
+    def engine_is_dead(self) -> bool:
+        """返回引擎是否已死亡"""
+        return self._engine_is_dead
 
     def on_stop(self) -> None:
+        # 停止引擎健康监控
+        if self._handler and hasattr(self._handler, "engine_monitor"):
+            self._handler.engine_monitor.stop_monitoring()
+
         # 取消初始化任务
         if (
             hasattr(self, "_init_task")
@@ -247,6 +368,14 @@ class VllmWorker(Actor):
         self._handler = None
         self._is_ready = False
 
+    @property
+    def is_primary_rank(self) -> bool:
+        """判断是否是主 rank (用于模型注册)
+
+        在 DP 部署中，只有 rank 0 需要注册模型到服务发现。
+        """
+        return self._is_primary_rank
+
     def metadata(self) -> dict[str, str]:
         meta = {
             "type": "vllm_worker",
@@ -256,6 +385,15 @@ class VllmWorker(Actor):
             "ready": str(self._is_ready),
             "multimodal_enabled": str(self.enable_multimodal),
             "text_mode": str(self.use_vllm_tokenizer),
+            # 分布式配置
+            "tp_size": str(self.tensor_parallel_size),
+            "pp_size": str(self.pipeline_parallel_size),
+            "dp_size": str(self.data_parallel_size),
+            "dp_rank": str(self.data_parallel_rank),
+            "ep_enabled": str(self.enable_expert_parallel),
+            "is_primary_rank": str(self._is_primary_rank),
+            # 健康状态
+            "engine_healthy": str(not self._engine_is_dead),
         }
 
         if self._is_ready and self._engine:
@@ -272,6 +410,18 @@ class VllmWorker(Actor):
                         "block_size": str(config.cache_config.block_size),
                     }
                 )
+                # 从 vllm_config 获取实际的并行配置
+                parallel_config = getattr(config, "parallel_config", None)
+                if parallel_config:
+                    meta["actual_tp_size"] = str(
+                        getattr(parallel_config, "tensor_parallel_size", 1)
+                    )
+                    meta["actual_pp_size"] = str(
+                        getattr(parallel_config, "pipeline_parallel_size", 1)
+                    )
+                    meta["actual_dp_size"] = str(
+                        getattr(parallel_config, "data_parallel_size", 1)
+                    )
             except Exception:
                 pass
 

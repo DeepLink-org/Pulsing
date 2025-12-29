@@ -11,9 +11,17 @@ Provides:
 import asyncio
 from abc import ABC, abstractmethod
 
-from pulsing._core import (ActorId, ActorRef, ActorSystem, Message, NodeId,
-                           StreamMessage, StreamReader, StreamWriter,
-                           SystemConfig)
+from pulsing._core import (
+    ActorId,
+    ActorRef,
+    ActorSystem,
+    Message,
+    NodeId,
+    StreamMessage,
+    StreamReader,
+    StreamWriter,
+    SystemConfig,
+)
 
 from . import helpers
 

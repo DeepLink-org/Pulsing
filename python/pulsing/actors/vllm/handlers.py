@@ -17,12 +17,19 @@ import tempfile
 import time
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from .sampling import build_sampling_params, build_sampling_params_openai
-from .utils import (IMAGE_URL_KEY, URL_VARIANT_KEY, VIDEO_URL_KEY, ImageLoader,
-                    VllmEngineMonitor, lora_name_to_id)
+from .utils import (
+    IMAGE_URL_KEY,
+    URL_VARIANT_KEY,
+    VIDEO_URL_KEY,
+    ImageLoader,
+    VllmEngineMonitor,
+    handle_engine_dead_error,
+    lora_name_to_id,
+)
 
 try:
     from vllm.inputs import TextPrompt, TokensPrompt
@@ -30,10 +37,12 @@ try:
     from vllm.outputs import RequestOutput
     from vllm.sampling_params import SamplingParams
     from vllm.v1.engine.async_llm import AsyncLLM
+    from vllm.v1.engine.exceptions import EngineDeadError
 
     VLLM_AVAILABLE = True
 except ImportError:
     VLLM_AVAILABLE = False
+    EngineDeadError = Exception  # Fallback for type hints
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +57,7 @@ class BaseWorkerHandler(ABC):
         model_max_len: int | None = None,
         enable_multimodal: bool = False,
         use_vllm_tokenizer: bool = False,
+        on_engine_dead: Callable[[], None] | None = None,
     ):
         self.engine_client = engine
         self.default_sampling_params = default_sampling_params
@@ -59,8 +69,9 @@ class BaseWorkerHandler(ABC):
         # LoRA 跟踪
         self.lora_id_for_name: dict[str, int] = {}
         self.lora_name_to_path: dict[str, str] = {}
-        # 引擎监控
-        self.engine_monitor = VllmEngineMonitor(engine)
+        # 引擎监控 (统一管理回调和健康状态)
+        self._on_engine_dead = on_engine_dead
+        self.engine_monitor = VllmEngineMonitor(engine, on_engine_dead=on_engine_dead)
 
     @abstractmethod
     async def generate(self, request: dict[str, Any]) -> AsyncGenerator[dict, None]:
@@ -177,17 +188,28 @@ class BaseWorkerHandler(ABC):
         sampling_params,
         request_id,
         lora_request=None,
+        data_parallel_rank: int | None = None,
     ):
-        """生成 tokens"""
+        """生成 tokens
+
+        Args:
+            prompt: 输入 prompt (TokensPrompt 或 TextPrompt)
+            sampling_params: 采样参数
+            request_id: 请求 ID
+            lora_request: LoRA 请求 (可选)
+            data_parallel_rank: 数据并行 rank (可选，用于 DP 部署)
+        """
         try:
             if lora_request:
                 logger.debug(
                     f"Starting token generation for request {request_id} with LoRA: "
                     f"{lora_request.lora_name} (ID: {lora_request.lora_int_id})"
+                    f"{f', dp_rank={data_parallel_rank}' if data_parallel_rank is not None else ''}"
                 )
             else:
                 logger.debug(
                     f"Starting token generation for request {request_id} (no LoRA)"
+                    f"{f', dp_rank={data_parallel_rank}' if data_parallel_rank is not None else ''}"
                 )
 
             gen = self.engine_client.generate(
@@ -195,6 +217,7 @@ class BaseWorkerHandler(ABC):
                 sampling_params,
                 request_id,
                 lora_request=lora_request,
+                data_parallel_rank=data_parallel_rank,
             )
 
             num_output_tokens_so_far = 0
@@ -246,6 +269,9 @@ class BaseWorkerHandler(ABC):
             raise GeneratorExit(
                 "Engine was shut down during token generation"
             ) from None
+        except EngineDeadError as e:
+            handle_engine_dead_error(e, "token generation", self._on_engine_dead)
+            raise
         except Exception as e:
             logger.exception(f"Error in token generation: {e}")
             raise
@@ -417,12 +443,16 @@ class PrefillWorkerHandler(BaseWorkerHandler):
                 f"Prefill request {request_id} will use LoRA adapter: {model_name} (ID: {lora_id})"
             )
 
+        # 获取 data_parallel_rank (参考 Dynamo handlers.py)
+        dp_rank = request.get("dp_rank", None)
+
         try:
             gen = self.engine_client.generate(
                 prompt,
                 sampling_params,
                 request_id,
                 lora_request=lora_request,
+                data_parallel_rank=dp_rank,
             )
 
             async for res in gen:
@@ -452,6 +482,9 @@ class PrefillWorkerHandler(BaseWorkerHandler):
                 yield output
         except asyncio.CancelledError:
             raise GeneratorExit("Prefill engine was shut down") from None
+        except EngineDeadError as e:
+            handle_engine_dead_error(e, "prefill", self._on_engine_dead)
+            raise
 
 
 class DecodeWorkerHandler(BaseWorkerHandler):
@@ -537,17 +570,21 @@ class DecodeWorkerHandler(BaseWorkerHandler):
                 f"Decode request {request_id} will use LoRA adapter: {model_name} (ID: {lora_id})"
             )
 
+        # 获取 data_parallel_rank (参考 Dynamo handlers.py)
+        dp_rank = request.get("dp_rank", None)
+
         try:
             async for tok in self.generate_tokens(
                 prompt,
                 sampling_params,
                 request_id,
                 lora_request=lora_request,
+                data_parallel_rank=dp_rank,
             ):
                 if prefill_result is not None and "completion_usage" in tok:
-                    tok["completion_usage"][
-                        "prompt_tokens_details"
-                    ] = prefill_prompt_tokens_details
+                    tok["completion_usage"]["prompt_tokens_details"] = (
+                        prefill_prompt_tokens_details
+                    )
                 yield tok
         except Exception as e:
             logger.exception(f"Error in decode generation: {e}")
@@ -607,6 +644,9 @@ class DecodeWorkerHandler(BaseWorkerHandler):
             request, self.default_sampling_params
         )
 
+        # 获取 data_parallel_rank (参考 Dynamo handlers.py)
+        dp_rank = request.get("dp_rank", None)
+
         openai_request_id = request.get("id") or request.get("request_id", request_id)
         previous_text = ""
 
@@ -615,6 +655,7 @@ class DecodeWorkerHandler(BaseWorkerHandler):
                 prompt,
                 sampling_params,
                 request_id,
+                data_parallel_rank=dp_rank,
             )
 
             async for res in gen:
@@ -657,6 +698,9 @@ class DecodeWorkerHandler(BaseWorkerHandler):
 
                 yield chunk
 
+        except EngineDeadError as e:
+            handle_engine_dead_error(e, "text mode generation", self._on_engine_dead)
+            raise
         except Exception as e:
             logger.exception(f"Error in text mode generation: {e}")
             raise

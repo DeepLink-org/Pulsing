@@ -19,8 +19,7 @@ from typing import Any
 
 from pulsing.actor import Actor, ActorId, Message, StreamMessage
 
-from .vllm_handlers import (BaseWorkerHandler, DecodeWorkerHandler,
-                            PrefillWorkerHandler)
+from .vllm_handlers import BaseWorkerHandler, DecodeWorkerHandler, PrefillWorkerHandler
 from .vllm_utils import _is_macos, _setup_macos_metal_env
 
 try:

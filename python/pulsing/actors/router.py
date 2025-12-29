@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass
 
 from aiohttp import web
+
 from pulsing.actor import ActorSystem, Message
 
 
@@ -362,9 +363,13 @@ async def start_router(
         AppRunner 实例
     """
     from .load_stream import StreamLoadScheduler
-    from .scheduler import (RUST_POLICIES_AVAILABLE, RandomScheduler,
-                            RoundRobinScheduler, RustCacheAwareScheduler,
-                            RustPowerOfTwoScheduler)
+    from .scheduler import (
+        RUST_POLICIES_AVAILABLE,
+        RandomScheduler,
+        RoundRobinScheduler,
+        RustCacheAwareScheduler,
+        RustPowerOfTwoScheduler,
+    )
 
     # 向后兼容: scheduler_class -> scheduler
     if scheduler_class is not None and scheduler is None:
