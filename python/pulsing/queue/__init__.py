@@ -1,9 +1,12 @@
 """分布式内存队列 - 基于 Pulsing Actor 架构
 
-每个 bucket 对应一个独立的 BucketStorage Actor 和一个 Lance 文件。
-内存缓冲和持久化数据同时对消费者可见。
+架构特点：
+- 每个节点有一个 StorageManager Actor，负责管理本节点的所有 bucket
+- StorageManager 使用一致性哈希确定 bucket 的 owner 节点
+- 保证整个集群中每个 bucket 只有一个 Actor
 """
 
+from .manager import StorageManager, get_bucket_ref, get_storage_manager
 from .queue import Queue, QueueReader, QueueWriter, read_queue, write_queue
 from .storage import BucketStorage
 
@@ -14,7 +17,10 @@ __all__ = [
     "QueueReader",
     "write_queue",
     "read_queue",
-    # 底层存储组件（高级用法）
+    # 底层组件（高级用法）
+    "StorageManager",
     "BucketStorage",
+    "get_storage_manager",
+    "get_bucket_ref",
 ]
 

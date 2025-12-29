@@ -8,7 +8,7 @@ from typing import Any
 
 from pulsing.actor import ActorRef, ActorSystem, Message
 
-from .storage import BucketStorage
+from .manager import get_bucket_ref, get_storage_manager
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,14 @@ class Queue:
         return hash_value % self.num_buckets
 
     async def _ensure_bucket(self, bucket_id: int) -> ActorRef:
-        """确保指定 bucket 的 Actor 已创建"""
+        """确保指定 bucket 的 Actor 已创建
+
+        通过 StorageManager 获取 bucket 引用：
+        1. 向本地 StorageManager 发送 GetBucket 请求
+        2. StorageManager 使用一致性哈希判断 owner
+        3. 如果是本节点，创建并返回；否则返回重定向
+        4. 自动处理重定向，最终获取正确节点上的 bucket
+        """
         if bucket_id in self._bucket_refs:
             return self._bucket_refs[bucket_id]
 
@@ -55,21 +62,15 @@ class Queue:
             if bucket_id in self._bucket_refs:
                 return self._bucket_refs[bucket_id]
 
-            path = f"queues/{self.topic}/bucket_{bucket_id}"
-            try:
-                self._bucket_refs[bucket_id] = await self.system.resolve_named(path)
-                logger.debug(f"Resolved bucket {bucket_id} for topic: {self.topic}")
-            except Exception:
-                storage = BucketStorage(
-                    bucket_id=bucket_id,
-                    storage_path=f"{self.storage_path}/bucket_{bucket_id}",
-                    batch_size=self.batch_size,
-                )
-                self._bucket_refs[bucket_id] = await self.system.spawn_named(
-                    path, f"bucket_{self.topic}_{bucket_id}", storage, public=True
-                )
-                logger.debug(f"Created bucket {bucket_id} for topic: {self.topic}")
-
+            # 通过 StorageManager 获取 bucket 引用
+            self._bucket_refs[bucket_id] = await get_bucket_ref(
+                self.system,
+                self.topic,
+                bucket_id,
+                batch_size=self.batch_size,
+                storage_path=self.storage_path,
+            )
+            logger.debug(f"Got bucket {bucket_id} for topic: {self.topic}")
             return self._bucket_refs[bucket_id]
 
     async def put(
@@ -357,9 +358,9 @@ async def read_queue(
     # 尝试解析已存在的 bucket Actor
     if assigned_buckets:
         for bid in assigned_buckets:
-            path = f"queues/{topic}/bucket_{bid}"
+            actor_name = f"queue_{topic}_bucket_{bid}"
             try:
-                queue._bucket_refs[bid] = await system.resolve_named(path)
+                queue._bucket_refs[bid] = await system.resolve_named(actor_name)
             except Exception:
                 pass
 
