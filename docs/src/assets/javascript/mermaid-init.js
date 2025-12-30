@@ -20,4 +20,3 @@ document.addEventListener('DOMContentSwitch', function() {
     mermaid.init(undefined, '.mermaid');
   }
 });
-

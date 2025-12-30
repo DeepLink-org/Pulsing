@@ -104,4 +104,3 @@ Sender ─→ ActorRef(Remote)          │                            Actor
 - [Node Discovery](../design/node-discovery.md)
 - [Actor Addressing](../design/actor-addressing.md)
 - [HTTP2 Transport](../design/http2-transport.md)
-

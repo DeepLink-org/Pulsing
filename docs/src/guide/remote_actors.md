@@ -115,10 +115,10 @@ except Exception as e:
 class DistributedCounter:
     def __init__(self, init_value: int = 0):
         self.value = init_value
-    
+
     def get(self) -> int:
         return self.value
-    
+
     def increment(self, n: int = 1) -> int:
         self.value += n
         return self.value
@@ -145,4 +145,3 @@ if remote_counter:
 
 - Learn about [Actor System](actor_system.md) basics
 - Check [Node Discovery](../design/node-discovery.md) for cluster details
-

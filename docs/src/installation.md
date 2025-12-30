@@ -180,4 +180,3 @@ Now that you have Pulsing installed:
 2. **Actors Guide** - Learn about [Actors](guide/actors.md)
 3. **Examples** - Explore [Example Code](examples/index.md)
 4. **API Reference** - Check the [API Documentation](api_reference.md)
-

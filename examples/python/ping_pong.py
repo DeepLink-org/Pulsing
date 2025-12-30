@@ -21,9 +21,10 @@ async def main():
     actor = await system.spawn("pingpong", PingPong())
 
     # Simple string message
-    print(await actor.ask("ping"))       # -> pong
-    print(await actor.ask("hello"))      # -> echo: hello
+    print(await actor.ask("ping"))  # -> pong
+    print(await actor.ask("hello"))  # -> echo: hello
 
+    await asyncio.sleep(1)  # Allow background tasks to complete
     await system.shutdown()
 
 

@@ -194,7 +194,11 @@ async def send_request(worker, wtype, stats):
             msg = {"type": "batch", "item": random.randint(1, 100)}
         else:  # stateful
             if random.random() < 0.5:
-                msg = {"type": "set", "key": f"k{random.randint(1, 100)}", "value": random.randint(1, 1000)}
+                msg = {
+                    "type": "set",
+                    "key": f"k{random.randint(1, 100)}",
+                    "value": random.randint(1, 1000),
+                }
             else:
                 msg = {"type": "get", "key": f"k{random.randint(1, 100)}"}
 
@@ -307,7 +311,9 @@ async def main():
     # 运行压测
     stats_req, stats_stream = Stats(), Stats()
     try:
-        await run_benchmark(worker_refs, stats_req, stats_stream, args.duration, args.rate)
+        await run_benchmark(
+            worker_refs, stats_req, stats_stream, args.duration, args.rate
+        )
     except KeyboardInterrupt:
         print("\nInterrupted")
 

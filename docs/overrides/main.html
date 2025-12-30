@@ -2,7 +2,7 @@
 
 {% block content %}
   {{ super() }}
-  
+
   {# Add Chinese language support scripts if needed #}
   {% if page.meta and page.meta.lang == 'zh' %}
     <script>
@@ -11,4 +11,3 @@
     </script>
   {% endif %}
 {% endblock %}
-

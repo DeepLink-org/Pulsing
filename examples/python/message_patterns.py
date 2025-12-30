@@ -7,7 +7,13 @@ Usage: python examples/python/message_patterns.py
 
 import asyncio
 import json
-from pulsing.actor import Actor, Message, StreamMessage, SystemConfig, create_actor_system
+from pulsing.actor import (
+    Actor,
+    Message,
+    StreamMessage,
+    SystemConfig,
+    create_actor_system,
+)
 
 
 class PatternDemo(Actor):
@@ -53,8 +59,8 @@ async def main():
     # Pattern 1: Dict messages
     print("--- Dict Messages ---")
     print(await actor.ask({"action": "add", "n": 10}))  # {'value': 10}
-    print(await actor.ask({"action": "add", "n": 5}))   # {'value': 15}
-    print(await actor.ask({"action": "get"}))          # {'value': 15}
+    print(await actor.ask({"action": "add", "n": 5}))  # {'value': 15}
+    print(await actor.ask({"action": "get"}))  # {'value': 15}
 
     # Pattern 2: Streaming
     print("\n--- Streaming ---")

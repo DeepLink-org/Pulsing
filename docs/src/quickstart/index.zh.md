@@ -17,7 +17,7 @@ graph LR
     A[发送者] -->|消息| B[Actor 邮箱]
     B --> C[Actor]
     C -->|响应| A
-    
+
     style A fill:#6366F1,color:#fff
     style B fill:#818CF8,color:#fff
     style C fill:#818CF8,color:#fff

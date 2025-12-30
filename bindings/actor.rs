@@ -604,7 +604,10 @@ impl PyActorRef {
             // Check if response is a sealed message
             Python::with_gil(|py| {
                 match response {
-                    Message::Single { ref msg_type, ref data } if msg_type == SEALED_PY_MSG_TYPE => {
+                    Message::Single {
+                        ref msg_type,
+                        ref data,
+                    } if msg_type == SEALED_PY_MSG_TYPE => {
                         // Unpickle and return the original Python object
                         unpickle_object(py, data)
                     }
@@ -900,9 +903,7 @@ impl Actor for PythonActorWrapper {
             PyActorResponse::StreamChannel(msg_type, rx) => {
                 Ok(Message::from_channel(&msg_type, rx))
             }
-            PyActorResponse::Sealed(data) => {
-                Ok(Message::single(SEALED_PY_MSG_TYPE, data))
-            }
+            PyActorResponse::Sealed(data) => Ok(Message::single(SEALED_PY_MSG_TYPE, data)),
         }
     }
 }

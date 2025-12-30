@@ -17,7 +17,7 @@ graph LR
     A[Sender] -->|Message| B[Actor Mailbox]
     B --> C[Actor]
     C -->|Response| A
-    
+
     style A fill:#6366F1,color:#fff
     style B fill:#818CF8,color:#fff
     style C fill:#818CF8,color:#fff

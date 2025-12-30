@@ -181,7 +181,11 @@ async def send_request(workers, stats):
             msg = {"type": "batch", "item": random.randint(1, 100)}
         else:  # stateful
             if random.random() < 0.5:
-                msg = {"type": "set", "key": f"k{random.randint(1, 100)}", "value": random.randint(1, 1000)}
+                msg = {
+                    "type": "set",
+                    "key": f"k{random.randint(1, 100)}",
+                    "value": random.randint(1, 1000),
+                }
             else:
                 msg = {"type": "get", "key": f"k{random.randint(1, 100)}"}
 
@@ -225,8 +229,10 @@ async def main():
     os.makedirs(args.log_dir, exist_ok=True)
 
     print(f"\n{'='*50}")
-    print(f"Pulsing Stress Test (Single Process)")
-    print(f"Duration: {args.duration}s, Rate: {args.rate}/s, Workers: {args.num_workers}")
+    print("Pulsing Stress Test (Single Process)")
+    print(
+        f"Duration: {args.duration}s, Rate: {args.rate}/s, Workers: {args.num_workers}"
+    )
     print(f"{'='*50}\n")
 
     system = await create_actor_system(SystemConfig.with_addr(f"0.0.0.0:{args.port}"))

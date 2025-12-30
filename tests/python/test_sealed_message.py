@@ -113,7 +113,10 @@ class ListProcessorActor(Actor):
     async def receive(self, msg):
         if isinstance(msg, list):
             # Process each item and return results
-            return [item * 2 if isinstance(item, (int, float)) else str(item) for item in msg]
+            return [
+                item * 2 if isinstance(item, (int, float)) else str(item)
+                for item in msg
+            ]
 
         if isinstance(msg, dict) and msg.get("action") == "sum":
             items = msg.get("items", [])
@@ -162,8 +165,6 @@ async def actor_system():
 
 def test_sealed_message_seal_unseal_dict():
     """Test sealing and unsealing a dict."""
-    import pulsing._core as core
-
     original = {"key": "value", "number": 42, "nested": {"a": 1}}
     sealed = SealedPyMessage.seal(original)
 
@@ -247,7 +248,9 @@ async def test_ask_with_dataclass(actor_system):
 @pytest.mark.asyncio
 async def test_ask_multiple_dataclass_messages(actor_system):
     """Test multiple ask calls with dataclass messages."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=10))
+    actor_ref = await actor_system.spawn(
+        "counter", SealedCounterActor(initial_value=10)
+    )
 
     # Multiple increments
     r1 = await actor_ref.ask(IncrementCommand(n=5))
@@ -281,7 +284,9 @@ async def test_ask_with_dict(actor_system):
 @pytest.mark.asyncio
 async def test_ask_dict_multiple_operations(actor_system):
     """Test multiple dict-based operations."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=100))
+    actor_ref = await actor_system.spawn(
+        "counter", SealedCounterActor(initial_value=100)
+    )
 
     # Increment
     r1 = await actor_ref.ask({"action": "increment", "n": 50})
@@ -527,7 +532,9 @@ class CustomHandlerActor(Actor):
                     result *= v
                 return CustomResponse(success=True, result=result)
             else:
-                return CustomResponse(success=False, error=f"Unknown operation: {msg.operation}")
+                return CustomResponse(
+                    success=False, error=f"Unknown operation: {msg.operation}"
+                )
 
         return CustomResponse(success=False, error="Invalid message type")
 
@@ -544,7 +551,9 @@ async def test_custom_request_response_types(actor_system):
 
     # Multiply operation
     r2 = await actor_ref.ask(
-        CustomRequest(operation="multiply", values=[2, 3, 4], metadata={"source": "test"})
+        CustomRequest(
+            operation="multiply", values=[2, 3, 4], metadata={"source": "test"}
+        )
     )
     assert r2.success is True
     assert r2.result == 24
@@ -557,4 +566,3 @@ async def test_custom_request_response_types(actor_system):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

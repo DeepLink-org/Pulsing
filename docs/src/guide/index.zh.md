@@ -37,4 +37,3 @@
 - **刚接触 Pulsing？** 从[快速开始指南](../quickstart/index.md)开始
 - **想了解设计？** 查看[设计文档](../design/actor-system.md)
 - **需要 API 详情？** 查看 [API 参考](../api_reference.md)
-

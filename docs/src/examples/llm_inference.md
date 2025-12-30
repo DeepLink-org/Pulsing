@@ -23,5 +23,3 @@ If you want this page to become a runnable example, tell me which backend you wa
 - `transformers` + `torch`
 - `vllm`
 - `triton` / custom engine
-
-

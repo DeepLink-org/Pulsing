@@ -20,7 +20,7 @@ from pulsing.actor import Actor, Message, SystemConfig, create_actor_system
 class MyActor(Actor):
     def __init__(self):
         self.state = {}
-    
+
     async def receive(self, msg: Message) -> Message:
         # 处理消息
         return Message.single("response", b"data")
@@ -42,10 +42,10 @@ from pulsing.actor import as_actor, SystemConfig, create_actor_system
 class Counter:
     def __init__(self, value: int = 0):
         self.value = value
-    
+
     def get(self) -> int:
         return self.value
-    
+
     def increment(self, n: int = 1) -> int:
         self.value += n
         return self.value
@@ -107,14 +107,14 @@ class StatefulActor:
     def __init__(self):
         self.counter = 0
         self.data = {}
-    
+
     def increment(self) -> int:
         self.counter += 1
         return self.counter
-    
+
     def set_data(self, key: str, value: str) -> None:
         self.data[key] = value
-    
+
     def get_data(self, key: str):
         return self.data.get(key)
 ```
@@ -142,4 +142,3 @@ except Exception as e:
 
 - 了解[远程 Actor](remote_actors.zh.md)进行集群通信
 - 查看[设计文档](../design/actor-system.md)了解实现细节
-

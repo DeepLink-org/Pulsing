@@ -632,13 +632,13 @@ class Calculator:
 
 async def main():
     system = await create_actor_system(SystemConfig.standalone())
-    
+
     calc = await Calculator.local(system, initial=100)
-    
+
     result = await calc.add(50)   # 150
     result = await calc.add(25)   # 175
     value = await calc.get()      # 175
-    
+
     print(f"Final value: {value}")
     await system.shutdown()
 

@@ -37,4 +37,3 @@ jobs:
           mkdocs gh-deploy --force --config-file mkdocs.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

@@ -1,5 +1,5 @@
 # Documentation dependencies
-# 
+#
 # Note: This file is maintained for backward compatibility.
 # For new projects, prefer using pyproject.toml with uv or pip:
 #   uv sync (recommended)

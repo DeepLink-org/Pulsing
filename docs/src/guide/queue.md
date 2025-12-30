@@ -195,5 +195,3 @@ Recommended patterns:
 - `python/pulsing/queue/storage.py`: `BucketStorage` (buffer + Lance persistence + streaming reads)
 - `examples/python/distributed_queue.py`: end-to-end example
 - `tests/python/test_queue.py`: behavior + stress tests
-
-

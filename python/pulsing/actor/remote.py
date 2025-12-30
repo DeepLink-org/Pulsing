@@ -158,7 +158,9 @@ class _WrappedActor(_ActorBase):
             kwargs = data.get("kwargs", {})
 
             if not method or method.startswith("_"):
-                return Message.from_json("Error", {"error": f"Invalid method: {method}"})
+                return Message.from_json(
+                    "Error", {"error": f"Invalid method: {method}"}
+                )
 
             func = getattr(self._instance, method, None)
             if func is None or not callable(func):

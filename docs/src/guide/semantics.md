@@ -146,5 +146,3 @@ Implications:
 - **Idempotency key**: include a stable `id` and deduplicate at the consumer/actor.
 - **Explicit acknowledgement**: model ack as an actor state update (or a separate “commit log”).
 - **Timeout + retry policy**: keep it explicit in your app; don’t rely on implicit retries.
-
-

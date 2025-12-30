@@ -24,4 +24,3 @@ clean:
 
 check-links:
 	uv run mkdocs-linkcheck src
-

@@ -25,7 +25,7 @@ class Message:
     def single(msg_type: str, payload: bytes) -> Message:
         """创建单条消息。"""
         pass
-    
+
     @staticmethod
     def stream(msg_type: str, payload: bytes) -> Message:
         """创建流式消息。"""
@@ -42,12 +42,12 @@ class SystemConfig:
     def standalone() -> SystemConfig:
         """创建单机（非集群）配置。"""
         pass
-    
+
     @staticmethod
     def with_addr(addr: str) -> SystemConfig:
         """创建带地址的配置。"""
         pass
-    
+
     def with_seeds(self, seeds: List[str]) -> SystemConfig:
         """添加用于集群发现的种子节点。"""
         pass
@@ -60,22 +60,22 @@ Actor 系统的主入口点。
 ```python
 class ActorSystem:
     async def spawn(
-        self, 
-        actor: Actor, 
-        name: str, 
+        self,
+        actor: Actor,
+        name: str,
         public: bool = False
     ) -> ActorRef:
         """生成新的 actor。"""
         pass
-    
+
     async def find(self, name: str) -> Optional[ActorRef]:
         """在集群中按名称查找 actor。"""
         pass
-    
+
     async def has_actor(self, name: str) -> bool:
         """检查 actor 是否存在。"""
         pass
-    
+
     async def shutdown(self) -> None:
         """关闭 actor 系统。"""
         pass
@@ -90,11 +90,11 @@ class ActorRef:
     async def ask(self, msg: Message) -> Message:
         """发送消息并等待响应。"""
         pass
-    
+
     async def tell(self, msg: Message) -> None:
         """发送消息但不等待响应。"""
         pass
-    
+
     async def ask_stream(self, msg: Message) -> AsyncIterator[Message]:
         """发送流式消息。"""
         pass
@@ -111,10 +111,10 @@ class ActorRef:
 class MyActor:
     def __init__(self, value: int):
         self.value = value
-    
+
     def get(self) -> int:
         return self.value
-    
+
     async def process(self, data: str) -> dict:
         return {"result": data.upper()}
 ```
@@ -139,4 +139,3 @@ async def create_actor_system(config: SystemConfig) -> ActorSystem:
 ## 示例
 
 查看[快速开始指南](quickstart/index.zh.md)了解使用示例。
-
