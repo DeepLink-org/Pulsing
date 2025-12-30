@@ -1,55 +1,27 @@
 # Ping-Pong
 
-Basic actor communication example (request/response and fire-and-forget).
-
-## What it demonstrates
-
-- Actor lifecycle (`on_start`, `on_stop`)
-- `ask` (request-response)
-- `tell` (fire-and-forget)
+The simplest actor communication example.
 
 ## Code
 
-This page matches the runnable script: `examples/python/ping_pong.py`.
-
 ```python
 import asyncio
-from pulsing.actor import Actor, ActorId, Message, SystemConfig, create_actor_system
+from pulsing.actor import Actor, SystemConfig, create_actor_system
 
 
-class Counter(Actor):
-    def __init__(self):
-        self.count = 0
-
-    def on_start(self, actor_id: ActorId):
-        print(f"[{actor_id}] Started with count: {self.count}")
-
-    def on_stop(self):
-        print(f"Stopped with count: {self.count}")
-
-    def receive(self, msg: Message) -> Message:
-        if msg.msg_type == "Ping":
-            value = msg.to_json().get("value", 1)
-            self.count += value
-            return Message.from_json("Pong", {"result": self.count})
-        elif msg.msg_type == "GetCount":
-            return Message.from_json("Count", {"count": self.count})
-        return Message.empty()
+class PingPong(Actor):
+    async def receive(self, msg):
+        if msg == "ping":
+            return "pong"
+        return f"echo: {msg}"
 
 
 async def main():
     system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn("counter", Counter())
+    actor = await system.spawn("pingpong", PingPong())
 
-    for i in range(1, 4):
-        resp = await actor.ask(Message.from_json("Ping", {"value": i * 10}))
-        print(resp.to_json())
-
-    await actor.tell(Message.from_json("Ping", {"value": 100}))
-    await asyncio.sleep(0.05)
-
-    resp = await actor.ask(Message.from_json("GetCount", {}))
-    print(resp.to_json())
+    print(await actor.ask("ping"))   # -> pong
+    print(await actor.ask("hello"))  # -> echo: hello
 
     await system.shutdown()
 
@@ -57,10 +29,15 @@ async def main():
 asyncio.run(main())
 ```
 
-## Run it
+## Run
 
 ```bash
 python examples/python/ping_pong.py
 ```
 
+## Key Points
 
+- `Actor` is the base class - implement `receive()` to handle messages
+- **Any Python object** can be a message (string, dict, list, etc.)
+- `actor.ask(msg)` sends a message and waits for response
+- `system.shutdown()` cleanly stops all actors

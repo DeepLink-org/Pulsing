@@ -1,86 +1,70 @@
 #!/usr/bin/env python3
 """
-Message Patterns Example
-
-Three core patterns:
-1. Single -> Single (RPC)
-2. Single -> Stream (Server Streaming) - e.g., LLM token generation
-3. Stream -> Single (Client Streaming) - limited in Python, uses batch
+Message Patterns - Common actor communication patterns
 
 Usage: python examples/python/message_patterns.py
 """
 
 import asyncio
 import json
-
-from pulsing.actor import (
-    Actor,
-    Message,
-    StreamMessage,
-    SystemConfig,
-    create_actor_system,
-)
+from pulsing.actor import Actor, Message, StreamMessage, SystemConfig, create_actor_system
 
 
-class DemoActor(Actor):
-    async def receive(self, msg: Message):
-        if msg.msg_type == "Greet":
-            # Pattern 1: RPC
-            name = msg.to_json().get("name", "stranger")
-            print(f"[Actor] Greet: {name}")
-            return Message.from_json("Greeting", {"message": f"Hello, {name}!"})
+class PatternDemo(Actor):
+    def __init__(self):
+        self.value = 0
 
-        elif msg.msg_type == "CountTo":
-            # Pattern 2: Server Streaming
-            n = msg.to_json().get("n", 3)
-            print(f"[Actor] CountTo: {n}")
+    async def receive(self, msg):
+        # Pattern 1: Simple object messaging (dict, list, string, etc.)
+        if isinstance(msg, dict):
+            if msg.get("action") == "add":
+                self.value += msg.get("n", 1)
+                return {"value": self.value}
+            if msg.get("action") == "get":
+                return {"value": self.value}
 
-            stream_msg, writer = StreamMessage.create("CountItem")
+        # Pattern 2: Streaming response (e.g., LLM token generation)
+        if msg == "stream":
+            stream_msg, writer = StreamMessage.create("tokens")
 
             async def produce():
-                for i in range(1, n + 1):
-                    await writer.write_json({"value": i})
-                    await asyncio.sleep(0.05)
-                writer.close()
+                for token in ["Hello", " ", "World", "!"]:
+                    await writer.write_json({"token": token})
+                    await asyncio.sleep(0.1)
+                await writer.close()
 
             asyncio.create_task(produce())
             return stream_msg
 
-        elif msg.msg_type == "Sum":
-            # Pattern 3: Client Streaming (batch mode in Python)
-            items = msg.to_json().get("items", [])
-            print(f"[Actor] Sum: {items}")
-            return Message.from_json("SumResult", {"total": sum(items)})
+        # Pattern 3: JSON Message (for Rust actor compatibility)
+        if isinstance(msg, Message):
+            return Message.from_json("Echo", {"received": msg.msg_type})
 
-        return Message.empty()
+        return f"unknown: {msg}"
 
 
 async def main():
-    print("=== Pulsing Message Patterns ===\n")
-
     system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn("demo", DemoActor())
+    actor = await system.spawn("demo", PatternDemo())
 
-    # Pattern 1: RPC
-    print("--- Pattern 1: RPC ---")
-    resp = (await actor.ask(Message.from_json("Greet", {"name": "Pulsing"}))).to_json()
-    print(f"Response: {resp['message']}\n")
+    # Pattern 1: Dict messages
+    print("--- Dict Messages ---")
+    print(await actor.ask({"action": "add", "n": 10}))  # {'value': 10}
+    print(await actor.ask({"action": "add", "n": 5}))   # {'value': 15}
+    print(await actor.ask({"action": "get"}))          # {'value': 15}
 
-    # Pattern 2: Server Streaming
-    print("--- Pattern 2: Server Streaming ---")
-    req = Message.from_json("CountTo", {"n": 3})
-    response = await actor.ask(req)
+    # Pattern 2: Streaming
+    print("\n--- Streaming ---")
+    response = await actor.ask("stream")
     async for chunk in response.stream_reader():
-        item = json.loads(chunk)
-        print(f"Received: {item['value']}")
+        token = json.loads(chunk)["token"]
+        print(token, end="", flush=True)
     print()
 
-    # Pattern 3: Client Streaming (batch mode)
-    print("--- Pattern 3: Client Streaming (batch) ---")
-    resp = (
-        await actor.ask(Message.from_json("Sum", {"items": [10, 20, 30]}))
-    ).to_json()
-    print(f"Sum: {resp['total']}\n")
+    # Pattern 3: JSON Message (backward compatible)
+    print("\n--- JSON Message ---")
+    resp = await actor.ask(Message.from_json("Test", {"data": 123}))
+    print(resp.to_json())  # {'received': 'Test'}
 
     await system.shutdown()
 
