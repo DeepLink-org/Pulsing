@@ -28,10 +28,13 @@ class PatternDemo(Actor):
             stream_msg, writer = StreamMessage.create("tokens")
 
             async def produce():
-                for token in ["Hello", " ", "World", "!"]:
-                    await writer.write_json({"token": token})
-                    await asyncio.sleep(0.1)
-                await writer.close()
+                try:
+                    for token in ["Hello", " ", "World", "!"]:
+                        await writer.write_json({"token": token})
+                        await asyncio.sleep(0.1)
+                    await writer.close()
+                except Exception:
+                    pass  # Stream closed, ignore
 
             asyncio.create_task(produce())
             return stream_msg

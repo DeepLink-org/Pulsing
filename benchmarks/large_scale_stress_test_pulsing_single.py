@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """
-Pulsing 压测脚本 - 单进程版本（与 Ray 单进程版本等价对比）
-
-本脚本在单进程内创建多个 Actor，与 Ray 单进程版本保持等价。
+Pulsing 压测脚本 - 单进程版本
 
 使用方法:
     python benchmarks/large_scale_stress_test_pulsing_single.py \
-        --duration 300 \
-        --rate 100 \
-        --num-workers 50
+        --duration 300 --rate 100 --num-workers 50
 """
 
 import argparse
@@ -20,216 +16,115 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from pulsing.actor import (
-    Actor,
-    ActorRef,
-    Message,
-    StreamMessage,
-    SystemConfig,
-    create_actor_system,
-)
+from pulsing.actor import Actor, StreamMessage, SystemConfig, create_actor_system
+
 
 # ============================================================================
-# 压测统计
+# 统计
 # ============================================================================
 
 
 @dataclass
-class StressTestStats:
-    """压测统计信息"""
+class Stats:
+    total: int = 0
+    success: int = 0
+    failed: int = 0
+    latencies: list = field(default_factory=list)
+    errors: dict = field(default_factory=lambda: defaultdict(int))
 
-    total_requests: int = 0
-    total_streams: int = 0
-    successful_requests: int = 0
-    successful_streams: int = 0
-    failed_requests: int = 0
-    failed_streams: int = 0
-    total_latency_ms: float = 0.0
-    total_stream_latency_ms: float = 0.0
-    request_latencies: list[float] = field(default_factory=list)
-    stream_latencies: list[float] = field(default_factory=list)
-    errors: dict[str, int] = field(default_factory=lambda: defaultdict(int))
-
-    def add_request(self, success: bool, latency_ms: float, error: str | None = None):
-        self.total_requests += 1
-        if success:
-            self.successful_requests += 1
-            self.total_latency_ms += latency_ms
-            self.request_latencies.append(latency_ms)
+    def add(self, ok: bool, latency_ms: float, error: str = None):
+        self.total += 1
+        if ok:
+            self.success += 1
+            self.latencies.append(latency_ms)
         else:
-            self.failed_requests += 1
+            self.failed += 1
             if error:
-                self.errors[error] += 1
+                self.errors[error[:50]] += 1
 
-    def add_stream(self, success: bool, latency_ms: float, error: str | None = None):
-        self.total_streams += 1
-        if success:
-            self.successful_streams += 1
-            self.total_stream_latency_ms += latency_ms
-            self.stream_latencies.append(latency_ms)
-        else:
-            self.failed_streams += 1
-            if error:
-                self.errors[error] += 1
-
-    def get_summary(self) -> dict:
-        avg_latency = (
-            self.total_latency_ms / self.successful_requests
-            if self.successful_requests > 0
-            else 0.0
-        )
-        avg_stream_latency = (
-            self.total_stream_latency_ms / self.successful_streams
-            if self.successful_streams > 0
-            else 0.0
-        )
-
-        request_latencies_sorted = sorted(self.request_latencies)
-        stream_latencies_sorted = sorted(self.stream_latencies)
-
-        def percentile(data: list[float], p: float) -> float:
-            if not data:
-                return 0.0
-            idx = int(len(data) * p / 100)
-            return data[min(idx, len(data) - 1)]
-
+    def summary(self):
+        lat = sorted(self.latencies)
+        pct = lambda p: lat[int(len(lat) * p / 100)] if lat else 0
         return {
-            "requests": {
-                "total": self.total_requests,
-                "successful": self.successful_requests,
-                "failed": self.failed_requests,
-                "success_rate": (
-                    self.successful_requests / self.total_requests * 100
-                    if self.total_requests > 0
-                    else 0.0
-                ),
-                "avg_latency_ms": avg_latency,
-                "p50_latency_ms": percentile(request_latencies_sorted, 50),
-                "p95_latency_ms": percentile(request_latencies_sorted, 95),
-                "p99_latency_ms": percentile(request_latencies_sorted, 99),
-            },
-            "streams": {
-                "total": self.total_streams,
-                "successful": self.successful_streams,
-                "failed": self.failed_streams,
-                "success_rate": (
-                    self.successful_streams / self.total_streams * 100
-                    if self.total_streams > 0
-                    else 0.0
-                ),
-                "avg_latency_ms": avg_stream_latency,
-                "p50_latency_ms": percentile(stream_latencies_sorted, 50),
-                "p95_latency_ms": percentile(stream_latencies_sorted, 95),
-                "p99_latency_ms": percentile(stream_latencies_sorted, 99),
-            },
+            "total": self.total,
+            "success": self.success,
+            "failed": self.failed,
+            "success_rate": self.success / self.total * 100 if self.total else 0,
+            "avg_ms": sum(lat) / len(lat) if lat else 0,
+            "p50_ms": pct(50),
+            "p95_ms": pct(95),
+            "p99_ms": pct(99),
             "errors": dict(self.errors),
         }
 
 
 # ============================================================================
-# Pulsing Actor 定义
+# Workers - 使用简化的消息格式
 # ============================================================================
 
 
 class EchoWorker(Actor):
-    """Echo Worker - 简单回显"""
-
-    async def receive(self, msg: Message):
-        if msg.msg_type == "Echo":
-            data = msg.to_json()
-            return Message.from_json("EchoResponse", {"echo": data.get("text", "")})
-        return Message.empty()
+    async def receive(self, msg):
+        if isinstance(msg, dict) and msg.get("type") == "echo":
+            return {"echo": msg.get("text", "")}
 
 
 class ComputeWorker(Actor):
-    """Compute Worker - 计算密集型"""
-
-    async def receive(self, msg: Message):
-        if msg.msg_type == "Compute":
-            data = msg.to_json()
-            n = data.get("n", 1000)
-            result = sum(i * i for i in range(n))
-            return Message.from_json("ComputeResponse", {"result": result})
-        return Message.empty()
+    async def receive(self, msg):
+        if isinstance(msg, dict) and msg.get("type") == "compute":
+            n = msg.get("n", 1000)
+            return {"result": sum(i * i for i in range(n))}
 
 
 class StreamWorker(Actor):
-    """Stream Worker - 流式响应"""
+    async def receive(self, msg):
+        if isinstance(msg, dict) and msg.get("type") == "stream":
+            count = msg.get("count", 10)
+            delay = msg.get("delay", 0.01)
 
-    async def receive(self, msg: Message):
-        if msg.msg_type == "GenerateStream":
-            data = msg.to_json()
-            count = data.get("count", 10)
-            delay = data.get("delay", 0.01)
-
-            stream_msg, writer = StreamMessage.create("StreamItem")
+            stream_msg, writer = StreamMessage.create("items")
 
             async def produce():
                 try:
                     for i in range(count):
-                        await writer.write_json(
-                            {
-                                "index": i,
-                                "value": f"item_{i}",
-                                "timestamp": time.time(),
-                            }
-                        )
+                        await writer.write_json({"index": i, "ts": time.time()})
                         await asyncio.sleep(delay)
                     await writer.close()
-                except Exception as e:
-                    await writer.error(str(e))
+                except Exception:
+                    pass  # Stream closed during shutdown, ignore
 
             asyncio.create_task(produce())
             return stream_msg
-        return Message.empty()
 
 
 class BatchWorker(Actor):
-    """Batch Worker - 批量处理"""
-
     def __init__(self):
         self.batch = []
-        self.batch_size = 10
 
-    async def receive(self, msg: Message):
-        if msg.msg_type == "BatchAdd":
-            data = msg.to_json()
-            self.batch.append(data.get("item"))
-
-            if len(self.batch) >= self.batch_size:
+    async def receive(self, msg):
+        if isinstance(msg, dict) and msg.get("type") == "batch":
+            self.batch.append(msg.get("item", 0))
+            if len(self.batch) >= 10:
                 result = sum(self.batch)
                 self.batch = []
-                return Message.from_json("BatchResult", {"sum": result})
-            return Message.from_json("BatchAck", {"count": len(self.batch)})
-        return Message.empty()
+                return {"sum": result}
+            return {"count": len(self.batch)}
 
 
 class StatefulWorker(Actor):
-    """Stateful Worker - 有状态处理"""
-
     def __init__(self):
         self.state = {}
-        self.counter = 0
 
-    async def receive(self, msg: Message):
-        if msg.msg_type == "SetState":
-            data = msg.to_json()
-            key = data.get("key")
-            value = data.get("value")
-            self.state[key] = value
-            self.counter += 1
-            return Message.from_json("StateSet", {"counter": self.counter})
-
-        elif msg.msg_type == "GetState":
-            data = msg.to_json()
-            key = data.get("key")
-            value = self.state.get(key)
-            return Message.from_json("StateValue", {"key": key, "value": value})
-
-        return Message.empty()
+    async def receive(self, msg):
+        if isinstance(msg, dict):
+            if msg.get("type") == "set":
+                self.state[msg["key"]] = msg["value"]
+                return {"ok": True}
+            if msg.get("type") == "get":
+                return {"value": self.state.get(msg["key"])}
 
 
-WORKER_CLASSES = {
+WORKERS = {
     "echo": EchoWorker,
     "compute": ComputeWorker,
     "stream": StreamWorker,
@@ -239,223 +134,137 @@ WORKER_CLASSES = {
 
 
 # ============================================================================
-# 压测客户端
+# 压测
 # ============================================================================
 
 
-class StressTestClient:
-    """压测客户端"""
+async def run_benchmark(workers, stats_req, stats_stream, duration, rate):
+    end_time = time.time() + duration
+    interval = 1.0 / rate if rate > 0 else 0
 
-    def __init__(
-        self,
-        workers: dict[str, list[ActorRef]],
-        stats: StressTestStats,
-        rate: float = 100.0,
-    ):
-        self.workers = workers
-        self.stats = stats
-        self.rate = rate
-        self.interval = 1.0 / rate if rate > 0 else 0.0
-        self.running = True
+    async def worker_loop():
+        while time.time() < end_time:
+            # 70% single, 30% stream
+            if random.random() < 0.7:
+                await send_request(workers, stats_req)
+            else:
+                await send_stream(workers, stats_stream)
+            if interval:
+                await asyncio.sleep(interval)
 
-    async def send_single_request(self) -> bool:
-        """发送单个请求"""
-        worker_types = ["echo", "compute", "batch", "stateful"]
-        worker_type = random.choice(worker_types)
+    tasks = [asyncio.create_task(worker_loop()) for _ in range(max(1, int(rate) // 10))]
 
-        if worker_type not in self.workers or not self.workers[worker_type]:
-            return False
+    # 进度报告
+    while time.time() < end_time:
+        await asyncio.sleep(10)
+        print(f"  Requests: {stats_req.total} (ok: {stats_req.success})")
+        print(f"  Streams:  {stats_stream.total} (ok: {stats_stream.success})")
 
-        worker = random.choice(self.workers[worker_type])
-        start_time = time.time()
+    for t in tasks:
+        t.cancel()
 
-        try:
-            if worker_type == "echo":
-                msg = Message.from_json(
-                    "Echo", {"text": f"echo_{random.randint(1, 1000)}"}
-                )
-            elif worker_type == "compute":
-                msg = Message.from_json("Compute", {"n": random.randint(100, 10000)})
-            elif worker_type == "batch":
-                msg = Message.from_json("BatchAdd", {"item": random.randint(1, 100)})
-            elif worker_type == "stateful":
-                if random.random() < 0.5:
-                    msg = Message.from_json(
-                        "SetState",
-                        {
-                            "key": f"key_{random.randint(1, 100)}",
-                            "value": random.randint(1, 1000),
-                        },
-                    )
-                else:
-                    msg = Message.from_json(
-                        "GetState", {"key": f"key_{random.randint(1, 100)}"}
-                    )
 
-            await worker.ask(msg)
+async def send_request(workers, stats):
+    wtype = random.choice(["echo", "compute", "batch", "stateful"])
+    if wtype not in workers:
+        return
 
-            latency_ms = (time.time() - start_time) * 1000
-            self.stats.add_request(True, latency_ms)
-            return True
+    worker = random.choice(workers[wtype])
+    start = time.time()
 
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self.stats.add_request(False, latency_ms, str(e)[:100])
-            return False
+    try:
+        if wtype == "echo":
+            msg = {"type": "echo", "text": f"msg_{random.randint(1, 1000)}"}
+        elif wtype == "compute":
+            msg = {"type": "compute", "n": random.randint(100, 5000)}
+        elif wtype == "batch":
+            msg = {"type": "batch", "item": random.randint(1, 100)}
+        else:  # stateful
+            if random.random() < 0.5:
+                msg = {"type": "set", "key": f"k{random.randint(1, 100)}", "value": random.randint(1, 1000)}
+            else:
+                msg = {"type": "get", "key": f"k{random.randint(1, 100)}"}
 
-    async def send_stream_request(self) -> bool:
-        """发送流式请求"""
-        if "stream" not in self.workers or not self.workers["stream"]:
-            return False
+        await worker.ask(msg)
+        stats.add(True, (time.time() - start) * 1000)
+    except Exception as e:
+        stats.add(False, (time.time() - start) * 1000, str(e))
 
-        worker = random.choice(self.workers["stream"])
-        start_time = time.time()
 
-        try:
-            payload = {
-                "count": random.randint(5, 20),
-                "delay": random.uniform(0.01, 0.05),
-            }
+async def send_stream(workers, stats):
+    if "stream" not in workers:
+        return
 
-            msg = Message.from_json("GenerateStream", payload)
-            response = await worker.ask(msg)
-            reader = response.stream_reader()
+    worker = random.choice(workers["stream"])
+    start = time.time()
 
-            chunk_count = 0
-            async for _chunk_bytes in reader:
-                chunk_count += 1
-
-            latency_ms = (time.time() - start_time) * 1000
-            self.stats.add_stream(True, latency_ms)
-            return True
-
-        except Exception as e:
-            latency_ms = (time.time() - start_time) * 1000
-            self.stats.add_stream(False, latency_ms, str(e)[:100])
-            return False
-
-    async def run_stress_test(self, duration: float):
-        """运行压测"""
-        end_time = time.time() + duration
-        report_interval = 10.0
-
-        print(f"[StressTest] Starting stress test for {duration}s at {self.rate} req/s")
-
-        async def worker_loop():
-            while self.running and time.time() < end_time:
-                if random.random() < 0.7:
-                    await self.send_single_request()
-                else:
-                    await self.send_stream_request()
-
-                if self.interval > 0:
-                    await asyncio.sleep(self.interval)
-
-        num_workers = max(1, int(self.rate / 10))
-        tasks = [asyncio.create_task(worker_loop()) for _ in range(num_workers)]
-
-        async def report_loop():
-            while self.running and time.time() < end_time:
-                await asyncio.sleep(report_interval)
-                summary = self.stats.get_summary()
-                print("\n[StressTest] Progress Report:")
-                print(
-                    f"  Requests: {summary['requests']['total']} "
-                    f"(success: {summary['requests']['successful']}, "
-                    f"failed: {summary['requests']['failed']})"
-                )
-                print(
-                    f"  Streams: {summary['streams']['total']} "
-                    f"(success: {summary['streams']['successful']}, "
-                    f"failed: {summary['streams']['failed']})"
-                )
-                if summary["requests"]["successful"] > 0:
-                    print(
-                        f"  Avg Latency: {summary['requests']['avg_latency_ms']:.2f}ms"
-                    )
-
-        report_task = asyncio.create_task(report_loop())
-
-        await asyncio.gather(*tasks, report_task)
-
-        self.running = False
-        print("\n[StressTest] Stress test completed")
+    try:
+        msg = {"type": "stream", "count": random.randint(5, 15), "delay": 0.01}
+        resp = await worker.ask(msg)
+        async for _ in resp.stream_reader():
+            pass
+        stats.add(True, (time.time() - start) * 1000)
+    except Exception as e:
+        stats.add(False, (time.time() - start) * 1000, str(e))
 
 
 # ============================================================================
-# 主函数
+# Main
 # ============================================================================
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Pulsing压测脚本 - 单进程版本")
-    parser.add_argument("--duration", type=float, default=30.0, help="压测时长（秒）")
-    parser.add_argument("--rate", type=float, default=100.0, help="每秒请求数")
-    parser.add_argument(
-        "--num-workers", type=int, default=50, help="每种类型的Worker数量"
-    )
-    parser.add_argument("--port", type=int, default=8000, help="Pulsing端口")
-    parser.add_argument(
-        "--log-dir", type=str, default="benchmark_logs", help="日志目录"
-    )
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--duration", type=float, default=30)
+    parser.add_argument("--rate", type=float, default=100)
+    parser.add_argument("--num-workers", type=int, default=50)
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--log-dir", type=str, default="benchmark_logs")
     args = parser.parse_args()
 
-    log_dir = args.log_dir
-    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(args.log_dir, exist_ok=True)
 
-    print(f"\n{'='*60}")
-    print("Pulsing Stress Test (Single Process Mode)")
-    print(f"Duration: {args.duration}s, Rate: {args.rate} req/s")
-    print(f"Workers per type: {args.num_workers}")
-    print(f"{'='*60}\n")
+    print(f"\n{'='*50}")
+    print(f"Pulsing Stress Test (Single Process)")
+    print(f"Duration: {args.duration}s, Rate: {args.rate}/s, Workers: {args.num_workers}")
+    print(f"{'='*50}\n")
 
-    # 初始化 Pulsing
-    config = SystemConfig.with_addr(f"0.0.0.0:{args.port}")
-    system = await create_actor_system(config)
-    print(f"Pulsing ActorSystem started at {system.addr}")
+    system = await create_actor_system(SystemConfig.with_addr(f"0.0.0.0:{args.port}"))
+    print(f"System started at {system.addr}")
 
-    # 创建 Workers
+    # 创建 workers
     workers = {}
-    for worker_type, worker_class in WORKER_CLASSES.items():
-        workers[worker_type] = []
+    for name, cls in WORKERS.items():
+        workers[name] = []
         for i in range(args.num_workers):
-            try:
-                worker_ref = await system.spawn(f"{worker_type}_{i}", worker_class())
-                workers[worker_type].append(worker_ref)
-            except Exception as e:
-                print(f"Failed to create {worker_type}_{i}: {e}")
-        print(f"Created {len(workers[worker_type])} {worker_type} workers")
+            ref = await system.spawn(f"{name}_{i}", cls())
+            workers[name].append(ref)
+        print(f"Created {args.num_workers} {name} workers")
 
-    # 等待就绪
-    print("Waiting for workers to be ready...")
-    await asyncio.sleep(2.0)
-
-    # 创建压测客户端
-    stats = StressTestStats()
-    client = StressTestClient(workers, stats, rate=args.rate)
+    await asyncio.sleep(1)
 
     # 运行压测
+    stats_req, stats_stream = Stats(), Stats()
     try:
-        await client.run_stress_test(args.duration)
+        await run_benchmark(workers, stats_req, stats_stream, args.duration, args.rate)
     except KeyboardInterrupt:
-        print("\nInterrupted by user")
-        client.running = False
+        print("\nInterrupted")
 
-    # 打印最终统计
-    print(f"\n{'='*60}")
-    print("Final Statistics (Pulsing Single Process)")
-    print(f"{'='*60}")
-    summary = stats.get_summary()
-    print(json.dumps(summary, indent=2))
+    # 结果
+    print(f"\n{'='*50}")
+    print("Results")
+    print(f"{'='*50}")
+    result = {"requests": stats_req.summary(), "streams": stats_stream.summary()}
+    print(json.dumps(result, indent=2))
 
-    # 保存统计
-    stats_file = os.path.join(log_dir, "stress_test_stats_pulsing_single.json")
-    with open(stats_file, "w") as f:
-        json.dump(summary, f, indent=2)
-    print(f"\nStatistics saved to {stats_file}")
+    with open(f"{args.log_dir}/stress_test_pulsing_single.json", "w") as f:
+        json.dump(result, f, indent=2)
 
-    print("Shutdown complete")
+    # 等待 3 秒让正在进行的流式任务完成
+    print("Waiting 3s for streams to complete...")
+    await asyncio.sleep(3)
+
+    await system.shutdown()
 
 
 if __name__ == "__main__":
