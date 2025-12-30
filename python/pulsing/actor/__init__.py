@@ -17,6 +17,7 @@ from pulsing._core import (
     ActorSystem,
     Message,
     NodeId,
+    SealedPyMessage,
     StreamMessage,
     StreamReader,
     StreamWriter,
@@ -49,6 +50,7 @@ __all__ = [
     # Message types
     "Message",
     "StreamMessage",
+    "SealedPyMessage",
     # Streaming types
     "StreamReader",
     "StreamWriter",
@@ -99,7 +101,13 @@ async def create_actor_system(config: SystemConfig) -> ActorSystem:
 
 
 class Actor(ABC):
-    """Base class for Python actors. Implement `receive` to handle messages."""
+    """Base class for Python actors. Implement `receive` to handle messages.
+
+    Python actors can receive and return arbitrary Python objects when communicating
+    with other Python actors. The objects are automatically pickled and unpickled.
+
+    For communication with Rust actors, use Message.from_json() and msg.to_json().
+    """
 
     def on_start(self, actor_id: ActorId) -> None:  # noqa: B027
         """Called when actor starts. Override to handle actor startup."""
@@ -114,22 +122,34 @@ class Actor(ABC):
         return {}
 
     @abstractmethod
-    async def receive(self, msg: Message) -> Message | StreamMessage | None:
+    async def receive(self, msg):
         """
         Handle incoming message
 
         Args:
-            msg: Incoming message (use msg.to_json() to get data)
+            msg: Incoming message. Can be:
+                 - Any Python object (when called from Python actors with ask/tell)
+                 - Message object (when called from Rust actors or with Message.from_json)
 
         Returns:
-            - Message.from_json("Type", {...}): Single response
+            - Any Python object: automatically pickled for Python-to-Python communication
+            - Message.from_json("Type", {...}): JSON response for Rust actor communication
             - StreamMessage.create(...): Streaming response
             - None: No response
 
-        Example:
+        Example (Python-to-Python, simple objects):
+            # Caller:
+            result = await counter.ask({"action": "increment", "n": 10})
+
+            # Actor receive:
             async def receive(self, msg):
-                data = msg.to_json()
-                if msg.msg_type == "Ping":
+                if isinstance(msg, dict) and msg.get("action") == "increment":
+                    self.value += msg["n"]
+                    return {"value": self.value}
+
+        Example (Rust actor communication):
+            async def receive(self, msg):
+                if isinstance(msg, Message) and msg.msg_type == "Ping":
                     return Message.from_json("Pong", {"count": 1})
                 return None
         """

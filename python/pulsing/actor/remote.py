@@ -51,7 +51,8 @@ class _ActorBase(ABC):
         return {}
 
     @abstractmethod
-    async def receive(self, msg: Message) -> Message | StreamMessage | None:
+    async def receive(self, msg) -> Any:
+        """Handle incoming message. Can receive and return any Python object."""
         pass
 
 
@@ -92,16 +93,22 @@ class _MethodCaller:
         self._method = method_name
 
     async def __call__(self, *args, **kwargs) -> Any:
-        msg = Message.from_json(
-            "Call",
-            {"method": self._method, "args": list(args), "kwargs": kwargs},
-        )
-        resp = await self._ref.ask(msg)
-        data = resp.to_json()
+        # Use simple dict message (will be pickled automatically)
+        call_msg = {"__call__": self._method, "args": args, "kwargs": kwargs}
+        resp = await self._ref.ask(call_msg)
 
-        if resp.msg_type == "Error":
-            raise RuntimeError(data.get("error", "Remote call failed"))
-        return data.get("result")
+        # Handle response
+        if isinstance(resp, dict):
+            if "__error__" in resp:
+                raise RuntimeError(resp["__error__"])
+            return resp.get("__result__")
+        elif isinstance(resp, Message):
+            # Fallback for Rust actor communication
+            data = resp.to_json()
+            if resp.msg_type == "Error":
+                raise RuntimeError(data.get("error", "Remote call failed"))
+            return data.get("result")
+        return resp
 
 
 class _WrappedActor(_ActorBase):
@@ -118,29 +125,54 @@ class _WrappedActor(_ActorBase):
         if hasattr(self._instance, "on_stop"):
             self._instance.on_stop()
 
-    async def receive(self, msg: Message) -> Message | StreamMessage | None:
-        if msg.msg_type != "Call":
-            return Message.from_json("Error", {"error": f"Unknown: {msg.msg_type}"})
+    async def receive(self, msg) -> Any:
+        # Handle new dict-based call format (Python-to-Python)
+        if isinstance(msg, dict) and "__call__" in msg:
+            method = msg["__call__"]
+            args = msg.get("args", ())
+            kwargs = msg.get("kwargs", {})
 
-        data = msg.to_json()
-        method = data.get("method")
-        args = data.get("args", [])
-        kwargs = data.get("kwargs", {})
+            if not method or method.startswith("_"):
+                return {"__error__": f"Invalid method: {method}"}
 
-        if not method or method.startswith("_"):
-            return Message.from_json("Error", {"error": f"Invalid method: {method}"})
+            func = getattr(self._instance, method, None)
+            if func is None or not callable(func):
+                return {"__error__": f"Not found: {method}"}
 
-        func = getattr(self._instance, method, None)
-        if func is None or not callable(func):
-            return Message.from_json("Error", {"error": f"Not found: {method}"})
+            try:
+                result = func(*args, **kwargs)
+                if asyncio.iscoroutine(result):
+                    result = await result
+                return {"__result__": result}
+            except Exception as e:
+                return {"__error__": str(e)}
 
-        try:
-            result = func(*args, **kwargs)
-            if asyncio.iscoroutine(result):
-                result = await result
-            return Message.from_json("Result", {"result": result})
-        except Exception as e:
-            return Message.from_json("Error", {"error": str(e)})
+        # Handle legacy Message-based call format (for Rust actor compatibility)
+        if isinstance(msg, Message):
+            if msg.msg_type != "Call":
+                return Message.from_json("Error", {"error": f"Unknown: {msg.msg_type}"})
+
+            data = msg.to_json()
+            method = data.get("method")
+            args = data.get("args", [])
+            kwargs = data.get("kwargs", {})
+
+            if not method or method.startswith("_"):
+                return Message.from_json("Error", {"error": f"Invalid method: {method}"})
+
+            func = getattr(self._instance, method, None)
+            if func is None or not callable(func):
+                return Message.from_json("Error", {"error": f"Not found: {method}"})
+
+            try:
+                result = func(*args, **kwargs)
+                if asyncio.iscoroutine(result):
+                    result = await result
+                return Message.from_json("Result", {"result": result})
+            except Exception as e:
+                return Message.from_json("Error", {"error": str(e)})
+
+        return {"__error__": f"Unknown message type: {type(msg)}"}
 
 
 class PythonActorService(_ActorBase):

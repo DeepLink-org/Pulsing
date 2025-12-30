@@ -14,6 +14,9 @@ use tokio::sync::Mutex as TokioMutex;
 
 use crate::python_executor::python_executor;
 
+/// Special message type identifier for pickle-encoded Python objects
+const SEALED_PY_MSG_TYPE: &str = "__sealed_py_message__";
+
 fn to_pyerr<E: std::fmt::Display>(err: E) -> PyErr {
     PyException::new_err(format!("{}", err))
 }
@@ -263,6 +266,84 @@ impl PyMessage {
 }
 
 // ============================================================================
+// SealedPyMessage - Pickle-encoded Python objects for Python-to-Python communication
+// ============================================================================
+
+/// Pickle-encoded Python object wrapper for transparent Python object passing.
+///
+/// This allows Python actors to send and receive arbitrary Python objects
+/// without the need for JSON serialization. The object is serialized using
+/// Python's pickle module.
+#[pyclass(name = "SealedPyMessage")]
+#[derive(Clone)]
+pub struct PySealedMessage {
+    /// Pickle-encoded Python object bytes
+    data: Vec<u8>,
+}
+
+#[pymethods]
+impl PySealedMessage {
+    /// Create a SealedPyMessage by pickling any Python object
+    #[staticmethod]
+    fn seal(py: Python<'_>, obj: PyObject) -> PyResult<Self> {
+        let pickle = py.import("pickle")?;
+        let dumped = pickle.call_method1("dumps", (&obj,))?;
+        let bytes = dumped.downcast::<PyBytes>()?;
+        Ok(Self {
+            data: bytes.as_bytes().to_vec(),
+        })
+    }
+
+    /// Unseal (unpickle) the message back to a Python object
+    fn unseal(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let pickle = py.import("pickle")?;
+        let bytes = PyBytes::new(py, &self.data);
+        let obj = pickle.call_method1("loads", (bytes,))?;
+        Ok(obj.into())
+    }
+
+    /// Get raw pickle bytes
+    #[getter]
+    fn data<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, &self.data)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("SealedPyMessage(data_len={})", self.data.len())
+    }
+}
+
+impl PySealedMessage {
+    /// Create from raw pickle bytes
+    #[allow(dead_code)]
+    fn from_bytes(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+
+    /// Convert to Rust Message with special type identifier
+    #[allow(dead_code)]
+    fn to_message(&self) -> Message {
+        Message::single(SEALED_PY_MSG_TYPE, self.data.clone())
+    }
+}
+
+/// Helper function to pickle a Python object in Rust
+fn pickle_object(py: Python<'_>, obj: &PyObject) -> PyResult<Vec<u8>> {
+    let pickle = py.import("pickle")?;
+    let dumped = pickle.call_method1("dumps", (obj,))?;
+    let bytes = dumped.downcast::<PyBytes>()?;
+    Ok(bytes.as_bytes().to_vec())
+}
+
+/// Helper function to unpickle bytes back to a Python object
+fn unpickle_object(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
+    let pickle = py.import("pickle")?;
+    let bytes = PyBytes::new(py, data);
+    let obj = pickle.call_method1("loads", (bytes,))?;
+    Ok(obj.into())
+}
+
+// ============================================================================
 // PyStreamReader - Async iterator for reading incoming streams
 // ============================================================================
 
@@ -466,10 +547,12 @@ impl PyStreamMessage {
     }
 }
 
-/// Response type from Python actor - can be single or stream
+/// Response type from Python actor - can be single, stream, or sealed (pickled)
 enum PyActorResponse {
     Single(PyMessage),
     StreamChannel(String, mpsc::Receiver<anyhow::Result<Vec<u8>>>),
+    /// Pickled Python object for Python-to-Python communication
+    Sealed(Vec<u8>),
 }
 
 /// Python wrapper for ActorRef
@@ -494,23 +577,67 @@ impl PyActorRef {
 
     /// Send a message and wait for response (supports both single and stream responses)
     ///
-    /// Returns a Message that can be either:
-    /// - Single response: use `msg.payload` or `msg.to_json()`
-    /// - Stream response: use `msg.is_stream` to check, then `msg.stream_reader()` to consume
-    fn ask<'py>(&self, py: Python<'py>, msg: PyMessage) -> PyResult<Bound<'py, PyAny>> {
+    /// The message can be:
+    /// - Any Python object: automatically pickled for Python-to-Python communication
+    /// - Message: uses JSON encoding for Rust actor communication
+    ///
+    /// Returns:
+    /// - For Python actors: the original Python object returned by receive()
+    /// - For Rust actors: a Message object
+    fn ask<'py>(&self, py: Python<'py>, msg: PyObject) -> PyResult<Bound<'py, PyAny>> {
         let actor_ref = self.inner.clone();
-        let actor_msg = msg.to_message();
+
+        // Check if msg is already a PyMessage
+        let msg_bound = msg.bind(py);
+        let actor_msg = if msg_bound.is_instance_of::<PyMessage>() {
+            let py_msg: PyMessage = msg_bound.extract()?;
+            py_msg.to_message()
+        } else {
+            // Pickle any other Python object
+            let pickled = pickle_object(py, &msg)?;
+            Message::single(SEALED_PY_MSG_TYPE, pickled)
+        };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
-            Ok(PyMessage::from_rust_message(response))
+
+            // Check if response is a sealed message
+            Python::with_gil(|py| {
+                match response {
+                    Message::Single { ref msg_type, ref data } if msg_type == SEALED_PY_MSG_TYPE => {
+                        // Unpickle and return the original Python object
+                        unpickle_object(py, data)
+                    }
+                    _ => {
+                        // Return as PyMessage for non-sealed responses
+                        Ok(PyMessage::from_rust_message(response)
+                            .into_pyobject(py)?
+                            .into_any()
+                            .unbind())
+                    }
+                }
+            })
         })
     }
 
     /// Send a message without waiting for response (fire-and-forget)
-    fn tell<'py>(&self, py: Python<'py>, msg: PyMessage) -> PyResult<Bound<'py, PyAny>> {
+    ///
+    /// The message can be:
+    /// - Any Python object: automatically pickled for Python-to-Python communication
+    /// - Message: uses JSON encoding for Rust actor communication
+    fn tell<'py>(&self, py: Python<'py>, msg: PyObject) -> PyResult<Bound<'py, PyAny>> {
         let actor_ref = self.inner.clone();
-        let actor_msg = msg.to_message();
+
+        // Check if msg is already a PyMessage
+        let msg_bound = msg.bind(py);
+        let actor_msg = if msg_bound.is_instance_of::<PyMessage>() {
+            let py_msg: PyMessage = msg_bound.extract()?;
+            py_msg.to_message()
+        } else {
+            // Pickle any other Python object
+            let pickled = pickle_object(py, &msg)?;
+            Message::single(SEALED_PY_MSG_TYPE, pickled)
+        };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             actor_ref.send_oneway(actor_msg).await.map_err(to_pyerr)?;
@@ -679,13 +806,26 @@ impl Actor for PythonActorWrapper {
         let (handler, event_loop) =
             Python::with_gil(|py| (self.handler.clone_ref(py), self.event_loop.clone_ref(py)));
 
+        // Check if this is a sealed Python message
+        let is_sealed_msg = msg.msg_type() == SEALED_PY_MSG_TYPE;
         let py_msg = PyMessage::from_rust_message(msg);
 
         let response = python_executor()
             .execute(move || {
                 Python::with_gil(|py| -> PyResult<PyActorResponse> {
                     let receive_method = handler.getattr(py, "receive")?;
-                    let result = receive_method.call1(py, (py_msg,))?;
+
+                    // If sealed message, unpickle and pass the original Python object
+                    let call_arg: PyObject = if is_sealed_msg {
+                        let payload = py_msg.payload.as_ref().ok_or_else(|| {
+                            pyo3::exceptions::PyValueError::new_err("Expected payload for sealed message")
+                        })?;
+                        unpickle_object(py, payload)?
+                    } else {
+                        py_msg.into_pyobject(py)?.into_any().unbind()
+                    };
+
+                    let result = receive_method.call1(py, (call_arg,))?;
 
                     let asyncio = py.import("asyncio")?;
                     let is_coro = asyncio
@@ -706,6 +846,7 @@ impl Actor for PythonActorWrapper {
                         return Ok(PyActorResponse::Single(PyMessage::empty()));
                     }
 
+                    // Handle StreamMessage
                     if py_result_bound.is_instance_of::<PyStreamMessage>() {
                         let stream_msg_cell = py_result_bound.downcast::<PyStreamMessage>()?;
 
@@ -733,7 +874,9 @@ impl Actor for PythonActorWrapper {
                         }
                     }
 
-                    if let Ok(msg) = py_result_bound.extract::<PyMessage>() {
+                    // Handle PyMessage (for Rust actor communication)
+                    if py_result_bound.is_instance_of::<PyMessage>() {
+                        let msg: PyMessage = py_result_bound.extract()?;
                         if msg.is_stream() {
                             return Err(pyo3::exceptions::PyValueError::new_err(
                                 "PyMessage with stream cannot be returned from receive(), use StreamMessage instead"
@@ -743,7 +886,9 @@ impl Actor for PythonActorWrapper {
                         }
                     }
 
-                    Ok(PyActorResponse::Single(PyMessage::empty()))
+                    // For any other Python object, pickle it and return as SealedPyMessage
+                    let pickled = pickle_object(py, &py_result)?;
+                    Ok(PyActorResponse::Sealed(pickled))
                 })
             })
             .await
@@ -754,6 +899,9 @@ impl Actor for PythonActorWrapper {
             PyActorResponse::Single(msg) => Ok(msg.to_message()),
             PyActorResponse::StreamChannel(msg_type, rx) => {
                 Ok(Message::from_channel(&msg_type, rx))
+            }
+            PyActorResponse::Sealed(data) => {
+                Ok(Message::single(SEALED_PY_MSG_TYPE, data))
             }
         }
     }
@@ -1005,5 +1153,7 @@ pub fn add_to_module(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyStreamReader>()?;
     m.add_class::<PyStreamWriter>()?;
     m.add_class::<PyStreamMessage>()?;
+    // Sealed message support (for Python-to-Python communication)
+    m.add_class::<PySealedMessage>()?;
     Ok(())
 }
