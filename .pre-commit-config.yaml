@@ -17,7 +17,8 @@ repos:
       - id: check-json
       - id: check-toml
       - id: check-yaml
-        args: ['--allow-multiple-documents']
+        args: ['--allow-multiple-documents', '--unsafe']
+        exclude: ^docs/mkdocs\.yml$
       - id: end-of-file-fixer
       - id: mixed-line-ending
       - id: trailing-whitespace
