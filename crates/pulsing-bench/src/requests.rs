@@ -925,7 +925,7 @@ mod tests {
         let t = tokio::spawn(async move {
             while let Some(item) = rx.recv().await {
                 let response = item;
-                assert_eq!(response.failed, false);
+                assert!(!response.failed);
                 num_tokens_clone.fetch_add(
                     response.num_generated_tokens,
                     std::sync::atomic::Ordering::SeqCst,
@@ -933,10 +933,7 @@ mod tests {
             }
         });
         t.await.unwrap();
-        assert_eq!(
-            num_tokens.load(std::sync::atomic::Ordering::SeqCst),
-            16 as u64
-        );
+        assert_eq!(num_tokens.load(std::sync::atomic::Ordering::SeqCst), 16_u64);
     }
 
     /// Test that the timings are correct
@@ -1078,7 +1075,7 @@ mod tests {
         t.await.unwrap();
         let responses = responses.read().await;
         assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0].failed, true);
+        assert!(responses[0].failed);
     }
 
     /// Test that bad responses are handled correctly
@@ -1124,7 +1121,7 @@ mod tests {
         t.await.unwrap();
         let responses = responses.read().await;
         assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0].failed, true);
+        assert!(responses[0].failed);
     }
 
     /// Test that malformed JSON responses are handled correctly
@@ -1170,7 +1167,7 @@ mod tests {
         t.await.unwrap();
         let responses = responses.read().await;
         assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0].failed, true);
+        assert!(responses[0].failed);
     }
 
     /// Test that request timeout is handled correctly
@@ -1218,7 +1215,7 @@ mod tests {
         t.await.unwrap();
         let responses = responses.read().await;
         assert_eq!(responses.len(), 1);
-        assert_eq!(responses[0].failed, true);
+        assert!(responses[0].failed);
     }
 
     /// Test that conversations are correctly loaded

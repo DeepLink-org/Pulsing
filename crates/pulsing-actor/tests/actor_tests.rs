@@ -1,6 +1,5 @@
 //! Actor core functionality tests
 
-use pulsing_actor::actor::ActorId;
 use pulsing_actor::prelude::*;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
@@ -118,7 +117,7 @@ mod basic_tests {
         let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
         // ActorId now uses u128 (node_id:local_id), verify it's a local actor
         assert!(actor_ref.is_local());
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 
     #[tokio::test]
@@ -132,7 +131,7 @@ mod basic_tests {
         let response: Pong = actor_ref.ask(Ping { value: 3 }).await.unwrap();
         assert_eq!(response.result, 8);
 
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 
     #[tokio::test]
@@ -146,7 +145,7 @@ mod basic_tests {
         let response: StateResponse = actor_ref.ask(GetState).await.unwrap();
         assert_eq!(response.value, 5);
 
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 
     #[tokio::test]
@@ -159,7 +158,7 @@ mod basic_tests {
             assert_eq!(response.result, (1..=i).sum::<i32>());
         }
 
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 }
 
@@ -185,7 +184,7 @@ mod lifecycle_tests {
 
         assert_eq!(start_count.load(Ordering::SeqCst), 1);
 
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 
     #[tokio::test]
@@ -259,7 +258,7 @@ mod error_tests {
         let response: Pong = actor_ref.ask(Ping { value: 1 }).await.unwrap();
         assert_eq!(response.result, 1);
 
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 
     #[tokio::test]
@@ -274,7 +273,7 @@ mod error_tests {
         let result = actor_ref.send(msg).await;
         assert!(result.is_err());
 
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 }
 
@@ -305,7 +304,7 @@ mod concurrent_tests {
         let response: StateResponse = actor_ref.ask(GetState).await.unwrap();
         assert_eq!(response.value, (0..10).sum::<i32>());
 
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 
     #[tokio::test]
@@ -321,7 +320,7 @@ mod concurrent_tests {
 
         assert!(elapsed >= Duration::from_millis(100));
 
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 }
 
@@ -354,7 +353,7 @@ mod spawn_tests {
             assert_eq!(response.result, i as i32 + 1);
         }
 
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 
     #[tokio::test]
@@ -377,6 +376,6 @@ mod spawn_tests {
         let response: StateResponse = ref2.ask(GetState).await.unwrap();
         assert_eq!(response.value, 0);
 
-        system.shutdown().await;
+        let _ = system.shutdown().await;
     }
 }

@@ -1,10 +1,9 @@
 //! Comprehensive tests for the actor addressing system
 
-use pulsing_actor::actor::{ActorAddress, ActorId, ActorPath, NodeId};
+use pulsing_actor::actor::{ActorId, ActorPath, NodeId};
 use pulsing_actor::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 // ============================================================================
 // Test Messages
@@ -156,7 +155,7 @@ mod integration_tests {
             .await
             .unwrap();
 
-        let actor_id = actor_ref.id().clone();
+        let actor_id = *actor_ref.id();
         let looked_up_ref = system.actor_ref(&actor_id).await.unwrap();
 
         let response: EchoResponse = looked_up_ref

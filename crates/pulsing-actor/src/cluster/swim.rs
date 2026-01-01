@@ -179,7 +179,7 @@ mod tests {
     #[tokio::test]
     async fn test_swim_detector_ping() {
         let node = NodeId::generate();
-        let detector = SwimDetector::new(node.clone(), SwimConfig::default());
+        let detector = SwimDetector::new(node, SwimConfig::default());
 
         let (seq, ping) = detector.create_ping();
         assert_eq!(seq, 0);
@@ -196,7 +196,7 @@ mod tests {
     #[tokio::test]
     async fn test_swim_detector_ack() {
         let node = NodeId::generate();
-        let detector = SwimDetector::new(node.clone(), SwimConfig::default());
+        let detector = SwimDetector::new(node, SwimConfig::default());
 
         let ack = detector.create_ack(42);
         match ack {

@@ -1,6 +1,6 @@
 //! Integration tests for the complete actor system
 
-use pulsing_actor::actor::{ActorAddress, ActorId, ActorPath, NodeId};
+use pulsing_actor::actor::{ActorAddress, ActorPath};
 use pulsing_actor::prelude::*;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Arc;

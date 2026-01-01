@@ -1,6 +1,6 @@
 //! Multi-node cluster integration tests
 
-use pulsing_actor::actor::{ActorAddress, ActorId, ActorPath, NodeId};
+use pulsing_actor::actor::{ActorAddress, ActorPath};
 use pulsing_actor::prelude::*;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
@@ -683,7 +683,7 @@ mod addressing_multi_node_tests {
         let config1 = create_cluster_config(20087);
         let system1 = ActorSystem::new(config1).await.unwrap();
         let gossip1_addr = system1.addr();
-        let node1_id = system1.node_id().clone();
+        let node1_id = *system1.node_id();
 
         // Node 2 joins
         let mut config2 = create_cluster_config(20088);

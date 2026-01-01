@@ -60,7 +60,7 @@ fn test_member_info_creation() {
     let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
     let gossip_addr: SocketAddr = "127.0.0.1:7000".parse().unwrap();
 
-    let member = MemberInfo::new(node_id.clone(), addr, gossip_addr);
+    let member = MemberInfo::new(node_id, addr, gossip_addr);
 
     assert_eq!(member.node_id, node_id);
     assert_eq!(member.addr, addr);
@@ -88,7 +88,7 @@ fn test_member_info_supersedes_by_incarnation() {
     let node_id = NodeId::generate();
     let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
 
-    let mut m1 = MemberInfo::new(node_id.clone(), addr, addr);
+    let mut m1 = MemberInfo::new(node_id, addr, addr);
     let m2 = MemberInfo::new(node_id, addr, addr);
 
     // Same incarnation - neither supersedes
@@ -106,8 +106,8 @@ fn test_member_info_supersedes_by_status() {
     let node_id = NodeId::generate();
     let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
 
-    let mut alive = MemberInfo::new(node_id.clone(), addr, addr);
-    let mut suspect = MemberInfo::new(node_id.clone(), addr, addr);
+    let mut alive = MemberInfo::new(node_id, addr, addr);
+    let mut suspect = MemberInfo::new(node_id, addr, addr);
     let mut dead = MemberInfo::new(node_id, addr, addr);
 
     alive.status = MemberStatus::Alive;
@@ -239,8 +239,8 @@ fn test_node_id_display() {
 #[test]
 fn test_node_id_from_string() {
     let original = NodeId::generate();
-    let as_string = original.0.clone();
-    let reconstructed = NodeId(as_string.clone());
+    let as_string = original.0;
+    let reconstructed = NodeId(as_string);
 
     assert_eq!(original, reconstructed);
 }
@@ -254,7 +254,7 @@ async fn test_swim_ping_ack() {
     use pulsing_actor::cluster::swim::{SwimConfig, SwimDetector};
 
     let node = NodeId::generate();
-    let detector = SwimDetector::new(node.clone(), SwimConfig::default());
+    let detector = SwimDetector::new(node, SwimConfig::default());
 
     let (seq, ping) = detector.create_ping();
     assert!(matches!(
@@ -263,7 +263,7 @@ async fn test_swim_ping_ack() {
     ));
 
     let target = NodeId::generate();
-    detector.ping_sent(seq, target.clone()).await;
+    detector.ping_sent(seq, target).await;
 
     // ack_received removes the pending ping
     detector.ack_received(seq).await;
@@ -286,7 +286,7 @@ async fn test_swim_timeout_detection() {
 
     let (seq, _) = detector.create_ping();
     let target = NodeId::generate();
-    detector.ping_sent(seq, target.clone()).await;
+    detector.ping_sent(seq, target).await;
 
     // Wait for ping timeout
     tokio::time::sleep(Duration::from_millis(60)).await;

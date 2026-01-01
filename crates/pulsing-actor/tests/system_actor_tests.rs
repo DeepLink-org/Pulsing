@@ -227,12 +227,10 @@ async fn test_system_actor_health_check() {
     match parsed {
         SystemResponse::Health {
             status,
-            actors_count,
-            uptime_secs,
+            actors_count: _,
+            uptime_secs: _,
         } => {
             assert_eq!(status, "healthy");
-            assert!(actors_count >= 0);
-            assert!(uptime_secs >= 0);
         }
         _ => panic!("Expected Health response"),
     }
@@ -253,11 +251,10 @@ async fn test_system_actor_get_node_info() {
         SystemResponse::NodeInfo {
             node_id,
             addr,
-            uptime_secs,
+            uptime_secs: _,
         } => {
             assert_eq!(node_id, system.node_id().0);
             assert!(!addr.is_empty());
-            assert!(uptime_secs >= 0);
         }
         _ => panic!("Expected NodeInfo response"),
     }
@@ -282,17 +279,13 @@ async fn test_system_actor_get_metrics() {
 
     match parsed {
         SystemResponse::Metrics {
-            actors_count,
+            actors_count: _,
             messages_total,
-            actors_created,
-            actors_stopped,
-            uptime_secs,
+            actors_created: _,
+            actors_stopped: _,
+            uptime_secs: _,
         } => {
-            assert!(actors_count >= 0);
             assert!(messages_total >= 4); // 3 pings + 1 get_metrics
-            assert!(actors_created >= 0);
-            assert!(actors_stopped >= 0);
-            assert!(uptime_secs >= 0);
         }
         _ => panic!("Expected Metrics response"),
     }
