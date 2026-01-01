@@ -370,9 +370,15 @@ mod tests {
         assert!(msg.is_stream());
 
         tokio::spawn(async move {
-            tx.send(Ok(Message::single("chunk", vec![1]))).await.unwrap();
-            tx.send(Ok(Message::single("chunk", vec![2]))).await.unwrap();
-            tx.send(Ok(Message::single("chunk", vec![3]))).await.unwrap();
+            tx.send(Ok(Message::single("chunk", vec![1])))
+                .await
+                .unwrap();
+            tx.send(Ok(Message::single("chunk", vec![2])))
+                .await
+                .unwrap();
+            tx.send(Ok(Message::single("chunk", vec![3])))
+                .await
+                .unwrap();
         });
 
         let Message::Stream { mut stream, .. } = msg else {

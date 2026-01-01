@@ -316,7 +316,6 @@ impl PySealedMessage {
     }
 }
 
-
 /// Helper function to pickle a Python object in Rust
 fn pickle_object(py: Python<'_>, obj: &PyObject) -> PyResult<Vec<u8>> {
     let pickle = py.import("pickle")?;
@@ -344,7 +343,6 @@ fn unpickle_object(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
 pub struct PyStreamReader {
     stream: Arc<TokioMutex<Option<pulsing_actor::actor::MessageStream>>>,
 }
-
 
 #[pymethods]
 impl PyStreamReader {
@@ -509,7 +507,10 @@ impl PyStreamMessage {
     }
 
     fn __repr__(&self) -> String {
-        format!("StreamMessage(default_msg_type='{}')", self.default_msg_type)
+        format!(
+            "StreamMessage(default_msg_type='{}')",
+            self.default_msg_type
+        )
     }
 }
 
