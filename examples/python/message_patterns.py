@@ -36,7 +36,7 @@ class PatternDemo(Actor):
             async def produce():
                 try:
                     for token in ["Hello", " ", "World", "!"]:
-                        await writer.write_json({"token": token})
+                        await writer.write({"token": token})
                         await asyncio.sleep(0.1)
                     await writer.close()
                 except Exception:

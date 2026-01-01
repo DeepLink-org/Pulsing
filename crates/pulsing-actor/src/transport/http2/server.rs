@@ -345,8 +345,11 @@ impl Http2Server {
                     .body(full_body(data))
                     .unwrap())
             }
-            Ok(Message::Stream { stream, .. }) => {
-                // Stream response - convert to NDJSON stream
+            Ok(Message::Stream {
+                default_msg_type,
+                stream,
+            }) => {
+                // Stream response - convert Message stream to NDJSON stream
                 let (tx, rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, Infallible>>(32);
 
                 tokio::spawn(async move {
@@ -355,7 +358,7 @@ impl Http2Server {
 
                     while let Some(result) = stream.next().await {
                         let frame = match result {
-                            Ok(data) => StreamFrame::data(seq, "", &data),
+                            Ok(msg) => StreamFrame::from_message(seq, &msg, &default_msg_type),
                             Err(e) => StreamFrame::error(seq, e.to_string()),
                         };
 

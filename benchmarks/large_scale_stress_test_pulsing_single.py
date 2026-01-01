@@ -87,7 +87,7 @@ class StreamWorker(Actor):
             async def produce():
                 try:
                     for i in range(count):
-                        await writer.write_json({"index": i, "ts": time.time()})
+                        await writer.write({"index": i, "ts": time.time()})
                         await asyncio.sleep(delay)
                     await writer.close()
                 except Exception:

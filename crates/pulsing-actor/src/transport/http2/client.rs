@@ -224,6 +224,8 @@ impl Http2Client {
     }
 
     /// Send a stream request and receive streaming response as MessageStream
+    ///
+    /// Each frame is converted to a `Message::Single` preserving the msg_type.
     pub async fn ask_stream_raw(
         &self,
         addr: SocketAddr,
@@ -233,23 +235,14 @@ impl Http2Client {
     ) -> anyhow::Result<MessageStream> {
         let stream_handle = self.ask_stream(addr, path, msg_type, payload).await?;
 
-        // Convert StreamFrame stream to Message stream
+        // Convert StreamFrame stream to Message stream using to_message()
         let msg_stream = stream_handle.filter_map(|result| async move {
             match result {
                 Ok(frame) => {
-                    // Skip end frames with no data
-                    if frame.end && frame.data.is_empty() {
-                        return None;
-                    }
-
-                    // Check for errors
-                    if let Some(error) = frame.error {
-                        return Some(Err(anyhow::anyhow!("{}", error)));
-                    }
-
-                    // Decode data
-                    match frame.decode_data() {
-                        Ok(payload) => Some(Ok(Message::single(&frame.msg_type, payload))),
+                    // Use the new to_message() method
+                    match frame.to_message() {
+                        Ok(Some(msg)) => Some(Ok(msg)),
+                        Ok(None) => None, // End frame with no data
                         Err(e) => Some(Err(e)),
                     }
                 }
@@ -292,7 +285,7 @@ impl Http2Client {
             .unwrap_or("single");
 
         if response_type == "stream" {
-            // Stream response - parse as NDJSON
+            // Stream response - parse as NDJSON, return MessageStream
             let cancel = CancellationToken::new();
             let cancel_clone = cancel.clone();
             let stream_timeout = self.config.stream_timeout;
@@ -301,17 +294,14 @@ impl Http2Client {
                 Self::body_to_frame_stream(body_stream, cancel_clone, stream_timeout);
             let stream_handle = StreamHandle::new(frame_stream, cancel);
 
-            let payload_stream = stream_handle.filter_map(|result| async move {
+            // Convert StreamFrame stream to Message stream (each frame -> Message::Single)
+            let msg_stream = stream_handle.filter_map(|result| async move {
                 match result {
                     Ok(frame) => {
-                        if frame.end && frame.data.is_empty() {
-                            return None;
-                        }
-                        if let Some(error) = frame.error {
-                            return Some(Err(anyhow::anyhow!("{}", error)));
-                        }
-                        match frame.decode_data() {
-                            Ok(payload) => Some(Ok(payload)),
+                        // Use the new to_message() method
+                        match frame.to_message() {
+                            Ok(Some(msg)) => Some(Ok(msg)),
+                            Ok(None) => None, // End frame with no data
                             Err(e) => Some(Err(e)),
                         }
                     }
@@ -320,8 +310,8 @@ impl Http2Client {
             });
 
             Ok(Message::Stream {
-                msg_type: String::new(),
-                stream: Box::pin(payload_stream),
+                default_msg_type: String::new(),
+                stream: Box::pin(msg_stream),
             })
         } else {
             // Single response - read body directly

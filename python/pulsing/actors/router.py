@@ -265,9 +265,8 @@ class _OpenAIHandler:
 
             reader = stream_message.stream_reader()
 
-            async for chunk_bytes in reader:
+            async for chunk in reader:
                 try:
-                    chunk = json.loads(chunk_bytes)
                     finish_reason = chunk.get("finish_reason")
                     text = chunk.get("text", "")
 

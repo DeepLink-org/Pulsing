@@ -223,7 +223,7 @@ class BucketStorage(Actor):
                             )
 
                         if records:
-                            await writer.write_json(
+                            await writer.write(
                                 {
                                     "records": records,
                                     "offset": current_offset,

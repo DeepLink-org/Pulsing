@@ -105,17 +105,14 @@ pub enum StopReason {
 // Messaging
 // ============================================================================
 
-/// Stream type for payload data
-pub type PayloadStream = Pin<Box<dyn Stream<Item = anyhow::Result<Vec<u8>>> + Send>>;
-
-/// Message stream type (for streaming scenarios)
+/// Message stream type (stream of Single messages)
 pub type MessageStream = Pin<Box<dyn Stream<Item = anyhow::Result<Message>> + Send>>;
 
 /// Unified message type for both requests and responses
 ///
 /// Message is an enum with two variants:
 /// - `Single`: for traditional request-response with a single data payload
-/// - `Stream`: for streaming scenarios with a payload stream
+/// - `Stream`: for streaming scenarios composed of Single messages
 pub enum Message {
     /// Single data message
     Single {
@@ -124,12 +121,12 @@ pub enum Message {
         /// Message data
         data: Vec<u8>,
     },
-    /// Streaming data message
+    /// Streaming data message (stream of Single messages)
     Stream {
-        /// Message type identifier (empty for responses)
-        msg_type: String,
-        /// Payload stream
-        stream: PayloadStream,
+        /// Default message type (used if chunk doesn't specify one)
+        default_msg_type: String,
+        /// Stream of Single messages
+        stream: MessageStream,
     },
 }
 
@@ -162,32 +159,34 @@ impl Message {
 
     /// Create a streaming message from a channel receiver
     pub fn from_channel(
-        msg_type: impl Into<String>,
-        rx: mpsc::Receiver<anyhow::Result<Vec<u8>>>,
+        default_msg_type: impl Into<String>,
+        rx: mpsc::Receiver<anyhow::Result<Message>>,
     ) -> Self {
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         Message::Stream {
-            msg_type: msg_type.into(),
+            default_msg_type: default_msg_type.into(),
             stream: Box::pin(stream),
         }
     }
 
     /// Create a streaming message from a stream
-    pub fn stream<S>(msg_type: impl Into<String>, stream: S) -> Self
+    pub fn stream<S>(default_msg_type: impl Into<String>, stream: S) -> Self
     where
-        S: Stream<Item = anyhow::Result<Vec<u8>>> + Send + 'static,
+        S: Stream<Item = anyhow::Result<Message>> + Send + 'static,
     {
         Message::Stream {
-            msg_type: msg_type.into(),
+            default_msg_type: default_msg_type.into(),
             stream: Box::pin(stream),
         }
     }
 
-    /// Get message type (works for both variants)
+    /// Get message type (for Single) or default message type (for Stream)
     pub fn msg_type(&self) -> &str {
         match self {
             Message::Single { msg_type, .. } => msg_type,
-            Message::Stream { msg_type, .. } => msg_type,
+            Message::Stream {
+                default_msg_type, ..
+            } => default_msg_type,
         }
     }
 
@@ -210,9 +209,11 @@ impl fmt::Debug for Message {
                 .field("msg_type", msg_type)
                 .field("data_len", &data.len())
                 .finish(),
-            Message::Stream { msg_type, .. } => f
+            Message::Stream {
+                default_msg_type, ..
+            } => f
                 .debug_struct("Message::Stream")
-                .field("msg_type", msg_type)
+                .field("default_msg_type", default_msg_type)
                 .finish_non_exhaustive(),
         }
     }
@@ -265,7 +266,8 @@ pub trait Actor: Send + Sync + 'static {
     ///     let (tx, rx) = mpsc::channel(32);
     ///     tokio::spawn(async move {
     ///         for i in 0..10 {
-    ///             tx.send(Ok(bincode::serialize(&i).unwrap())).await;
+    ///             let data = bincode::serialize(&i).unwrap();
+    ///             tx.send(Ok(Message::single("item", data))).await;
     ///         }
     ///     });
     ///     Ok(Message::from_channel("StreamResponse", rx))
@@ -281,7 +283,8 @@ pub trait Actor: Send + Sync + 'static {
     ///     };
     ///     let mut sum = 0;
     ///     while let Some(chunk) = stream.next().await {
-    ///         let val: i32 = bincode::deserialize(&chunk?)?;
+    ///         let Message::Single { data, .. } = chunk? else { continue };
+    ///         let val: i32 = bincode::deserialize(&data)?;
     ///         sum += val;
     ///     }
     ///     Message::pack(&sum)
@@ -299,6 +302,7 @@ pub trait Actor: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
 
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct TestMessage {
@@ -359,18 +363,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_message_server_streaming() {
-        use tokio_stream::StreamExt;
-
-        // Simulate a server streaming response
-        let (tx, rx) = mpsc::channel(10);
+        // Simulate a server streaming response with Message stream
+        let (tx, rx) = mpsc::channel::<anyhow::Result<Message>>(10);
         let msg = Message::from_channel("StreamResponse", rx);
 
         assert!(msg.is_stream());
 
         tokio::spawn(async move {
-            tx.send(Ok(vec![1])).await.unwrap();
-            tx.send(Ok(vec![2])).await.unwrap();
-            tx.send(Ok(vec![3])).await.unwrap();
+            tx.send(Ok(Message::single("chunk", vec![1]))).await.unwrap();
+            tx.send(Ok(Message::single("chunk", vec![2]))).await.unwrap();
+            tx.send(Ok(Message::single("chunk", vec![3]))).await.unwrap();
         });
 
         let Message::Stream { mut stream, .. } = msg else {
@@ -378,8 +380,11 @@ mod tests {
         };
 
         let mut values = Vec::new();
-        while let Some(item) = stream.next().await {
-            values.push(item.unwrap()[0]);
+        while let Some(item) = StreamExt::next(&mut stream).await {
+            let msg: Message = item.unwrap();
+            if let Message::Single { data, .. } = msg {
+                values.push(data[0]);
+            }
         }
 
         assert_eq!(values, vec![1, 2, 3]);
@@ -387,15 +392,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_message_client_streaming() {
-        use tokio_stream::StreamExt;
-
         // Simulate a client streaming request
-        let (tx, rx) = mpsc::channel(10);
+        let (tx, rx) = mpsc::channel::<anyhow::Result<Message>>(10);
         let msg = Message::from_channel("StreamRequest", rx);
 
         tokio::spawn(async move {
-            tx.send(Ok(vec![10])).await.unwrap();
-            tx.send(Ok(vec![20])).await.unwrap();
+            tx.send(Ok(Message::single("", vec![10]))).await.unwrap();
+            tx.send(Ok(Message::single("", vec![20]))).await.unwrap();
         });
 
         let Message::Stream { mut stream, .. } = msg else {
@@ -403,10 +406,50 @@ mod tests {
         };
 
         let mut sum = 0;
-        while let Some(item) = stream.next().await {
-            sum += item.unwrap()[0];
+        while let Some(item) = StreamExt::next(&mut stream).await {
+            let msg: Message = item.unwrap();
+            if let Message::Single { data, .. } = msg {
+                sum += data[0];
+            }
         }
 
         assert_eq!(sum, 30);
+    }
+
+    #[tokio::test]
+    async fn test_message_stream_heterogeneous() {
+        // Test heterogeneous stream - different message types in one stream
+        let (tx, rx) = mpsc::channel::<anyhow::Result<Message>>(10);
+        let msg = Message::from_channel("MixedStream", rx);
+
+        tokio::spawn(async move {
+            tx.send(Ok(Message::single("token", b"Hello".to_vec())))
+                .await
+                .unwrap();
+            tx.send(Ok(Message::single("token", b" World".to_vec())))
+                .await
+                .unwrap();
+            // Different type at the end
+            tx.send(Ok(Message::single(
+                "usage",
+                serde_json::to_vec(&serde_json::json!({"tokens": 2})).unwrap(),
+            )))
+            .await
+            .unwrap();
+        });
+
+        let Message::Stream { mut stream, .. } = msg else {
+            panic!("expected stream")
+        };
+
+        let mut types = Vec::new();
+        while let Some(item) = StreamExt::next(&mut stream).await {
+            let msg: Message = item.unwrap();
+            if let Message::Single { msg_type, .. } = msg {
+                types.push(msg_type);
+            }
+        }
+
+        assert_eq!(types, vec!["token", "token", "usage"]);
     }
 }

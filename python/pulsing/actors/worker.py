@@ -112,7 +112,7 @@ class TransformersWorker(Actor):
 
         for writer in self._load_subscribers:
             try:
-                await writer.write_json(snapshot)
+                await writer.write(snapshot)
             except Exception:
                 dead_writers.append(writer)
 
@@ -182,12 +182,12 @@ class TransformersWorker(Actor):
         async def produce():
             try:
                 # 立即发送当前状态
-                await writer.write_json(worker._get_load_snapshot())
+                await writer.write(worker._get_load_snapshot())
 
                 # 定期推送 (每秒)
                 while True:
                     await asyncio.sleep(1.0)
-                    await writer.write_json(worker._get_load_snapshot())
+                    await writer.write(worker._get_load_snapshot())
             except Exception:
                 pass
             finally:
@@ -295,7 +295,7 @@ class TransformersWorker(Actor):
                 for text in streamer:
                     if text:
                         token_count += 1
-                        await writer.write_json(
+                        await writer.write(
                             {
                                 "text": text,
                                 "worker_id": worker.worker_id,
@@ -303,7 +303,7 @@ class TransformersWorker(Actor):
                         )
                 thread.join()
 
-                await writer.write_json(
+                await writer.write(
                     {
                         "text": "",
                         "finish_reason": "stop",

@@ -37,7 +37,7 @@ class TransformersWorker(Actor):
 
         async def produce():
             while True:
-                await writer.write_json(self._get_load_snapshot())
+                await writer.write(self._get_load_snapshot())
                 await asyncio.sleep(1.0)
 
         asyncio.create_task(produce())

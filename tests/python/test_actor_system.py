@@ -84,7 +84,7 @@ class StreamingGeneratorActor(Actor):
             async def produce():
                 try:
                     for i in range(count):
-                        await writer.write_json({"index": i, "token": f"token_{i}"})
+                        await writer.write({"index": i, "token": f"token_{i}"})
                         await asyncio.sleep(delay)
                     await writer.close()
                 except Exception as e:
@@ -100,7 +100,7 @@ class StreamingGeneratorActor(Actor):
             async def produce_with_error():
                 try:
                     for i in range(3):
-                        await writer.write_json({"index": i})
+                        await writer.write({"index": i})
                         await asyncio.sleep(0.01)
                     await writer.error("Simulated error at index 3")
                 except Exception as e:
@@ -121,8 +121,7 @@ class StreamConsumerActor(Actor):
             reader = msg.stream_reader()
             items = []
             try:
-                async for chunk in reader:
-                    data = json.loads(chunk)
+                async for data in reader:
                     items.append(data)
             except Exception as e:
                 return Message.from_json("error", {"message": str(e)})
@@ -146,15 +145,14 @@ class BidirectionalStreamActor(Actor):
 
             async def process():
                 try:
-                    async for chunk in reader:
-                        data = json.loads(chunk)
+                    async for data in reader:
                         # Transform each item
                         processed = {
                             "original": data,
                             "processed": True,
                             "doubled": data.get("value", 0) * 2,
                         }
-                        await writer.write_json(processed)
+                        await writer.write(processed)
                     await writer.close()
                 except Exception as e:
                     await writer.error(str(e))
@@ -348,8 +346,7 @@ async def test_streaming_response_basic(actor_system):
     # Consume the stream
     reader = response.stream_reader()
     items = []
-    async for chunk in reader:
-        data = json.loads(chunk)
+    async for data in reader:
         items.append(data)
 
     # Verify all items received
@@ -370,8 +367,7 @@ async def test_streaming_response_with_stream_reader(actor_system):
     reader = response.stream_reader()
 
     items = []
-    async for chunk in reader:
-        data = json.loads(chunk)
+    async for data in reader:
         items.append(data)
 
     assert len(items) == 3
@@ -406,8 +402,7 @@ async def test_streaming_response_with_error(actor_system):
     error_caught = False
 
     try:
-        async for chunk in reader:
-            data = json.loads(chunk)
+        async for data in reader:
             items.append(data)
     except RuntimeError as e:
         error_caught = True
@@ -535,8 +530,7 @@ async def test_remote_streaming_response(cluster_systems):
 
     reader = response.stream_reader()
     items = []
-    async for chunk in reader:
-        data = json.loads(chunk)
+    async for data in reader:
         items.append(data)
 
     assert len(items) == 5

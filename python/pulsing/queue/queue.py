@@ -168,8 +168,7 @@ class Queue:
 
         records = []
         reader = response.stream_reader()
-        async for chunk_bytes in reader:
-            chunk = json.loads(chunk_bytes)
+        async for chunk in reader:
             for record in chunk.get("records", []):
                 records.append(record)
                 if len(records) >= limit:

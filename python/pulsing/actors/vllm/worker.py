@@ -575,7 +575,7 @@ class VllmWorker(Actor):
             try:
                 data = msg.to_json()
                 async for chunk in self._handler.generate(data):
-                    await writer.write_json(chunk)
+                    await writer.write(chunk)
                     if chunk.get("finish_reason"):
                         break
             except Exception as e:

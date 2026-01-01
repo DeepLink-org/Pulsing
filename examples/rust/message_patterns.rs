@@ -67,9 +67,8 @@ impl Actor for DemoActor {
                 let (tx, rx) = tokio::sync::mpsc::channel(32);
                 tokio::spawn(async move {
                     for i in 1..=req.n {
-                        let _ = tx
-                            .send(Ok(bincode::serialize(&CountItem { value: i }).unwrap()))
-                            .await;
+                        let data = bincode::serialize(&CountItem { value: i }).unwrap();
+                        let _ = tx.send(Ok(Message::single("CountItem", data))).await;
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     }
                 });
@@ -85,7 +84,12 @@ impl Actor for DemoActor {
 
                 let mut total = 0;
                 while let Some(chunk) = stream.next().await {
-                    let item: SumItem = bincode::deserialize(&chunk?)?;
+                    // Stream now contains Message items
+                    let chunk_msg = chunk?;
+                    let Message::Single { data, .. } = chunk_msg else {
+                        continue;
+                    };
+                    let item: SumItem = bincode::deserialize(&data)?;
                     println!("[Actor]   +{}", item.value);
                     total += item.value;
                 }
@@ -120,7 +124,12 @@ async fn main() -> anyhow::Result<()> {
         return Err(anyhow::anyhow!("Expected stream"));
     };
     while let Some(chunk) = stream.next().await {
-        let item: CountItem = bincode::deserialize(&chunk?)?;
+        // Stream now contains Message items
+        let chunk_msg = chunk?;
+        let Message::Single { data, .. } = chunk_msg else {
+            continue;
+        };
+        let item: CountItem = bincode::deserialize(&data)?;
         println!("Received: {}", item.value);
     }
 
@@ -129,9 +138,8 @@ async fn main() -> anyhow::Result<()> {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
     tokio::spawn(async move {
         for v in [10, 20, 30] {
-            let _ = tx
-                .send(Ok(bincode::serialize(&SumItem { value: v }).unwrap()))
-                .await;
+            let data = bincode::serialize(&SumItem { value: v }).unwrap();
+            let _ = tx.send(Ok(Message::single("SumItem", data))).await;
         }
     });
     let resp: SumResult = actor

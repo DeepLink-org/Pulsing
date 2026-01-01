@@ -1,7 +1,7 @@
 //! Python bindings for the Pulsing Actor System
 
 use futures::StreamExt;
-use pulsing_actor::actor::{ActorId, ActorPath, NodeId, PayloadStream};
+use pulsing_actor::actor::{ActorId, ActorPath, NodeId};
 use pulsing_actor::prelude::*;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
@@ -139,7 +139,7 @@ pub struct PyMessage {
     /// Payload for single messages (None for stream messages)
     payload: Option<Vec<u8>>,
     /// Stream reader for stream messages (None for single messages)
-    stream_reader: Option<Arc<TokioMutex<Option<PayloadStream>>>>,
+    stream_reader: Option<Arc<TokioMutex<Option<pulsing_actor::actor::MessageStream>>>>,
 }
 
 #[pymethods]
@@ -256,8 +256,11 @@ impl PyMessage {
                 payload: Some(data),
                 stream_reader: None,
             },
-            Message::Stream { msg_type, stream } => Self {
-                msg_type,
+            Message::Stream {
+                default_msg_type,
+                stream,
+            } => Self {
+                msg_type: default_msg_type,
                 payload: None,
                 stream_reader: Some(Arc::new(TokioMutex::new(Some(stream)))),
             },
@@ -313,19 +316,6 @@ impl PySealedMessage {
     }
 }
 
-impl PySealedMessage {
-    /// Create from raw pickle bytes
-    #[allow(dead_code)]
-    fn from_bytes(data: Vec<u8>) -> Self {
-        Self { data }
-    }
-
-    /// Convert to Rust Message with special type identifier
-    #[allow(dead_code)]
-    fn to_message(&self) -> Message {
-        Message::single(SEALED_PY_MSG_TYPE, self.data.clone())
-    }
-}
 
 /// Helper function to pickle a Python object in Rust
 fn pickle_object(py: Python<'_>, obj: &PyObject) -> PyResult<Vec<u8>> {
@@ -348,19 +338,13 @@ fn unpickle_object(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
 // ============================================================================
 
 /// Async stream reader for consuming streaming messages from Rust.
+///
+/// Now reads `Message` items from the stream, providing access to msg_type per chunk.
 #[pyclass(name = "StreamReader")]
 pub struct PyStreamReader {
-    stream: Arc<TokioMutex<Option<PayloadStream>>>,
+    stream: Arc<TokioMutex<Option<pulsing_actor::actor::MessageStream>>>,
 }
 
-impl PyStreamReader {
-    #[allow(dead_code)]
-    fn new(stream: PayloadStream) -> Self {
-        Self {
-            stream: Arc::new(TokioMutex::new(Some(stream))),
-        }
-    }
-}
 
 #[pymethods]
 impl PyStreamReader {
@@ -368,6 +352,7 @@ impl PyStreamReader {
         slf
     }
 
+    /// Iterate and return Python objects (auto unpickle if sealed)
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let stream = self.stream.clone();
 
@@ -375,34 +360,22 @@ impl PyStreamReader {
             let mut guard = stream.lock().await;
             if let Some(ref mut s) = *guard {
                 match s.next().await {
-                    Some(Ok(data)) => {
-                        Python::with_gil(|py| Ok(PyBytes::new(py, &data).into_any().unbind()))
-                    }
-                    Some(Err(e)) => Err(PyRuntimeError::new_err(e.to_string())),
-                    None => {
-                        *guard = None;
-                        Err(PyStopAsyncIteration::new_err(""))
-                    }
-                }
-            } else {
-                Err(PyStopAsyncIteration::new_err("Stream already consumed"))
-            }
-        })
-    }
-
-    /// Read next chunk and parse as JSON
-    fn read_json<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let stream = self.stream.clone();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let mut guard = stream.lock().await;
-            if let Some(ref mut s) = *guard {
-                match s.next().await {
-                    Some(Ok(data)) => Python::with_gil(|py| {
-                        let value: serde_json::Value =
-                            serde_json::from_slice(&data).map_err(to_pyerr)?;
-                        let pyobj = pythonize::pythonize(py, &value)?;
-                        Ok(pyobj.unbind())
+                    Some(Ok(msg)) => Python::with_gil(|py| {
+                        // Auto unpickle if it's a sealed Python message
+                        match &msg {
+                            Message::Single { msg_type, data }
+                                if msg_type == SEALED_PY_MSG_TYPE =>
+                            {
+                                unpickle_object(py, data)
+                            }
+                            _ => {
+                                // Return as PyMessage for JSON/other types
+                                Ok(PyMessage::from_rust_message(msg)
+                                    .into_pyobject(py)?
+                                    .into_any()
+                                    .unbind())
+                            }
+                        }
                     }),
                     Some(Err(e)) => Err(PyRuntimeError::new_err(e.to_string())),
                     None => {
@@ -436,41 +409,29 @@ impl PyStreamReader {
 // ============================================================================
 
 /// Stream writer for producing streaming responses.
+///
+/// Now sends `Message::Single` items, allowing each chunk to have its own msg_type.
 #[pyclass(name = "StreamWriter")]
 pub struct PyStreamWriter {
     #[allow(clippy::type_complexity)]
-    sender: Arc<TokioMutex<Option<mpsc::Sender<anyhow::Result<Vec<u8>>>>>>,
+    sender: Arc<TokioMutex<Option<mpsc::Sender<anyhow::Result<Message>>>>>,
 }
 
 #[pymethods]
 impl PyStreamWriter {
-    /// Write raw bytes to the stream
-    fn write<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+    /// Write any Python object to the stream (auto pickle)
+    ///
+    /// This is the recommended method for Python-to-Python streaming.
+    /// Objects are automatically pickled and will be unpickled on the reader side.
+    fn write<'py>(&self, py: Python<'py>, obj: PyObject) -> PyResult<Bound<'py, PyAny>> {
+        let pickled = pickle_object(py, &obj)?;
         let sender = self.sender.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = sender.lock().await;
             if let Some(ref tx) = *guard {
-                tx.send(Ok(data))
-                    .await
-                    .map_err(|_| PyRuntimeError::new_err("Stream closed"))?;
-                Ok(())
-            } else {
-                Err(PyRuntimeError::new_err("Writer already closed"))
-            }
-        })
-    }
-
-    /// Write an object as JSON to the stream
-    fn write_json<'py>(&self, py: Python<'py>, data: PyObject) -> PyResult<Bound<'py, PyAny>> {
-        let json_value: serde_json::Value = pythonize::depythonize(&data.into_bound(py))?;
-        let payload = serde_json::to_vec(&json_value).map_err(to_pyerr)?;
-        let sender = self.sender.clone();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let guard = sender.lock().await;
-            if let Some(ref tx) = *guard {
-                tx.send(Ok(payload))
+                let msg = Message::single(SEALED_PY_MSG_TYPE, pickled);
+                tx.send(Ok(msg))
                     .await
                     .map_err(|_| PyRuntimeError::new_err("Stream closed"))?;
                 Ok(())
@@ -512,23 +473,28 @@ impl PyStreamWriter {
 // ============================================================================
 
 /// Streaming message for returning stream responses from Python actors.
+///
+/// Now uses `Message` stream, allowing heterogeneous message types in the stream.
 #[pyclass(name = "StreamMessage")]
 pub struct PyStreamMessage {
-    msg_type: String,
+    /// Default message type (used when chunk doesn't specify one)
+    default_msg_type: String,
     #[allow(clippy::type_complexity)]
-    receiver: Arc<StdMutex<Option<mpsc::Receiver<anyhow::Result<Vec<u8>>>>>>,
+    receiver: Arc<StdMutex<Option<mpsc::Receiver<anyhow::Result<Message>>>>>,
 }
 
 #[pymethods]
 impl PyStreamMessage {
     /// Create a new streaming message with a writer.
+    ///
+    /// The `msg_type` is the default message type for chunks that don't specify their own.
     #[staticmethod]
     #[pyo3(signature = (msg_type, buffer_size=32))]
     fn create(msg_type: String, buffer_size: usize) -> (PyStreamMessage, PyStreamWriter) {
         let (tx, rx) = mpsc::channel(buffer_size);
         (
             PyStreamMessage {
-                msg_type,
+                default_msg_type: msg_type,
                 receiver: Arc::new(StdMutex::new(Some(rx))),
             },
             PyStreamWriter {
@@ -539,18 +505,19 @@ impl PyStreamMessage {
 
     #[getter]
     fn msg_type(&self) -> String {
-        self.msg_type.clone()
+        self.default_msg_type.clone()
     }
 
     fn __repr__(&self) -> String {
-        format!("StreamMessage(msg_type='{}')", self.msg_type)
+        format!("StreamMessage(default_msg_type='{}')", self.default_msg_type)
     }
 }
 
 /// Response type from Python actor - can be single, stream, or sealed (pickled)
 enum PyActorResponse {
     Single(PyMessage),
-    StreamChannel(String, mpsc::Receiver<anyhow::Result<Vec<u8>>>),
+    /// Stream of Messages with default msg_type
+    StreamChannel(String, mpsc::Receiver<anyhow::Result<Message>>),
     /// Pickled Python object for Python-to-Python communication
     Sealed(Vec<u8>),
 }
@@ -854,7 +821,7 @@ impl Actor for PythonActorWrapper {
                         let stream_msg_cell = py_result_bound.downcast::<PyStreamMessage>()?;
 
                         let borrowed = stream_msg_cell.borrow();
-                        let msg_type = borrowed.msg_type.clone();
+                        let default_msg_type = borrowed.default_msg_type.clone();
                         let receiver_arc = borrowed.receiver.clone();
                         drop(borrowed);
 
@@ -869,7 +836,7 @@ impl Actor for PythonActorWrapper {
                         };
 
                         if let Some(rx) = receiver {
-                            return Ok(PyActorResponse::StreamChannel(msg_type, rx));
+                            return Ok(PyActorResponse::StreamChannel(default_msg_type, rx));
                         } else {
                             return Err(pyo3::exceptions::PyRuntimeError::new_err(
                                 "StreamMessage receiver already consumed",
@@ -900,8 +867,8 @@ impl Actor for PythonActorWrapper {
 
         match response {
             PyActorResponse::Single(msg) => Ok(msg.to_message()),
-            PyActorResponse::StreamChannel(msg_type, rx) => {
-                Ok(Message::from_channel(&msg_type, rx))
+            PyActorResponse::StreamChannel(default_msg_type, rx) => {
+                Ok(Message::from_channel(&default_msg_type, rx))
             }
             PyActorResponse::Sealed(data) => Ok(Message::single(SEALED_PY_MSG_TYPE, data)),
         }

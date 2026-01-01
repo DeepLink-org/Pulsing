@@ -209,7 +209,9 @@ impl ActorLifecycle {
         // Get payload bytes (termination message is always single message)
         let (msg_type, payload_bytes) = match msg {
             Message::Single { msg_type, data } => (msg_type, data),
-            Message::Stream { msg_type, .. } => (msg_type, Vec::new()),
+            Message::Stream {
+                default_msg_type, ..
+            } => (default_msg_type, Vec::new()),
         };
 
         // Send to all watchers

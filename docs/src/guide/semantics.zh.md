@@ -73,7 +73,7 @@
 ### 背压与缓冲
 
 - 底层是一个**有界**的 channel（大小为 `buffer_size`）。
-- `writer.write(...)` / `writer.write_json(...)` 在 buffer 满时会 `await` → 自然背压。
+- `writer.write(...)` 在 buffer 满时会 `await` → 自然背压。
 
 ### 生命周期
 
@@ -140,3 +140,4 @@
 - **幂等键（idempotency key）**：写入/处理时携带稳定 `id`，消费端去重。
 - **显式 ack**：用 actor 状态（或单独的 commit log）记录“已处理到哪个 offset”。
 - **显式超时 + 重试策略**：把策略放在业务层，避免隐式重试带来的语义误解。
+

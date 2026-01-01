@@ -1,5 +1,6 @@
 //! Streaming response support for HTTP/2 transport
 
+use crate::actor::Message;
 use bytes::Bytes;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
@@ -42,17 +43,6 @@ impl StreamFrame {
         }
     }
 
-    /// Create a final data frame
-    pub fn data_end(seq: u64, msg_type: impl Into<String>, payload: &[u8]) -> Self {
-        Self {
-            seq,
-            msg_type: msg_type.into(),
-            data: base64_encode(payload),
-            end: true,
-            error: None,
-        }
-    }
-
     /// Create an end frame (no data)
     pub fn end(seq: u64) -> Self {
         Self {
@@ -83,6 +73,47 @@ impl StreamFrame {
     /// Check if this frame contains an error
     pub fn is_error(&self) -> bool {
         self.error.is_some()
+    }
+
+    /// Create a StreamFrame from a Message::Single
+    ///
+    /// The msg_type from the Message is preserved in the frame.
+    /// If the message has an empty msg_type, the default_msg_type is used.
+    pub fn from_message(seq: u64, msg: &Message, default_msg_type: &str) -> Self {
+        match msg {
+            Message::Single { msg_type, data } => {
+                let frame_msg_type = if msg_type.is_empty() {
+                    default_msg_type.to_string()
+                } else {
+                    msg_type.clone()
+                };
+                Self::data(seq, frame_msg_type, data)
+            }
+            Message::Stream { .. } => {
+                // Nested streams are not supported, create an error frame
+                Self::error(seq, "Nested streams are not supported")
+            }
+        }
+    }
+
+    /// Convert this frame to a Message::Single
+    ///
+    /// Returns None for end frames with no data.
+    /// Returns Err for error frames.
+    pub fn to_message(&self) -> anyhow::Result<Option<Message>> {
+        // Check for errors first
+        if let Some(ref error) = self.error {
+            return Err(anyhow::anyhow!("{}", error));
+        }
+
+        // Skip end frames with no data
+        if self.end && self.data.is_empty() {
+            return Ok(None);
+        }
+
+        // Decode and create Message
+        let data = self.decode_data()?;
+        Ok(Some(Message::single(&self.msg_type, data)))
     }
 
     /// Serialize to NDJSON line
@@ -215,5 +246,53 @@ mod tests {
         let encoded = base64_encode(original);
         let decoded = base64_decode(&encoded).unwrap();
         assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_from_message_with_msg_type() {
+        let msg = Message::single("token", b"hello");
+        let frame = StreamFrame::from_message(0, &msg, "default");
+
+        assert_eq!(frame.seq, 0);
+        assert_eq!(frame.msg_type, "token");
+        assert_eq!(frame.decode_data().unwrap(), b"hello");
+    }
+
+    #[test]
+    fn test_from_message_uses_default_msg_type() {
+        // Empty msg_type should use default
+        let msg = Message::single("", b"hello");
+        let frame = StreamFrame::from_message(0, &msg, "default_type");
+
+        assert_eq!(frame.msg_type, "default_type");
+    }
+
+    #[test]
+    fn test_to_message_roundtrip() {
+        let original = Message::single("chunk", b"data");
+        let frame = StreamFrame::from_message(0, &original, "default");
+        let recovered = frame.to_message().unwrap().unwrap();
+
+        if let Message::Single { msg_type, data } = recovered {
+            assert_eq!(msg_type, "chunk");
+            assert_eq!(data, b"data");
+        } else {
+            panic!("Expected Single message");
+        }
+    }
+
+    #[test]
+    fn test_to_message_end_frame() {
+        let frame = StreamFrame::end(0);
+        let msg = frame.to_message().unwrap();
+        assert!(msg.is_none());
+    }
+
+    #[test]
+    fn test_to_message_error_frame() {
+        let frame = StreamFrame::error(0, "test error");
+        let result = frame.to_message();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("test error"));
     }
 }
