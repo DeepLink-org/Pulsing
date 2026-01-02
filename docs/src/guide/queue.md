@@ -181,15 +181,15 @@ writer = await write_queue(
 For persistent storage, use backends from [Persisting](https://github.com/DeepLink-org/Persisting):
 
 ```python
-from pulsing.queue import register_backend, write_queue
-from persisting.queue import LanceBackend, PersistingBackend
+import pulsing as pul
+import persisting as pst
 
 # Register backends from Persisting
-register_backend("lance", LanceBackend)
-register_backend("persisting", PersistingBackend)
+pul.queue.register_backend("lance", pst.queue.LanceBackend)
+pul.queue.register_backend("persisting", pst.queue.PersistingBackend)
 
 # Use Lance backend for persistence
-writer = await write_queue(
+writer = await pul.queue.write_queue(
     system,
     topic="my_queue",
     backend="lance",
@@ -197,7 +197,7 @@ writer = await write_queue(
 )
 
 # Or use enhanced Persisting backend with WAL
-writer = await write_queue(
+writer = await pul.queue.write_queue(
     system,
     topic="my_queue",
     backend="persisting",
@@ -211,7 +211,7 @@ writer = await write_queue(
 Implement the `StorageBackend` protocol and register:
 
 ```python
-from pulsing.queue import register_backend
+import pulsing as pul
 
 class MyBackend:
     async def put(self, record): ...
@@ -219,8 +219,8 @@ class MyBackend:
     async def flush(self): ...
     # ... other methods
 
-register_backend("my_backend", MyBackend)
-writer = await write_queue(system, "topic", backend="my_backend")
+pul.queue.register_backend("my_backend", MyBackend)
+writer = await pul.queue.write_queue(system, "topic", backend="my_backend")
 ```
 
 ## Multi-consumer offsets: strategy & limitations

@@ -181,15 +181,15 @@ writer = await write_queue(
 如需持久化存储，使用 [Persisting](https://github.com/DeepLink-org/Persisting) 提供的后端：
 
 ```python
-from pulsing.queue import register_backend, write_queue
-from persisting.queue import LanceBackend, PersistingBackend
+import pulsing as pul
+import persisting as pst
 
 # 从 Persisting 注册后端
-register_backend("lance", LanceBackend)
-register_backend("persisting", PersistingBackend)
+pul.queue.register_backend("lance", pst.queue.LanceBackend)
+pul.queue.register_backend("persisting", pst.queue.PersistingBackend)
 
 # 使用 Lance 后端实现持久化
-writer = await write_queue(
+writer = await pul.queue.write_queue(
     system,
     topic="my_queue",
     backend="lance",
@@ -197,7 +197,7 @@ writer = await write_queue(
 )
 
 # 或使用增强版 Persisting 后端（支持 WAL）
-writer = await write_queue(
+writer = await pul.queue.write_queue(
     system,
     topic="my_queue",
     backend="persisting",
@@ -211,7 +211,7 @@ writer = await write_queue(
 实现 `StorageBackend` 协议并注册：
 
 ```python
-from pulsing.queue import register_backend
+import pulsing as pul
 
 class MyBackend:
     async def put(self, record): ...
@@ -219,8 +219,8 @@ class MyBackend:
     async def flush(self): ...
     # ... 其他方法
 
-register_backend("my_backend", MyBackend)
-writer = await write_queue(system, "topic", backend="my_backend")
+pul.queue.register_backend("my_backend", MyBackend)
+writer = await pul.queue.write_queue(system, "topic", backend="my_backend")
 ```
 
 ## 多消费者 offset：策略与局限
