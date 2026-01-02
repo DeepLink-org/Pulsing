@@ -44,9 +44,15 @@ class StorageManager(Actor):
     4. 不属于本节点：返回 Redirect 响应，指向正确节点
     """
 
-    def __init__(self, system: ActorSystem, base_storage_path: str = "./queue_storage"):
+    def __init__(
+        self,
+        system: ActorSystem,
+        base_storage_path: str = "./queue_storage",
+        default_backend: str | type = "memory",
+    ):
         self.system = system
         self.base_storage_path = base_storage_path
+        self.default_backend = default_backend
 
         # 本节点管理的 bucket: {(topic, bucket_id): ActorRef}
         self._buckets: dict[tuple[str, int], ActorRef] = {}
@@ -82,6 +88,8 @@ class StorageManager(Actor):
         bucket_id: int,
         batch_size: int,
         storage_path: str | None = None,
+        backend: str | type | None = None,
+        backend_options: dict | None = None,
     ) -> ActorRef:
         """获取或创建本地 BucketStorage Actor"""
         key = (topic, bucket_id)
@@ -108,11 +116,13 @@ class StorageManager(Actor):
                 self._buckets[key] = await self.system.resolve_named(actor_name)
                 logger.debug(f"Resolved existing bucket: {actor_name}")
             except Exception:
-                # 创建新的
+                # 创建新的，使用指定后端或默认后端
                 storage = BucketStorage(
                     bucket_id=bucket_id,
                     storage_path=bucket_storage_path,
                     batch_size=batch_size,
+                    backend=backend or self.default_backend,
+                    backend_options=backend_options,
                 )
                 self._buckets[key] = await self.system.spawn(
                     actor_name, storage, public=True
@@ -138,6 +148,8 @@ class StorageManager(Actor):
             bucket_id = data.get("bucket_id")
             batch_size = data.get("batch_size", 100)
             storage_path = data.get("storage_path")  # 可选的自定义存储路径
+            backend = data.get("backend")  # 可选的后端名称
+            backend_options = data.get("backend_options")  # 可选的后端参数
 
             if topic is None or bucket_id is None:
                 return Message.from_json(
@@ -154,7 +166,7 @@ class StorageManager(Actor):
             if owner_node_id is None or owner_node_id == local_node_id:
                 # 本节点负责，创建/返回 bucket
                 bucket_ref = await self._get_or_create_bucket(
-                    topic, bucket_id, batch_size, storage_path
+                    topic, bucket_id, batch_size, storage_path, backend, backend_options
                 )
                 return Message.from_json(
                     "BucketReady",
@@ -269,6 +281,8 @@ async def get_bucket_ref(
     bucket_id: int,
     batch_size: int = 100,
     storage_path: str | None = None,
+    backend: str | type | None = None,
+    backend_options: dict | None = None,
     max_redirects: int = 3,
 ) -> ActorRef:
     """获取指定 bucket 的 ActorRef
@@ -281,6 +295,8 @@ async def get_bucket_ref(
         bucket_id: bucket ID
         batch_size: 批处理大小
         storage_path: 自定义存储路径（可选）
+        backend: 存储后端名称或类（可选）
+        backend_options: 后端额外参数（可选）
         max_redirects: 最大重定向次数
     """
     from pulsing.actor import ActorId, NodeId
@@ -296,6 +312,11 @@ async def get_bucket_ref(
         }
         if storage_path:
             msg_data["storage_path"] = storage_path
+        if backend:
+            # 如果是类，传递类名（跨节点时无法序列化类）
+            msg_data["backend"] = backend if isinstance(backend, str) else backend.__name__
+        if backend_options:
+            msg_data["backend_options"] = backend_options
 
         response = await manager.ask(Message.from_json("GetBucket", msg_data))
 

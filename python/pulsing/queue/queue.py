@@ -22,6 +22,19 @@ class Queue:
     """分布式队列 - 高级 API
 
     每个 bucket 对应一个独立的 BucketStorage Actor。
+    
+    Args:
+        system: Actor 系统
+        topic: 队列主题
+        bucket_column: 分桶列名
+        num_buckets: 桶数量
+        batch_size: 批处理大小
+        storage_path: 存储路径
+        backend: 存储后端
+            - "memory": 纯内存后端（默认）
+            - 持久化后端需安装 persisting 包
+            - 自定义类: 实现 StorageBackend 协议的类
+        backend_options: 后端额外参数
     """
 
     def __init__(
@@ -32,6 +45,8 @@ class Queue:
         num_buckets: int = 4,
         batch_size: int = 100,
         storage_path: str | None = None,
+        backend: str | type = "memory",
+        backend_options: dict[str, Any] | None = None,
     ):
         self.system = system
         self.topic = topic
@@ -39,6 +54,8 @@ class Queue:
         self.num_buckets = num_buckets
         self.batch_size = batch_size
         self.storage_path = storage_path or f"./queue_storage/{topic}"
+        self.backend = backend
+        self.backend_options = backend_options
 
         # 每个 bucket 的 Actor 引用
         self._bucket_refs: dict[int, ActorRef] = {}
@@ -80,6 +97,8 @@ class Queue:
                 bucket_id,
                 batch_size=self.batch_size,
                 storage_path=self.storage_path,
+                backend=self.backend,
+                backend_options=self.backend_options,
             )
             logger.debug(f"Got bucket {bucket_id} for topic: {self.topic}")
             return self._bucket_refs[bucket_id]
@@ -313,8 +332,34 @@ async def write_queue(
     num_buckets: int = 4,
     batch_size: int = 100,
     storage_path: str | None = None,
+    backend: str | type = "memory",
+    backend_options: dict[str, Any] | None = None,
 ) -> QueueWriter:
-    """打开队列用于写入"""
+    """打开队列用于写入
+    
+    Args:
+        system: Actor 系统
+        topic: 队列主题
+        bucket_column: 分桶列名
+        num_buckets: 桶数量
+        batch_size: 批处理大小
+        storage_path: 存储路径
+        backend: 存储后端
+            - "memory": 纯内存后端（默认）
+            - 持久化后端需安装 persisting 包
+            - 自定义类: 实现 StorageBackend 协议的类
+        backend_options: 后端额外参数
+        
+    Example:
+        # 使用默认内存后端
+        writer = await write_queue(system, "my_queue")
+        
+        # 使用 persisting 的 Lance 后端
+        from persisting.queue import LanceBackend
+        from pulsing.queue import register_backend
+        register_backend("lance", LanceBackend)
+        writer = await write_queue(system, "my_queue", backend="lance")
+    """
     # 确保集群中所有节点都有 StorageManager
     from .manager import ensure_storage_managers
 
@@ -327,6 +372,8 @@ async def write_queue(
         num_buckets=num_buckets,
         batch_size=batch_size,
         storage_path=storage_path,
+        backend=backend,
+        backend_options=backend_options,
     )
     return QueueWriter(queue)
 
@@ -350,6 +397,8 @@ async def read_queue(
     world_size: int | None = None,
     num_buckets: int = 4,
     storage_path: str | None = None,
+    backend: str | type = "memory",
+    backend_options: dict[str, Any] | None = None,
 ) -> QueueReader:
     """打开队列用于读取
 
@@ -367,6 +416,8 @@ async def read_queue(
         world_size: 消费者总数
         num_buckets: bucket 数量（用于 rank/world_size 模式）
         storage_path: 存储路径
+        backend: 存储后端（需与写入时使用的后端一致）
+        backend_options: 后端额外参数
 
     Example:
         # 分布式消费：4 个 bucket，2 个消费者
@@ -400,6 +451,8 @@ async def read_queue(
         num_buckets=num_buckets,
         batch_size=100,
         storage_path=storage_path,
+        backend=backend,
+        backend_options=backend_options,
     )
 
     # 尝试解析已存在的 bucket Actor

@@ -2,6 +2,8 @@
 
 基于 Pulsing Actor 架构实现的分布式内存队列系统。
 
+**支持可插拔存储后端**，可根据需求选择不同的实现。
+
 ## 架构概览
 
 ```
@@ -247,6 +249,70 @@ Consumer (rank=0)           Consumer (rank=1)
 
 ```bash
 pip install lance pyarrow
+```
+
+---
+
+## 可插拔存储后端
+
+队列系统支持可插拔的存储后端，可根据需求选择不同实现。
+
+### 内置后端
+
+| 后端 | 说明 | 适用场景 |
+|------|------|----------|
+| `memory` | 纯内存，无持久化（默认） | 测试、临时数据 |
+
+### 持久化后端（需安装 persisting）
+
+```bash
+pip install persisting[lance]
+```
+
+| 后端 | 说明 | 适用场景 |
+|------|------|----------|
+| `LanceBackend` | Lance 持久化 | 一般持久化场景 |
+| `PersistingBackend` | 增强版（WAL、监控） | 生产环境 |
+
+### 使用方式
+
+```python
+# 使用默认内存后端
+writer = await write_queue(system, "my_queue")
+
+# 使用 persisting 的 Lance 持久化后端
+from persisting.queue import LanceBackend
+from pulsing.queue import register_backend
+
+register_backend("lance", LanceBackend)
+writer = await write_queue(system, "my_queue", backend="lance")
+
+# 使用增强版后端
+from persisting.queue import PersistingBackend
+register_backend("persisting", PersistingBackend)
+writer = await write_queue(
+    system, "my_queue", 
+    backend="persisting",
+    backend_options={"enable_wal": True, "enable_metrics": True}
+)
+```
+
+### 自定义后端
+
+实现 `StorageBackend` 协议即可：
+
+```python
+class MyBackend:
+    def __init__(self, bucket_id: int, storage_path: str, **kwargs):
+        ...
+    
+    async def put(self, record: dict) -> None: ...
+    async def put_batch(self, records: list[dict]) -> None: ...
+    async def get(self, limit: int, offset: int) -> list[dict]: ...
+    async def get_stream(self, limit, offset, wait, timeout) -> AsyncIterator: ...
+    async def flush(self) -> None: ...
+    async def stats(self) -> dict: ...
+    def total_count(self) -> int: ...
 ```
 
 ---

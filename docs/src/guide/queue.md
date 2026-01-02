@@ -5,20 +5,28 @@ Pulsing includes a **distributed memory queue** built on the same actor + cluste
 It is designed for:
 
 - **High-throughput ingestion** with sharding (buckets)
-- **Location-transparent access** (writers/readers don’t need to know where data lives)
-- **Optional persistence** backed by [Lance](https://github.com/lancedb/lance) (`lance` + `pyarrow`)
+- **Location-transparent access** (writers/readers don't need to know where data lives)
+- **Pluggable storage backends** with built-in memory backend and optional persistence via [Persisting](https://github.com/DeepLink-org/Persisting)
 
 ## Architecture
 
 - **Topic**: logical queue name, e.g. `my_queue`
 - **Buckets**: a topic is sharded into \(N\) buckets (`num_buckets`)
 - **BucketStorage (Actor)**: each bucket is a `BucketStorage` actor holding:
-  - an in-memory buffer
-  - a persisted dataset (`data.lance`) when Lance is available
+  - a pluggable `StorageBackend` instance (default: `MemoryBackend`)
+  - supports custom backends via `backend` parameter
 - **StorageManager (Actor)**: one per node (`queue_storage_manager`)
   - uses **consistent hashing** to decide which node owns a given bucket
   - creates / returns the local `BucketStorage` if the bucket is owned locally
   - otherwise returns a redirect to the owner node
+
+### Storage Backends
+
+| Backend | Location | Persistence | Description |
+|---------|----------|-------------|-------------|
+| `MemoryBackend` | Pulsing (built-in) | No | Fast in-memory storage, default |
+| `LanceBackend` | [Persisting](https://github.com/DeepLink-org/Persisting) | Yes | Lance columnar storage |
+| `PersistingBackend` | [Persisting](https://github.com/DeepLink-org/Persisting) | Yes | Enhanced with WAL, metrics |
 
 ### Consistent hashing & redirect flow
 
@@ -130,9 +138,9 @@ Bucket reads default to a streaming path (`GetStream`).
 
 ## Visibility semantics (buffer vs persisted)
 
-Each `BucketStorage` has two segments:
+Each `BucketStorage` has two segments (when using persistent backends):
 
-- **Persisted segment**: `data.lance` (when Lance is available)
+- **Persisted segment**: stored by backend (e.g., Lance dataset)
 - **In-memory buffer**: newly written records not flushed yet
 
 Readers see a unified logical view:
@@ -152,13 +160,68 @@ flowchart LR
 
 **Non-guarantees**
 
-- Durability is not guaranteed unless Lance is installed and `flush()` succeeds.
+- Durability is not guaranteed unless using a persistent backend and `flush()` succeeds.
 
-## Persistence (Lance)
+## Storage Backends
 
-`BucketStorage` persists buffered records on `flush()` (and also auto-flushes when the buffer reaches `batch_size`).
+### Memory Backend (Default)
 
-- If `lance` / `pyarrow` are missing, it falls back to **in-memory only**
+The default `MemoryBackend` stores data in memory without persistence:
+
+```python
+writer = await write_queue(
+    system,
+    topic="my_queue",
+    backend="memory",  # default, can be omitted
+)
+```
+
+### Persistence with Persisting
+
+For persistent storage, use backends from [Persisting](https://github.com/DeepLink-org/Persisting):
+
+```python
+from pulsing.queue import register_backend, write_queue
+from persisting.queue import LanceBackend, PersistingBackend
+
+# Register backends from Persisting
+register_backend("lance", LanceBackend)
+register_backend("persisting", PersistingBackend)
+
+# Use Lance backend for persistence
+writer = await write_queue(
+    system,
+    topic="my_queue",
+    backend="lance",
+    storage_path="/data/queues",
+)
+
+# Or use enhanced Persisting backend with WAL
+writer = await write_queue(
+    system,
+    topic="my_queue",
+    backend="persisting",
+    storage_path="/data/queues",
+    backend_options={"enable_wal": True},
+)
+```
+
+### Custom Backends
+
+Implement the `StorageBackend` protocol and register:
+
+```python
+from pulsing.queue import register_backend
+
+class MyBackend:
+    async def put(self, record): ...
+    async def get(self, offset, limit): ...
+    async def flush(self): ...
+    # ... other methods
+
+register_backend("my_backend", MyBackend)
+writer = await write_queue(system, "topic", backend="my_backend")
+```
 
 ## Multi-consumer offsets: strategy & limitations
 
@@ -192,6 +255,11 @@ Recommended patterns:
 
 - `python/pulsing/queue/queue.py`: high-level `Queue`, `write_queue`, `read_queue`
 - `python/pulsing/queue/manager.py`: `StorageManager` and bucket routing / redirects
-- `python/pulsing/queue/storage.py`: `BucketStorage` (buffer + Lance persistence + streaming reads)
+- `python/pulsing/queue/storage.py`: `BucketStorage` (delegates to `StorageBackend`)
+- `python/pulsing/queue/backend.py`: `StorageBackend` protocol and `MemoryBackend`
 - `examples/python/distributed_queue.py`: end-to-end example
 - `tests/python/test_queue.py`: behavior + stress tests
+
+## Related Projects
+
+- **[Persisting](https://github.com/DeepLink-org/Persisting)**: Persistent storage backends (Lance, WAL, metrics)

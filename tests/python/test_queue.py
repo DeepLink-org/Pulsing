@@ -4,11 +4,12 @@ Tests for the Pulsing Distributed Memory Queue.
 Covers:
 - Basic queue operations (put, get)
 - Hash partitioning and bucketing
-- Data persistence with Lance
-- Memory + persisted data visibility
+- Memory-based storage (default backend)
 - Streaming and blocking
 - Distributed consumption (rank/world_size)
 - Stress tests (high concurrency, large data)
+
+Note: Persistence tests (Lance backend) are in persisting package.
 """
 
 import asyncio
@@ -152,19 +153,18 @@ async def test_get_from_specific_bucket(queue):
 
 
 @pytest.mark.asyncio
-async def test_flush_and_persistence(queue, temp_storage_path):
-    """Test data persistence after flush."""
+async def test_flush_with_memory_backend(queue, temp_storage_path):
+    """Test flush with memory backend (no-op but should not error)."""
     # Write records
     for i in range(5):
         await queue.put({"id": f"test_{i}", "value": i})
 
-    # Flush to persist
+    # Flush should work (no-op for memory backend)
     await queue.flush()
-
-    # Check Lance files exist
-    storage_path = Path(temp_storage_path)
-    lance_files = list(storage_path.rglob("*.lance"))
-    assert len(lance_files) > 0
+    
+    # Data should still be readable
+    records = await queue.get(limit=10)
+    assert len(records) == 5
 
 
 @pytest.mark.asyncio
@@ -245,28 +245,28 @@ async def test_immediate_visibility(queue):
 
 
 @pytest.mark.asyncio
-async def test_combined_visibility(queue):
-    """Test that both persisted and buffered data are visible."""
-    # Write and flush some records
+async def test_combined_writes(queue):
+    """Test that multiple writes are all visible."""
+    # Write first batch
     for i in range(15):
-        await queue.put({"id": f"persisted_{i}", "value": i})
-    await queue.flush()
+        await queue.put({"id": f"batch1_{i}", "value": i})
+    await queue.flush()  # No-op for memory, but should work
 
-    # Write more records (in buffer)
+    # Write second batch
     for i in range(5):
-        await queue.put({"id": f"buffered_{i}", "value": i + 100})
+        await queue.put({"id": f"batch2_{i}", "value": i + 100})
 
     # Read all
     records = await queue.get(limit=100)
 
-    # Should have both persisted and buffered
-    persisted_count = sum(
-        1 for r in records if r.get("id", "").startswith("persisted_")
+    # Should have both batches
+    batch1_count = sum(
+        1 for r in records if r.get("id", "").startswith("batch1_")
     )
-    buffered_count = sum(1 for r in records if r.get("id", "").startswith("buffered_"))
+    batch2_count = sum(1 for r in records if r.get("id", "").startswith("batch2_"))
 
-    assert persisted_count > 0, "Should have persisted records"
-    assert buffered_count > 0, "Should have buffered records"
+    assert batch1_count > 0, "Should have batch1 records"
+    assert batch2_count > 0, "Should have batch2 records"
 
 
 # ============================================================================
@@ -949,11 +949,12 @@ async def test_data_integrity_under_stress(actor_system, temp_storage_path):
 
 @pytest.mark.asyncio
 async def test_bucket_storage_direct(actor_system, temp_storage_path):
-    """Test BucketStorage actor directly."""
+    """Test BucketStorage actor directly with memory backend."""
     storage = BucketStorage(
         bucket_id=0,
         storage_path=f"{temp_storage_path}/direct_bucket",
         batch_size=5,
+        backend="memory",
     )
 
     # Spawn actor
@@ -974,14 +975,15 @@ async def test_bucket_storage_direct(actor_system, temp_storage_path):
 
     assert stats["bucket_id"] == 0
     assert stats["total_count"] == 10
+    assert stats["backend"] == "memory"
 
-    # Flush
+    # Flush (no-op for memory backend)
     await actor_ref.ask(Message.from_json("Flush", {}))
 
-    # Verify persisted count
+    # Data should still be there
     stats_response = await actor_ref.ask(Message.from_json("Stats", {}))
     stats = stats_response.to_json()
-    assert stats["persisted_count"] == 10
+    assert stats["total_count"] == 10
 
 
 # ============================================================================

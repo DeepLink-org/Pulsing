@@ -6,19 +6,27 @@ Pulsing 内置了一个**分布式内存队列**（Distributed Memory Queue）�
 
 - **高吞吐写入**（分桶/并行）
 - **位置透明访问**（读写端无需知道数据在哪个节点）
-- **可选持久化**（基于 [Lance](https://github.com/lancedb/lance)，需要 `lance` + `pyarrow`）
+- **可插拔存储后端**，内置内存后端，可通过 [Persisting](https://github.com/DeepLink-org/Persisting) 实现持久化
 
 ## 架构
 
 - **Topic**：队列主题，例如 `my_queue`
 - **Bucket**：一个 topic 被切分为 \(N\) 个 bucket（`num_buckets`）
 - **BucketStorage（Actor）**：每个 bucket 对应一个 `BucketStorage` Actor，内部包含：
-  - 内存缓冲区
-  - 可选的持久化数据集（`data.lance`，当 Lance 可用时）
+  - 可插拔的 `StorageBackend` 实例（默认：`MemoryBackend`）
+  - 支持通过 `backend` 参数使用自定义后端
 - **StorageManager（Actor）**：每个节点一个（服务名 `queue_storage_manager`）
   - 使用**一致性哈希**决定某个 bucket 的 owner 节点
   - 若 bucket 属于本节点：创建/返回本地 `BucketStorage`
   - 否则：返回 Redirect，客户端自动跳转到 owner 节点
+
+### 存储后端
+
+| 后端 | 位置 | 持久化 | 说明 |
+|------|------|--------|------|
+| `MemoryBackend` | Pulsing（内置） | 否 | 快速内存存储，默认 |
+| `LanceBackend` | [Persisting](https://github.com/DeepLink-org/Persisting) | 是 | Lance 列式存储 |
+| `PersistingBackend` | [Persisting](https://github.com/DeepLink-org/Persisting) | 是 | 增强版，支持 WAL、指标 |
 
 ### 一致性哈希与重定向流程
 
@@ -130,9 +138,9 @@ Bucket 默认走流式读取（`GetStream`）：
 
 ## 可见性语义（buffer vs persisted）
 
-每个 `BucketStorage` 内部有两段数据：
+每个 `BucketStorage` 内部有两段数据（使用持久化后端时）：
 
-- **持久化段**：`data.lance`（当 Lance 可用时）
+- **持久化段**：由后端存储（如 Lance 数据集）
 - **内存缓冲段**：刚写入但尚未 flush 的记录
 
 读者看到的是一个统一的逻辑视图：
@@ -152,13 +160,68 @@ flowchart LR
 
 **不保证**
 
-- 若没有安装 Lance，或 `flush()` 失败，则不保证落盘持久化。
+- 若没有使用持久化后端，或 `flush()` 失败，则不保证落盘持久化。
 
-## 持久化（Lance）
+## 存储后端
 
-`BucketStorage` 在 `flush()` 时持久化缓冲区；当缓冲达到 `batch_size` 也会自动 flush。
+### 内存后端（默认）
 
-- 若没有安装 `lance` / `pyarrow`，则退化为**纯内存队列**
+默认的 `MemoryBackend` 将数据存储在内存中，无持久化：
+
+```python
+writer = await write_queue(
+    system,
+    topic="my_queue",
+    backend="memory",  # 默认，可省略
+)
+```
+
+### 使用 Persisting 实现持久化
+
+如需持久化存储，使用 [Persisting](https://github.com/DeepLink-org/Persisting) 提供的后端：
+
+```python
+from pulsing.queue import register_backend, write_queue
+from persisting.queue import LanceBackend, PersistingBackend
+
+# 从 Persisting 注册后端
+register_backend("lance", LanceBackend)
+register_backend("persisting", PersistingBackend)
+
+# 使用 Lance 后端实现持久化
+writer = await write_queue(
+    system,
+    topic="my_queue",
+    backend="lance",
+    storage_path="/data/queues",
+)
+
+# 或使用增强版 Persisting 后端（支持 WAL）
+writer = await write_queue(
+    system,
+    topic="my_queue",
+    backend="persisting",
+    storage_path="/data/queues",
+    backend_options={"enable_wal": True},
+)
+```
+
+### 自定义后端
+
+实现 `StorageBackend` 协议并注册：
+
+```python
+from pulsing.queue import register_backend
+
+class MyBackend:
+    async def put(self, record): ...
+    async def get(self, offset, limit): ...
+    async def flush(self): ...
+    # ... 其他方法
+
+register_backend("my_backend", MyBackend)
+writer = await write_queue(system, "topic", backend="my_backend")
+```
 
 ## 多消费者 offset：策略与局限
 
@@ -192,6 +255,11 @@ flowchart LR
 
 - `python/pulsing/queue/queue.py`：高层 `Queue` / `write_queue` / `read_queue`
 - `python/pulsing/queue/manager.py`：`StorageManager`（bucket 路由 / redirect）
-- `python/pulsing/queue/storage.py`：`BucketStorage`（缓冲 + Lance 持久化 + 流式读取）
+- `python/pulsing/queue/storage.py`：`BucketStorage`（委托给 `StorageBackend`）
+- `python/pulsing/queue/backend.py`：`StorageBackend` 协议和 `MemoryBackend`
 - `examples/python/distributed_queue.py`：端到端示例
 - `tests/python/test_queue.py`：行为与压力测试
+
+## 相关项目
+
+- **[Persisting](https://github.com/DeepLink-org/Persisting)**：持久化存储后端（Lance、WAL、指标）
