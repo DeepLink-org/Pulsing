@@ -1819,6 +1819,7 @@ dependencies = [
  "indicatif",
  "log",
  "mockito",
+ "pulsing-actor",
  "rand",
  "rand_distr",
  "rayon",
@@ -1832,6 +1833,7 @@ dependencies = [
  "tabled",
  "tokenizers",
  "tokio",
+ "tracing",
  "uuid",
  "vergen-gitcl",
 ]

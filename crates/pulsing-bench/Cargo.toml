@@ -8,6 +8,12 @@ repository = "https://github.com/huggingface/inference-benchmarker"
 readme = "README.md"
 
 [dependencies]
+# Actor framework
+pulsing-actor = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
 # Use workspace dependencies where available
 reqwest-eventsource = { workspace = true }
 log = { workspace = true }

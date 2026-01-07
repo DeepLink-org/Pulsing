@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{broadcast, Mutex};
 
-#[derive(Clone, strum_macros::Display)]
+#[derive(Debug, Clone, strum_macros::Display, serde::Serialize, serde::Deserialize)]
 pub enum ExecutorType {
     ConstantVUs,
     ConstantArrivalRate,

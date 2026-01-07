@@ -29,6 +29,9 @@ mod scheduler;
 mod table;
 mod writers;
 
+// Actor-based benchmark implementation
+pub mod actors;
+
 pub struct RunConfiguration {
     pub url: Url,
     pub api_key: String,
