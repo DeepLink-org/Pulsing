@@ -1,0 +1,20 @@
+[project]
+name = "pulsing-bench"
+version = "0.1.0"
+description = "Pulsing Benchmark - LLM Inference Benchmark Tool"
+readme = "../../README.md"
+authors = [
+    { name = "Reiase", email = "reiase@gmail.com" }
+]
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = ["pulsing"]  # Requires core pulsing package
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "pulsing._bench"
+python-source = "."
+python-packages = ["pulsing"]

@@ -8,8 +8,9 @@
 //! Refactored to use unified phase execution logic.
 
 use super::messages::*;
-use super::scheduler::{RequestGenerator, SimpleRequestGenerator};
+use super::scheduler::{RequestGenerator, SimpleRequestGenerator, TokenizedRequestGenerator};
 use super::{ConsoleRendererActor, MetricsAggregatorActor, SchedulerActor, WorkerActor};
+use crate::tokenizer::TokenCounter;
 use async_trait::async_trait;
 use pulsing_actor::prelude::*;
 use std::sync::Arc;
@@ -57,6 +58,8 @@ pub struct CoordinatorActor {
     num_workers: u32,
     /// Request generator
     request_gen: Arc<dyn RequestGenerator>,
+    /// Token counter for accurate token counting
+    token_counter: Option<TokenCounter>,
     /// Enable console display
     display_enabled: bool,
     /// Cached final report (saved before cleanup)
@@ -76,6 +79,7 @@ impl CoordinatorActor {
             renderer_ref: None,
             num_workers: 4,
             request_gen: Arc::new(SimpleRequestGenerator::default_prompts()),
+            token_counter: None,
             display_enabled: true,
             final_report: None,
         }
@@ -93,6 +97,11 @@ impl CoordinatorActor {
 
     pub fn with_request_generator(mut self, gen: Arc<dyn RequestGenerator>) -> Self {
         self.request_gen = gen;
+        self
+    }
+
+    pub fn with_token_counter(mut self, tc: TokenCounter) -> Self {
+        self.token_counter = Some(tc);
         self
     }
 
@@ -154,11 +163,17 @@ impl CoordinatorActor {
             self.workers.push(worker_ref);
         }
 
-        // Spawn Scheduler
+        // Spawn Scheduler with appropriate request generator
+        let request_gen: Arc<dyn RequestGenerator> = if let Some(ref tc) = self.token_counter {
+            Arc::new(TokenizedRequestGenerator::new(tc.clone()))
+        } else {
+            self.request_gen.clone()
+        };
+
         let scheduler = SchedulerActor::new()
             .with_workers(self.workers.clone())
             .with_metrics(metrics_ref.clone())
-            .with_request_generator(self.request_gen.clone())
+            .with_request_generator(request_gen)
             .with_target(
                 start.config.url.clone(),
                 start.config.api_key.clone(),

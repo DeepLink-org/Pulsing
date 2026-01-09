@@ -1,6 +1,7 @@
 //! Scheduler Actor - controls request timing and rate
 
 use super::messages::*;
+use crate::tokenizer::TokenCounter;
 use async_trait::async_trait;
 use pulsing_actor::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -14,7 +15,7 @@ pub trait RequestGenerator: Send + Sync {
     fn generate(&self) -> RequestTemplate;
 }
 
-/// Simple round-robin request generator
+/// Simple round-robin request generator (estimation-based)
 pub struct SimpleRequestGenerator {
     prompts: Vec<String>,
     index: AtomicU64,
@@ -47,6 +48,54 @@ impl RequestGenerator for SimpleRequestGenerator {
             id: format!("req-{}", idx),
             prompt: prompt.clone(),
             num_prompt_tokens: (prompt.len() / 4) as u64, // rough estimate
+            num_decode_tokens: Some(100),
+        }
+    }
+}
+
+/// Tokenized request generator - uses real tokenizer for accurate token counting
+pub struct TokenizedRequestGenerator {
+    prompts: Vec<String>,
+    index: AtomicU64,
+    token_counter: TokenCounter,
+}
+
+impl TokenizedRequestGenerator {
+    pub fn new(token_counter: TokenCounter) -> Self {
+        Self {
+            prompts: vec![
+                "What is the meaning of life?".to_string(),
+                "Explain quantum computing in simple terms.".to_string(),
+                "Write a short poem about the ocean.".to_string(),
+                "What are the benefits of exercise?".to_string(),
+                "How does photosynthesis work?".to_string(),
+                "Describe the process of machine learning.".to_string(),
+                "What causes the northern lights?".to_string(),
+                "Explain how a computer works.".to_string(),
+            ],
+            index: AtomicU64::new(0),
+            token_counter,
+        }
+    }
+
+    pub fn with_prompts(mut self, prompts: Vec<String>) -> Self {
+        self.prompts = prompts;
+        self
+    }
+}
+
+impl RequestGenerator for TokenizedRequestGenerator {
+    fn generate(&self) -> RequestTemplate {
+        let idx = self.index.fetch_add(1, Ordering::SeqCst) as usize;
+        let prompt = &self.prompts[idx % self.prompts.len()];
+
+        // Use real tokenizer for accurate token counting
+        let num_prompt_tokens = self.token_counter.count_tokens(prompt);
+
+        RequestTemplate {
+            id: format!("req-{}", idx),
+            prompt: prompt.clone(),
+            num_prompt_tokens,
             num_decode_tokens: Some(100),
         }
     }

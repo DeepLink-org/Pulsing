@@ -1,0 +1,35 @@
+[package]
+name = "pulsing-bench-py"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+description = "Python bindings for Pulsing Benchmark"
+
+[lib]
+name = "_bench"
+crate-type = ["cdylib"]
+
+[dependencies]
+pulsing-bench = { path = "../pulsing-bench" }
+
+# Serialization
+serde_json = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# PyO3 dependencies
+pyo3 = { version = "0.23.4", default-features = false, features = [
+  "macros",
+  "experimental-async",
+  "extension-module",
+  "py-clone",
+  "abi3-py310",
+] }
+pyo3-async-runtimes = { version = "0.23.0", default-features = false, features = [
+  "attributes",
+  "tokio-runtime",
+  "unstable-streams",
+] }

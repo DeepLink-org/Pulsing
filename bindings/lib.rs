@@ -3,7 +3,6 @@
 //! This crate provides Python bindings for the Pulsing distributed actor framework.
 //! It is a standalone module that can be used independently of Dynamo.
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 mod actor;
@@ -37,112 +36,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add load balancing policies
     policies::add_to_module(m)?;
 
-    // Add benchmark function
-    m.add_function(wrap_pyfunction!(benchmark_main, m)?)?;
-
     // Add version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
     Ok(())
-}
-
-// Helper functions for parsing config dict
-fn get_opt_str(dict: &Bound<'_, pyo3::types::PyDict>, key: &str) -> PyResult<Option<String>> {
-    match dict.get_item(key)? {
-        Some(v) => Ok(v.extract::<String>().ok()),
-        None => Ok(None),
-    }
-}
-
-fn get_opt<T: for<'a> pyo3::FromPyObject<'a>>(
-    dict: &Bound<'_, pyo3::types::PyDict>,
-    key: &str,
-) -> PyResult<Option<T>> {
-    match dict.get_item(key)? {
-        Some(v) => Ok(v.extract::<T>().ok()),
-        None => Ok(None),
-    }
-}
-
-/// Run benchmark
-///
-/// Args:
-///     config: Dictionary with benchmark configuration
-///         - url: str (default: "http://localhost:8000")
-///         - api_key: str (default: "")
-///         - model_name: str (required)
-///         - max_vus: int (default: 128)
-///         - duration: str (default: "120s")
-///         - warmup: str (default: "30s")
-///         - benchmark_kind: str (default: "throughput")
-///         - num_rates: int (default: 10)
-///         - rates: list[float] (optional)
-///         - num_workers: int (default: 4)
-///
-/// Returns:
-///     JSON string with benchmark report
-#[pyfunction]
-fn benchmark_main<'py>(py: Python<'py>, config: PyObject) -> PyResult<Bound<'py, PyAny>> {
-    use pyo3::types::PyDict;
-    let config_dict = config.bind(py).downcast::<PyDict>()?;
-    
-    use pulsing_bench::BenchmarkArgs;
-
-    // Parse configuration
-    let url = get_opt_str(config_dict, "url")?
-        .unwrap_or_else(|| "http://localhost:8000".to_string());
-    
-    let api_key = get_opt_str(config_dict, "api_key")?.unwrap_or_default();
-    
-    // model_name is required
-    let model_name = config_dict
-        .get_item("model_name")?
-        .ok_or_else(|| PyValueError::new_err("model_name is required"))?
-        .extract::<String>()?;
-
-    let max_vus = get_opt::<u64>(config_dict, "max_vus")?.unwrap_or(128);
-
-    let duration_str = get_opt_str(config_dict, "duration")?.unwrap_or_else(|| "120s".to_string());
-    let duration_secs = pulsing_bench::parse_duration(&duration_str)
-        .map_err(|e| PyValueError::new_err(format!("Invalid duration: {}", e)))?
-        .as_secs();
-
-    let warmup_str = get_opt_str(config_dict, "warmup")?.unwrap_or_else(|| "30s".to_string());
-    let warmup_secs = pulsing_bench::parse_duration(&warmup_str)
-        .map_err(|e| PyValueError::new_err(format!("Invalid warmup duration: {}", e)))?
-        .as_secs();
-
-    let benchmark_kind =
-        get_opt_str(config_dict, "benchmark_kind")?.unwrap_or_else(|| "throughput".to_string());
-
-    let num_rates = get_opt::<u64>(config_dict, "num_rates")?.unwrap_or(10);
-
-    let rates: Option<Vec<f64>> = get_opt::<Vec<f64>>(config_dict, "rates")?;
-
-    let num_workers = get_opt::<u32>(config_dict, "num_workers")?.unwrap_or(4);
-
-    let args = BenchmarkArgs {
-        url,
-        api_key,
-        model_name,
-        max_vus,
-        duration_secs,
-        warmup_secs,
-        benchmark_kind,
-        num_rates,
-        rates,
-        num_workers,
-    };
-
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let report = pulsing_bench::run_benchmark(args)
-            .await
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        
-        // Convert report to JSON string for Python
-        let json = serde_json::to_string_pretty(&report)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize report: {}", e)))?;
-        
-        Ok(json)
-    })
 }

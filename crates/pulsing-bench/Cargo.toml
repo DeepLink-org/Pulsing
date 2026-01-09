@@ -8,6 +8,10 @@ repository.workspace = true
 readme = "README.md"
 description = "Actor-based LLM inference benchmark tool"
 
+[features]
+default = []
+python = ["pyo3", "pyo3-async-runtimes", "tracing-subscriber"]
+
 [dependencies]
 # Core
 tokio = { workspace = true }
@@ -26,6 +30,7 @@ serde_json = { workspace = true }
 # Logging
 log = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true, optional = true }
 
 # Utilities
 uuid = { workspace = true }
@@ -34,8 +39,26 @@ colored = { workspace = true }
 chrono = { workspace = true }
 rand = { workspace = true }
 
+# Tokenizer for accurate token counting
+tokenizers = { workspace = true }
+hf-hub = { workspace = true }
+
 # Pulsing Actor System
 pulsing-actor = { workspace = true }
+
+# PyO3 dependencies (optional, for python bindings)
+pyo3 = { version = "0.23.4", default-features = false, features = [
+  "macros",
+  "experimental-async",
+  "extension-module",
+  "py-clone",
+  "abi3-py310",
+], optional = true }
+pyo3-async-runtimes = { version = "0.23.0", default-features = false, features = [
+  "attributes",
+  "tokio-runtime",
+  "unstable-streams",
+], optional = true }
 
 [build-dependencies]
 vergen-gitcl = { workspace = true }
@@ -43,3 +66,4 @@ vergen-gitcl = { workspace = true }
 [lib]
 name = "pulsing_bench"
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]

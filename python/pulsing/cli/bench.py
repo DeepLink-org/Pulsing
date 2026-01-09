@@ -1,12 +1,15 @@
 """Pulsing CLI - Benchmark commands"""
 
 import asyncio
+import os
 
 
 def run_benchmark(
     model_name: str,
     url: str = "http://localhost:8000",
     api_key: str = "",
+    tokenizer_name: str | None = None,
+    hf_token: str | None = None,
     max_vus: int = 128,
     duration: str = "120s",
     warmup: str = "30s",
@@ -21,6 +24,8 @@ def run_benchmark(
         model_name: The name of the model to benchmark (required)
         url: Backend URL (default: "http://localhost:8000")
         api_key: API key for authentication (default: "")
+        tokenizer_name: HuggingFace tokenizer name (default: same as model_name)
+        hf_token: HuggingFace token for private models (default: from HF_TOKEN env)
         max_vus: Maximum number of virtual users (default: 128)
         duration: Duration of each benchmark step (default: "120s")
         warmup: Warmup duration (default: "30s")
@@ -29,7 +34,11 @@ def run_benchmark(
         rates: List of rates for rate benchmark
         num_workers: Number of worker actors (default: 4)
     """
-    from pulsing._core import benchmark_main
+    from pulsing._bench import benchmark_main
+
+    # Get HF token from environment if not provided
+    if hf_token is None:
+        hf_token = os.environ.get("HF_TOKEN")
 
     config = {
         "model_name": model_name,
@@ -42,6 +51,12 @@ def run_benchmark(
         "num_rates": num_rates,
         "num_workers": num_workers,
     }
+
+    if tokenizer_name is not None:
+        config["tokenizer_name"] = tokenizer_name
+
+    if hf_token is not None:
+        config["hf_token"] = hf_token
 
     if rates is not None:
         config["rates"] = rates

@@ -133,6 +133,8 @@ def bench(
     model: str,  # Positional argument
     url: str = "http://localhost:8000",
     api_key: str = "",
+    tokenizer: str | None = None,
+    hf_token: str | None = None,
     max_vus: int = 128,
     duration: str = "120s",
     warmup: str = "30s",
@@ -151,6 +153,8 @@ def bench(
         model: The name of the model to benchmark (positional, required)
         url: Backend URL (default: "http://localhost:8000")
         api_key: API key for authentication (default: "")
+        tokenizer: HuggingFace tokenizer name for accurate token counting (default: same as model)
+        hf_token: HuggingFace token for private models (default: from HF_TOKEN env)
         max_vus: Maximum number of virtual users / concurrent requests (default: 128)
         duration: Duration of each benchmark phase (default: "120s")
         warmup: Warmup duration (default: "30s")
@@ -164,8 +168,11 @@ def bench(
         num_workers: Number of worker actors (default: 4)
 
     Examples:
-        # Basic throughput test
-        pulsing bench gpt2 --url http://localhost:8080
+        # Basic throughput test (uses model name for tokenizer)
+        pulsing bench Qwen/Qwen3-0.6B --url http://localhost:8080
+
+        # Use different tokenizer
+        pulsing bench gpt-4 --tokenizer gpt2 --url http://api.openai.com
 
         # Concurrency sweep test
         pulsing bench Qwen/Qwen3-0.6B --benchmark_kind csweep --max_vus 64
@@ -182,6 +189,8 @@ def bench(
         model_name=model,
         url=url,
         api_key=api_key,
+        tokenizer_name=tokenizer,
+        hf_token=hf_token,
         max_vus=max_vus,
         duration=duration,
         warmup=warmup,

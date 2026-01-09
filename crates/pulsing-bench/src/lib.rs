@@ -37,7 +37,7 @@
 //! async fn main() {
 //!     let args = BenchmarkArgs {
 //!         url: "http://localhost:8000".to_string(),
-//!         model_name: "gpt2".to_string(),
+//!         model_name: "Qwen/Qwen3-0.6B".to_string(),
 //!         max_vus: 10,
 //!         duration_secs: 60,
 //!         ..Default::default()
@@ -54,11 +54,15 @@ use pulsing_actor::prelude::*;
 // Actor-based benchmark implementation
 pub mod actors;
 
+// Tokenizer service for accurate token counting
+pub mod tokenizer;
+
 // Re-export main types
 pub use actors::{
     BenchmarkConfig, BenchmarkPhase, BenchmarkReport, CoordinatorActor, MetricsSnapshot,
     PhaseReport, SchedulerType,
 };
+pub use tokenizer::{TokenCounter, TokenizerService};
 
 /// Benchmark arguments
 #[derive(Debug, Clone)]
@@ -69,6 +73,10 @@ pub struct BenchmarkArgs {
     pub api_key: String,
     /// Model name to use in requests
     pub model_name: String,
+    /// Tokenizer name (HuggingFace model name, defaults to model_name)
+    pub tokenizer_name: Option<String>,
+    /// HuggingFace token for private models
+    pub hf_token: Option<String>,
     /// Maximum number of virtual users (concurrent requests)
     pub max_vus: u64,
     /// Duration of each benchmark phase in seconds
@@ -91,6 +99,8 @@ impl Default for BenchmarkArgs {
             url: "http://localhost:8000".to_string(),
             api_key: String::new(),
             model_name: "gpt2".to_string(),
+            tokenizer_name: None,
+            hf_token: None,
             max_vus: 128,
             duration_secs: 120,
             warmup_secs: 30,
@@ -126,7 +136,7 @@ pub fn parse_duration(s: &str) -> anyhow::Result<std::time::Duration> {
 /// ```rust,ignore
 /// let args = BenchmarkArgs {
 ///     url: "http://localhost:8000".to_string(),
-///     model_name: "gpt2".to_string(),
+///     model_name: "Qwen/Qwen3-0.6B".to_string(),
 ///     max_vus: 10,
 ///     duration_secs: 60,
 ///     ..Default::default()
@@ -144,13 +154,36 @@ pub async fn run_benchmark(args: BenchmarkArgs) -> anyhow::Result<BenchmarkRepor
         git_sha
     );
 
+    // Determine tokenizer name (use model_name if not specified)
+    let tokenizer_name = args
+        .tokenizer_name
+        .clone()
+        .unwrap_or_else(|| args.model_name.clone());
+
+    // Load tokenizer
+    println!("Loading tokenizer: {}", tokenizer_name);
+    let token_counter = match TokenCounter::real(&tokenizer_name, args.hf_token.clone()) {
+        Ok(tc) => {
+            println!("Tokenizer loaded successfully");
+            tc
+        }
+        Err(e) => {
+            println!(
+                "Warning: Failed to load tokenizer ({}), using estimation",
+                e
+            );
+            TokenCounter::estimate()
+        }
+    };
+
     // Create actor system
     let system = ActorSystem::new(SystemConfig::standalone()).await?;
 
     // Create and spawn coordinator
     let coordinator = CoordinatorActor::new()
         .with_system(system.clone())
-        .with_num_workers(args.num_workers);
+        .with_num_workers(args.num_workers)
+        .with_token_counter(token_counter);
 
     let coordinator_ref = system.spawn("coordinator", coordinator).await?;
 
@@ -159,6 +192,7 @@ pub async fn run_benchmark(args: BenchmarkArgs) -> anyhow::Result<BenchmarkRepor
         url: args.url,
         api_key: args.api_key,
         model_name: args.model_name,
+        tokenizer_name: Some(tokenizer_name),
         max_vus: args.max_vus,
         duration_secs: args.duration_secs,
         rate: None,
@@ -215,7 +249,7 @@ pub async fn run_benchmark(args: BenchmarkArgs) -> anyhow::Result<BenchmarkRepor
 /// # Arguments
 ///
 /// * `url` - Target URL
-/// * `model_name` - Model name
+/// * `model_name` - Model name (also used as tokenizer name)
 /// * `max_vus` - Maximum concurrent requests
 /// * `duration_secs` - Test duration in seconds
 pub async fn run_throughput_test(
@@ -235,4 +269,3 @@ pub async fn run_throughput_test(
     };
     run_benchmark(args).await
 }
-

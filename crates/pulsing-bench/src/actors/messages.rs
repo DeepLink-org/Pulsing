@@ -15,6 +15,8 @@ pub struct BenchmarkConfig {
     pub api_key: String,
     /// Model name
     pub model_name: String,
+    /// Tokenizer name (HuggingFace model name)
+    pub tokenizer_name: Option<String>,
     /// Maximum virtual users (concurrent requests)
     pub max_vus: u64,
     /// Test duration in seconds
@@ -37,6 +39,7 @@ impl Default for BenchmarkConfig {
             url: "http://localhost:8000".to_string(),
             api_key: String::new(),
             model_name: "gpt2".to_string(),
+            tokenizer_name: None,
             max_vus: 128,
             duration_secs: 120,
             rate: None,
