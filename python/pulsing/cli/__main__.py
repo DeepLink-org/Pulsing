@@ -130,83 +130,64 @@ def inspect(seeds: str | None = None):
 
 @hp.param("bench")
 def bench(
-    tokenizer_name: str | None = None,
-    model_name: str | None = None,
-    max_vus: int = 128,
-    duration: str = "120s",
-    rates: list | None = None,
-    num_rates: int = 10,
-    profile: str | None = None,
-    benchmark_kind: str = "sweep",
-    warmup: str = "30s",
+    model: str,  # Positional argument
     url: str = "http://localhost:8000",
     api_key: str = "",
-    prompt_options: str | None = None,
-    decode_options: str | None = None,
-    dataset: str = "hlarcher/inference-benchmarker",
-    dataset_file: str = "share_gpt_filtered_small.json",
-    extra_meta: str | None = None,
-    run_id: str | None = None,
-    engine: str = "classic",
+    max_vus: int = 128,
+    duration: str = "120s",
+    warmup: str = "30s",
+    benchmark_kind: str = "throughput",
+    num_rates: int = 10,
+    rates: list | None = None,
     num_workers: int = 4,
 ):
     """
     Run inference benchmarks.
 
-    This command runs the pulsing benchmark tool with the specified parameters.
-    Supports two engines:
-    - classic: Original implementation with tokenizer and dataset support
-    - actor: New Actor-based implementation (simpler, no tokenizer required)
+    This command runs the pulsing benchmark tool to test LLM inference endpoints.
+    It uses an Actor-based architecture for real-time metrics and high performance.
 
     Args:
-        tokenizer_name: The name of the tokenizer to use (required for classic engine)
-        model_name: The name of the model to use. If not provided, same as tokenizer_name
-        max_vus: Maximum number of virtual users (default: 128)
-        duration: Duration of each benchmark step (default: "120s")
-        rates: List of rates for ConstantArrivalRate benchmark
-        num_rates: Number of rates to sweep (default: 10)
-        profile: Benchmark profile to use
-        benchmark_kind: Kind of benchmark - throughput, sweep, csweep, rate (default: "sweep")
-        warmup: Warmup duration (default: "30s")
+        model: The name of the model to benchmark (positional, required)
         url: Backend URL (default: "http://localhost:8000")
         api_key: API key for authentication (default: "")
-        prompt_options: Prompt tokenizer options as "key=value,key2=value2"
-        decode_options: Decode tokenizer options as "key=value,key2=value2"
-        dataset: Hugging Face dataset name (default: "hlarcher/inference-benchmarker")
-        dataset_file: Dataset file name (default: "share_gpt_filtered_small.json")
-        extra_meta: Extra metadata as "key1=value1,key2=value2"
-        run_id: Run identifier for results file
-        engine: Benchmark engine - "classic" (original) or "actor" (new). Default: "classic"
-        num_workers: Number of worker actors (only for actor engine). Default: 4
+        max_vus: Maximum number of virtual users / concurrent requests (default: 128)
+        duration: Duration of each benchmark phase (default: "120s")
+        warmup: Warmup duration (default: "30s")
+        benchmark_kind: Kind of benchmark (default: "throughput")
+            - throughput: Max throughput test with constant VUs
+            - sweep: Auto-discover max rate then sweep rates
+            - csweep: Concurrency sweep (vary VUs)
+            - rate: Test specific rates
+        num_rates: Number of rate steps for sweep (default: 10)
+        rates: Specific rates for rate benchmark (comma-separated)
+        num_workers: Number of worker actors (default: 4)
 
     Examples:
-        # Classic engine (requires tokenizer)
-        pulsing bench --tokenizer_name gpt2 --url http://localhost:8080
+        # Basic throughput test
+        pulsing bench gpt2 --url http://localhost:8080
 
-        # Actor engine (simpler, just needs model_name)
-        pulsing bench --model_name gpt2 --engine actor --url http://localhost:8080 --benchmark_kind throughput
+        # Concurrency sweep test
+        pulsing bench Qwen/Qwen3-0.6B --benchmark_kind csweep --max_vus 64
+
+        # Rate test with specific rates
+        pulsing bench gpt2 --benchmark_kind rate --rates 1,5,10,20
+
+        # Long duration test with more workers
+        pulsing bench gpt2 --duration 300s --num_workers 8
     """
     from .bench import run_benchmark
 
     run_benchmark(
-        tokenizer_name=tokenizer_name,
-        model_name=model_name,
-        max_vus=max_vus,
-        duration=duration,
-        rates=rates,
-        num_rates=num_rates,
-        profile=profile,
-        benchmark_kind=benchmark_kind,
-        warmup=warmup,
+        model_name=model,
         url=url,
         api_key=api_key,
-        prompt_options=prompt_options,
-        decode_options=decode_options,
-        dataset=dataset,
-        dataset_file=dataset_file,
-        extra_meta=extra_meta,
-        run_id=run_id,
-        engine=engine,
+        max_vus=max_vus,
+        duration=duration,
+        warmup=warmup,
+        benchmark_kind=benchmark_kind,
+        num_rates=num_rates,
+        rates=rates,
         num_workers=num_workers,
     )
 

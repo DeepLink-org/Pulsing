@@ -1,26 +1,27 @@
-//! Actor-based Benchmark Example
+//! Benchmark Example
 //!
-//! This example demonstrates how to use the new Actor-based benchmark architecture.
+//! This example demonstrates how to use the Actor-based benchmark architecture.
 //!
 //! Architecture:
 //! - Worker Actor: Sends HTTP requests to the target endpoint
 //! - Scheduler Actor: Controls request timing (constant VUs or constant rate)
 //! - Coordinator Actor: Orchestrates the benchmark lifecycle
-//! - Collector Actor: Collects metrics and displays real-time progress
+//! - MetricsAggregator Actor: Collects metrics and calculates statistics
+//! - ConsoleRenderer Actor: Displays real-time progress
 //!
 //! Run with:
 //! ```bash
 //! cargo run --example actor_benchmark -- --url http://localhost:8000 --model gpt2
 //! ```
 
-use pulsing_bench::{run_actor_benchmark, ActorBenchmarkArgs};
+use pulsing_bench::{run_benchmark, BenchmarkArgs};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Parse command line arguments (simplified)
     let args: Vec<String> = std::env::args().collect();
 
-    let mut benchmark_args = ActorBenchmarkArgs::default();
+    let mut benchmark_args = BenchmarkArgs::default();
 
     let mut i = 1;
     while i < args.len() {
@@ -67,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    println!("Starting Actor-based benchmark...");
+    println!("Starting benchmark...");
     println!("  URL: {}", benchmark_args.url);
     println!("  Model: {}", benchmark_args.model_name);
     println!("  Max VUs: {}", benchmark_args.max_vus);
@@ -77,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
     println!();
 
     // Run the benchmark
-    let report = run_actor_benchmark(benchmark_args).await?;
+    let report = run_benchmark(benchmark_args).await?;
 
     // Print summary
     println!("\n=== Benchmark Report ===");
@@ -104,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
 fn print_help() {
     println!(
         r#"
-Actor-based Benchmark Example
+Pulsing Benchmark Example
 
 USAGE:
     actor_benchmark [OPTIONS]
@@ -138,4 +139,3 @@ EXAMPLES:
 "#
     );
 }
-

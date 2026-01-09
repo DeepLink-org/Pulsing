@@ -82,8 +82,8 @@ pub struct SchedulerActor {
     workers: Vec<ActorRef>,
     /// Coordinator reference for progress updates
     coordinator_ref: Option<ActorRef>,
-    /// Collector reference for forwarding
-    collector_ref: Option<ActorRef>,
+    /// MetricsAggregator reference
+    metrics_ref: Option<ActorRef>,
     /// Target URL
     target_url: String,
     /// API key
@@ -109,7 +109,7 @@ impl SchedulerActor {
             request_gen: Arc::new(SimpleRequestGenerator::default_prompts()),
             workers: Vec::new(),
             coordinator_ref: None,
-            collector_ref: None,
+            metrics_ref: None,
             target_url: "http://localhost:8000".to_string(),
             api_key: String::new(),
             model_name: "gpt2".to_string(),
@@ -141,8 +141,8 @@ impl SchedulerActor {
         self
     }
 
-    pub fn with_collector(mut self, collector: ActorRef) -> Self {
-        self.collector_ref = Some(collector);
+    pub fn with_metrics(mut self, metrics: ActorRef) -> Self {
+        self.metrics_ref = Some(metrics);
         self
     }
 

@@ -147,7 +147,7 @@ impl CoordinatorActor {
         self.workers.clear();
         for i in 0..self.num_workers {
             let worker =
-                WorkerActor::new(format!("worker-{}", i)).with_collector(metrics_ref.clone());
+                WorkerActor::new(format!("worker-{}", i)).with_metrics(metrics_ref.clone());
             let worker_ref = system
                 .spawn(format!("worker-{}-{}", start.run_id, i), worker)
                 .await?;
@@ -157,7 +157,7 @@ impl CoordinatorActor {
         // Spawn Scheduler
         let scheduler = SchedulerActor::new()
             .with_workers(self.workers.clone())
-            .with_collector(metrics_ref.clone())
+            .with_metrics(metrics_ref.clone())
             .with_request_generator(self.request_gen.clone())
             .with_target(
                 start.config.url.clone(),

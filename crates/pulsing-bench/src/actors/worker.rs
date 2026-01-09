@@ -17,8 +17,8 @@ pub struct WorkerActor {
     worker_id: String,
     /// HTTP client
     client: Client,
-    /// Collector actor reference for reporting results
-    collector_ref: Option<ActorRef>,
+    /// MetricsAggregator actor reference for reporting results
+    metrics_ref: Option<ActorRef>,
     /// Active request count
     active_requests: Arc<AtomicU32>,
     /// Completed request count
@@ -37,7 +37,7 @@ impl WorkerActor {
                 .pool_max_idle_per_host(100)
                 .build()
                 .expect("Failed to create HTTP client"),
-            collector_ref: None,
+            metrics_ref: None,
             active_requests: Arc::new(AtomicU32::new(0)),
             completed_requests: Arc::new(AtomicU64::new(0)),
             failed_requests: Arc::new(AtomicU64::new(0)),
@@ -45,8 +45,8 @@ impl WorkerActor {
         }
     }
 
-    pub fn with_collector(mut self, collector: ActorRef) -> Self {
-        self.collector_ref = Some(collector);
+    pub fn with_metrics(mut self, metrics: ActorRef) -> Self {
+        self.metrics_ref = Some(metrics);
         self
     }
 
@@ -232,9 +232,9 @@ impl Actor for WorkerActor {
 
             let result = self.send_request(request).await;
 
-            // Report to collector if configured
-            if let Some(ref collector) = self.collector_ref {
-                let _ = collector.tell(result.clone()).await;
+            // Report to metrics aggregator if configured
+            if let Some(ref metrics) = self.metrics_ref {
+                let _ = metrics.tell(result.clone()).await;
             }
 
             return Message::pack(&result);
