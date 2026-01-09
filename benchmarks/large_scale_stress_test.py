@@ -261,10 +261,10 @@ async def main():
     sys.stdout = Tee(log_file, orig_stdout)
     sys.stderr = sys.stdout
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Stress Test - Process {rank}/{world_size}")
     print(f"Duration: {args.duration}s, Rate: {args.rate}/s")
-    print(f"{'='*50}\n")
+    print(f"{'=' * 50}\n")
 
     # 配置系统
     port = (8000 if args.port == 0 else args.port) + rank
@@ -318,9 +318,9 @@ async def main():
         print("\nInterrupted")
 
     # 结果
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Results - Process {rank}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
     result = {"requests": stats_req.summary(), "streams": stats_stream.summary()}
     print(json.dumps(result, indent=2))
 

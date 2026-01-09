@@ -369,11 +369,11 @@ async def main():
     log_dir = args.log_dir
     os.makedirs(log_dir, exist_ok=True)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Ray Stress Test (Single Process Mode)")
     print(f"Duration: {args.duration}s, Rate: {args.rate} req/s")
     print(f"Workers per type: {args.num_workers}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # 初始化 Ray
     if not ray.is_initialized():
@@ -415,9 +415,9 @@ async def main():
         client.running = False
 
     # 打印最终统计
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Final Statistics (Ray Single Process)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     summary = stats.get_summary()
     print(json.dumps(summary, indent=2))
 

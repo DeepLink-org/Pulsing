@@ -228,12 +228,12 @@ async def main():
 
     os.makedirs(args.log_dir, exist_ok=True)
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print("Pulsing Stress Test (Single Process)")
     print(
         f"Duration: {args.duration}s, Rate: {args.rate}/s, Workers: {args.num_workers}"
     )
-    print(f"{'='*50}\n")
+    print(f"{'=' * 50}\n")
 
     system = await create_actor_system(SystemConfig.with_addr(f"0.0.0.0:{args.port}"))
     print(f"System started at {system.addr}")
@@ -257,9 +257,9 @@ async def main():
         print("\nInterrupted")
 
     # 结果
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print("Results")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
     result = {"requests": stats_req.summary(), "streams": stats_stream.summary()}
     print(json.dumps(result, indent=2))
 

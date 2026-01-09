@@ -618,7 +618,7 @@ async def test_high_concurrency_writes(actor_system, temp_storage_path):
 
     print(
         f"\nHigh concurrency writes: {total_writes} records in {elapsed:.2f}s "
-        f"({total_writes/elapsed:.0f} records/s)"
+        f"({total_writes / elapsed:.0f} records/s)"
     )
 
 
@@ -795,7 +795,7 @@ async def test_producer_consumer_stress(actor_system, temp_storage_path):
     print(f"  Produced: {len(produced_ids)} records")
     print(f"  Consumed: {len(consumed_ids)} records")
     print(f"  Elapsed: {elapsed:.2f}s")
-    print(f"  Throughput: {len(produced_ids)/elapsed:.0f} records/s")
+    print(f"  Throughput: {len(produced_ids) / elapsed:.0f} records/s")
 
     assert len(produced_ids) == total_produced
 
@@ -936,9 +936,9 @@ async def test_data_integrity_under_stress(actor_system, temp_storage_path):
         actual_checksum = hashlib.md5(
             f"{record_id}:{record['value']}".encode()
         ).hexdigest()
-        assert (
-            record["checksum"] == expected_checksum
-        ), f"Checksum mismatch for {record_id}"
+        assert record["checksum"] == expected_checksum, (
+            f"Checksum mismatch for {record_id}"
+        )
         assert actual_checksum == expected_checksum, f"Value corruption for {record_id}"
 
 

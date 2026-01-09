@@ -642,11 +642,11 @@ async def main():
     sys.stdout = tee
     sys.stderr = tee
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Stress Test Process {rank}/{world_size} (Ray Version)")
     print(f"Local Rank: {local_rank}, World Size: {world_size}")
     print(f"Log file: {log_file}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # 初始化Ray
     # ⚠️ 重要：Ray在torchrun多进程环境下，每个进程都是独立的
@@ -675,7 +675,7 @@ async def main():
             )
             print(
                 f"[Process {rank}] Ray initialized: {num_cpus} CPU, "
-                f"{object_store_memory/1e6:.0f}MB object store"
+                f"{object_store_memory / 1e6:.0f}MB object store"
             )
 
     print(f"[Process {rank}] Ray initialized")
@@ -760,9 +760,9 @@ async def main():
         raise
 
     # 打印最终统计
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Final Statistics - Process {rank} (Ray Version)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     summary = stats.get_summary()
     print(json.dumps(summary, indent=2))
 

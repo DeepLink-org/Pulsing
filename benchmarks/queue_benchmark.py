@@ -325,14 +325,14 @@ async def main():
     sys.stdout = tee
     sys.stderr = tee
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Queue Benchmark - Process {rank}/{world_size}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Duration: {args.duration}s")
     print(f"Buckets: {args.num_buckets}, Batch size: {args.batch_size}")
     print(f"Record size: {args.record_size} bytes")
     print(f"Log file: {log_file}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # 配置系统
     if args.port == 0:
@@ -455,9 +455,9 @@ async def main():
     actual_duration = time.time() - start_time
     summary = stats.get_summary(actual_duration)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Final Statistics - Process {rank}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(json.dumps(summary, indent=2))
 
     # 保存结果
