@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pulsing-actor", "crates/pulsing-bench"]
+members = ["crates/pulsing-actor", "crates/pulsing-bench", "crates/pulsing-bench-py"]
 resolver = "3"
 
 [workspace.package]
@@ -58,7 +58,7 @@ sysinfo = "0.33"
 # HTTP
 # axum = { version = "0.8", features = ["macros"] }
 hyper = { version = "1.7", features = ["http2", "server", "client"] }
-hyper-util = { version = "0.1" }
+hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
@@ -97,7 +97,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pulsing-actor = { workspace = true }
-pulsing-bench = { path = "crates/pulsing-bench" }
 
 # Use workspace dependencies
 anyhow = { workspace = true }
@@ -109,7 +108,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-humantime = { workspace = true }
 reqwest = { workspace = true }
 
 # PyO3 dependencies
