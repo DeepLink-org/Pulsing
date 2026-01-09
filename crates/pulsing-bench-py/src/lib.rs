@@ -66,8 +66,7 @@ fn benchmark_main<'py>(py: Python<'py>, config: PyObject) -> PyResult<Bound<'py,
 
     let max_vus = get_opt::<u64>(config_dict, "max_vus")?.unwrap_or(128);
 
-    let duration_str =
-        get_opt_str(config_dict, "duration")?.unwrap_or_else(|| "120s".to_string());
+    let duration_str = get_opt_str(config_dict, "duration")?.unwrap_or_else(|| "120s".to_string());
     let duration_secs = parse_duration(&duration_str)
         .map_err(|e| PyValueError::new_err(format!("Invalid duration: {}", e)))?
         .as_secs();

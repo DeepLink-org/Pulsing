@@ -52,7 +52,7 @@ pub struct CoordinatorActor {
     scheduler_ref: Option<ActorRef>,
     /// Metrics aggregator reference
     metrics_ref: Option<ActorRef>,
-    /// Console renderer reference  
+    /// Console renderer reference
     renderer_ref: Option<ActorRef>,
     /// Number of workers to spawn
     num_workers: u32,
@@ -293,22 +293,20 @@ impl CoordinatorActor {
                 phases
             }
 
-            "rate" => {
-                config
-                    .rates
-                    .clone()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|rate| PhaseDefinition {
-                        phase_id: format!("rate@{:.1}reqs", rate),
-                        phase_name: format!("Rate {:.1} req/s", rate),
-                        scheduler_type: SchedulerType::ConstantArrivalRate,
-                        max_vus: config.max_vus,
-                        duration_secs: config.duration_secs,
-                        rate: Some(rate),
-                    })
-                    .collect()
-            }
+            "rate" => config
+                .rates
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|rate| PhaseDefinition {
+                    phase_id: format!("rate@{:.1}reqs", rate),
+                    phase_name: format!("Rate {:.1} req/s", rate),
+                    scheduler_type: SchedulerType::ConstantArrivalRate,
+                    max_vus: config.max_vus,
+                    duration_secs: config.duration_secs,
+                    rate: Some(rate),
+                })
+                .collect(),
 
             "csweep" => {
                 let levels = self.generate_concurrency_levels(config.max_vus);

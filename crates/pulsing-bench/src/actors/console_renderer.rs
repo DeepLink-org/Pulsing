@@ -396,4 +396,3 @@ mod tests {
         assert!(!renderer.header_printed);
     }
 }
-

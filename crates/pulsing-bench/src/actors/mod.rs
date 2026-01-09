@@ -43,17 +43,17 @@
 //! 4. **Scalability**: Workers can be distributed across nodes
 //! 5. **Fault Isolation**: Actor failures don't crash the whole system
 
-pub mod messages;
-pub mod worker;
-pub mod scheduler;
-pub mod coordinator;
-pub mod metrics_aggregator;
 pub mod console_renderer;
+pub mod coordinator;
+pub mod messages;
+pub mod metrics_aggregator;
+pub mod scheduler;
+pub mod worker;
 
 // Re-export main types
-pub use messages::*;
-pub use worker::WorkerActor;
-pub use scheduler::SchedulerActor;
-pub use coordinator::CoordinatorActor;
-pub use metrics_aggregator::MetricsAggregatorActor;
 pub use console_renderer::ConsoleRendererActor;
+pub use coordinator::CoordinatorActor;
+pub use messages::*;
+pub use metrics_aggregator::MetricsAggregatorActor;
+pub use scheduler::SchedulerActor;
+pub use worker::WorkerActor;

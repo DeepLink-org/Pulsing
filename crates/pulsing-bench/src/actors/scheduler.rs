@@ -289,7 +289,8 @@ impl SchedulerActor {
 
                 // Keep spawning requests while duration not reached
                 while is_active_clone.load(Ordering::SeqCst) && start.elapsed() < duration {
-                    let worker_idx = sent_requests_clone.load(Ordering::SeqCst) as usize % workers.len();
+                    let worker_idx =
+                        sent_requests_clone.load(Ordering::SeqCst) as usize % workers.len();
                     let worker = &workers[worker_idx];
                     let template = request_gen.generate();
 
@@ -521,4 +522,3 @@ mod tests {
         assert_eq!(config.rate, Some(10.0));
     }
 }
-

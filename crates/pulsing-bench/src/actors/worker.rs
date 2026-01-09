@@ -149,8 +149,9 @@ impl WorkerActor {
                                             first_token_time = Some(now);
                                         }
 
-                                        token_times
-                                            .push(now.duration_since(start_time).as_secs_f64() * 1000.0);
+                                        token_times.push(
+                                            now.duration_since(start_time).as_secs_f64() * 1000.0,
+                                        );
                                         generated_tokens += 1;
                                         response_text.push_str(content);
                                     }
@@ -199,7 +200,6 @@ impl WorkerActor {
             token_times_ms: token_times,
         })
     }
-
 }
 
 #[async_trait]
@@ -228,7 +228,10 @@ impl Actor for WorkerActor {
 
         if msg_type.ends_with("SendRequest") {
             let request: SendRequest = msg.unpack()?;
-            debug!("Worker {} received request {}", self.worker_id, request.request_id);
+            debug!(
+                "Worker {} received request {}",
+                self.worker_id, request.request_id
+            );
 
             let result = self.send_request(request).await;
 
@@ -268,4 +271,3 @@ mod tests {
         assert_eq!(worker.active_requests.load(Ordering::SeqCst), 0);
     }
 }
-

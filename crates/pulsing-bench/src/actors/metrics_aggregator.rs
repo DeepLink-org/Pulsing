@@ -226,7 +226,7 @@ impl PhaseStats {
         } else {
             self.progress(expected_duration)
         };
-        
+
         PhaseDisplayData {
             phase_id: self.phase_id.clone(),
             phase_name: self.phase_name.clone(),
@@ -476,7 +476,7 @@ impl MetricsAggregatorActor {
             // Send final display update
             let update = self.build_display_update();
             let renderer = renderer.clone();
-            
+
             // Also send a FinalReport message
             let report = self.get_report();
             tokio::spawn(async move {
@@ -590,4 +590,3 @@ mod tests {
         assert_eq!(PhaseStats::percentile(&values, 90.0), Some(9.0));
     }
 }
-

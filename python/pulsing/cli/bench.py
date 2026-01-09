@@ -64,19 +64,21 @@ def run_benchmark(
     # Run the async benchmark
     async def _run():
         return await benchmark_main(config)
-    
+
     # Try to use uvloop for better performance
     try:
         import uvloop
+
         uvloop.install()
     except ImportError:
         pass
-    
+
     result = asyncio.run(_run())
-    
+
     # Result is a JSON string with the benchmark report
     if result:
         import json
+
         print("\n" + "=" * 80)
         print("BENCHMARK REPORT (JSON)")
         print("=" * 80)
@@ -85,5 +87,5 @@ def run_benchmark(
             print(json.dumps(report, indent=2))
         except json.JSONDecodeError:
             print(result)
-    
+
     return result
