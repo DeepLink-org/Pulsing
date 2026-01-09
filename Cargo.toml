@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pulsing-actor", "crates/pulsing-bench", "crates/pulsing-bench-py"]
+members = ["crates/pulsing-actor", "crates/pulsing-bench", "crates/pulsing-bench-py", "crates/pulsing-py"]
 resolver = "3"
 
 [workspace.package]
@@ -81,50 +81,3 @@ tabled = "=0.14"
 tokenizers = { version = "0.21", features = ["http"] }
 hf-hub = { version = "0.4", features = ["tokio"] }
 vergen-gitcl = "1.0"
-
-[package]
-name = "pulsing-py"
-version.workspace = true
-edition = "2021"
-authors.workspace = true
-license.workspace = true
-description = "Python bindings for Pulsing Actor System"
-
-[lib]
-path = "bindings/lib.rs"
-name = "_core"
-crate-type = ["cdylib", "rlib"]
-
-[dependencies]
-pulsing-actor = { workspace = true }
-
-# Use workspace dependencies
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-futures = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-reqwest = { workspace = true }
-
-# PyO3 dependencies
-pyo3 = { version = "0.23.4", default-features = false, features = [
-  "macros",
-  "experimental-async",
-  # "experimental-inspect",
-  "extension-module",
-  "py-clone",
-  "abi3-py310",
-] }
-
-pyo3-async-runtimes = { version = "0.23.0", default-features = false, features = [
-  "attributes",
-  # "testing",
-  "tokio-runtime",
-  "unstable-streams",
-] }
-
-pythonize = "0.23"

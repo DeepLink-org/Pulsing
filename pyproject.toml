@@ -56,7 +56,7 @@ pulsing = "pulsing.cli.__main__:main"
 
 [tool.maturin]
 module-name = "pulsing._core"
-manifest-path = "Cargo.toml"
+manifest-path = "crates/pulsing-py/Cargo.toml"
 python-packages = ["pulsing"]
 python-source = "python"
 

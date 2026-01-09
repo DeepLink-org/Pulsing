@@ -113,3 +113,7 @@ profiling_results*
 benchmark_logs/
 queue_storage/
 docs/site/
+
+# Cleanup
+stress_test_*.json
+queue_benchmark_*.json
