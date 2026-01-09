@@ -34,7 +34,16 @@ def run_benchmark(
         rates: List of rates for rate benchmark
         num_workers: Number of worker actors (default: 4)
     """
-    from pulsing._bench import benchmark_main
+    try:
+        from pulsing._bench import benchmark_main
+    except ImportError:
+        print(
+            "Error: 'pulsing._bench' module not found.\n"
+            "The benchmark tools are optional and need to be installed separately.\n\n"
+            "To install them, please run:\n"
+            "  maturin develop --manifest-path crates/pulsing-bench-py/Cargo.toml"
+        )
+        return
 
     # Get HF token from environment if not provided
     if hf_token is None:
