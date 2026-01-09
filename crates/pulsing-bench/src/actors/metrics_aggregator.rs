@@ -219,11 +219,19 @@ impl PhaseStats {
 
     /// Create a display-friendly snapshot with progress
     pub fn to_display_snapshot(&self, expected_duration: Duration) -> PhaseDisplayData {
+        let is_completed = self.end_time.is_some();
+        // If phase is completed, progress is always 100%
+        let progress_pct = if is_completed {
+            100.0
+        } else {
+            self.progress(expected_duration)
+        };
+        
         PhaseDisplayData {
             phase_id: self.phase_id.clone(),
             phase_name: self.phase_name.clone(),
-            is_completed: self.end_time.is_some(),
-            progress_pct: self.progress(expected_duration),
+            is_completed,
+            progress_pct,
             error_rate: self.error_rate(),
             request_rate: self.request_rate(),
             avg_ttft_ms: self.avg_ttft_ms(),

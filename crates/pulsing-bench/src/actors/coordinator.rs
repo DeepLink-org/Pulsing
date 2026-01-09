@@ -59,6 +59,8 @@ pub struct CoordinatorActor {
     request_gen: Arc<dyn RequestGenerator>,
     /// Enable console display
     display_enabled: bool,
+    /// Cached final report (saved before cleanup)
+    final_report: Option<BenchmarkReport>,
 }
 
 impl CoordinatorActor {
@@ -75,6 +77,7 @@ impl CoordinatorActor {
             num_workers: 4,
             request_gen: Arc::new(SimpleRequestGenerator::default_prompts()),
             display_enabled: true,
+            final_report: None,
         }
     }
 
@@ -173,6 +176,16 @@ impl CoordinatorActor {
 
         // Run benchmark phases
         let result = self.run_benchmark_phases(&start).await;
+
+        // Get and cache final report before cleanup
+        if let Some(ref metrics) = self.metrics_ref {
+            let get_report = GetReport {
+                run_id: start.run_id.clone(),
+            };
+            if let Ok(report) = metrics.ask::<_, BenchmarkReport>(get_report).await {
+                self.final_report = Some(report);
+            }
+        }
 
         // Cleanup
         self.cleanup(&start.run_id).await;
@@ -490,11 +503,16 @@ impl Actor for CoordinatorActor {
         }
 
         if msg_type.ends_with("GetReport") {
+            // Try to get from metrics actor first
             if let Some(ref metrics) = self.metrics_ref {
                 let report: GetReport = msg.unpack()?;
                 return metrics.send(Message::pack(&report)?).await;
             }
-            return Err(anyhow::anyhow!("Metrics not available"));
+            // Fall back to cached report
+            if let Some(ref report) = self.final_report {
+                return Message::pack(report);
+            }
+            return Err(anyhow::anyhow!("No report available"));
         }
 
         Err(anyhow::anyhow!("Unknown message type: {}", msg_type))

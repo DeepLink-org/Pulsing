@@ -103,7 +103,7 @@ impl ConsoleRendererActor {
 
         // Print table header
         println!(
-            "{:<20} {:<10} {:>6} {:>6} {:>12} {:>18} {:>18} {:>10} {:>10} {:>10}",
+            "{:<20} {:<10} {:>6} {:>6} {:>12} {:>18} {:>18} {:>10} {:>10} {:>12}",
             "Bench".blue().bold(),
             "Status".blue().bold(),
             "%".blue().bold(),
@@ -113,7 +113,7 @@ impl ConsoleRendererActor {
             "TPOT".blue().bold(),
             "In tok/s".blue().bold(),
             "Out tok/s".blue().bold(),
-            "Total".blue().bold()
+            "Total tok/s".blue().bold()
         );
         println!("{}", "-".repeat(120).blue());
 
@@ -199,7 +199,7 @@ impl ConsoleRendererActor {
             .map_or("N/A".to_string(), |t| format!("{:.1}", t));
 
         println!(
-            "{:<20} {:<10} {:>5.0}% {:>6} {:>10.2} r/s {:>18} {:>18} {:>10} {:>10} {:>10}",
+            "{:<20} {:<10} {:>5.0}% {:>6} {:>10.2} r/s {:>18} {:>18} {:>10} {:>10} {:>12}",
             truncate(&phase.phase_name, 20).white(),
             status,
             phase.progress_pct,

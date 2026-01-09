@@ -116,22 +116,24 @@ pub async fn run(mut run_config: RunConfiguration, stop_sender: Sender<()>) -> a
     config.validate()?;
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     // Always use console interface, send logs to file for debugging
-    let target = Box::new(File::create("log.txt").expect("Can't create file"));
-    env_logger::Builder::new()
-        .target(env_logger::Target::Pipe(target))
-        .filter(Some("inference_benchmarker"), LevelFilter::Debug)
-        .format(|buf, record| {
-            writeln!(
-                buf,
-                "[{} {} {}:{}] {}",
-                Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-                record.level(),
-                record.file().unwrap_or("unknown"),
-                record.line().unwrap_or(0),
-                record.args()
-            )
-        })
-        .init();
+    // Use try_init to avoid panic if logger is already initialized (e.g., from Python bindings)
+    if let Ok(target) = File::create("log.txt") {
+        let _ = env_logger::Builder::new()
+            .target(env_logger::Target::Pipe(Box::new(target)))
+            .filter(Some("inference_benchmarker"), LevelFilter::Debug)
+            .format(|buf, record| {
+                writeln!(
+                    buf,
+                    "[{} {} {}:{}] {}",
+                    Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                    record.level(),
+                    record.file().unwrap_or("unknown"),
+                    record.line().unwrap_or(0),
+                    record.args()
+                )
+            })
+            .try_init();
+    }
     let config_clone = config.clone();
     let mut stop_receiver = stop_sender.subscribe();
     let stop_sender_clone = stop_sender.clone();

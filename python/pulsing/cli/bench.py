@@ -1,6 +1,6 @@
 """Pulsing CLI - Benchmark commands"""
 
-import uvloop
+import asyncio
 
 
 def run_benchmark(
@@ -92,7 +92,19 @@ def run_benchmark(
     if run_id is not None:
         config["run_id"] = run_id
 
-    result = uvloop.run(benchmark_main(config))
+    # Run the async benchmark
+    # pyo3_async_runtimes requires an event loop to be present when creating the awaitable
+    async def _run():
+        return await benchmark_main(config)
+    
+    # Try to use uvloop for better performance
+    try:
+        import uvloop
+        uvloop.install()
+    except ImportError:
+        pass
+    
+    result = asyncio.run(_run())
     
     # For actor engine, result is a JSON string
     if engine == "actor" and result:
@@ -107,5 +119,3 @@ def run_benchmark(
             print(result)
     
     return result
-
-
