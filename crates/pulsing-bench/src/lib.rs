@@ -397,3 +397,159 @@ pub async fn benchmark_main_async(args: BenchmarkArgs) -> anyhow::Result<()> {
     };
     run(run_config, stop_sender_clone).await
 }
+
+// ============================================================================
+// Actor-based Benchmark API
+// ============================================================================
+
+use pulsing_actor::prelude::*;
+
+/// Actor-based benchmark arguments
+#[derive(Debug, Clone)]
+pub struct ActorBenchmarkArgs {
+    pub url: String,
+    pub api_key: String,
+    pub model_name: String,
+    pub max_vus: u64,
+    pub duration_secs: u64,
+    pub warmup_secs: u64,
+    pub benchmark_kind: String,
+    pub num_rates: u64,
+    pub rates: Option<Vec<f64>>,
+    pub num_workers: u32,
+}
+
+impl Default for ActorBenchmarkArgs {
+    fn default() -> Self {
+        Self {
+            url: "http://localhost:8000".to_string(),
+            api_key: String::new(),
+            model_name: "gpt2".to_string(),
+            max_vus: 128,
+            duration_secs: 120,
+            warmup_secs: 30,
+            benchmark_kind: "throughput".to_string(),
+            num_rates: 10,
+            rates: None,
+            num_workers: 4,
+        }
+    }
+}
+
+/// Run benchmark using Actor-based architecture
+///
+/// This is the new Actor-based benchmark implementation that provides:
+/// - Better separation of concerns
+/// - Real-time streaming metrics display
+/// - Potential for distributed benchmarking
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use pulsing_bench::{run_actor_benchmark, ActorBenchmarkArgs};
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let args = ActorBenchmarkArgs {
+///         url: "http://localhost:8000".to_string(),
+///         model_name: "my-model".to_string(),
+///         max_vus: 10,
+///         duration_secs: 60,
+///         ..Default::default()
+///     };
+///
+///     run_actor_benchmark(args).await.unwrap();
+/// }
+/// ```
+pub async fn run_actor_benchmark(args: ActorBenchmarkArgs) -> anyhow::Result<actors::BenchmarkReport> {
+    use actors::*;
+
+    let git_sha = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
+    println!(
+        "Pulsing Benchmark (Actor Edition) {} ({})",
+        env!("CARGO_PKG_VERSION"),
+        git_sha
+    );
+
+    // Create actor system
+    let system = ActorSystem::new(SystemConfig::standalone()).await?;
+
+    // Create and spawn coordinator
+    let coordinator = CoordinatorActor::new()
+        .with_system(system.clone())
+        .with_num_workers(args.num_workers);
+
+    let coordinator_ref = system.spawn("coordinator", coordinator).await?;
+
+    // Build benchmark config
+    let config = BenchmarkConfig {
+        url: args.url,
+        api_key: args.api_key,
+        model_name: args.model_name,
+        max_vus: args.max_vus,
+        duration_secs: args.duration_secs,
+        rate: None,
+        warmup_secs: args.warmup_secs,
+        benchmark_kind: args.benchmark_kind,
+        num_rates: args.num_rates,
+        rates: args.rates,
+    };
+
+    let run_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+
+    // Start benchmark
+    let start_msg = StartBenchmark {
+        config,
+        run_id: run_id.clone(),
+    };
+
+    // Handle ctrl-c
+    let coordinator_ref_clone = coordinator_ref.clone();
+    let run_id_clone = run_id.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to listen for ctrl-c");
+        info!("Received ctrl-c, stopping benchmark");
+        let stop_msg = StopBenchmark {
+            run_id: run_id_clone,
+            reason: "User interrupted".to_string(),
+        };
+        let _ = coordinator_ref_clone.tell(stop_msg).await;
+    });
+
+    // Run benchmark and wait for completion
+    let result: AckMessage = coordinator_ref.ask(start_msg).await?;
+
+    if !result.success {
+        return Err(anyhow::anyhow!("Benchmark failed: {}", result.message));
+    }
+
+    // Get final report
+    let get_report = GetReport { run_id };
+    let report: BenchmarkReport = coordinator_ref.ask(get_report).await?;
+
+    // Shutdown
+    system.shutdown().await?;
+
+    Ok(report)
+}
+
+/// Run a simple Actor-based throughput test
+pub async fn run_actor_throughput_test(
+    url: &str,
+    model_name: &str,
+    max_vus: u64,
+    duration_secs: u64,
+) -> anyhow::Result<actors::BenchmarkReport> {
+    let args = ActorBenchmarkArgs {
+        url: url.to_string(),
+        model_name: model_name.to_string(),
+        max_vus,
+        duration_secs,
+        warmup_secs: 10,
+        benchmark_kind: "throughput".to_string(),
+        ..Default::default()
+    };
+    run_actor_benchmark(args).await
+}

@@ -1,70 +1,59 @@
 //! Actor-based benchmark implementation
 //!
-//! This module provides an Actor-based architecture for benchmark execution:
+//! This module provides a refactored benchmark system using the Actor model.
+//!
+//! ## Architecture
 //!
 //! ```text
-//! ┌─────────────────────────────────────────────────────────────────────────┐
-//! │                         CoordinatorActor                                  │
-//! │  - Manages benchmark lifecycle                                            │
-//! │  - Spawns ExecutorActors and CollectorActor                              │
-//! │  - Handles progress events                                                │
-//! └────────────────────────────────────────────────────────────────────────── │
-//!              │                                      │
-//!              ▼                                      ▼
-//! ┌───────────────────────┐                ┌───────────────────────┐
-//! │   ExecutorActor[0..N] │                │    CollectorActor     │
-//! │  - Sends requests     │ ────────────>  │  - Aggregates results │
-//! │  - Handles responses  │   Results      │  - Computes stats     │
-//! └───────────────────────┘                └───────────────────────┘
+//!                              ┌─────────────────┐
+//!                              │   Coordinator   │
+//!                              │  (Orchestrator) │
+//!                              └────────┬────────┘
+//!                                       │
+//!         ┌─────────────────────────────┼─────────────────────────────┐
+//!         │                             │                             │
+//!         ▼                             ▼                             ▼
+//! ┌────────────────┐           ┌─────────────────┐           ┌────────────────┐
+//! │   Scheduler    │           │   Worker(s)     │           │    Metrics     │
+//! │ (Rate Control) │           │ (HTTP Clients)  │           │  Aggregator    │
+//! └────────────────┘           └───────┬─────────┘           └────────┬───────┘
+//!                                      │                              │
+//!                                      │ RequestCompleted             │ DisplayUpdate
+//!                                      │                              │
+//!                                      ▼                              ▼
+//!                              ┌─────────────────┐           ┌────────────────┐
+//!                              │    Metrics      │ ───────►  │    Console     │
+//!                              │   Aggregator    │           │   Renderer     │
+//!                              └─────────────────┘           └────────────────┘
 //! ```
+//!
+//! ## Actors
+//!
+//! - **Coordinator**: Manages lifecycle, spawns other actors, orchestrates benchmark phases
+//! - **Scheduler**: Controls request timing (ConstantVUs, ConstantArrivalRate)
+//! - **Worker**: Sends HTTP requests, processes streaming responses, calculates TTFT/TPOT
+//! - **MetricsAggregator**: Collects results, computes statistics (percentiles, throughput)
+//! - **ConsoleRenderer**: Renders benchmark progress to terminal (tables, progress bars)
+//!
+//! ## Benefits of Actor Model
+//!
+//! 1. **Separation of Concerns**: Each actor has a single responsibility
+//! 2. **Testability**: Metrics logic can be tested without terminal dependencies
+//! 3. **Flexibility**: Easy to replace ConsoleRenderer with JSON/Web output
+//! 4. **Scalability**: Workers can be distributed across nodes
+//! 5. **Fault Isolation**: Actor failures don't crash the whole system
 
-mod messages;
-mod executor;
-mod collector;
-mod coordinator;
+pub mod messages;
+pub mod worker;
+pub mod scheduler;
+pub mod coordinator;
+pub mod metrics_aggregator;
+pub mod console_renderer;
 
+// Re-export main types
 pub use messages::*;
-pub use executor::ExecutorActor;
-pub use collector::CollectorActor;
+pub use worker::WorkerActor;
+pub use scheduler::SchedulerActor;
 pub use coordinator::CoordinatorActor;
-
-use crate::benchmark::BenchmarkConfig;
-use crate::requests::{TextGenerationBackend, TextRequestGenerator};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::info;
-
-/// Run benchmark using Actor-based coordinator
-/// 
-/// This function creates a CoordinatorActor and runs the benchmark directly
-/// without requiring full actor system setup. This is suitable for standalone
-/// benchmarks.
-pub async fn run_actor_benchmark(
-    config: BenchmarkConfig,
-    backend: Box<dyn TextGenerationBackend + Send + Sync>,
-    requests: Arc<Mutex<dyn TextRequestGenerator + Send>>,
-) -> anyhow::Result<crate::results::BenchmarkReport> {
-    info!("Starting actor-based benchmark");
-    
-    // Create coordinator directly (simplified actor model)
-    let mut coordinator = CoordinatorActor::new(config, backend, requests);
-    
-    // Create a minimal context for direct execution
-    let _ctx = MinimalContext::new();
-    
-    // Run benchmark
-    let report = coordinator.run_benchmark_direct().await?;
-    
-    info!("Actor-based benchmark completed");
-    Ok(report)
-}
-
-/// Minimal context for direct actor execution (without full actor system)
-struct MinimalContext;
-
-impl MinimalContext {
-    fn new() -> Self {
-        Self
-    }
-}
-
+pub use metrics_aggregator::MetricsAggregatorActor;
+pub use console_renderer::ConsoleRendererActor;

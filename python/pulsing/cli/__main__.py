@@ -130,7 +130,7 @@ def inspect(seeds: str | None = None):
 
 @hp.param("bench")
 def bench(
-    tokenizer_name: str,
+    tokenizer_name: str | None = None,
     model_name: str | None = None,
     max_vus: int = 128,
     duration: str = "120s",
@@ -147,14 +147,19 @@ def bench(
     dataset_file: str = "share_gpt_filtered_small.json",
     extra_meta: str | None = None,
     run_id: str | None = None,
+    engine: str = "classic",
+    num_workers: int = 4,
 ):
     """
     Run inference benchmarks.
 
     This command runs the pulsing benchmark tool with the specified parameters.
+    Supports two engines:
+    - classic: Original implementation with tokenizer and dataset support
+    - actor: New Actor-based implementation (simpler, no tokenizer required)
 
     Args:
-        tokenizer_name: The name of the tokenizer to use (required)
+        tokenizer_name: The name of the tokenizer to use (required for classic engine)
         model_name: The name of the model to use. If not provided, same as tokenizer_name
         max_vus: Maximum number of virtual users (default: 128)
         duration: Duration of each benchmark step (default: "120s")
@@ -171,9 +176,15 @@ def bench(
         dataset_file: Dataset file name (default: "share_gpt_filtered_small.json")
         extra_meta: Extra metadata as "key1=value1,key2=value2"
         run_id: Run identifier for results file
+        engine: Benchmark engine - "classic" (original) or "actor" (new). Default: "classic"
+        num_workers: Number of worker actors (only for actor engine). Default: 4
 
     Examples:
+        # Classic engine (requires tokenizer)
         pulsing bench --tokenizer_name gpt2 --url http://localhost:8080
+
+        # Actor engine (simpler, just needs model_name)
+        pulsing bench --model_name gpt2 --engine actor --url http://localhost:8080 --benchmark_kind throughput
     """
     from .bench import run_benchmark
 
@@ -195,6 +206,8 @@ def bench(
         dataset_file=dataset_file,
         extra_meta=extra_meta,
         run_id=run_id,
+        engine=engine,
+        num_workers=num_workers,
     )
 
 

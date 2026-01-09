@@ -1,248 +1,318 @@
-//! CoordinatorActor - Coordinates benchmark execution
+//! Coordinator Actor - orchestrates the benchmark lifecycle
 //!
-//! Responsible for:
-//! - Managing benchmark lifecycle
-//! - Spawning ExecutorActors and CollectorActor
-//! - Running benchmark phases (warmup, throughput, sweep, etc.)
-//! - Generating final report
+//! This actor is responsible for:
+//! - Managing actor lifecycle (spawn/stop workers, scheduler, metrics, renderer)
+//! - Orchestrating benchmark phases
+//! - Handling start/stop commands
+//!
+//! Refactored to use unified phase execution logic.
 
-use super::executor::ExecutorActor;
 use super::messages::*;
-use crate::benchmark::{BenchmarkConfig, BenchmarkKind};
-use crate::requests::{TextGenerationBackend, TextRequestGenerator};
-use crate::results::{BenchmarkReport, BenchmarkResults};
-use crate::scheduler::ExecutorType;
+use super::scheduler::{RequestGenerator, SimpleRequestGenerator};
+use super::{ConsoleRendererActor, MetricsAggregatorActor, SchedulerActor, WorkerActor};
 use async_trait::async_trait;
 use pulsing_actor::prelude::*;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use std::time::Duration;
+use tracing::info;
 
-const THROUGHPUT_BUDGET: f64 = 1.2;
+/// Coordinator state
+#[derive(Debug, Clone, PartialEq)]
+enum CoordinatorState {
+    Idle,
+    Running(String), // run_id
+    Stopping,
+}
 
-/// CoordinatorActor coordinates the benchmark flow
+/// Phase definition - describes how to run a benchmark phase
+#[derive(Debug, Clone)]
+struct PhaseDefinition {
+    phase_id: String,
+    phase_name: String,
+    scheduler_type: SchedulerType,
+    max_vus: u64,
+    duration_secs: u64,
+    rate: Option<f64>,
+}
+
+/// Coordinator Actor - manages the entire benchmark lifecycle
 pub struct CoordinatorActor {
-    /// Benchmark configuration
-    config: BenchmarkConfig,
-    /// Backend factory (creates new backends for executors)
-    backend: Box<dyn TextGenerationBackend + Send + Sync>,
+    /// Actor system reference
+    system: Option<Arc<ActorSystem>>,
+    /// Current state
+    state: CoordinatorState,
+    /// Current phase
+    phase: Option<BenchmarkPhase>,
+    /// Current configuration
+    config: Option<BenchmarkConfig>,
+    /// Worker references
+    workers: Vec<ActorRef>,
+    /// Scheduler reference
+    scheduler_ref: Option<ActorRef>,
+    /// Metrics aggregator reference
+    metrics_ref: Option<ActorRef>,
+    /// Console renderer reference  
+    renderer_ref: Option<ActorRef>,
+    /// Number of workers to spawn
+    num_workers: u32,
     /// Request generator
-    requests: Arc<Mutex<dyn TextRequestGenerator + Send>>,
-    /// Benchmark report
-    report: BenchmarkReport,
-    /// Start time
-    start_time: Option<Instant>,
-    /// Collector actor ref (reserved for future distributed usage)
-    #[allow(dead_code)]
-    collector_ref: Option<ActorRef>,
-    /// Executor actor ref (reserved for future distributed usage)
-    #[allow(dead_code)]
-    executor_ref: Option<ActorRef>,
+    request_gen: Arc<dyn RequestGenerator>,
+    /// Enable console display
+    display_enabled: bool,
 }
 
 impl CoordinatorActor {
-    pub fn new(
-        config: BenchmarkConfig,
-        backend: Box<dyn TextGenerationBackend + Send + Sync>,
-        requests: Arc<Mutex<dyn TextRequestGenerator + Send>>,
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
-            config,
-            backend,
-            requests,
-            report: BenchmarkReport::new(),
-            start_time: None,
-            collector_ref: None,
-            executor_ref: None,
+            system: None,
+            state: CoordinatorState::Idle,
+            phase: None,
+            config: None,
+            workers: Vec::new(),
+            scheduler_ref: None,
+            metrics_ref: None,
+            renderer_ref: None,
+            num_workers: 4,
+            request_gen: Arc::new(SimpleRequestGenerator::default_prompts()),
+            display_enabled: true,
         }
     }
 
-    /// Run the complete benchmark (direct execution, without actor system)
-    pub async fn run_benchmark_direct(&mut self) -> anyhow::Result<BenchmarkReport> {
-        self.run_benchmark_internal().await
+    pub fn with_system(mut self, system: Arc<ActorSystem>) -> Self {
+        self.system = Some(system);
+        self
     }
 
-    /// Run the complete benchmark (internal implementation)
-    async fn run_benchmark_internal(&mut self) -> anyhow::Result<BenchmarkReport> {
-        info!("Starting benchmark");
-        self.start_time = Some(Instant::now());
-        self.report.start();
+    pub fn with_num_workers(mut self, num: u32) -> Self {
+        self.num_workers = num;
+        self
+    }
 
-        // Run warmup
-        info!("Running warmup phase");
-        self.run_phase("warmup", ExecutorType::ConstantVUs, 1, self.config.warmup_duration, None)
+    pub fn with_request_generator(mut self, gen: Arc<dyn RequestGenerator>) -> Self {
+        self.request_gen = gen;
+        self
+    }
+
+    pub fn with_display(mut self, enabled: bool) -> Self {
+        self.display_enabled = enabled;
+        self
+    }
+
+    /// Start a new benchmark run
+    async fn start_benchmark(&mut self, start: StartBenchmark) -> anyhow::Result<AckMessage> {
+        if self.state != CoordinatorState::Idle {
+            return Ok(AckMessage::error("Benchmark already running"));
+        }
+
+        let system = self
+            .system
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("ActorSystem not configured"))?;
+
+        info!("Starting benchmark run: {}", start.run_id);
+        self.config = Some(start.config.clone());
+        self.state = CoordinatorState::Running(start.run_id.clone());
+        self.phase = Some(BenchmarkPhase::Initializing);
+
+        // Spawn Console Renderer first (if enabled)
+        if self.display_enabled {
+            let renderer = ConsoleRendererActor::new();
+            let renderer_ref = system
+                .spawn(format!("renderer-{}", start.run_id), renderer)
+                .await?;
+            self.renderer_ref = Some(renderer_ref);
+        }
+
+        // Spawn Metrics Aggregator
+        let mut metrics = MetricsAggregatorActor::new();
+        if let Some(ref renderer) = self.renderer_ref {
+            metrics = metrics.with_renderer(renderer.clone());
+        }
+        let metrics_ref = system
+            .spawn(format!("metrics-{}", start.run_id), metrics)
             .await?;
-        info!("Warmup complete");
+        self.metrics_ref = Some(metrics_ref.clone());
 
-        // Run main benchmark based on kind
-        match self.config.benchmark_kind {
-            BenchmarkKind::Throughput => {
-                self.run_throughput().await?;
-            }
-            BenchmarkKind::Sweep => {
-                self.run_sweep().await?;
-            }
-            BenchmarkKind::ConcurrencySweep => {
-                self.run_concurrency_sweep().await?;
-            }
-            BenchmarkKind::Rate => {
-                self.run_rates().await?;
-            }
+        // Register run with metrics
+        let register = RegisterRun {
+            run_id: start.run_id.clone(),
+            config: start.config.clone(),
+        };
+        metrics_ref.tell(register).await?;
+
+        // Spawn Workers
+        self.workers.clear();
+        for i in 0..self.num_workers {
+            let worker =
+                WorkerActor::new(format!("worker-{}", i)).with_collector(metrics_ref.clone());
+            let worker_ref = system
+                .spawn(format!("worker-{}-{}", start.run_id, i), worker)
+                .await?;
+            self.workers.push(worker_ref);
         }
 
-        self.report.end();
-        
-        let duration = self.start_time.map(|t| t.elapsed()).unwrap_or_default();
-        info!("Benchmark complete in {:?}", duration);
-        
-        Ok(self.report.clone())
-    }
-
-    /// Run a single benchmark phase
-    async fn run_phase(
-        &mut self,
-        id: &str,
-        executor_type: ExecutorType,
-        max_vus: u64,
-        duration: Duration,
-        rate: Option<f64>,
-    ) -> anyhow::Result<BenchmarkResults> {
-        debug!("Running phase: {} ({:?}, {} VUs, {:?})", id, executor_type, max_vus, duration);
-
-        // Create executor actor inline (simpler approach)
-        let mut executor = ExecutorActor::new(
-            self.backend.clone(),
-            self.requests.clone(),
-        );
-
-        // Build start message
-        let start_msg = match executor_type {
-            ExecutorType::ConstantVUs => StartExecutor::constant_vus(
-                id,
-                max_vus,
-                duration,
-                "collector",
-            ),
-            ExecutorType::ConstantArrivalRate => {
-                let r = rate.ok_or_else(|| anyhow::anyhow!("Rate required for constant arrival rate"))?;
-                StartExecutor::constant_arrival_rate(
-                    id,
-                    max_vus,
-                    duration,
-                    r,
-                    "collector",
-                )
-            }
-        };
-
-        // Run executor directly (without actor system for simplicity)
-        let result = match executor_type {
-            ExecutorType::ConstantVUs => executor.run_constant_vus(start_msg).await?,
-            ExecutorType::ConstantArrivalRate => executor.run_constant_arrival_rate(start_msg).await?,
-        };
+        // Spawn Scheduler
+        let scheduler = SchedulerActor::new()
+            .with_workers(self.workers.clone())
+            .with_collector(metrics_ref.clone())
+            .with_request_generator(self.request_gen.clone())
+            .with_target(
+                start.config.url.clone(),
+                start.config.api_key.clone(),
+                start.config.model_name.clone(),
+            );
+        let scheduler_ref = system
+            .spawn(format!("scheduler-{}", start.run_id), scheduler)
+            .await?;
+        self.scheduler_ref = Some(scheduler_ref);
 
         info!(
-            "Phase {} complete: {} successful, {} failed",
-            id, result.successful_requests, result.failed_requests
+            "Initialized {} workers, scheduler, metrics for run {}",
+            self.num_workers, start.run_id
         );
 
-        // Get results and convert to BenchmarkResults
-        let results_data = executor.results.read().await.clone();
-        let mut benchmark_results = BenchmarkResults::new(
-            id.to_string(),
-            executor_type,
-            crate::executors::ExecutorConfig {
-                max_vus,
-                duration,
-                rate,
-            },
-        );
+        // Run benchmark phases
+        let result = self.run_benchmark_phases(&start).await;
 
-        // Convert request results to responses
-        // Note: We create a minimal response since we're tracking the important metrics separately
-        for result in results_data {
-            // Create request for the response
-            let request = Arc::new(crate::requests::TextGenerationRequest {
-                id: None,
-                prompt: String::new(),
-                num_prompt_tokens: result.input_tokens,
-                num_decode_tokens: Some(result.output_tokens),
-            });
-            
-            // Create response using the constructor
-            let mut response = crate::requests::TextGenerationAggregatedResponse::new(request);
-            response.start_time = Some(tokio::time::Instant::now());
-            response.end_time = Some(tokio::time::Instant::now());
-            response.failed = !result.success;
-            response.ended = true;
-            response.num_generated_tokens = result.output_tokens;
-            response.times_to_tokens = if let Some(ttft) = result.time_to_first_token_ms {
-                let mut times = vec![Duration::from_millis(ttft)];
-                let mut current = ttft;
-                for &itl in &result.inter_token_latencies_ms {
-                    current += itl;
-                    times.push(Duration::from_millis(current));
+        // Cleanup
+        self.cleanup(&start.run_id).await;
+
+        match result {
+            Ok(()) => {
+                self.phase = Some(BenchmarkPhase::Completed);
+                Ok(AckMessage::ok())
+            }
+            Err(e) => {
+                self.phase = Some(BenchmarkPhase::Failed(e.to_string()));
+                Ok(AckMessage::error(e.to_string()))
+            }
+        }
+    }
+
+    async fn run_benchmark_phases(&mut self, start: &StartBenchmark) -> anyhow::Result<()> {
+        let config = &start.config;
+
+        // Phase 1: Warmup
+        self.phase = Some(BenchmarkPhase::Warmup);
+        info!("Starting warmup phase");
+
+        let warmup = PhaseDefinition {
+            phase_id: "warmup".to_string(),
+            phase_name: "Warmup".to_string(),
+            scheduler_type: SchedulerType::ConstantVUs,
+            max_vus: 1,
+            duration_secs: config.warmup_secs,
+            rate: None,
+        };
+        self.run_phase(&start.run_id, &warmup).await?;
+
+        // Phase 2: Main benchmark
+        self.phase = Some(BenchmarkPhase::Running);
+        info!("Starting main benchmark phase");
+
+        let phases = self.generate_phases(config);
+        for phase_def in phases {
+            self.run_phase(&start.run_id, &phase_def).await?;
+        }
+
+        // Phase 3: Cooldown
+        self.phase = Some(BenchmarkPhase::Cooldown);
+        info!("Cooldown phase");
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        Ok(())
+    }
+
+    /// Generate phase definitions based on benchmark kind
+    fn generate_phases(&self, config: &BenchmarkConfig) -> Vec<PhaseDefinition> {
+        match config.benchmark_kind.as_str() {
+            "throughput" => vec![PhaseDefinition {
+                phase_id: "throughput".to_string(),
+                phase_name: "Max Throughput".to_string(),
+                scheduler_type: SchedulerType::ConstantVUs,
+                max_vus: config.max_vus,
+                duration_secs: config.duration_secs,
+                rate: None,
+            }],
+
+            "sweep" => {
+                // Sweep needs to first discover max rate, then run rate tests
+                // For simplicity, use num_rates evenly distributed
+                let mut phases = vec![
+                    // First: throughput discovery
+                    PhaseDefinition {
+                        phase_id: "throughput-discovery".to_string(),
+                        phase_name: "Throughput Discovery".to_string(),
+                        scheduler_type: SchedulerType::ConstantVUs,
+                        max_vus: config.max_vus,
+                        duration_secs: config.duration_secs,
+                        rate: None,
+                    },
+                ];
+
+                // Rate sweep phases (will be dynamically adjusted)
+                for i in 1..=config.num_rates {
+                    let rate_ratio = i as f64 / config.num_rates as f64;
+                    phases.push(PhaseDefinition {
+                        phase_id: format!("rate-{}", i),
+                        phase_name: format!("Rate Sweep {}/{}", i, config.num_rates),
+                        scheduler_type: SchedulerType::ConstantArrivalRate,
+                        max_vus: config.max_vus,
+                        duration_secs: config.duration_secs,
+                        rate: Some(rate_ratio * 100.0), // Placeholder, will be adjusted
+                    });
                 }
-                times
-            } else {
-                Vec::new()
-            };
-            
-            benchmark_results.add_response(response);
+                phases
+            }
+
+            "rate" => {
+                config
+                    .rates
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|rate| PhaseDefinition {
+                        phase_id: format!("rate@{:.1}reqs", rate),
+                        phase_name: format!("Rate {:.1} req/s", rate),
+                        scheduler_type: SchedulerType::ConstantArrivalRate,
+                        max_vus: config.max_vus,
+                        duration_secs: config.duration_secs,
+                        rate: Some(rate),
+                    })
+                    .collect()
+            }
+
+            "csweep" => {
+                let levels = self.generate_concurrency_levels(config.max_vus);
+                levels
+                    .into_iter()
+                    .map(|vus| PhaseDefinition {
+                        phase_id: format!("concurrency#{}vus", vus),
+                        phase_name: format!("Concurrency {} VUs", vus),
+                        scheduler_type: SchedulerType::ConstantVUs,
+                        max_vus: vus,
+                        duration_secs: config.duration_secs,
+                        rate: None,
+                    })
+                    .collect()
+            }
+
+            _ => vec![PhaseDefinition {
+                phase_id: "unknown".to_string(),
+                phase_name: "Unknown".to_string(),
+                scheduler_type: SchedulerType::ConstantVUs,
+                max_vus: config.max_vus,
+                duration_secs: config.duration_secs,
+                rate: None,
+            }],
         }
-
-        self.report.add_benchmark_result(benchmark_results.clone());
-        Ok(benchmark_results)
     }
 
-    /// Run throughput benchmark
-    async fn run_throughput(&mut self) -> anyhow::Result<()> {
-        info!("Running throughput benchmark");
-        self.run_phase(
-            "throughput",
-            ExecutorType::ConstantVUs,
-            self.config.max_vus,
-            self.config.duration,
-            None,
-        ).await?;
-        Ok(())
-    }
-
-    /// Run sweep benchmark
-    async fn run_sweep(&mut self) -> anyhow::Result<()> {
-        // First run throughput to find max rate
-        self.run_throughput().await?;
-
-        // Get max throughput from results
-        let throughput_results = &self.report.get_results()[1]; // Index 1 = after warmup
-        let max_throughput = throughput_results.successful_request_rate()?;
-        
-        info!("Max throughput detected: {:.2} req/s", max_throughput);
-
-        // Run sweep at different rates
-        let num_rates = self.config.num_rates;
-        for i in 1..=num_rates {
-            let rate = i as f64 * max_throughput * THROUGHPUT_BUDGET / num_rates as f64;
-            self.run_rate(rate).await?;
-        }
-
-        Ok(())
-    }
-
-    /// Run concurrency sweep benchmark
-    async fn run_concurrency_sweep(&mut self) -> anyhow::Result<()> {
-        info!("Running concurrency sweep benchmark");
-
-        let max_concurrency = self.config.max_vus;
-        let mut best_concurrency = 1;
-        let mut best_throughput = 0.0;
-
-        // Generate concurrency levels to test
-        let mut levels = Vec::new();
-        levels.push(1);
+    /// Generate concurrency levels for sweep
+    fn generate_concurrency_levels(&self, max_vus: u64) -> Vec<u64> {
+        let mut levels = vec![1u64];
         let mut level = 2;
-        while level <= max_concurrency {
+        while level <= max_vus {
             levels.push(level);
             if level < 10 {
                 level += 1;
@@ -254,121 +324,179 @@ impl CoordinatorActor {
                 level += 20;
             }
         }
-        if !levels.contains(&max_concurrency) {
-            levels.push(max_concurrency);
+        if !levels.contains(&max_vus) {
+            levels.push(max_vus);
         }
-        levels.sort();
-        levels.dedup();
+        levels
+    }
 
-        info!("Testing concurrency levels: {:?}", levels);
+    /// Unified phase execution - reduces code duplication
+    async fn run_phase(&self, run_id: &str, phase: &PhaseDefinition) -> anyhow::Result<()> {
+        let scheduler_ref = self
+            .scheduler_ref
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Scheduler not initialized"))?;
+        let metrics_ref = self
+            .metrics_ref
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Metrics not initialized"))?;
 
-        for concurrency in levels {
-            let results = self.run_phase(
-                &format!("concurrency#{}vus", concurrency),
-                ExecutorType::ConstantVUs,
-                concurrency,
-                self.config.duration,
-                None,
-            ).await?;
+        info!("Running phase: {}", phase.phase_name);
 
-            let throughput = results.successful_request_rate().unwrap_or(0.0);
-            info!("Concurrency {}: {:.2} req/s", concurrency, throughput);
+        // Step 1: Configure scheduler
+        let config_msg = ConfigureScheduler {
+            scheduler_type: phase.scheduler_type.clone(),
+            max_vus: phase.max_vus,
+            duration_secs: phase.duration_secs,
+            rate: phase.rate,
+        };
+        scheduler_ref.tell(config_msg).await?;
 
-            if throughput > best_throughput {
-                best_throughput = throughput;
-                best_concurrency = concurrency;
-            }
+        // Step 2: Notify metrics of phase start
+        let start_phase = StartPhase {
+            run_id: run_id.to_string(),
+            phase_id: phase.phase_id.clone(),
+            phase_name: phase.phase_name.clone(),
+            scheduler_type: phase.scheduler_type.clone(),
+            target_rate: phase.rate,
+        };
+        metrics_ref.tell(start_phase).await?;
 
-            // Early stop if throughput declining
-            if concurrency > 10 && throughput < best_throughput * 0.9 {
-                warn!("Throughput declining, stopping early");
-                break;
-            }
-        }
+        // Step 3: Start scheduling and wait for completion
+        let start_msg = StartScheduling {
+            phase_id: phase.phase_id.clone(),
+        };
+        scheduler_ref.ask::<_, AckMessage>(start_msg).await?;
 
-        info!(
-            "Optimal concurrency: {} ({:.2} req/s)",
-            best_concurrency, best_throughput
-        );
+        // Step 4: Notify metrics of phase end
+        let end_phase = EndPhase {
+            run_id: run_id.to_string(),
+            phase_id: phase.phase_id.clone(),
+        };
+        metrics_ref.tell(end_phase).await?;
 
+        info!("Phase {} completed", phase.phase_name);
         Ok(())
     }
 
-    /// Run rate benchmark
-    async fn run_rate(&mut self, rate: f64) -> anyhow::Result<()> {
-        debug!("Running benchmark at rate: {} req/s", rate);
-        self.run_phase(
-            &format!("rate@{:.1}reqs", rate),
-            ExecutorType::ConstantArrivalRate,
-            self.config.max_vus,
-            self.config.duration,
-            Some(rate),
-        ).await?;
-        Ok(())
-    }
+    async fn cleanup(&mut self, run_id: &str) {
+        let system = match &self.system {
+            Some(s) => s,
+            None => return,
+        };
 
-    /// Run rates benchmark
-    async fn run_rates(&mut self) -> anyhow::Result<()> {
-        let rates = self.config.rates.clone().ok_or_else(|| {
-            anyhow::anyhow!("Rates must be specified for rate benchmark")
-        })?;
+        info!("Cleaning up actors for run {}", run_id);
 
-        for rate in rates {
-            self.run_rate(rate).await?;
+        // Stop scheduler
+        if self.scheduler_ref.is_some() {
+            let _ = system.stop(format!("scheduler-{}", run_id)).await;
         }
 
-        Ok(())
+        // Stop workers
+        for i in 0..self.num_workers {
+            let _ = system.stop(format!("worker-{}-{}", run_id, i)).await;
+        }
+
+        // Stop metrics (this will trigger final report to renderer)
+        if self.metrics_ref.is_some() {
+            let _ = system.stop(format!("metrics-{}", run_id)).await;
+        }
+
+        // Stop renderer
+        if self.renderer_ref.is_some() {
+            // Give renderer time to process final report
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = system.stop(format!("renderer-{}", run_id)).await;
+        }
+
+        self.scheduler_ref = None;
+        self.metrics_ref = None;
+        self.renderer_ref = None;
+        self.workers.clear();
+        self.state = CoordinatorState::Idle;
+    }
+
+    async fn stop_benchmark(&mut self, stop: StopBenchmark) -> AckMessage {
+        if let CoordinatorState::Running(ref run_id) = self.state {
+            if *run_id != stop.run_id {
+                return AckMessage::error("Run ID mismatch");
+            }
+
+            info!("Stopping benchmark: {}", stop.reason);
+            self.state = CoordinatorState::Stopping;
+
+            // Signal scheduler to stop
+            if let Some(ref scheduler) = self.scheduler_ref {
+                let _ = scheduler.tell(PauseScheduling).await;
+            }
+
+            self.cleanup(&stop.run_id).await;
+            AckMessage::ok()
+        } else {
+            AckMessage::error("No benchmark running")
+        }
+    }
+
+    fn get_status(&self) -> CoordinatorStatus {
+        let (run_id, phase) = match &self.state {
+            CoordinatorState::Running(id) => (Some(id.clone()), self.phase.clone()),
+            _ => (None, None),
+        };
+
+        CoordinatorStatus {
+            run_id,
+            phase,
+            workers: self.workers.len() as u32,
+            active_requests: 0, // Could aggregate from metrics
+        }
+    }
+}
+
+impl Default for CoordinatorActor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[async_trait]
 impl Actor for CoordinatorActor {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+        info!("Coordinator started with actor_id {:?}", ctx.id());
+        Ok(())
+    }
+
+    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+        info!("Coordinator stopped");
+        Ok(())
+    }
+
     async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
         let msg_type = msg.msg_type();
 
         if msg_type.ends_with("StartBenchmark") {
-            match self.run_benchmark_internal().await {
-                Ok(_) => {
-                    return Message::pack(&BenchmarkComplete {
-                        success: true,
-                        message: "Benchmark completed successfully".to_string(),
-                    });
-                }
-                Err(e) => {
-                    return Message::pack(&BenchmarkComplete {
-                        success: false,
-                        message: format!("Benchmark failed: {}", e),
-                    });
-                }
-            }
+            let start: StartBenchmark = msg.unpack()?;
+            let result = self.start_benchmark(start).await?;
+            return Message::pack(&result);
         }
 
         if msg_type.ends_with("StopBenchmark") {
-            // Signal stop to executors
-            self.report.end();
-            return Message::pack(&BenchmarkComplete {
-                success: true,
-                message: "Benchmark stopped".to_string(),
-            });
+            let stop: StopBenchmark = msg.unpack()?;
+            let result = self.stop_benchmark(stop).await;
+            return Message::pack(&result);
         }
 
-        if msg_type.ends_with("ProgressUpdate") {
-            // Return current progress
-            let progress = ProgressUpdate {
-                phase: "unknown".to_string(),
-                progress: 0.0,
-                successful_requests: 0,
-                failed_requests: 0,
-                requests_throughput: 0.0,
-                avg_ttft_ms: None,
-                avg_tpot_ms: None,
-                input_throughput: None,
-                output_throughput: None,
-            };
-            return Message::pack(&progress);
+        if msg_type.ends_with("CoordinatorStatus") || msg_type.ends_with("GetStatus") {
+            return Message::pack(&self.get_status());
+        }
+
+        if msg_type.ends_with("GetReport") {
+            if let Some(ref metrics) = self.metrics_ref {
+                let report: GetReport = msg.unpack()?;
+                return metrics.send(Message::pack(&report)?).await;
+            }
+            return Err(anyhow::anyhow!("Metrics not available"));
         }
 
         Err(anyhow::anyhow!("Unknown message type: {}", msg_type))
     }
 }
-
