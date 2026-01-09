@@ -29,7 +29,7 @@ test: test-rust test-python
 
 # Run Rust tests
 test-rust:
-    cargo test --workspace
+    cargo test --workspace --exclude pulsing-bench-py --exclude pulsing-py
 
 # Run Python tests
 test-python:
