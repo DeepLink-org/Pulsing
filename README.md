@@ -114,8 +114,9 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 Pulsing/
 ├── crates/                   # Rust crates
 │   ├── pulsing-actor/        # Actor System 核心库
-│   └── pulsing-bench/        # 性能基准测试工具
-├── bindings/                 # PyO3 绑定
+│   ├── pulsing-bench/        # 性能基准测试工具
+│   ├── pulsing-bench-py/     # Benchmark Python 绑定
+│   └── pulsing-py/           # PyO3 核心绑定
 ├── python/pulsing/           # Python 包
 │   ├── actor/                # Actor System Python API
 │   ├── actors/               # LLM serving actors
