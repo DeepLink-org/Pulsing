@@ -563,10 +563,10 @@
           <span class="feature-icon">🐍</span>
           {% if config.theme.language == "zh" %}
           <h3>Python 优先</h3>
-          <p>通过 PyO3 提供完整的 Python API。使用 <code>@as_actor</code> 装饰器将任何类转换为分布式 Actor。</p>
+          <p>通过 PyO3 提供完整的 Python API。使用 <code>@remote</code> 装饰器将任何类转换为分布式 Actor。</p>
           {% else %}
           <h3>Python First</h3>
-          <p>Full Python API via PyO3. Use the <code>@as_actor</code> decorator to turn any class into a distributed actor.</p>
+          <p>Full Python API via PyO3. Use the <code>@remote</code> decorator to turn any class into a distributed actor.</p>
           {% endif %}
         </div>
         <div class="feature-card">
@@ -607,9 +607,9 @@ uv pip install -e .</code></pre>
           <div class="step-content">
             <h3>{% if config.theme.language == "zh" %}创建你的第一个 Actor{% else %}Create Your First Actor{% endif %}</h3>
             <div class="code-block">
-              <pre><code class="language-python">from pulsing.actor import as_actor, create_actor_system, SystemConfig
+              <pre><code class="language-python">from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class Calculator:
     def __init__(self, initial: int = 0):
         self.value = initial
@@ -631,16 +631,16 @@ class Calculator:
               <pre><code class="language-python">import asyncio
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
+    await init()
 
-    calc = await Calculator.local(system, initial=100)
+    calc = await Calculator.spawn(initial=100)
 
     result = await calc.add(50)   # 150
     result = await calc.add(25)   # 175
     value = await calc.get()      # 175
 
     print(f"Final value: {value}")
-    await system.shutdown()
+    await shutdown()
 
 asyncio.run(main())</code></pre>
             </div>

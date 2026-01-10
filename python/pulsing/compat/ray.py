@@ -37,7 +37,9 @@ For better performance in async environments, use pulsing.actor directly.
 """
 
 import asyncio
+import concurrent.futures
 import inspect
+import threading
 from typing import Any, TypeVar
 
 T = TypeVar("T")
@@ -45,6 +47,70 @@ T = TypeVar("T")
 # Global state
 _system = None
 _loop = None
+_thread = None
+_loop_ready = None
+
+
+def _ensure_not_initialized(ignore_reinit_error: bool) -> None:
+    global _system
+    if _system is not None:
+        if ignore_reinit_error:
+            return
+        raise RuntimeError("Already initialized. Call ray.shutdown() first.")
+
+
+def _start_background_loop() -> None:
+    """Start a dedicated event loop in a background thread.
+
+    This is required when the caller is already inside a running event loop.
+    """
+    global _thread, _loop, _loop_ready
+    if _thread is not None:
+        return
+
+    ready = threading.Event()
+    _loop_ready = ready
+
+    def _thread_main():
+        global _loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        _loop = loop
+        ready.set()
+        loop.run_forever()
+        try:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_thread_main, name="pulsing-compat-ray-loop", daemon=True)
+    _thread = t
+    t.start()
+    ready.wait()
+
+
+def _run_coro_sync(coro: Any, timeout=None) -> Any:
+    """Run a coroutine to completion and return its result.
+
+    - If we have a background loop thread: schedule via run_coroutine_threadsafe().
+    - Otherwise: run on the local event loop with run_until_complete().
+    """
+    if _loop is None:
+        raise RuntimeError("Not initialized. Call ray.init() first.")
+
+    if _thread is not None:
+        fut = asyncio.run_coroutine_threadsafe(coro, _loop)
+        try:
+            return fut.result(timeout=timeout)
+        except concurrent.futures.TimeoutError as e:
+            raise TimeoutError("Timed out waiting for result") from e
+    else:
+        # Local (non-running) loop only
+        return _loop.run_until_complete(coro)
 
 
 class ObjectRef:
@@ -60,18 +126,15 @@ class ObjectRef:
         if self._is_ready:
             return self._result
 
-        if _loop is None:
-            raise RuntimeError("Not initialized. Call ray.init() first.")
-
         async def _get():
             return await self._coro
 
-        if timeout:
+        if timeout is not None:
             coro = asyncio.wait_for(_get(), timeout)
         else:
             coro = _get()
 
-        self._result = _loop.run_until_complete(coro)
+        self._result = _run_coro_sync(coro, timeout=timeout)
         self._is_ready = True
         return self._result
 
@@ -132,7 +195,7 @@ class _ActorClass:
             proxy = await self._pulsing_class.local(_system, *args, **kwargs)
             return _ActorHandle(proxy, self._methods)
 
-        return _loop.run_until_complete(create())
+        return _run_coro_sync(create())
 
     def options(self, **kwargs) -> "_ActorClass":
         """Set actor options (Ray compatibility, limited support)"""
@@ -162,34 +225,52 @@ def init(
     """
     global _system, _loop
 
-    if _system is not None:
-        if ignore_reinit_error:
-            return
-        raise RuntimeError("Already initialized. Call ray.shutdown() first.")
+    _ensure_not_initialized(ignore_reinit_error)
 
     from pulsing.actor import SystemConfig, create_actor_system
 
+    # If we're already inside a running event loop (e.g., Jupyter/pytest-asyncio),
+    # we must not call run_until_complete() on it. Use a dedicated background loop.
+    in_running_loop = True
     try:
-        _loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
+        in_running_loop = False
+
+    if in_running_loop:
+        _start_background_loop()
+    else:
         _loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_loop)
 
     config = SystemConfig.standalone()
-    _system = _loop.run_until_complete(create_actor_system(config))
+    _system = _run_coro_sync(create_actor_system(config))
 
 
 def shutdown() -> None:
     """Shutdown Pulsing (Ray-compatible)"""
-    global _system, _loop
+    global _system, _loop, _thread, _loop_ready
 
     if _system is not None:
         try:
-            _loop.run_until_complete(_system.shutdown())
+            _run_coro_sync(_system.shutdown())
         except Exception:
             pass
         _system = None
-        _loop = None
+        if _thread is not None and _loop is not None:
+            try:
+                _loop.call_soon_threadsafe(_loop.stop)
+            except Exception:
+                pass
+            try:
+                _thread.join(timeout=2.0)
+            except Exception:
+                pass
+            _thread = None
+            _loop_ready = None
+            _loop = None
+        else:
+            _loop = None
 
 
 def is_initialized() -> bool:
