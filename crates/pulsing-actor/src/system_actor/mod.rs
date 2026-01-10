@@ -25,6 +25,7 @@ pub use factory::{ActorFactory, BoxedActorFactory, DefaultActorFactory};
 pub use messages::{ActorInfo, ActorStatusInfo, SystemMessage, SystemResponse};
 
 use crate::actor::{Actor, ActorContext, ActorId, Message};
+use crate::metrics::SystemMetrics as PrometheusSystemMetrics;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -282,6 +283,18 @@ impl SystemActor {
     pub fn unregister_actor(&self, name: &str) {
         if self.registry.unregister(name).is_some() {
             self.metrics.inc_actor_stopped();
+        }
+    }
+
+    /// Get Prometheus-compatible system metrics
+    pub fn get_prometheus_metrics(&self) -> PrometheusSystemMetrics {
+        PrometheusSystemMetrics {
+            node_id: self.system_ref.node_id.0,
+            actors_count: self.registry.count(),
+            messages_total: self.metrics.messages_total(),
+            actors_created: self.metrics.actors_created(),
+            actors_stopped: self.metrics.actors_stopped(),
+            cluster_members: HashMap::new(), // Will be filled by caller with cluster info
         }
     }
 

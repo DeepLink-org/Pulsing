@@ -42,9 +42,13 @@ dashmap = { version = "6.1" }
 anyhow = { version = "1" }
 thiserror = { version = "2.0" }
 
-# Logging
+# Logging & Tracing
 tracing = { version = "0.1" }
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json"] }
+tracing-opentelemetry = { version = "0.28" }
+opentelemetry = { version = "0.27" }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
 log = "0.4"
 env_logger = "0.11"
 

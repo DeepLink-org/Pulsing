@@ -6,6 +6,7 @@ use super::config::Http2Config;
 use super::stream::{BinaryFrameParser, StreamFrame};
 use super::{headers, MessageMode, RequestType};
 use crate::actor::Message;
+use crate::tracing::{TraceContext, TRACEPARENT_HEADER};
 use bytes::Bytes;
 use futures::StreamExt;
 use http_body_util::{BodyExt, Full, StreamBody};
@@ -70,6 +71,14 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
     /// Get health status
     async fn health_check(&self) -> serde_json::Value {
         serde_json::json!({"status": "ok"})
+    }
+
+    /// Get Prometheus metrics (text format)
+    ///
+    /// Default implementation returns empty metrics.
+    /// Override this to provide system metrics.
+    async fn prometheus_metrics(&self) -> String {
+        String::new()
     }
 }
 
@@ -267,6 +276,30 @@ impl Http2Server {
         let path = req.uri().path().to_string();
         let method = req.method().clone();
 
+        // Extract trace context from incoming request
+        let parent_trace = req
+            .headers()
+            .get(TRACEPARENT_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(TraceContext::from_traceparent);
+
+        // Create a child span ID for this request
+        let trace_ctx = parent_trace.map(|p| p.child()).unwrap_or_default();
+
+        // Create span with trace context
+        let span = tracing::info_span!(
+            "http.request",
+            otel.name = %format!("{} {}", method, path),
+            http.method = %method,
+            http.route = %path,
+            http.peer = %peer_addr,
+            trace_id = %trace_ctx.trace_id,
+            span_id = %trace_ctx.span_id,
+        );
+
+        // Enter the span for the duration of request handling
+        let _enter = span.enter();
+
         // Health check endpoint
         if path == "/health" && method == Method::GET {
             let health = handler.health_check().await;
@@ -275,6 +308,16 @@ impl Http2Server {
                 .status(StatusCode::OK)
                 .header("content-type", "application/json")
                 .body(full_body(body))
+                .unwrap());
+        }
+
+        // Prometheus metrics endpoint
+        if path == "/metrics" && method == Method::GET {
+            let metrics = handler.prometheus_metrics().await;
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
+                .body(full_body(metrics.into_bytes()))
                 .unwrap());
         }
 

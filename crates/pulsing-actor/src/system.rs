@@ -7,6 +7,7 @@ use crate::actor::{
 use crate::cluster::{
     GossipCluster, GossipConfig, GossipMessage, MemberInfo, MemberStatus, NamedActorInfo,
 };
+use crate::metrics::{metrics, SystemMetrics as PrometheusMetrics};
 use crate::system_actor::{
     BoxedActorFactory, SystemActor, SystemRef, SYSTEM_ACTOR_LOCAL_NAME, SYSTEM_ACTOR_PATH,
 };
@@ -1203,5 +1204,38 @@ impl Http2ServerHandler for SystemMessageHandler {
             "named_actors": named_actors,
             "cluster": cluster_info,
         })
+    }
+
+    async fn prometheus_metrics(&self) -> String {
+        // Collect cluster member counts by status
+        let mut cluster_members = std::collections::HashMap::new();
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            let all_members = cluster.all_members().await;
+            for member in all_members {
+                let status = format!("{:?}", member.status);
+                *cluster_members.entry(status).or_insert(0usize) += 1;
+            }
+        }
+        drop(cluster_guard);
+
+        // Count messages from local actors
+        let mut total_messages: u64 = 0;
+        for entry in self.local_actors.iter() {
+            total_messages += entry.value().stats.message_count.load(Ordering::Relaxed);
+        }
+
+        // Build system metrics
+        let system_metrics = PrometheusMetrics {
+            node_id: self.node_id.0,
+            actors_count: self.local_actors.len(),
+            messages_total: total_messages,
+            actors_created: self.local_actors.len() as u64, // Approximation
+            actors_stopped: 0,                              // Would need separate tracking
+            cluster_members,
+        };
+
+        // Export using global metrics registry
+        metrics().export_prometheus(&system_metrics)
     }
 }

@@ -12,6 +12,8 @@ keywords = ["actor", "distributed", "cluster", "gossip"]
 default = []
 # Enable integration tests that require a running cluster
 integration = []
+# Enable OTLP exporter for sending traces to Jaeger/Tempo
+otlp = ["opentelemetry-otlp"]
 
 [dependencies]
 # Async runtime
@@ -36,8 +38,13 @@ dashmap = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
-# Logging
+# Logging & Tracing
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true, optional = true }
 
 # Utilities
 uuid = { workspace = true }

@@ -5,6 +5,7 @@
 //! - Retry strategies with exponential backoff
 //! - Timeout management
 //! - Streaming support
+//! - Distributed tracing (W3C Trace Context)
 
 use super::config::Http2Config;
 use super::pool::{ConnectionPool, PoolConfig};
@@ -12,6 +13,7 @@ use super::retry::{RetryConfig, RetryExecutor};
 use super::stream::{BinaryFrameParser, StreamFrame, StreamHandle};
 use super::{headers, MessageMode, RequestType};
 use crate::actor::{Message, MessageStream};
+use crate::tracing::{TraceContext, TRACEPARENT_HEADER};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use http_body_util::{BodyExt, Full, StreamBody};
@@ -314,6 +316,21 @@ impl Http2Client {
         use hyper_util::rt::{TokioExecutor, TokioIo};
         use tokio::net::TcpStream;
 
+        // Create trace context for outgoing streaming request
+        let trace_ctx = TraceContext::from_current()
+            .map(|p| p.child())
+            .unwrap_or_default();
+
+        let span = tracing::info_span!(
+            "http.client.stream",
+            otel.name = %format!("POST {} (stream)", path),
+            http.method = "POST",
+            http.url = %format!("http://{}{}", addr, path),
+            trace_id = %trace_ctx.trace_id,
+            span_id = %trace_ctx.span_id,
+        );
+        let _enter = span.enter();
+
         // Create a dedicated connection for streaming request
         let tcp_stream =
             tokio::time::timeout(self.config.connect_timeout, TcpStream::connect(addr))
@@ -375,7 +392,7 @@ impl Http2Client {
         let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         let body = StreamBody::new(body_stream);
 
-        // Build request with streaming body
+        // Build request with streaming body and trace context
         let uri = format!("http://{}{}", addr, path);
         let request = Request::builder()
             .method(Method::POST)
@@ -383,6 +400,7 @@ impl Http2Client {
             .header(headers::MESSAGE_MODE, MessageMode::Ask.as_str())
             .header(headers::MESSAGE_TYPE, msg_type)
             .header(headers::REQUEST_TYPE, RequestType::Stream.as_str())
+            .header(TRACEPARENT_HEADER, trace_ctx.to_traceparent())
             .header("content-type", "application/octet-stream")
             .body(body)
             .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
@@ -499,16 +517,32 @@ impl Http2Client {
         payload: Vec<u8>,
         mode: MessageMode,
     ) -> anyhow::Result<hyper::Response<Incoming>> {
+        // Create trace context for outgoing request
+        let trace_ctx = TraceContext::from_current()
+            .map(|p| p.child())
+            .unwrap_or_default();
+
+        let span = tracing::info_span!(
+            "http.client",
+            otel.name = %format!("POST {}", path),
+            http.method = "POST",
+            http.url = %format!("http://{}{}", addr, path),
+            trace_id = %trace_ctx.trace_id,
+            span_id = %trace_ctx.span_id,
+        );
+        let _enter = span.enter();
+
         let conn_guard = self.pool.get_connection(addr).await?;
         let mut conn = conn_guard.get().await;
 
-        // Build request
+        // Build request with trace context header
         let uri = format!("http://{}{}", addr, path);
         let request = Request::builder()
             .method(Method::POST)
             .uri(&uri)
             .header(headers::MESSAGE_MODE, mode.as_str())
             .header(headers::MESSAGE_TYPE, msg_type)
+            .header(TRACEPARENT_HEADER, trace_ctx.to_traceparent())
             .header("content-type", "application/octet-stream")
             .body(Full::new(Bytes::from(payload)))
             .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;

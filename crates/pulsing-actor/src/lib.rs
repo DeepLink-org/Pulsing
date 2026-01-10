@@ -106,9 +106,11 @@
 pub mod actor;
 pub mod circuit_breaker;
 pub mod cluster;
+pub mod metrics;
 pub mod policies;
 pub mod system;
 pub mod system_actor;
+pub mod tracing;
 pub mod transport;
 pub mod watch;
 
