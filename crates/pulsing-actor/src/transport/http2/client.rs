@@ -9,14 +9,15 @@
 use super::config::Http2Config;
 use super::pool::{ConnectionPool, PoolConfig};
 use super::retry::{RetryConfig, RetryExecutor};
-use super::stream::{StreamFrame, StreamHandle};
-use super::{headers, MessageMode};
+use super::stream::{BinaryFrameParser, StreamFrame, StreamHandle};
+use super::{headers, MessageMode, RequestType};
 use crate::actor::{Message, MessageStream};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
-use http_body_util::{BodyExt, Full};
-use hyper::body::Incoming;
+use http_body_util::{BodyExt, Full, StreamBody};
+use hyper::body::{Frame, Incoming};
 use hyper::{Method, Request};
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -253,8 +254,8 @@ impl Http2Client {
         Ok(Box::pin(msg_stream))
     }
 
-    /// Unified send - automatically handles single and stream responses
-    /// based on the response header from server
+    /// Unified send - automatically handles single and stream requests/responses
+    /// based on the Message type and response header from server
     pub async fn send_message(
         &self,
         addr: SocketAddr,
@@ -266,6 +267,136 @@ impl Http2Client {
             .send_request(addr, path, msg_type, payload, MessageMode::Ask)
             .await?;
 
+        self.parse_response(response).await
+    }
+
+    /// Send a Message (Single or Stream) and receive response
+    ///
+    /// This method supports both single and streaming requests:
+    /// - `Message::Single`: Sent as a regular request body
+    /// - `Message::Stream`: Sent as length-prefixed binary frames
+    pub async fn send_message_full(
+        &self,
+        addr: SocketAddr,
+        path: &str,
+        msg: Message,
+    ) -> anyhow::Result<Message> {
+        match msg {
+            Message::Single { msg_type, data } => {
+                // Single request - use existing method
+                self.send_message(addr, path, &msg_type, data).await
+            }
+            Message::Stream {
+                default_msg_type,
+                stream,
+            } => {
+                // Streaming request - send as binary frames
+                let response = self
+                    .send_stream_request(addr, path, &default_msg_type, stream)
+                    .await?;
+                self.parse_response(response).await
+            }
+        }
+    }
+
+    /// Send a streaming request (Message::Stream as request body)
+    ///
+    /// Note: Streaming requests use a dedicated connection (not from the pool)
+    /// because the connection pool is typed for `Full<Bytes>` bodies.
+    async fn send_stream_request(
+        &self,
+        addr: SocketAddr,
+        path: &str,
+        msg_type: &str,
+        stream: MessageStream,
+    ) -> anyhow::Result<hyper::Response<Incoming>> {
+        use hyper::client::conn::http2;
+        use hyper_util::rt::{TokioExecutor, TokioIo};
+        use tokio::net::TcpStream;
+
+        // Create a dedicated connection for streaming request
+        let tcp_stream = tokio::time::timeout(
+            self.config.connect_timeout,
+            TcpStream::connect(addr),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Connection timeout"))?
+        .map_err(|e| anyhow::anyhow!("Failed to connect: {}", e))?;
+
+        let io = TokioIo::new(tcp_stream);
+
+        // Build HTTP/2 connection with streaming body type
+        type StreamingBody = StreamBody<tokio_stream::wrappers::ReceiverStream<Result<Frame<Bytes>, Infallible>>>;
+        let (mut sender, conn): (http2::SendRequest<StreamingBody>, _) = http2::handshake(TokioExecutor::new(), io)
+            .await
+            .map_err(|e| anyhow::anyhow!("HTTP/2 handshake failed: {}", e))?;
+
+        // Spawn connection driver
+        let cancel = self.cancel.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                result = conn => {
+                    if let Err(e) = result {
+                        tracing::debug!(error = %e, "Streaming connection ended");
+                    }
+                }
+                _ = cancel.cancelled() => {
+                    tracing::debug!("Streaming connection cancelled");
+                }
+            }
+        });
+
+        // Create a channel for streaming body
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, Infallible>>(32);
+
+        // Spawn task to convert Message stream to binary frames
+        let default_msg_type = msg_type.to_string();
+        tokio::spawn(async move {
+            let mut stream = std::pin::pin!(stream);
+
+            while let Some(result) = stream.next().await {
+                let frame = match result {
+                    Ok(msg) => StreamFrame::from_message(&msg, &default_msg_type),
+                    Err(e) => StreamFrame::error(e.to_string()),
+                };
+
+                if tx.send(Ok(Frame::data(frame.to_binary()))).await.is_err() {
+                    break;
+                }
+            }
+
+            // Send end frame
+            let _ = tx.send(Ok(Frame::data(StreamFrame::end().to_binary()))).await;
+        });
+
+        // Build streaming request body
+        let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        let body = StreamBody::new(body_stream);
+
+        // Build request with streaming body
+        let uri = format!("http://{}{}", addr, path);
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(&uri)
+            .header(headers::MESSAGE_MODE, MessageMode::Ask.as_str())
+            .header(headers::MESSAGE_TYPE, msg_type)
+            .header(headers::REQUEST_TYPE, RequestType::Stream.as_str())
+            .header("content-type", "application/octet-stream")
+            .body(body)
+            .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+
+        // Send request with timeout
+        let send_future = sender.send_request(request);
+        let response = tokio::time::timeout(self.config.stream_timeout, send_future)
+            .await
+            .map_err(|_| anyhow::anyhow!("Streaming request timeout"))?
+            .map_err(|e| anyhow::anyhow!("Streaming request failed: {}", e))?;
+
+        Ok(response)
+    }
+
+    /// Parse HTTP response into Message (handles both single and stream responses)
+    async fn parse_response(&self, response: hyper::Response<Incoming>) -> anyhow::Result<Message> {
         let status = response.status();
         if !status.is_success() {
             let body = response.collect().await?.to_bytes();
@@ -285,7 +416,7 @@ impl Http2Client {
             .unwrap_or("single");
 
         if response_type == "stream" {
-            // Stream response - parse as NDJSON, return MessageStream
+            // Stream response - parse binary frames
             let cancel = CancellationToken::new();
             let cancel_clone = cancel.clone();
             let stream_timeout = self.config.stream_timeout;
@@ -294,17 +425,14 @@ impl Http2Client {
                 Self::body_to_frame_stream(body_stream, cancel_clone, stream_timeout);
             let stream_handle = StreamHandle::new(frame_stream, cancel);
 
-            // Convert StreamFrame stream to Message stream (each frame -> Message::Single)
+            // Convert StreamFrame stream to Message stream
             let msg_stream = stream_handle.filter_map(|result| async move {
                 match result {
-                    Ok(frame) => {
-                        // Use the new to_message() method
-                        match frame.to_message() {
-                            Ok(Some(msg)) => Some(Ok(msg)),
-                            Ok(None) => None, // End frame with no data
-                            Err(e) => Some(Err(e)),
-                        }
-                    }
+                    Ok(frame) => match frame.to_message() {
+                        Ok(Some(msg)) => Some(Ok(msg)),
+                        Ok(None) => None, // End frame
+                        Err(e) => Some(Err(e)),
+                    },
                     Err(e) => Some(Err(e)),
                 }
             });
@@ -325,13 +453,13 @@ impl Http2Client {
         }
     }
 
-    /// Convert response body to stream of StreamFrames with timeout
+    /// Convert response body to stream of StreamFrames using binary format
     fn body_to_frame_stream(
         body: Incoming,
         cancel: CancellationToken,
         timeout: Duration,
     ) -> impl Stream<Item = anyhow::Result<StreamFrame>> {
-        let buffer = Arc::new(Mutex::new(String::new()));
+        let parser = Arc::new(Mutex::new(BinaryFrameParser::new()));
         let start = std::time::Instant::now();
 
         http_body_util::BodyStream::new(body)
@@ -341,29 +469,18 @@ impl Http2Client {
                 async move { !cancelled && !timed_out }
             })
             .map(move |result| {
-                let buffer = buffer.clone();
+                let parser = parser.clone();
                 async move {
                     let frame = result.map_err(|e| anyhow::anyhow!("Body read error: {}", e))?;
                     let data = frame
                         .into_data()
                         .map_err(|_| anyhow::anyhow!("Not data frame"))?;
 
-                    let mut buf = buffer.lock().await;
-                    buf.push_str(&String::from_utf8_lossy(&data));
+                    let mut parser = parser.lock().await;
+                    parser.push(&data);
 
-                    // Extract complete lines
-                    let mut frames = Vec::new();
-                    while let Some(newline_pos) = buf.find('\n') {
-                        let line = buf.drain(..=newline_pos).collect::<String>();
-                        let line = line.trim();
-                        if !line.is_empty() {
-                            match StreamFrame::from_ndjson(line) {
-                                Ok(frame) => frames.push(Ok(frame)),
-                                Err(e) => frames.push(Err(anyhow::anyhow!("Parse error: {}", e))),
-                            }
-                        }
-                    }
-
+                    // Parse all complete frames
+                    let frames = parser.parse_all();
                     Ok::<_, anyhow::Error>(futures::stream::iter(frames))
                 }
             })

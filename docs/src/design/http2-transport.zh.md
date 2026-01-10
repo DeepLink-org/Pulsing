@@ -96,32 +96,42 @@ sequenceDiagram
 
     C->>S: POST /actors/{name}<br/>x-message-mode: stream<br/>x-message-type: {type}<br/>[serialized message]
 
-    S-->>C: HTTP/2 200<br/>content-type: application/x-ndjson
+    S-->>C: HTTP/2 200<br/>content-type: application/octet-stream
 
-    loop 流式响应
-        S-->>C: {"seq":0,"data":"base64..."}
-        S-->>C: {"seq":1,"data":"base64..."}
-        S-->>C: {"seq":2,"data":"base64...","end":true}
+    loop 流式响应 (二进制帧)
+        S-->>C: [4字节长度][flags][msg_type_len][msg_type][data]
+        S-->>C: [4字节长度][flags][msg_type_len][msg_type][data]
+        S-->>C: [4字节长度][FLAG_END]
     end
 ```
 
-### 流式响应帧格式
+### 流式帧格式 (Binary Framing Protocol)
+
+采用高性能二进制分帧协议，避免 JSON 解析和 Base64 编解码开销：
+
+```
++----------------+-------+-------------+----------+------------+
+| Length (4B BE) | Flags | MsgType Len | MsgType  | Raw Data   |
++----------------+-------+-------------+----------+------------+
+|   u32 big-end  |  1B   |    1B       | variable | variable   |
++----------------+-------+-------------+----------+------------+
+
+Flags:
+  - 0x01: FLAG_END   - 流结束标志
+  - 0x02: FLAG_ERROR - 错误标志 (此时 Raw Data 为 UTF-8 错误信息)
+```
 
 ```rust
-/// 流式响应帧
-#[derive(Serialize, Deserialize)]
+/// 流式帧 (二进制格式)
+#[derive(Debug, Clone)]
 pub struct StreamFrame {
-    /// 序列号
-    pub seq: u64,
     /// 消息类型
     pub msg_type: String,
-    /// 消息数据 (base64 编码的二进制)
-    pub data: String,
+    /// 原始二进制数据
+    pub raw_data: Vec<u8>,
     /// 是否是最后一帧
-    #[serde(default)]
     pub end: bool,
     /// 错误信息（如果有）
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 ```
@@ -350,39 +360,31 @@ async fn handle_stream_request(
 ) -> Response<Body> {
     match handler.handle_stream(path, msg_type, payload).await {
         Ok(stream) => {
-            // 将 Stream 转换为 NDJSON 格式的 Body
+            // 将 Stream 转换为二进制帧格式的 Body
             let body_stream = stream
-                .enumerate()
-                .map(|(seq, result)| {
+                .map(|result| {
                     match result {
                         Ok((msg_type, data)) => {
-                            let frame = StreamFrame {
-                                seq: seq as u64,
-                                msg_type,
-                                data: base64::encode(&data),
-                                end: false,
-                                error: None,
-                            };
-                            Ok(Bytes::from(format!("{}\n", serde_json::to_string(&frame).unwrap())))
+                            let frame = StreamFrame::from_raw(msg_type, data);
+                            Ok(Bytes::from(frame.to_binary()))
                         }
                         Err(e) => {
-                            let frame = StreamFrame {
-                                seq: seq as u64,
-                                msg_type: "error".to_string(),
-                                data: String::new(),
-                                end: true,
-                                error: Some(e.to_string()),
-                            };
-                            Ok(Bytes::from(format!("{}\n", serde_json::to_string(&frame).unwrap())))
+                            let frame = StreamFrame::error(0, e.to_string());
+                            Ok(Bytes::from(frame.to_binary()))
                         }
                     }
-                });
+                })
+                .chain(futures::stream::once(async {
+                    // 发送结束帧
+                    let end_frame = StreamFrame::end(0);
+                    Ok::<_, std::io::Error>(Bytes::from(end_frame.to_binary()))
+                }));
 
             let body = Body::from_stream(body_stream);
 
             Response::builder()
                 .status(StatusCode::OK)
-                .header("content-type", "application/x-ndjson")
+                .header("content-type", "application/octet-stream")
                 .body(body)
                 .unwrap()
         }
@@ -421,16 +423,26 @@ impl Http2Client {
             return Err(anyhow::anyhow!("Request failed: {}", response.status()));
         }
 
-        // 将响应 body 转换为 StreamFrame 流
-        let stream = response
-            .bytes_stream()
-            .map_err(|e| anyhow::anyhow!("Stream error: {}", e))
-            .and_then(|bytes| async move {
-                // 解析 NDJSON
-                let line = std::str::from_utf8(&bytes)?;
-                let frame: StreamFrame = serde_json::from_str(line.trim())?;
-                Ok(frame)
-            });
+        // 使用 BinaryFrameParser 解析二进制帧流
+        let body_stream = response.bytes_stream();
+        let parser = BinaryFrameParser::new();
+
+        let stream = async_stream::try_stream! {
+            let mut parser = parser;
+            tokio::pin!(body_stream);
+
+            while let Some(chunk) = body_stream.next().await {
+                let bytes = chunk.map_err(|e| anyhow::anyhow!("Stream error: {}", e))?;
+                parser.feed(&bytes);
+
+                while let Some(frame) = parser.next_frame()? {
+                    if frame.end {
+                        return;
+                    }
+                    yield frame;
+                }
+            }
+        };
 
         Ok(stream)
     }

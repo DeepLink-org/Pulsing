@@ -1,11 +1,13 @@
 //! HTTP/2 Transport Layer
 //!
-//! Provides HTTP/2 (h2c - cleartext) transport for actor communication with streaming support.
+//! Provides HTTP/2 (h2c - cleartext) transport for actor communication with
+//! bidirectional streaming support using a high-performance binary protocol.
 //!
 //! ## Features
 //!
 //! - HTTP/2 over cleartext (h2c) - no TLS required
-//! - Streaming responses via `ask_stream`
+//! - **Bidirectional streaming** - both requests and responses can be streams
+//! - **Binary frame protocol** - ~56% smaller than JSON, zero-copy friendly
 //! - Connection multiplexing with advanced pooling
 //! - Retry strategies with exponential backoff
 //! - Timeout management at multiple levels
@@ -15,14 +17,21 @@
 //!
 //! ### Message Modes
 //!
-//! - `ask`: Request-response pattern
-//! - `tell`: Fire-and-forget pattern
-//! - `stream`: Streaming response pattern
+//! - `ask`: Request-response pattern (single or stream)
+//! - `tell`: Fire-and-forget pattern (single only)
+//! - `stream`: Explicit streaming response request
+//!
+//! ### Request Types
+//!
+//! - `single`: Regular request body
+//! - `stream`: Length-prefixed binary frames
 //!
 //! ### Headers
 //!
 //! - `x-message-mode`: ask | tell | stream
 //! - `x-message-type`: Message type identifier
+//! - `x-request-type`: single | stream
+//! - `x-response-type`: single | stream
 //! - `x-request-id`: Optional request ID for tracing
 //!
 //! ## Example
@@ -60,7 +69,7 @@ pub use config::Http2Config;
 pub use pool::{ConnectionPool, PoolConfig, PoolStats};
 pub use retry::{RetryConfig, RetryExecutor, RetryableError};
 pub use server::{Http2Server, Http2ServerHandler};
-pub use stream::{StreamFrame, StreamHandle};
+pub use stream::{BinaryFrameParser, StreamFrame, StreamHandle, FLAG_END, FLAG_ERROR};
 
 use crate::actor::{ActorId, ActorPath, Message, RemoteTransport};
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
@@ -124,6 +133,10 @@ impl Http2Transport {
     }
 
     /// Send a request to an actor and wait for response
+    ///
+    /// Supports both single and streaming requests:
+    /// - `Message::Single`: Sent as regular request body
+    /// - `Message::Stream`: Sent as binary frames
     pub async fn ask(
         &self,
         addr: SocketAddr,
@@ -131,15 +144,14 @@ impl Http2Transport {
         msg: Message,
     ) -> anyhow::Result<Message> {
         let path = format!("/actors/{}", actor_name);
-        let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming requests not yet supported"));
-        };
-
-        let response = self.client.ask(addr, &path, &msg_type, data).await?;
-        Ok(Message::single("", response))
+        self.client.send_message_full(addr, &path, msg).await
     }
 
     /// Send a request to a named actor and wait for response
+    ///
+    /// Supports both single and streaming requests:
+    /// - `Message::Single`: Sent as regular request body
+    /// - `Message::Stream`: Sent as binary frames
     pub async fn ask_named(
         &self,
         addr: SocketAddr,
@@ -147,12 +159,7 @@ impl Http2Transport {
         msg: Message,
     ) -> anyhow::Result<Message> {
         let url_path = format!("/named/{}", path.as_str());
-        let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming requests not yet supported"));
-        };
-
-        let response = self.client.ask(addr, &url_path, &msg_type, data).await?;
-        Ok(Message::single("", response))
+        self.client.send_message_full(addr, &url_path, msg).await
     }
 
     /// Send a fire-and-forget message
@@ -244,7 +251,34 @@ pub mod headers {
     pub const MESSAGE_MODE: &str = "x-message-mode";
     pub const MESSAGE_TYPE: &str = "x-message-type";
     pub const RESPONSE_TYPE: &str = "x-response-type";
+    pub const REQUEST_TYPE: &str = "x-request-type";
     pub const REQUEST_ID: &str = "x-request-id";
+}
+
+/// Request type for unified message handling
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestType {
+    /// Single data payload
+    Single,
+    /// Streaming request (binary frames)
+    Stream,
+}
+
+impl RequestType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RequestType::Single => "single",
+            RequestType::Stream => "stream",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "single" => Some(RequestType::Single),
+            "stream" => Some(RequestType::Stream),
+            _ => None,
+        }
+    }
 }
 
 /// Response type for unified message handling
@@ -425,23 +459,37 @@ impl RemoteTransport for Http2RemoteTransport {
     /// Send a message and receive response (unified interface)
     ///
     /// This method is the primary way ActorRef communicates with remote actors.
-    /// It automatically handles both single and stream responses based on
-    /// the server's response type header.
+    /// It automatically handles both:
+    /// - Single and streaming requests (based on Message type)
+    /// - Single and streaming responses (based on server's response type header)
     async fn send_message(&self, _actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
-        let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming requests not yet supported"));
-        };
-        // Use unified send_message that auto-detects response type
-        self.client
-            .send_message(self.remote_addr, &self.path, &msg_type, data)
-            .await
+        // Check circuit breaker before making request
+        if !self.circuit_breaker.can_execute() {
+            return Err(anyhow::anyhow!(
+                "Circuit breaker is open for {}",
+                self.remote_addr
+            ));
+        }
+
+        // Use unified send_message_full that handles both single and streaming
+        let result = self
+            .client
+            .send_message_full(self.remote_addr, &self.path, msg)
+            .await;
+
+        // Record outcome in circuit breaker
+        self.circuit_breaker.record_outcome(result.is_ok());
+        result
     }
 
     /// Send a one-way message (unified interface)
+    ///
+    /// Note: Streaming requests are NOT supported for fire-and-forget messages
+    /// because there's no way to know when the stream is fully consumed.
     async fn send_oneway(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<()> {
         let Message::Single { msg_type, data } = msg else {
             return Err(anyhow::anyhow!(
-                "Streaming not supported for fire-and-forget"
+                "Streaming not supported for fire-and-forget (use ask pattern instead)"
             ));
         };
         self.send(actor_id, &msg_type, data).await

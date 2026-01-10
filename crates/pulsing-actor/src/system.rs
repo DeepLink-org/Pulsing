@@ -870,8 +870,21 @@ impl SystemMessageHandler {
 
 #[async_trait::async_trait]
 impl Http2ServerHandler for SystemMessageHandler {
-    /// Unified message handler - returns Message (Single or Stream)
-    async fn handle_message(
+    /// Unified message handler - accepts Message (Single or Stream), returns Message
+    ///
+    /// This handler supports both single and streaming requests:
+    /// - Single requests are dispatched to local actors
+    /// - Streaming requests are passed through to actors that support streaming
+    async fn handle_message_full(
+        &self,
+        path: &str,
+        msg: Message,
+    ) -> anyhow::Result<Message> {
+        self.dispatch_message(path, msg).await
+    }
+
+    /// Simple message handler for backward compatibility
+    async fn handle_message_simple(
         &self,
         path: &str,
         msg_type: &str,

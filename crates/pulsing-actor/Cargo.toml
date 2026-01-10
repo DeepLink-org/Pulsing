@@ -48,9 +48,6 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 
-# Base64 encoding
-base64 = { workspace = true }
-
 [dev-dependencies]
 tokio-test = { workspace = true }
 tracing-subscriber = { workspace = true }

@@ -45,7 +45,7 @@ impl TestHandler {
 
 #[async_trait::async_trait]
 impl Http2ServerHandler for TestHandler {
-    async fn handle_message(
+    async fn handle_message_simple(
         &self,
         path: &str,
         msg_type: &str,
@@ -546,22 +546,18 @@ async fn test_http2_server_shutdown() {
 fn test_stream_frame_data() {
     use pulsing_actor::transport::StreamFrame;
 
-    let frame = StreamFrame::data(0, "token", b"hello");
-    assert_eq!(frame.seq, 0);
+    let frame = StreamFrame::data("token", b"hello");
     assert_eq!(frame.msg_type, "token");
     assert!(!frame.end);
     assert!(frame.error.is_none());
-
-    let decoded = frame.decode_data().unwrap();
-    assert_eq!(decoded, b"hello");
+    assert_eq!(frame.get_data(), b"hello");
 }
 
 #[test]
 fn test_stream_frame_end() {
     use pulsing_actor::transport::StreamFrame;
 
-    let frame = StreamFrame::end(5);
-    assert_eq!(frame.seq, 5);
+    let frame = StreamFrame::end();
     assert!(frame.end);
     assert!(frame.error.is_none());
 }
@@ -570,24 +566,22 @@ fn test_stream_frame_end() {
 fn test_stream_frame_error() {
     use pulsing_actor::transport::StreamFrame;
 
-    let frame = StreamFrame::error(3, "something went wrong");
-    assert_eq!(frame.seq, 3);
+    let frame = StreamFrame::error("something went wrong");
     assert!(frame.end);
     assert!(frame.is_error());
     assert_eq!(frame.error.as_ref().unwrap(), "something went wrong");
 }
 
 #[test]
-fn test_stream_frame_ndjson_roundtrip() {
+fn test_stream_frame_binary_roundtrip() {
     use pulsing_actor::transport::StreamFrame;
 
-    let original = StreamFrame::data(1, "response", b"world");
-    let json = original.to_ndjson().unwrap();
-    let parsed = StreamFrame::from_ndjson(std::str::from_utf8(&json).unwrap()).unwrap();
+    let original = StreamFrame::data("response", b"world");
+    let bytes = original.to_binary();
+    let parsed = StreamFrame::from_binary(&bytes).unwrap();
 
-    assert_eq!(parsed.seq, 1);
     assert_eq!(parsed.msg_type, "response");
-    assert_eq!(parsed.decode_data().unwrap(), b"world");
+    assert_eq!(parsed.get_data(), b"world");
 }
 
 // ============================================================================
@@ -929,4 +923,209 @@ async fn test_http2_retry_on_connection_error() {
         "Unexpected error: {}",
         err
     );
+}
+
+// ============================================================================
+// Streaming Request Tests
+// ============================================================================
+
+/// Handler that supports streaming requests
+struct StreamingHandler {
+    counters: Arc<TestCounters>,
+}
+
+impl StreamingHandler {
+    fn new() -> Self {
+        Self {
+            counters: Arc::new(TestCounters::default()),
+        }
+    }
+
+    fn with_counters(counters: Arc<TestCounters>) -> Self {
+        Self { counters }
+    }
+}
+
+#[async_trait::async_trait]
+impl Http2ServerHandler for StreamingHandler {
+    async fn handle_message_full(
+        &self,
+        path: &str,
+        msg: Message,
+    ) -> anyhow::Result<Message> {
+        use futures::StreamExt;
+        self.counters.ask_count.fetch_add(1, Ordering::SeqCst);
+
+        match msg {
+            Message::Single { msg_type, data } => {
+                // Echo single message
+                let mut response = format!("{}:{}:", path, msg_type).into_bytes();
+                response.extend(data);
+                Ok(Message::single("echo", response))
+            }
+            Message::Stream { stream, .. } => {
+                // Collect all stream data and echo back as single response
+                let mut collected = Vec::new();
+                let mut stream = std::pin::pin!(stream);
+                while let Some(result) = stream.next().await {
+                    match result {
+                        Ok(Message::Single { data, .. }) => {
+                            collected.extend(data);
+                        }
+                        Ok(Message::Stream { .. }) => {
+                            return Err(anyhow::anyhow!("Nested streams not supported"));
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                let response = format!("{}:collected:{} bytes", path, collected.len()).into_bytes();
+                Ok(Message::single("stream_echo", response))
+            }
+        }
+    }
+
+    async fn handle_message_simple(
+        &self,
+        path: &str,
+        msg_type: &str,
+        payload: Vec<u8>,
+    ) -> anyhow::Result<Message> {
+        self.counters.ask_count.fetch_add(1, Ordering::SeqCst);
+        let mut response = format!("{}:{}:", path, msg_type).into_bytes();
+        response.extend(payload);
+        Ok(Message::single("", response))
+    }
+
+    async fn handle_tell(
+        &self,
+        _path: &str,
+        _msg_type: &str,
+        _payload: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        self.counters.tell_count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn handle_gossip(
+        &self,
+        _payload: Vec<u8>,
+        _peer_addr: std::net::SocketAddr,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn test_http2_streaming_request() {
+    let counters = Arc::new(TestCounters::default());
+    let handler = Arc::new(StreamingHandler::with_counters(counters.clone()));
+    let cancel = CancellationToken::new();
+
+    // Start server
+    let server = Http2Server::new(
+        "127.0.0.1:0".parse().unwrap(),
+        handler,
+        Http2Config::default(),
+        cancel.clone(),
+    )
+    .await
+    .unwrap();
+
+    let addr = server.local_addr();
+
+    // Create client
+    let client = Http2Client::new(Http2Config::default());
+
+    // Create a streaming request
+    let (tx, rx) = tokio::sync::mpsc::channel::<anyhow::Result<Message>>(10);
+    
+    // Send some messages through the stream
+    tokio::spawn(async move {
+        for i in 0..5 {
+            let msg = Message::single("chunk", format!("data-{}", i).into_bytes());
+            if tx.send(Ok(msg)).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Create stream message from channel
+    let stream_msg = Message::from_channel("StreamRequest", rx);
+
+    // Send streaming request
+    let response = client
+        .send_message_full(addr, "/actors/stream_test", stream_msg)
+        .await
+        .unwrap();
+
+    // Verify response
+    assert!(response.is_single());
+    let Message::Single { data, .. } = response else {
+        panic!("Expected single message");
+    };
+    let response_str = String::from_utf8_lossy(&data);
+    assert!(response_str.contains("/actors/stream_test"));
+    assert!(response_str.contains("collected:"));
+    
+    // Verify handler was called
+    assert_eq!(counters.ask_count.load(Ordering::SeqCst), 1);
+
+    // Cleanup
+    cancel.cancel();
+}
+
+#[tokio::test]
+async fn test_http2_single_request_with_full_api() {
+    let counters = Arc::new(TestCounters::default());
+    let handler = Arc::new(StreamingHandler::with_counters(counters.clone()));
+    let cancel = CancellationToken::new();
+
+    // Start server
+    let server = Http2Server::new(
+        "127.0.0.1:0".parse().unwrap(),
+        handler,
+        Http2Config::default(),
+        cancel.clone(),
+    )
+    .await
+    .unwrap();
+
+    let addr = server.local_addr();
+
+    // Create client
+    let client = Http2Client::new(Http2Config::default());
+
+    // Send single message using send_message_full
+    let msg = Message::single("TestType", b"test-payload".to_vec());
+    let response = client
+        .send_message_full(addr, "/actors/single_test", msg)
+        .await
+        .unwrap();
+
+    // Verify response
+    assert!(response.is_single());
+    let Message::Single { data, .. } = response else {
+        panic!("Expected single message");
+    };
+    let response_str = String::from_utf8_lossy(&data);
+    assert!(response_str.contains("/actors/single_test"));
+    assert!(response_str.contains("TestType"));
+
+    // Verify handler was called
+    assert_eq!(counters.ask_count.load(Ordering::SeqCst), 1);
+
+    // Cleanup
+    cancel.cancel();
+}
+
+#[test]
+fn test_request_type_conversion() {
+    use pulsing_actor::transport::RequestType;
+
+    assert_eq!(RequestType::Single.as_str(), "single");
+    assert_eq!(RequestType::Stream.as_str(), "stream");
+
+    assert_eq!(RequestType::parse("single"), Some(RequestType::Single));
+    assert_eq!(RequestType::parse("STREAM"), Some(RequestType::Stream));
+    assert_eq!(RequestType::parse("invalid"), None);
 }

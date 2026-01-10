@@ -1,130 +1,231 @@
-//! Streaming response support for HTTP/2 transport
+//! Streaming support for HTTP/2 transport
+//!
+//! Uses a high-performance binary frame format for streaming requests and responses.
+//!
+//! ## Binary Frame Format
+//!
+//! ```text
+//! +--------+--------+----------+----------+---------+-----------+
+//! | length | flags  | msg_type | data_len |  data   | [error]   |
+//! | 4B BE  | 1byte  | 2B+UTF8  | 4B BE    | N bytes | [2B+UTF8] |
+//! +--------+--------+----------+----------+---------+-----------+
+//! ```
+//!
+//! - **length**: Total frame length (excluding this field), big-endian u32
+//! - **flags**: bit 0 = END, bit 1 = ERROR
+//! - **msg_type**: 2-byte length prefix + UTF-8 string
+//! - **data_len**: 4-byte length prefix + raw binary payload
+//! - **error**: Optional error message (only present if ERROR flag is set)
+//!
+//! ## Features
+//!
+//! - **Compact**: Raw binary, no encoding overhead
+//! - **Fast parsing**: O(1) frame boundary detection via length prefix
+//! - **Zero-copy friendly**: Direct binary data passthrough
 
 use crate::actor::Message;
-use bytes::Bytes;
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::Stream;
-use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_util::sync::CancellationToken;
 
-/// A frame in a streaming response
-///
-/// Frames are serialized as NDJSON (newline-delimited JSON) for transmission.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamFrame {
-    /// Sequence number (0-indexed)
-    pub seq: u64,
+/// Frame flags
+pub const FLAG_END: u8 = 0x01;
+pub const FLAG_ERROR: u8 = 0x02;
 
+/// A frame in a streaming message
+///
+/// Serialized using a length-prefixed binary format for efficient transmission.
+#[derive(Debug, Clone)]
+pub struct StreamFrame {
     /// Message type identifier
     pub msg_type: String,
 
-    /// Message data (base64 encoded binary)
-    pub data: String,
+    /// Raw binary payload
+    pub data: Vec<u8>,
 
     /// Whether this is the final frame
-    #[serde(default)]
     pub end: bool,
 
     /// Error message (if any)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 impl StreamFrame {
     /// Create a new data frame
-    pub fn data(seq: u64, msg_type: impl Into<String>, payload: &[u8]) -> Self {
+    pub fn data(msg_type: impl Into<String>, payload: &[u8]) -> Self {
         Self {
-            seq,
             msg_type: msg_type.into(),
-            data: base64_encode(payload),
+            data: payload.to_vec(),
             end: false,
             error: None,
         }
     }
 
     /// Create an end frame (no data)
-    pub fn end(seq: u64) -> Self {
+    pub fn end() -> Self {
         Self {
-            seq,
             msg_type: String::new(),
-            data: String::new(),
+            data: Vec::new(),
             end: true,
             error: None,
         }
     }
 
     /// Create an error frame
-    pub fn error(seq: u64, error: impl Into<String>) -> Self {
+    pub fn error(error: impl Into<String>) -> Self {
         Self {
-            seq,
-            msg_type: "error".to_string(),
-            data: String::new(),
+            msg_type: String::new(),
+            data: Vec::new(),
             end: true,
             error: Some(error.into()),
         }
     }
 
-    /// Decode the data payload
-    pub fn decode_data(&self) -> anyhow::Result<Vec<u8>> {
-        base64_decode(&self.data)
+    /// Get the data payload
+    #[inline]
+    pub fn get_data(&self) -> &[u8] {
+        &self.data
     }
 
     /// Check if this frame contains an error
+    #[inline]
     pub fn is_error(&self) -> bool {
         self.error.is_some()
     }
 
     /// Create a StreamFrame from a Message::Single
-    ///
-    /// The msg_type from the Message is preserved in the frame.
-    /// If the message has an empty msg_type, the default_msg_type is used.
-    pub fn from_message(seq: u64, msg: &Message, default_msg_type: &str) -> Self {
+    pub fn from_message(msg: &Message, default_msg_type: &str) -> Self {
         match msg {
             Message::Single { msg_type, data } => {
                 let frame_msg_type = if msg_type.is_empty() {
-                    default_msg_type.to_string()
+                    default_msg_type
                 } else {
-                    msg_type.clone()
+                    msg_type
                 };
-                Self::data(seq, frame_msg_type, data)
+                Self::data(frame_msg_type, data)
             }
-            Message::Stream { .. } => {
-                // Nested streams are not supported, create an error frame
-                Self::error(seq, "Nested streams are not supported")
-            }
+            Message::Stream { .. } => Self::error("Nested streams are not supported"),
         }
     }
 
     /// Convert this frame to a Message::Single
-    ///
-    /// Returns None for end frames with no data.
-    /// Returns Err for error frames.
     pub fn to_message(&self) -> anyhow::Result<Option<Message>> {
-        // Check for errors first
         if let Some(ref error) = self.error {
             return Err(anyhow::anyhow!("{}", error));
         }
-
-        // Skip end frames with no data
         if self.end && self.data.is_empty() {
             return Ok(None);
         }
-
-        // Decode and create Message
-        let data = self.decode_data()?;
-        Ok(Some(Message::single(&self.msg_type, data)))
+        Ok(Some(Message::single(&self.msg_type, self.data.clone())))
     }
 
-    /// Serialize to NDJSON line
-    pub fn to_ndjson(&self) -> anyhow::Result<Bytes> {
-        let json = serde_json::to_string(self)?;
-        Ok(Bytes::from(format!("{}\n", json)))
+    /// Serialize to binary format
+    ///
+    /// Format: `[4B len][1B flags][2B msg_type_len][msg_type][4B data_len][data][opt: 2B err_len][err]`
+    pub fn to_binary(&self) -> Bytes {
+        let msg_type_bytes = self.msg_type.as_bytes();
+        let error_bytes = self.error.as_ref().map(|e| e.as_bytes());
+
+        // Calculate total length (excluding the length field itself)
+        let mut content_len = 1 + 2 + msg_type_bytes.len() + 4 + self.data.len();
+        if let Some(err) = &error_bytes {
+            content_len += 2 + err.len();
+        }
+
+        let mut buf = BytesMut::with_capacity(4 + content_len);
+
+        // Length prefix
+        buf.put_u32(content_len as u32);
+
+        // Flags
+        let mut flags = 0u8;
+        if self.end {
+            flags |= FLAG_END;
+        }
+        if self.error.is_some() {
+            flags |= FLAG_ERROR;
+        }
+        buf.put_u8(flags);
+
+        // Message type
+        buf.put_u16(msg_type_bytes.len() as u16);
+        buf.put_slice(msg_type_bytes);
+
+        // Data
+        buf.put_u32(self.data.len() as u32);
+        buf.put_slice(&self.data);
+
+        // Error message (if any)
+        if let Some(err) = error_bytes {
+            buf.put_u16(err.len() as u16);
+            buf.put_slice(err);
+        }
+
+        buf.freeze()
     }
 
-    /// Parse from NDJSON line
-    pub fn from_ndjson(line: &str) -> anyhow::Result<Self> {
-        Ok(serde_json::from_str(line.trim())?)
+    /// Parse from binary format
+    pub fn from_binary(mut buf: &[u8]) -> anyhow::Result<Self> {
+        if buf.remaining() < 4 {
+            return Err(anyhow::anyhow!("Buffer too short for length"));
+        }
+
+        let total_len = buf.get_u32() as usize;
+        if buf.remaining() < total_len {
+            return Err(anyhow::anyhow!(
+                "Incomplete frame: expected {} bytes",
+                total_len
+            ));
+        }
+
+        // Flags
+        let flags = buf.get_u8();
+        let end = (flags & FLAG_END) != 0;
+        let has_error = (flags & FLAG_ERROR) != 0;
+
+        // Message type
+        let msg_type_len = buf.get_u16() as usize;
+        if buf.remaining() < msg_type_len {
+            return Err(anyhow::anyhow!("Invalid msg_type length"));
+        }
+        let msg_type = String::from_utf8(buf[..msg_type_len].to_vec())
+            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in msg_type: {}", e))?;
+        buf.advance(msg_type_len);
+
+        // Data
+        if buf.remaining() < 4 {
+            return Err(anyhow::anyhow!("Missing data length"));
+        }
+        let data_len = buf.get_u32() as usize;
+        if buf.remaining() < data_len {
+            return Err(anyhow::anyhow!("Invalid data length"));
+        }
+        let data = buf[..data_len].to_vec();
+        buf.advance(data_len);
+
+        // Error (if flagged)
+        let error = if has_error && buf.remaining() >= 2 {
+            let error_len = buf.get_u16() as usize;
+            if buf.remaining() >= error_len {
+                Some(
+                    String::from_utf8(buf[..error_len].to_vec())
+                        .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in error: {}", e))?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
+            msg_type,
+            data,
+            end,
+            error,
+        })
     }
 }
 
@@ -178,22 +279,62 @@ impl<T> Stream for StreamHandle<T> {
 
 impl<T> Drop for StreamHandle<T> {
     fn drop(&mut self) {
-        // Cancel the stream when dropped
         self.cancel.cancel();
     }
 }
 
-// Base64 encoding/decoding helpers
-use base64::{engine::general_purpose::STANDARD, Engine};
-
-fn base64_encode(data: &[u8]) -> String {
-    STANDARD.encode(data)
+/// Parser for binary stream frames
+///
+/// Accumulates bytes and yields complete frames as they become available.
+#[derive(Default)]
+pub struct BinaryFrameParser {
+    buffer: BytesMut,
 }
 
-fn base64_decode(s: &str) -> anyhow::Result<Vec<u8>> {
-    STANDARD
-        .decode(s)
-        .map_err(|e| anyhow::anyhow!("Base64 decode error: {}", e))
+impl BinaryFrameParser {
+    pub fn new() -> Self {
+        Self {
+            buffer: BytesMut::new(),
+        }
+    }
+
+    /// Add data to the buffer
+    pub fn push(&mut self, data: &[u8]) {
+        self.buffer.extend_from_slice(data);
+    }
+
+    /// Try to parse a complete frame from the buffer
+    pub fn try_parse(&mut self) -> Option<anyhow::Result<StreamFrame>> {
+        if self.buffer.len() < 4 {
+            return None;
+        }
+
+        // Peek at length without consuming
+        let total_len = u32::from_be_bytes([
+            self.buffer[0],
+            self.buffer[1],
+            self.buffer[2],
+            self.buffer[3],
+        ]) as usize;
+
+        // Check if we have the complete frame
+        if self.buffer.len() < 4 + total_len {
+            return None;
+        }
+
+        // Parse the frame
+        let frame_bytes = self.buffer.split_to(4 + total_len);
+        Some(StreamFrame::from_binary(&frame_bytes))
+    }
+
+    /// Parse all available frames
+    pub fn parse_all(&mut self) -> Vec<anyhow::Result<StreamFrame>> {
+        let mut frames = Vec::new();
+        while let Some(result) = self.try_parse() {
+            frames.push(result);
+        }
+        frames
+    }
 }
 
 #[cfg(test)]
@@ -202,67 +343,120 @@ mod tests {
 
     #[test]
     fn test_stream_frame_data() {
-        let frame = StreamFrame::data(0, "test", b"hello");
-        assert_eq!(frame.seq, 0);
+        let frame = StreamFrame::data("test", b"hello");
         assert_eq!(frame.msg_type, "test");
         assert!(!frame.end);
         assert!(frame.error.is_none());
-
-        let decoded = frame.decode_data().unwrap();
-        assert_eq!(decoded, b"hello");
+        assert_eq!(frame.get_data(), b"hello");
     }
 
     #[test]
     fn test_stream_frame_end() {
-        let frame = StreamFrame::end(5);
-        assert_eq!(frame.seq, 5);
+        let frame = StreamFrame::end();
         assert!(frame.end);
         assert!(frame.error.is_none());
     }
 
     #[test]
     fn test_stream_frame_error() {
-        let frame = StreamFrame::error(3, "something went wrong");
-        assert_eq!(frame.seq, 3);
+        let frame = StreamFrame::error("something went wrong");
         assert!(frame.end);
         assert!(frame.is_error());
-        assert_eq!(frame.error.unwrap(), "something went wrong");
+        assert_eq!(frame.error.as_ref().unwrap(), "something went wrong");
     }
 
     #[test]
-    fn test_ndjson_roundtrip() {
-        let frame = StreamFrame::data(1, "token", b"world");
-        let json = frame.to_ndjson().unwrap();
-        let parsed = StreamFrame::from_ndjson(std::str::from_utf8(&json).unwrap()).unwrap();
+    fn test_binary_roundtrip() {
+        let frame = StreamFrame::data("token", b"hello world");
+        let bytes = frame.to_binary();
+        let parsed = StreamFrame::from_binary(&bytes).unwrap();
 
-        assert_eq!(parsed.seq, 1);
         assert_eq!(parsed.msg_type, "token");
-        assert_eq!(parsed.decode_data().unwrap(), b"world");
+        assert_eq!(parsed.get_data(), b"hello world");
+        assert!(!parsed.end);
     }
 
     #[test]
-    fn test_base64_roundtrip() {
-        let original = b"Hello, World! \x00\x01\x02\xff";
-        let encoded = base64_encode(original);
-        let decoded = base64_decode(&encoded).unwrap();
-        assert_eq!(decoded, original);
+    fn test_binary_end_frame() {
+        let frame = StreamFrame::end();
+        let bytes = frame.to_binary();
+        let parsed = StreamFrame::from_binary(&bytes).unwrap();
+
+        assert!(parsed.end);
+        assert!(parsed.get_data().is_empty());
+    }
+
+    #[test]
+    fn test_binary_error_frame() {
+        let frame = StreamFrame::error("test error");
+        let bytes = frame.to_binary();
+        let parsed = StreamFrame::from_binary(&bytes).unwrap();
+
+        assert!(parsed.end);
+        assert!(parsed.is_error());
+        assert_eq!(parsed.error.as_ref().unwrap(), "test error");
+    }
+
+    #[test]
+    fn test_binary_large_payload() {
+        let large_data = vec![0xABu8; 1024 * 1024]; // 1MB
+        let frame = StreamFrame::data("large", &large_data);
+        let bytes = frame.to_binary();
+        let parsed = StreamFrame::from_binary(&bytes).unwrap();
+
+        assert_eq!(parsed.get_data(), &large_data[..]);
+    }
+
+    #[test]
+    fn test_binary_frame_parser() {
+        let mut parser = BinaryFrameParser::new();
+
+        let frame1 = StreamFrame::data("chunk", b"first");
+        let frame2 = StreamFrame::data("chunk", b"second");
+        let frame3 = StreamFrame::end();
+
+        parser.push(&frame1.to_binary());
+        parser.push(&frame2.to_binary());
+        parser.push(&frame3.to_binary());
+
+        let frames = parser.parse_all();
+        assert_eq!(frames.len(), 3);
+
+        assert_eq!(frames[0].as_ref().unwrap().get_data(), b"first");
+        assert_eq!(frames[1].as_ref().unwrap().get_data(), b"second");
+        assert!(frames[2].as_ref().unwrap().end);
+    }
+
+    #[test]
+    fn test_binary_frame_parser_partial() {
+        let mut parser = BinaryFrameParser::new();
+
+        let frame = StreamFrame::data("test", b"payload");
+        let bytes = frame.to_binary();
+
+        // Push partial data
+        parser.push(&bytes[..5]);
+        assert!(parser.try_parse().is_none());
+
+        // Push rest
+        parser.push(&bytes[5..]);
+        let parsed = parser.try_parse().unwrap().unwrap();
+        assert_eq!(parsed.get_data(), b"payload");
     }
 
     #[test]
     fn test_from_message_with_msg_type() {
         let msg = Message::single("token", b"hello");
-        let frame = StreamFrame::from_message(0, &msg, "default");
+        let frame = StreamFrame::from_message(&msg, "default");
 
-        assert_eq!(frame.seq, 0);
         assert_eq!(frame.msg_type, "token");
-        assert_eq!(frame.decode_data().unwrap(), b"hello");
+        assert_eq!(frame.get_data(), b"hello");
     }
 
     #[test]
     fn test_from_message_uses_default_msg_type() {
-        // Empty msg_type should use default
         let msg = Message::single("", b"hello");
-        let frame = StreamFrame::from_message(0, &msg, "default_type");
+        let frame = StreamFrame::from_message(&msg, "default_type");
 
         assert_eq!(frame.msg_type, "default_type");
     }
@@ -270,7 +464,7 @@ mod tests {
     #[test]
     fn test_to_message_roundtrip() {
         let original = Message::single("chunk", b"data");
-        let frame = StreamFrame::from_message(0, &original, "default");
+        let frame = StreamFrame::from_message(&original, "default");
         let recovered = frame.to_message().unwrap().unwrap();
 
         if let Message::Single { msg_type, data } = recovered {
@@ -283,14 +477,14 @@ mod tests {
 
     #[test]
     fn test_to_message_end_frame() {
-        let frame = StreamFrame::end(0);
+        let frame = StreamFrame::end();
         let msg = frame.to_message().unwrap();
         assert!(msg.is_none());
     }
 
     #[test]
     fn test_to_message_error_frame() {
-        let frame = StreamFrame::error(0, "test error");
+        let frame = StreamFrame::error("test error");
         let result = frame.to_message();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("test error"));
