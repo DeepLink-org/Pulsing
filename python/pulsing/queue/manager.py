@@ -18,20 +18,38 @@ STORAGE_MANAGER_NAME = "queue_storage_manager"
 def _compute_owner(bucket_key: str, nodes: list[dict]) -> int | None:
     """根据 bucket key 计算 owner 节点 ID
 
-    使用一致性哈希，确保：
+    使用 Rendezvous Hashing（最高随机权重哈希），确保：
     1. 同一个 bucket 总是由同一个节点负责
-    2. 节点变化时影响最小
+    2. 节点变化时只影响 ~1/N 的 key（最小迁移）
+    3. 负载自然均匀分布
+
+    算法：对每个 (key, node) 组合计算分数，选择分数最高的节点
     """
     if not nodes:
         return None
 
-    # 按 node_id 排序确保一致性（node_id 可能是字符串，统一转为 int）
-    sorted_nodes = sorted(nodes, key=lambda n: int(n.get("node_id", 0)))
-    hash_value = int(hashlib.md5(bucket_key.encode()).hexdigest(), 16)
-    index = hash_value % len(sorted_nodes)
-    # 返回 int 类型的 node_id
-    node_id = sorted_nodes[index].get("node_id")
-    return int(node_id) if node_id is not None else None
+    # 只选择 Alive 状态的节点
+    alive_nodes = [n for n in nodes if n.get("state") == "Alive"]
+    if not alive_nodes:
+        # 如果没有 Alive 节点，退回到所有节点
+        alive_nodes = nodes
+
+    best_score = -1
+    best_node_id = None
+
+    for node in alive_nodes:
+        node_id = node.get("node_id")
+        if node_id is None:
+            continue
+        node_id = int(node_id)
+        # 组合 key 和 node_id 计算哈希分数
+        combined = f"{bucket_key}:{node_id}"
+        score = int(hashlib.md5(combined.encode()).hexdigest(), 16)
+        if score > best_score:
+            best_score = score
+            best_node_id = node_id
+
+    return best_node_id
 
 
 class StorageManager(Actor):

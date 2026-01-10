@@ -128,7 +128,9 @@ pub mod watch;
 /// import from `pulsing_actor::actor::*`.
 pub mod prelude {
     pub use crate::actor::{Actor, ActorContext, ActorRef, Message};
-    pub use crate::system::{ActorSystem, SystemConfig};
+    pub use crate::system::{
+        ActorSystem, LoadBalanceStrategy, ResolveOptions, SpawnOptions, SystemConfig,
+    };
     pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};
 }

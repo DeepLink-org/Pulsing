@@ -2,9 +2,11 @@
 
 use crate::actor::{
     Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Envelope,
-    Message, NodeId, StopReason,
+    Mailbox, Message, NodeId, StopReason, DEFAULT_MAILBOX_SIZE,
 };
-use crate::cluster::{GossipCluster, GossipConfig, GossipMessage, MemberInfo, NamedActorInfo};
+use crate::cluster::{
+    GossipCluster, GossipConfig, GossipMessage, MemberInfo, MemberStatus, NamedActorInfo,
+};
 use crate::system_actor::{
     BoxedActorFactory, SystemActor, SystemRef, SYSTEM_ACTOR_LOCAL_NAME, SYSTEM_ACTOR_PATH,
 };
@@ -62,6 +64,9 @@ pub struct SystemConfig {
 
     /// HTTP/2 transport configuration
     pub http2_config: Http2Config,
+
+    /// Default mailbox capacity for all actors
+    pub default_mailbox_capacity: usize,
 }
 
 impl Default for SystemConfig {
@@ -71,6 +76,7 @@ impl Default for SystemConfig {
             seed_nodes: Vec::new(),
             gossip_config: GossipConfig::default(),
             http2_config: Http2Config::default(),
+            default_mailbox_capacity: DEFAULT_MAILBOX_SIZE,
         }
     }
 }
@@ -92,6 +98,93 @@ impl SystemConfig {
     /// Add seed nodes for cluster joining
     pub fn with_seeds(mut self, seeds: Vec<SocketAddr>) -> Self {
         self.seed_nodes = seeds;
+        self
+    }
+
+    /// Set default mailbox capacity
+    pub fn with_mailbox_capacity(mut self, capacity: usize) -> Self {
+        self.default_mailbox_capacity = capacity;
+        self
+    }
+}
+
+/// Options for spawning an actor
+#[derive(Default, Clone, Debug)]
+pub struct SpawnOptions {
+    /// Override mailbox capacity (None = use system default)
+    pub mailbox_capacity: Option<usize>,
+    /// Whether this actor is public (can be resolved by name across cluster)
+    pub public: bool,
+}
+
+impl SpawnOptions {
+    /// Create new spawn options with defaults
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set mailbox capacity override
+    pub fn mailbox_capacity(mut self, capacity: usize) -> Self {
+        self.mailbox_capacity = Some(capacity);
+        self
+    }
+
+    /// Set whether actor is public
+    pub fn public(mut self, public: bool) -> Self {
+        self.public = public;
+        self
+    }
+}
+
+/// Load balance strategy for resolving named actors with multiple instances
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LoadBalanceStrategy {
+    /// Pick the first available instance (original behavior)
+    First,
+    /// Round-robin across instances
+    #[default]
+    RoundRobin,
+    /// Random selection
+    Random,
+    /// Prefer local instance if available, fallback to round-robin
+    PreferLocal,
+}
+
+/// Options for resolving named actors
+#[derive(Clone, Debug, Default)]
+pub struct ResolveOptions {
+    /// Target node ID (if specified, skip load balancing)
+    pub node_id: Option<NodeId>,
+    /// Load balance strategy (default: RoundRobin)
+    pub strategy: LoadBalanceStrategy,
+    /// Only select Alive nodes (default: true)
+    pub filter_alive: bool,
+}
+
+impl ResolveOptions {
+    /// Create new resolve options with defaults
+    pub fn new() -> Self {
+        Self {
+            filter_alive: true,
+            ..Default::default()
+        }
+    }
+
+    /// Set target node ID (bypasses load balancing)
+    pub fn node_id(mut self, node_id: NodeId) -> Self {
+        self.node_id = Some(node_id);
+        self
+    }
+
+    /// Set load balance strategy
+    pub fn strategy(mut self, strategy: LoadBalanceStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
+    /// Set whether to filter only alive nodes
+    pub fn filter_alive(mut self, filter: bool) -> Self {
+        self.filter_alive = filter;
         self
     }
 }
@@ -125,6 +218,9 @@ pub struct ActorSystem {
     /// HTTP/2 address
     addr: SocketAddr,
 
+    /// Default mailbox capacity for actors
+    default_mailbox_capacity: usize,
+
     /// Local actors (actor_name -> handle)
     local_actors: Arc<DashMap<String, LocalActorHandle>>,
 
@@ -145,6 +241,9 @@ pub struct ActorSystem {
 
     /// Actor ID counter (for generating unique local IDs)
     actor_id_counter: AtomicU64,
+
+    /// Round-robin counter for load balancing (per actor path)
+    lb_counters: DashMap<String, AtomicU64>,
 }
 
 impl ActorSystem {
@@ -199,6 +298,7 @@ impl ActorSystem {
         let system = Arc::new(Self {
             node_id,
             addr: actual_addr,
+            default_mailbox_capacity: config.default_mailbox_capacity,
             local_actors: local_actors.clone(),
             named_actor_paths: named_actor_paths.clone(),
             cluster: cluster_holder,
@@ -206,6 +306,7 @@ impl ActorSystem {
             cancel_token: cancel_token.clone(),
             lifecycle,
             actor_id_counter: AtomicU64::new(1),
+            lb_counters: DashMap::new(),
         });
 
         // Start the builtin SystemActor with path "system"
@@ -312,8 +413,22 @@ impl ActorSystem {
         ActorId::new(self.node_id, local_id)
     }
 
-    /// Spawn an actor with a local name
+    /// Spawn an actor with a local name (uses system default mailbox capacity)
     pub async fn spawn<A>(&self, name: impl AsRef<str>, actor: A) -> anyhow::Result<ActorRef>
+    where
+        A: Actor,
+    {
+        self.spawn_with_options(name, actor, SpawnOptions::default())
+            .await
+    }
+
+    /// Spawn an actor with custom options
+    pub async fn spawn_with_options<A>(
+        &self,
+        name: impl AsRef<str>,
+        actor: A,
+        options: SpawnOptions,
+    ) -> anyhow::Result<ActorRef>
     where
         A: Actor,
     {
@@ -325,7 +440,14 @@ impl ActorSystem {
         }
 
         let actor_id = self.next_actor_id();
-        let (sender, receiver) = mpsc::channel(128);
+
+        // Use configured mailbox capacity
+        let capacity = options
+            .mailbox_capacity
+            .unwrap_or(self.default_mailbox_capacity);
+        let mailbox = Mailbox::with_capacity(capacity);
+        let (sender, receiver) = mailbox.split();
+
         let stats = Arc::new(ActorStats::default());
         let metadata = actor.metadata();
 
@@ -367,6 +489,21 @@ impl ActorSystem {
     where
         A: Actor,
     {
+        self.spawn_named_with_options(path, local_name, actor, SpawnOptions::default())
+            .await
+    }
+
+    /// Spawn a named actor with custom options
+    pub async fn spawn_named_with_options<A>(
+        &self,
+        path: ActorPath,
+        local_name: impl AsRef<str>,
+        actor: A,
+        options: SpawnOptions,
+    ) -> anyhow::Result<ActorRef>
+    where
+        A: Actor,
+    {
         let local_name = local_name.as_ref();
 
         // Check for duplicate local name
@@ -386,7 +523,14 @@ impl ActorSystem {
         }
 
         let actor_id = self.next_actor_id();
-        let (sender, receiver) = mpsc::channel(128);
+
+        // Use configured mailbox capacity
+        let capacity = options
+            .mailbox_capacity
+            .unwrap_or(self.default_mailbox_capacity);
+        let mailbox = Mailbox::with_capacity(capacity);
+        let (sender, receiver) = mailbox.split();
+
         let stats = Arc::new(ActorStats::default());
         let metadata = actor.metadata();
 
@@ -462,11 +606,25 @@ impl ActorSystem {
         Ok(ActorRef::remote(*id, member.addr, Arc::new(transport)))
     }
 
-    /// Resolve a named actor and get an ActorRef
+    /// Resolve a named actor and get an ActorRef (uses default load balancing: RoundRobin)
     pub async fn resolve_named(
         &self,
         path: &ActorPath,
         node_id: Option<&NodeId>,
+    ) -> anyhow::Result<ActorRef> {
+        let options = if let Some(nid) = node_id {
+            ResolveOptions::new().node_id(*nid)
+        } else {
+            ResolveOptions::new()
+        };
+        self.resolve_named_with_options(path, options).await
+    }
+
+    /// Resolve a named actor with custom options (load balancing, health filtering)
+    pub async fn resolve_named_with_options(
+        &self,
+        path: &ActorPath,
+        options: ResolveOptions,
     ) -> anyhow::Result<ActorRef> {
         let cluster_guard = self.cluster.read().await;
         let cluster = cluster_guard
@@ -479,15 +637,33 @@ impl ActorSystem {
             return Err(anyhow::anyhow!("Named actor not found: {}", path.as_str()));
         }
 
-        // If node_id specified, find that specific instance
-        let target = if let Some(nid) = node_id {
+        // Health filtering: only select Alive nodes
+        let healthy_instances: Vec<_> = if options.filter_alive {
             instances
+                .into_iter()
+                .filter(|i| i.status == MemberStatus::Alive)
+                .collect()
+        } else {
+            instances
+        };
+
+        if healthy_instances.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No healthy instances for named actor: {}",
+                path.as_str()
+            ));
+        }
+
+        // Select target instance
+        let target = if let Some(nid) = options.node_id {
+            // If node_id specified, find that specific instance
+            healthy_instances
                 .iter()
-                .find(|i| &i.node_id == nid)
+                .find(|i| i.node_id == nid)
                 .ok_or_else(|| anyhow::anyhow!("Actor instance not found on node: {}", nid))?
         } else {
-            // Otherwise pick first instance
-            &instances[0]
+            // Use load balancing strategy
+            self.select_instance(path, &healthy_instances, options.strategy)
         };
 
         // If local, get local ref
@@ -514,6 +690,55 @@ impl ActorSystem {
         // The transport will use the path for routing
         let actor_id = ActorId::new(target.node_id, 0);
         Ok(ActorRef::remote(actor_id, target.addr, Arc::new(transport)))
+    }
+
+    /// Select an instance based on load balancing strategy
+    fn select_instance<'a>(
+        &self,
+        path: &ActorPath,
+        instances: &'a [MemberInfo],
+        strategy: LoadBalanceStrategy,
+    ) -> &'a MemberInfo {
+        match strategy {
+            LoadBalanceStrategy::First => &instances[0],
+
+            LoadBalanceStrategy::RoundRobin => {
+                let path_key = path.as_str().to_string();
+                let counter = self
+                    .lb_counters
+                    .entry(path_key)
+                    .or_insert_with(|| AtomicU64::new(0));
+                let idx = counter.fetch_add(1, Ordering::Relaxed) as usize % instances.len();
+                &instances[idx]
+            }
+
+            LoadBalanceStrategy::Random => {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                use std::time::SystemTime;
+
+                // Simple random using time-based seed
+                let mut hasher = DefaultHasher::new();
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+                    .hash(&mut hasher);
+                std::thread::current().id().hash(&mut hasher);
+                let idx = hasher.finish() as usize % instances.len();
+                &instances[idx]
+            }
+
+            LoadBalanceStrategy::PreferLocal => {
+                // Try to find local instance first
+                if let Some(local) = instances.iter().find(|i| i.node_id == self.node_id) {
+                    local
+                } else {
+                    // Fallback to round-robin
+                    self.select_instance(path, instances, LoadBalanceStrategy::RoundRobin)
+                }
+            }
+        }
     }
 
     /// Resolve an actor address and get an ActorRef
