@@ -21,6 +21,7 @@ from autogen_core import AgentId
 # 消息类型
 # ============================================================================
 
+
 @dataclass
 class RequestToSpeak:
     topic: str
@@ -35,6 +36,7 @@ class ChatMessage:
 # ============================================================================
 # Agent 定义
 # ============================================================================
+
 
 class WriterAgent:
     """Writer - 负责内容创作"""
@@ -108,7 +110,10 @@ def get_pulsing_config(rank: int, master_addr: str, pulsing_base_port: int):
 # 运行函数
 # ============================================================================
 
-async def run_with_rank(rank: int, world_size: int, master_addr: str, pulsing_base_port: int):
+
+async def run_with_rank(
+    rank: int, world_size: int, master_addr: str, pulsing_base_port: int
+):
     """根据 rank 运行对应角色"""
     from pulsing.autogen import PulsingRuntime
 
@@ -147,12 +152,16 @@ async def run_manager_logic(runtime):
 
     # Writer 写作
     print("\n[1] Asking Writer...")
-    response = await runtime.send_message(RequestToSpeak(topic="AI"), recipient=writer_id)
+    response = await runtime.send_message(
+        RequestToSpeak(topic="AI"), recipient=writer_id
+    )
     print(f"    Response: {response}")
 
     # Editor 审核
     print("\n[2] Asking Editor...")
-    response = await runtime.send_message(RequestToSpeak(topic="review"), recipient=editor_id)
+    response = await runtime.send_message(
+        RequestToSpeak(topic="review"), recipient=editor_id
+    )
     print(f"    Response: {response}")
 
     print("\n" + "=" * 50)
@@ -179,8 +188,10 @@ async def run_standalone():
 # 手动模式 (多终端启动)
 # ============================================================================
 
+
 async def run_writer():
     from pulsing.autogen import PulsingRuntime
+
     runtime = PulsingRuntime(addr="0.0.0.0:8001", seeds=[])
     await runtime.start()
     await runtime.register_factory("writer", WriterAgent)
@@ -190,6 +201,7 @@ async def run_writer():
 
 async def run_editor():
     from pulsing.autogen import PulsingRuntime
+
     runtime = PulsingRuntime(addr="0.0.0.0:8002", seeds=["127.0.0.1:8001"])
     await runtime.start()
     await runtime.register_factory("editor", EditorAgent)
@@ -199,6 +211,7 @@ async def run_editor():
 
 async def run_manager():
     from pulsing.autogen import PulsingRuntime
+
     runtime = PulsingRuntime(addr="0.0.0.0:8003", seeds=["127.0.0.1:8001"])
     await runtime.start()
     await asyncio.sleep(2)
@@ -210,6 +223,7 @@ async def run_manager():
 # 入口
 # ============================================================================
 
+
 def main():
     rank, world_size, master_addr, pulsing_base_port = get_distributed_config()
 
@@ -220,18 +234,18 @@ def main():
 
     # 命令行模式
     role = sys.argv[1].lower() if len(sys.argv) > 1 else "standalone"
-    
+
     handlers = {
         "writer": run_writer,
         "editor": run_editor,
         "manager": run_manager,
         "standalone": run_standalone,
     }
-    
+
     if role in handlers:
         asyncio.run(handlers[role]())
     else:
-        print(f"Usage: python distributed.py [writer|editor|manager|standalone]")
+        print("Usage: python distributed.py [writer|editor|manager|standalone]")
         sys.exit(1)
 
 

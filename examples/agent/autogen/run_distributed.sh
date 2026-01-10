@@ -35,7 +35,7 @@ if [ "$MODE" = "torchrun" ]; then
 else
     cleanup() { kill $(jobs -p) 2>/dev/null; wait 2>/dev/null; }
     trap cleanup EXIT INT TERM
-    
+
     python distributed.py writer &
     sleep 1
     python distributed.py editor &

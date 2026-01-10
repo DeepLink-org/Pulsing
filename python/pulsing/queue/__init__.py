@@ -13,7 +13,7 @@
 Example:
     # 使用默认内存后端
     writer = await write_queue(system, "my_queue")
-    
+
     # 使用 persisting 提供的 Lance 持久化后端
     from persisting.queue import LanceBackend
     from pulsing.queue import register_backend
@@ -28,7 +28,12 @@ from .backend import (
     list_backends,
     register_backend,
 )
-from .manager import StorageManager, get_bucket_ref, get_storage_manager
+from .manager import (
+    StorageManager,
+    get_bucket_ref,
+    get_storage_manager,
+    get_topic_broker,
+)
 from .queue import Queue, QueueReader, QueueWriter, read_queue, write_queue
 from .storage import BucketStorage
 from .sync_queue import SyncQueue, SyncQueueReader, SyncQueueWriter
@@ -49,6 +54,7 @@ __all__ = [
     "BucketStorage",
     "get_storage_manager",
     "get_bucket_ref",
+    "get_topic_broker",
     # 后端相关
     "StorageBackend",
     "MemoryBackend",

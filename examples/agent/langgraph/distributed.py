@@ -3,7 +3,7 @@ LangGraph + Pulsing 分布式模式示例
 
 Usage:
     ./run_distributed.sh                          # 一键启动
-    
+
     # 或手动启动:
     python distributed.py worker llm 8001         # 终端 1
     python distributed.py worker tool 8002 8001   # 终端 2
@@ -26,18 +26,23 @@ def llm_node(state: AgentState) -> AgentState:
     """LLM 节点 - 部署在 GPU 服务器"""
     messages = state.get("messages", [])
     last_msg = messages[-1] if messages else {}
-    content = last_msg.get("content", "") if isinstance(last_msg, dict) else str(last_msg)
+    content = (
+        last_msg.get("content", "") if isinstance(last_msg, dict) else str(last_msg)
+    )
     role = last_msg.get("role", "") if isinstance(last_msg, dict) else ""
-    
+
     if role == "tool":
         response, next_step = f"Weather: {content}", "end"
     elif "weather" in content.lower():
         response, next_step = "Let me check the weather.", "tool"
     else:
         response, next_step = f"Hello! You said: {content}", "end"
-    
+
     print(f"[LLM Worker] {content[:30]}... -> {response[:30]}...")
-    return {"messages": [{"role": "assistant", "content": response}], "next_step": next_step}
+    return {
+        "messages": [{"role": "assistant", "content": response}],
+        "next_step": next_step,
+    }
 
 
 def tool_node(state: AgentState) -> AgentState:
@@ -52,7 +57,9 @@ def build_graph():
     graph.add_node("llm", llm_node)
     graph.add_node("tool", tool_node)
     graph.set_entry_point("llm")
-    graph.add_conditional_edges("llm", lambda s: s.get("next_step", "end"), {"tool": "tool", "end": END})
+    graph.add_conditional_edges(
+        "llm", lambda s: s.get("next_step", "end"), {"tool": "tool", "end": END}
+    )
     graph.add_edge("tool", "llm")
     return graph.compile()
 
@@ -60,11 +67,11 @@ def build_graph():
 async def run_distributed():
     """分布式主程序"""
     from pulsing.langgraph import with_pulsing
-    
+
     print("=" * 50)
     print("LangGraph + Pulsing 分布式模式")
     print("=" * 50)
-    
+
     # ✨ 一行代码实现分布式
     app = with_pulsing(
         build_graph(),
@@ -74,14 +81,19 @@ async def run_distributed():
         },
         seeds=["127.0.0.1:8001", "127.0.0.1:8002"],
     )
-    
+
     print("\n等待连接...")
     await asyncio.sleep(2)
-    
+
     print("\n--- Weather Query ---")
-    result = await app.ainvoke({"messages": [{"role": "user", "content": "What's the weather?"}], "next_step": ""})
+    result = await app.ainvoke(
+        {
+            "messages": [{"role": "user", "content": "What's the weather?"}],
+            "next_step": "",
+        }
+    )
     print(f"Messages: {len(result['messages'])}")
-    
+
     await app.close()
     print("\n✅ Done!")
 
@@ -89,12 +101,12 @@ async def run_distributed():
 async def run_worker(node_name: str, port: int, seed_port: int | None = None):
     """启动 Worker"""
     from pulsing.langgraph import start_worker
-    
+
     nodes = {"llm": llm_node, "tool": tool_node}
     if node_name not in nodes:
         print(f"Unknown node: {node_name}")
         return
-    
+
     seeds = [f"127.0.0.1:{seed_port}"] if seed_port else []
     print(f"Starting {node_name.upper()} Worker on :{port}...")
     await start_worker(node_name, nodes[node_name], addr=f"0.0.0.0:{port}", seeds=seeds)
@@ -107,12 +119,18 @@ def main():
         print("  python distributed.py worker llm 8001")
         print("  python distributed.py worker tool 8002 8001")
         return
-    
+
     cmd = sys.argv[1]
     if cmd == "run":
         asyncio.run(run_distributed())
     elif cmd == "worker" and len(sys.argv) >= 4:
-        asyncio.run(run_worker(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]) if len(sys.argv) > 4 else None))
+        asyncio.run(
+            run_worker(
+                sys.argv[2],
+                int(sys.argv[3]),
+                int(sys.argv[4]) if len(sys.argv) > 4 else None,
+            )
+        )
 
 
 if __name__ == "__main__":

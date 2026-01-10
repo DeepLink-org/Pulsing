@@ -7,13 +7,13 @@
 使用方式：
     # 使用内置后端
     writer = await write_queue(system, "topic", backend="memory")
-    
+
     # 使用 persisting 提供的持久化后端
     from persisting.queue import LanceBackend
     from pulsing.queue import register_backend
     register_backend("lance", LanceBackend)
     writer = await write_queue(system, "topic", backend="lance")
-    
+
     # 或者直接传类
     writer = await write_queue(system, "topic", backend=LanceBackend)
 """
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 @runtime_checkable
 class StorageBackend(Protocol):
     """存储后端协议
-    
+
     所有存储后端必须实现此协议。可以通过继承或鸭子类型实现。
     """
 
@@ -79,12 +79,12 @@ class StorageBackend(Protocol):
 
 class MemoryBackend:
     """纯内存后端 - 内置默认实现
-    
+
     特点：
     - 无持久化，数据仅存在于内存
     - 支持阻塞等待新数据
     - 轻量级，适合测试和临时数据
-    
+
     如需持久化能力，请使用 persisting 包提供的后端：
     - persisting.queue.LanceBackend: Lance 持久化
     - persisting.queue.PersistingBackend: 增强版（WAL、监控等）
@@ -139,7 +139,9 @@ class MemoryBackend:
                     else:
                         return
 
-                records = self.buffer[current_offset : current_offset + min(remaining, 100)]
+                records = self.buffer[
+                    current_offset : current_offset + min(remaining, 100)
+                ]
 
             if records:
                 yield records
@@ -179,11 +181,11 @@ _REGISTERED_BACKENDS: dict[str, type] = {}
 
 def register_backend(name: str, backend_class: type) -> None:
     """注册自定义后端
-    
+
     Example:
         from persisting.queue import LanceBackend
         register_backend("lance", LanceBackend)
-        
+
         writer = await write_queue(system, "topic", backend="lance")
     """
     if not isinstance(backend_class, type):
@@ -194,10 +196,10 @@ def register_backend(name: str, backend_class: type) -> None:
 
 def get_backend_class(backend: str | type) -> type:
     """获取后端类
-    
+
     Args:
         backend: 后端名称（str）或后端类（type）
-        
+
     Returns:
         后端类
     """

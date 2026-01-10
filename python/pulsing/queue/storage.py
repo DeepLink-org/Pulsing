@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 class BucketStorage(Actor):
     """单个 Bucket 的存储 Actor
-    
+
     使用可插拔的 StorageBackend 实现数据存储。
-    
+
     Args:
         bucket_id: 桶 ID
         storage_path: 存储路径
@@ -79,7 +79,9 @@ class BucketStorage(Actor):
                 return Message.from_json("Error", {"error": "Missing 'records'"})
 
             await self._backend.put_batch(records)
-            return Message.from_json("PutBatchResponse", {"status": "ok", "count": len(records)})
+            return Message.from_json(
+                "PutBatchResponse", {"status": "ok", "count": len(records)}
+            )
 
         elif msg_type == "Get":
             limit = data.get("limit", 100)
@@ -97,7 +99,9 @@ class BucketStorage(Actor):
 
             async def produce():
                 try:
-                    async for records in self._backend.get_stream(limit, offset, wait, timeout):
+                    async for records in self._backend.get_stream(
+                        limit, offset, wait, timeout
+                    ):
                         await writer.write({"records": records})
                     writer.close()
                 except Exception as e:

@@ -22,7 +22,7 @@ class Queue:
     """分布式队列 - 高级 API
 
     每个 bucket 对应一个独立的 BucketStorage Actor。
-    
+
     Args:
         system: Actor 系统
         topic: 队列主题
@@ -336,7 +336,7 @@ async def write_queue(
     backend_options: dict[str, Any] | None = None,
 ) -> QueueWriter:
     """打开队列用于写入
-    
+
     Args:
         system: Actor 系统
         topic: 队列主题
@@ -349,11 +349,11 @@ async def write_queue(
             - 持久化后端需安装 persisting 包
             - 自定义类: 实现 StorageBackend 协议的类
         backend_options: 后端额外参数
-        
+
     Example:
         # 使用默认内存后端
         writer = await write_queue(system, "my_queue")
-        
+
         # 使用 persisting 的 Lance 后端
         from persisting.queue import LanceBackend
         from pulsing.queue import register_backend

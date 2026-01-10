@@ -38,10 +38,14 @@ class StorageManager(Actor):
     """存储管理器 Actor
 
     每个节点一个实例，负责：
-    1. 接收 GetBucket 请求
-    2. 判断 bucket 是否属于本节点（一致性哈希）
-    3. 属于本节点：创建/返回 BucketStorage Actor
+    1. 接收 GetBucket/GetTopic 请求
+    2. 判断资源是否属于本节点（一致性哈希）
+    3. 属于本节点：创建/返回对应 Actor
     4. 不属于本节点：返回 Redirect 响应，指向正确节点
+
+    支持的资源类型：
+    - Queue Bucket: GetBucket -> BucketStorage Actor
+    - Topic Broker: GetTopic -> TopicBroker Actor
     """
 
     def __init__(
@@ -56,6 +60,8 @@ class StorageManager(Actor):
 
         # 本节点管理的 bucket: {(topic, bucket_id): ActorRef}
         self._buckets: dict[tuple[str, int], ActorRef] = {}
+        # 本节点管理的 topic broker: {topic_name: ActorRef}
+        self._topics: dict[str, ActorRef] = {}
         self._lock = asyncio.Lock()
 
         # 缓存的集群成员信息
@@ -81,6 +87,10 @@ class StorageManager(Actor):
     def _bucket_key(self, topic: str, bucket_id: int) -> str:
         """生成 bucket 的唯一 key"""
         return f"{topic}:bucket_{bucket_id}"
+
+    def _topic_key(self, topic_name: str) -> str:
+        """生成 topic 的唯一 key"""
+        return f"topic:{topic_name}"
 
     async def _get_or_create_bucket(
         self,
@@ -130,6 +140,31 @@ class StorageManager(Actor):
                 logger.info(f"Created bucket: {actor_name} at {bucket_storage_path}")
 
             return self._buckets[key]
+
+    async def _get_or_create_topic_broker(self, topic_name: str) -> ActorRef:
+        """获取或创建本地 TopicBroker Actor"""
+        if topic_name in self._topics:
+            return self._topics[topic_name]
+
+        async with self._lock:
+            if topic_name in self._topics:
+                return self._topics[topic_name]
+
+            actor_name = f"_topic_broker_{topic_name}"
+            try:
+                self._topics[topic_name] = await self.system.resolve_named(actor_name)
+                logger.debug(f"Resolved existing topic broker: {actor_name}")
+            except Exception:
+                # 延迟导入避免循环依赖
+                from pulsing.topic.broker import TopicBroker
+
+                broker = TopicBroker(topic_name, self.system)
+                self._topics[topic_name] = await self.system.spawn(
+                    actor_name, broker, public=True
+                )
+                logger.info(f"Created topic broker: {actor_name}")
+
+            return self._topics[topic_name]
 
     async def receive(self, msg: Message) -> Message | None:
         try:
@@ -202,6 +237,49 @@ class StorageManager(Actor):
                     },
                 )
 
+        elif msg_type == "GetTopic":
+            # 请求获取 topic broker 引用
+            topic_name = data.get("topic")
+            if not topic_name:
+                return Message.from_json("Error", {"error": "Missing 'topic'"})
+
+            # 计算 owner
+            topic_key = self._topic_key(topic_name)
+            members = await self._refresh_members()
+            owner_node_id = _compute_owner(topic_key, members)
+            local_node_id = self.system.node_id.id
+
+            if owner_node_id is None or owner_node_id == local_node_id:
+                # 本节点负责，创建/返回 topic broker
+                broker_ref = await self._get_or_create_topic_broker(topic_name)
+                return Message.from_json(
+                    "TopicReady",
+                    {
+                        "_type": "TopicReady",
+                        "topic": topic_name,
+                        "actor_id": broker_ref.actor_id.local_id,
+                        "node_id_hex": hex(local_node_id),
+                    },
+                )
+            else:
+                # 不属于本节点，返回重定向
+                owner_addr = None
+                for m in members:
+                    m_node_id = m.get("node_id")
+                    if m_node_id is not None and int(m_node_id) == owner_node_id:
+                        owner_addr = m.get("addr")
+                        break
+
+                return Message.from_json(
+                    "Redirect",
+                    {
+                        "_type": "Redirect",
+                        "topic": topic_name,
+                        "owner_node_id_hex": hex(owner_node_id),
+                        "owner_addr": owner_addr,
+                    },
+                )
+
         elif msg_type == "ListBuckets":
             # 列出本节点管理的所有 bucket
             buckets = [
@@ -210,6 +288,10 @@ class StorageManager(Actor):
             ]
             return Message.from_json("BucketList", {"buckets": buckets})
 
+        elif msg_type == "ListTopics":
+            # 列出本节点管理的所有 topic
+            return Message.from_json("TopicList", {"topics": list(self._topics.keys())})
+
         elif msg_type == "GetStats":
             # 获取统计信息
             return Message.from_json(
@@ -217,9 +299,11 @@ class StorageManager(Actor):
                 {
                     "node_id": self.system.node_id.id,
                     "bucket_count": len(self._buckets),
+                    "topic_count": len(self._topics),
                     "buckets": [
                         {"topic": t, "bucket_id": b} for (t, b) in self._buckets.keys()
                     ],
+                    "topics": list(self._topics.keys()),
                 },
             )
 
@@ -314,7 +398,9 @@ async def get_bucket_ref(
             msg_data["storage_path"] = storage_path
         if backend:
             # 如果是类，传递类名（跨节点时无法序列化类）
-            msg_data["backend"] = backend if isinstance(backend, str) else backend.__name__
+            msg_data["backend"] = (
+                backend if isinstance(backend, str) else backend.__name__
+            )
         if backend_options:
             msg_data["backend_options"] = backend_options
 
@@ -381,3 +467,68 @@ async def get_bucket_ref(
             raise RuntimeError(f"Unexpected response: {msg_type}")
 
     raise RuntimeError(f"Failed to get bucket {topic}:{bucket_id}")
+
+
+async def get_topic_broker(
+    system: ActorSystem,
+    topic: str,
+    max_redirects: int = 3,
+) -> ActorRef:
+    """获取指定 topic 的 broker ActorRef
+
+    自动处理重定向，确保最终获取到正确节点上的 broker。
+
+    Args:
+        system: Actor 系统
+        topic: Topic 名称
+        max_redirects: 最大重定向次数
+    """
+    from pulsing.actor import ActorId, NodeId
+
+    manager = await get_storage_manager(system)
+
+    for redirect_count in range(max_redirects + 1):
+        response = await manager.ask(Message.from_json("GetTopic", {"topic": topic}))
+
+        resp_data = response.to_json()
+        msg_type = response.msg_type or resp_data.get("_type", "")
+
+        if msg_type == "TopicReady":
+            actor_id = resp_data["actor_id"]
+            node_id = int(resp_data["node_id_hex"], 16)
+            broker_actor_id = ActorId(actor_id, NodeId(node_id))
+            return await system.actor_ref(broker_actor_id)
+
+        elif msg_type == "Redirect":
+            owner_node_id = int(resp_data["owner_node_id_hex"], 16)
+
+            logger.debug(f"Redirecting topic {topic} to node {owner_node_id}")
+
+            if redirect_count >= max_redirects:
+                raise RuntimeError(f"Too many redirects for topic: {topic}")
+
+            if owner_node_id == system.node_id.id:
+                raise RuntimeError(f"Redirect loop for topic: {topic}")
+
+            # 获取 owner 节点的 StorageManager
+            for retry in range(10):
+                try:
+                    manager = await system.resolve_named(
+                        STORAGE_MANAGER_NAME, node_id=owner_node_id
+                    )
+                    break
+                except Exception as e:
+                    if retry < 9:
+                        await asyncio.sleep(0.5)
+                    else:
+                        raise RuntimeError(
+                            f"StorageManager not found on node {owner_node_id}: {e}"
+                        ) from e
+
+        elif msg_type == "Error":
+            raise RuntimeError(f"GetTopic failed: {resp_data.get('error')}")
+
+        else:
+            raise RuntimeError(f"Unexpected response: {msg_type}")
+
+    raise RuntimeError(f"Failed to get topic broker: {topic}")

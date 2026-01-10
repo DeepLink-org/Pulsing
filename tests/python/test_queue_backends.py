@@ -123,9 +123,12 @@ class TestMemoryBackend:
 
         # Stream with wait should timeout
         import time
+
         start = time.time()
         records = []
-        async for batch in backend.get_stream(limit=10, offset=1, wait=True, timeout=0.3):
+        async for batch in backend.get_stream(
+            limit=10, offset=1, wait=True, timeout=0.3
+        ):
             records.extend(batch)
         elapsed = time.time() - start
 
@@ -165,7 +168,9 @@ class TestMemoryBackend:
 
         async def reader():
             read_started.set()
-            async for batch in backend.get_stream(limit=5, offset=1, wait=True, timeout=2.0):
+            async for batch in backend.get_stream(
+                limit=5, offset=1, wait=True, timeout=2.0
+            ):
                 received.extend(batch)
                 if len(received) >= 2:
                     break
@@ -242,7 +247,9 @@ class TestBucketStorageWithBackend:
     """Tests for BucketStorage using different backends."""
 
     @pytest.mark.asyncio
-    async def test_bucket_storage_with_memory_backend(self, actor_system, temp_storage_path):
+    async def test_bucket_storage_with_memory_backend(
+        self, actor_system, temp_storage_path
+    ):
         """Test BucketStorage with memory backend."""
         from pulsing.actor import Message
 
@@ -308,7 +315,9 @@ class TestQueueAPIWithBackend:
     """Tests for Queue/write_queue/read_queue with different backends."""
 
     @pytest.mark.asyncio
-    async def test_write_queue_with_memory_backend(self, actor_system, temp_storage_path):
+    async def test_write_queue_with_memory_backend(
+        self, actor_system, temp_storage_path
+    ):
         """Test write_queue with memory backend."""
         writer = await write_queue(
             actor_system,
@@ -326,14 +335,13 @@ class TestQueueAPIWithBackend:
 
         # Check stats
         stats = await writer.queue.stats()
-        total = sum(
-            b.get("total_count", 0)
-            for b in stats["buckets"].values()
-        )
+        total = sum(b.get("total_count", 0) for b in stats["buckets"].values())
         assert total == 10
 
     @pytest.mark.asyncio
-    async def test_read_queue_with_memory_backend(self, actor_system, temp_storage_path):
+    async def test_read_queue_with_memory_backend(
+        self, actor_system, temp_storage_path
+    ):
         """Test read_queue with memory backend."""
         # Write data
         writer = await write_queue(
@@ -365,7 +373,7 @@ class TestQueueAPIWithBackend:
         """Test queue with registered custom backend."""
         # Register a custom backend
         register_backend("memory_registered", MemoryBackend)
-        
+
         writer = await write_queue(
             actor_system,
             topic="registered_backend_test",
@@ -380,10 +388,7 @@ class TestQueueAPIWithBackend:
             assert result["status"] == "ok"
 
         stats = await writer.queue.stats()
-        assert any(
-            b.get("backend") == "memory"
-            for b in stats["buckets"].values()
-        )
+        assert any(b.get("backend") == "memory" for b in stats["buckets"].values())
 
     @pytest.mark.asyncio
     async def test_default_backend_is_memory(self, actor_system, temp_storage_path):
@@ -398,12 +403,9 @@ class TestQueueAPIWithBackend:
         )
 
         await writer.put({"id": "test", "value": 1})
-        
+
         stats = await writer.queue.stats()
-        assert any(
-            b.get("backend") == "memory"
-            for b in stats["buckets"].values()
-        )
+        assert any(b.get("backend") == "memory" for b in stats["buckets"].values())
 
 
 # ============================================================================
@@ -432,12 +434,16 @@ class TestCustomBackendProtocol:
                 self.data.extend(records)
 
             async def get(self, limit: int, offset: int) -> list[dict[str, Any]]:
-                return self.data[offset:offset + limit]
+                return self.data[offset : offset + limit]
 
             async def get_stream(
-                self, limit: int, offset: int, wait: bool = False, timeout: float | None = None
+                self,
+                limit: int,
+                offset: int,
+                wait: bool = False,
+                timeout: float | None = None,
             ) -> AsyncIterator[list[dict[str, Any]]]:
-                yield self.data[offset:offset + limit]
+                yield self.data[offset : offset + limit]
 
             async def flush(self) -> None:
                 pass
@@ -464,7 +470,9 @@ class TestCustomBackendProtocol:
         assert len(records) == 1
 
     @pytest.mark.asyncio
-    async def test_custom_backend_with_bucket_storage(self, actor_system, temp_storage_path):
+    async def test_custom_backend_with_bucket_storage(
+        self, actor_system, temp_storage_path
+    ):
         """Test custom backend with BucketStorage actor."""
         from pulsing.actor import Message
 
@@ -492,13 +500,17 @@ class TestCustomBackendProtocol:
 
             async def get(self, limit: int, offset: int) -> list[dict[str, Any]]:
                 self.operations.append("get")
-                return self.data[offset:offset + limit]
+                return self.data[offset : offset + limit]
 
             async def get_stream(
-                self, limit: int, offset: int, wait: bool = False, timeout: float | None = None
+                self,
+                limit: int,
+                offset: int,
+                wait: bool = False,
+                timeout: float | None = None,
             ) -> AsyncIterator[list[dict[str, Any]]]:
                 self.operations.append("get_stream")
-                yield self.data[offset:offset + limit]
+                yield self.data[offset : offset + limit]
 
             async def flush(self) -> None:
                 self.operations.append("flush")
@@ -553,7 +565,9 @@ class TestBackendIntegration:
     """Integration tests for backend system."""
 
     @pytest.mark.asyncio
-    async def test_memory_backend_distributed_consumption(self, actor_system, temp_storage_path):
+    async def test_memory_backend_distributed_consumption(
+        self, actor_system, temp_storage_path
+    ):
         """Test distributed consumption with memory backend."""
         writer = await write_queue(
             actor_system,
@@ -600,7 +614,9 @@ class TestBackendIntegration:
         assert len(overlap) == 0, f"Should have no overlap: {overlap}"
 
     @pytest.mark.asyncio
-    async def test_high_concurrency_with_memory_backend(self, actor_system, temp_storage_path):
+    async def test_high_concurrency_with_memory_backend(
+        self, actor_system, temp_storage_path
+    ):
         """Stress test: high concurrency writes with memory backend."""
         writer = await write_queue(
             actor_system,
@@ -616,11 +632,13 @@ class TestBackendIntegration:
 
         async def write_batch(writer_id: int):
             for i in range(records_per_writer):
-                await writer.put({
-                    "id": f"w{writer_id}_r{i}",
-                    "writer_id": writer_id,
-                    "seq": i,
-                })
+                await writer.put(
+                    {
+                        "id": f"w{writer_id}_r{i}",
+                        "writer_id": writer_id,
+                        "seq": i,
+                    }
+                )
 
         # Concurrent writes
         tasks = [write_batch(i) for i in range(num_writers)]

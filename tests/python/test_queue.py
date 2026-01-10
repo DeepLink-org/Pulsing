@@ -161,7 +161,7 @@ async def test_flush_with_memory_backend(queue, temp_storage_path):
 
     # Flush should work (no-op for memory backend)
     await queue.flush()
-    
+
     # Data should still be readable
     records = await queue.get(limit=10)
     assert len(records) == 5
@@ -260,9 +260,7 @@ async def test_combined_writes(queue):
     records = await queue.get(limit=100)
 
     # Should have both batches
-    batch1_count = sum(
-        1 for r in records if r.get("id", "").startswith("batch1_")
-    )
+    batch1_count = sum(1 for r in records if r.get("id", "").startswith("batch1_"))
     batch2_count = sum(1 for r in records if r.get("id", "").startswith("batch2_"))
 
     assert batch1_count > 0, "Should have batch1 records"
@@ -936,9 +934,9 @@ async def test_data_integrity_under_stress(actor_system, temp_storage_path):
         actual_checksum = hashlib.md5(
             f"{record_id}:{record['value']}".encode()
         ).hexdigest()
-        assert record["checksum"] == expected_checksum, (
-            f"Checksum mismatch for {record_id}"
-        )
+        assert (
+            record["checksum"] == expected_checksum
+        ), f"Checksum mismatch for {record_id}"
         assert actual_checksum == expected_checksum, f"Value corruption for {record_id}"
 
 

@@ -52,10 +52,16 @@
 
 ### 1. StorageManager（存储管理器）
 
-**每个节点一个实例**，负责：
-- 接收 `GetBucket` 请求
-- 使用**一致性哈希**判断 bucket 的 owner 节点
-- Owner 节点：创建并返回 `BucketStorage` Actor
+**每个节点一个实例**，负责管理两类资源：
+
+| 资源类型 | 请求消息 | Actor 类型 | 用途 |
+|---------|---------|-----------|------|
+| Queue Bucket | `GetBucket` | `BucketStorage` | 生产者-消费者队列 |
+| Topic Broker | `GetTopic` | `TopicBroker` | 发布-订阅 |
+
+核心职责：
+- 使用**一致性哈希**判断资源的 owner 节点
+- Owner 节点：创建并返回对应 Actor
 - 非 Owner 节点：返回 `Redirect`，指向正确节点
 
 ### 2. BucketStorage（桶存储）
@@ -291,7 +297,7 @@ writer = await write_queue(system, "my_queue", backend="lance")
 from persisting.queue import PersistingBackend
 register_backend("persisting", PersistingBackend)
 writer = await write_queue(
-    system, "my_queue", 
+    system, "my_queue",
     backend="persisting",
     backend_options={"enable_wal": True, "enable_metrics": True}
 )
@@ -305,7 +311,7 @@ writer = await write_queue(
 class MyBackend:
     def __init__(self, bucket_id: int, storage_path: str, **kwargs):
         ...
-    
+
     async def put(self, record: dict) -> None: ...
     async def put_batch(self, records: list[dict]) -> None: ...
     async def get(self, limit: int, offset: int) -> list[dict]: ...
