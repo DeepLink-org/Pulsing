@@ -1022,7 +1022,7 @@ async def test_default_ask_timeout():
 @pytest.mark.asyncio
 async def test_subscriber_failure_threshold_eviction(actor_system):
     """Test that subscribers are evicted after consecutive failures.
-    
+
     验证 P0-3 修复：连续失败 3 次后自动清退订阅者。
     """
     from pulsing.actor import Actor, ActorId, Message
@@ -1069,11 +1069,7 @@ async def test_subscriber_failure_threshold_eviction(actor_system):
 
     # 发送消息触发失败（使用 best_effort 模式避免阻塞）
     for i in range(MAX_CONSECUTIVE_FAILURES + 1):
-        await writer.publish(
-            {"trigger": i}, 
-            mode=PublishMode.BEST_EFFORT,
-            timeout=2.0
-        )
+        await writer.publish({"trigger": i}, mode=PublishMode.BEST_EFFORT, timeout=2.0)
         await asyncio.sleep(0.05)
 
     # 等待清退生效
@@ -1091,7 +1087,7 @@ async def test_subscriber_failure_threshold_eviction(actor_system):
 @pytest.mark.asyncio
 async def test_subscriber_ttl_config():
     """Test that TTL configuration constants are set correctly.
-    
+
     验证 P0-3 修复：TTL re-resolve 配置。
     """
     from pulsing.topic.broker import REF_TTL_SECONDS, MAX_CONSECUTIVE_FAILURES
@@ -1104,7 +1100,7 @@ async def test_subscriber_ttl_config():
 @pytest.mark.asyncio
 async def test_healthy_subscriber_not_evicted(actor_system):
     """Test that healthy subscribers are NOT evicted.
-    
+
     验证健康的订阅者不会被误清退。
     """
     writer = await write_topic(actor_system, "healthy_sub_topic")
@@ -1141,7 +1137,7 @@ async def test_healthy_subscriber_not_evicted(actor_system):
 @pytest.mark.asyncio
 async def test_default_mailbox_capacity_config():
     """Test that default mailbox capacity is configurable.
-    
+
     验证 P1-1 修复：SystemConfig 的默认 mailbox capacity。
     """
     # Python 侧通过 Rust 绑定使用，验证默认值存在
@@ -1160,7 +1156,7 @@ async def test_default_mailbox_capacity_config():
 @pytest.mark.asyncio
 async def test_resolve_named_returns_actor(actor_system):
     """Test that resolve_named returns a valid ActorRef.
-    
+
     验证 P1-2 修复：resolve_named 基本功能。
     """
     from pulsing.actor import Actor, ActorId
@@ -1191,7 +1187,7 @@ async def test_resolve_named_returns_actor(actor_system):
 @pytest.mark.asyncio
 async def test_resolve_named_multiple_calls(actor_system):
     """Test that multiple resolve_named calls work correctly.
-    
+
     验证 P1-2 修复：多次 resolve 应该返回有效的 ActorRef。
     注意：在单节点环境下无法验证 RoundRobin，但可以验证基本功能。
     """
