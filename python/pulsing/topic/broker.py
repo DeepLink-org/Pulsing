@@ -91,11 +91,15 @@ class TopicBroker(Actor):
         node_id = data.get("node_id")
 
         if not subscriber_id or not actor_name:
-            return Message.from_json("Error", {"error": "Missing subscriber_id or actor_name"})
+            return Message.from_json(
+                "Error", {"error": "Missing subscriber_id or actor_name"}
+            )
 
         async with self._lock:
             if subscriber_id in self._subscribers:
-                return Message.from_json("SubscribeResult", {"success": True, "already": True})
+                return Message.from_json(
+                    "SubscribeResult", {"success": True, "already": True}
+                )
 
             self._subscribers[subscriber_id] = _Subscriber(
                 subscriber_id=subscriber_id,
@@ -103,7 +107,9 @@ class TopicBroker(Actor):
                 node_id=node_id,
             )
             logger.debug(f"TopicBroker[{self.topic}] +subscriber: {subscriber_id}")
-            return Message.from_json("SubscribeResult", {"success": True, "topic": self.topic})
+            return Message.from_json(
+                "SubscribeResult", {"success": True, "topic": self.topic}
+            )
 
     async def _unsubscribe(self, data: dict) -> Message:
         subscriber_id = data.get("subscriber_id")
@@ -122,7 +128,9 @@ class TopicBroker(Actor):
         if sub._ref is not None:
             return sub._ref
         try:
-            sub._ref = await self.system.resolve_named(sub.actor_name, node_id=sub.node_id)
+            sub._ref = await self.system.resolve_named(
+                sub.actor_name, node_id=sub.node_id
+            )
             return sub._ref
         except Exception as e:
             logger.warning(f"Failed to resolve {sub.subscriber_id}: {e}")
@@ -136,9 +144,10 @@ class TopicBroker(Actor):
         self._total_published += 1
 
         if not self._subscribers:
-            return Message.from_json("PublishResult", {
-                "success": True, "delivered": 0, "failed": 0, "subscriber_count": 0
-            })
+            return Message.from_json(
+                "PublishResult",
+                {"success": True, "delivered": 0, "failed": 0, "subscriber_count": 0},
+            )
 
         envelope = {
             "topic": self.topic,
@@ -181,12 +190,19 @@ class TopicBroker(Actor):
         self._total_delivered += sent
         self._total_failed += failed
 
-        return Message.from_json("PublishResult", {
-            "success": True, "delivered": sent, "failed": failed,
-            "subscriber_count": len(self._subscribers)
-        })
+        return Message.from_json(
+            "PublishResult",
+            {
+                "success": True,
+                "delivered": sent,
+                "failed": failed,
+                "subscriber_count": len(self._subscribers),
+            },
+        )
 
-    async def _fanout_ask(self, envelope: dict, sender_id: str | None, wait_all: bool) -> Message:
+    async def _fanout_ask(
+        self, envelope: dict, sender_id: str | None, wait_all: bool
+    ) -> Message:
         """等待 ack 模式"""
         tasks = []
         sub_ids = []
@@ -200,9 +216,10 @@ class TopicBroker(Actor):
                 sub_ids.append(sub_id)
 
         if not tasks:
-            return Message.from_json("PublishResult", {
-                "success": True, "delivered": 0, "failed": 0, "subscriber_count": 0
-            })
+            return Message.from_json(
+                "PublishResult",
+                {"success": True, "delivered": 0, "failed": 0, "subscriber_count": 0},
+            )
 
         delivered = 0
         failed = 0
@@ -222,7 +239,9 @@ class TopicBroker(Actor):
                     if sub:
                         sub.messages_delivered += 1
         else:
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
             for task in done:
                 if not task.exception():
                     delivered = 1
@@ -233,14 +252,20 @@ class TopicBroker(Actor):
         self._total_delivered += delivered
         self._total_failed += failed
 
-        return Message.from_json("PublishResult", {
-            "success": delivered > 0 or failed == 0,
-            "delivered": delivered, "failed": failed,
-            "failed_subscribers": failed_ids,
-            "subscriber_count": len(self._subscribers)
-        })
+        return Message.from_json(
+            "PublishResult",
+            {
+                "success": delivered > 0 or failed == 0,
+                "delivered": delivered,
+                "failed": failed,
+                "failed_subscribers": failed_ids,
+                "subscriber_count": len(self._subscribers),
+            },
+        )
 
-    async def _fanout_best_effort(self, envelope: dict, sender_id: str | None) -> Message:
+    async def _fanout_best_effort(
+        self, envelope: dict, sender_id: str | None
+    ) -> Message:
         """Best-effort: 尝试发送，记录失败"""
         delivered = 0
         failed = 0
@@ -266,17 +291,25 @@ class TopicBroker(Actor):
         self._total_delivered += delivered
         self._total_failed += failed
 
-        return Message.from_json("PublishResult", {
-            "success": True, "delivered": delivered, "failed": failed,
-            "failed_subscribers": failed_ids,
-            "subscriber_count": len(self._subscribers)
-        })
+        return Message.from_json(
+            "PublishResult",
+            {
+                "success": True,
+                "delivered": delivered,
+                "failed": failed,
+                "failed_subscribers": failed_ids,
+                "subscriber_count": len(self._subscribers),
+            },
+        )
 
     def _stats(self) -> Message:
-        return Message.from_json("TopicStats", {
-            "topic": self.topic,
-            "subscriber_count": len(self._subscribers),
-            "total_published": self._total_published,
-            "total_delivered": self._total_delivered,
-            "total_failed": self._total_failed,
-        })
+        return Message.from_json(
+            "TopicStats",
+            {
+                "topic": self.topic,
+                "subscriber_count": len(self._subscribers),
+                "total_published": self._total_published,
+                "total_delivered": self._total_delivered,
+                "total_failed": self._total_failed,
+            },
+        )

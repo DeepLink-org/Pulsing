@@ -31,24 +31,20 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
     /// - Streaming requests: `Message::Stream` with async stream of chunks
     ///
     /// The default implementation delegates to `handle_message_simple` for backward compatibility.
-    async fn handle_message_full(
-        &self,
-        path: &str,
-        msg: Message,
-    ) -> anyhow::Result<Message> {
+    async fn handle_message_full(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
         // Default: extract single message and delegate to simple handler
         match msg {
             Message::Single { msg_type, data } => {
                 self.handle_message_simple(path, &msg_type, data).await
             }
-            Message::Stream { .. } => {
-                Err(anyhow::anyhow!("Streaming requests not supported by this handler"))
-            }
+            Message::Stream { .. } => Err(anyhow::anyhow!(
+                "Streaming requests not supported by this handler"
+            )),
         }
     }
 
     /// Simple message handler for backward compatibility
-    /// 
+    ///
     /// Implement this if you only need to handle single (non-streaming) requests.
     async fn handle_message_simple(
         &self,
@@ -321,7 +317,9 @@ impl Http2Server {
                 Err(e) => {
                     return Ok(Response::builder()
                         .status(StatusCode::BAD_REQUEST)
-                        .body(full_body(format!("Failed to read body: {}", e).into_bytes()))
+                        .body(full_body(
+                            format!("Failed to read body: {}", e).into_bytes(),
+                        ))
                         .unwrap());
                 }
             };
@@ -336,7 +334,9 @@ impl Http2Server {
                     Err(e) => {
                         return Ok(Response::builder()
                             .status(StatusCode::BAD_REQUEST)
-                            .body(full_body(format!("Failed to read body: {}", e).into_bytes()))
+                            .body(full_body(
+                                format!("Failed to read body: {}", e).into_bytes(),
+                            ))
                             .unwrap());
                     }
                 };
@@ -352,7 +352,9 @@ impl Http2Server {
                             Err(e) => {
                                 return Ok(Response::builder()
                                     .status(StatusCode::BAD_REQUEST)
-                                    .body(full_body(format!("Failed to read body: {}", e).into_bytes()))
+                                    .body(full_body(
+                                        format!("Failed to read body: {}", e).into_bytes(),
+                                    ))
                                     .unwrap());
                             }
                         };
@@ -416,7 +418,9 @@ impl Http2Server {
                         }
                     }
                     Err(e) => {
-                        let _ = tx.send(Err(anyhow::anyhow!("Body read error: {}", e))).await;
+                        let _ = tx
+                            .send(Err(anyhow::anyhow!("Body read error: {}", e)))
+                            .await;
                         return;
                     }
                 }
@@ -487,7 +491,9 @@ impl Http2Server {
                     }
 
                     // Send end frame
-                    let _ = tx.send(Ok(Frame::data(StreamFrame::end().to_binary()))).await;
+                    let _ = tx
+                        .send(Ok(Frame::data(StreamFrame::end().to_binary())))
+                        .await;
                 });
 
                 let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);

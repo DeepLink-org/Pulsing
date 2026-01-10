@@ -315,21 +315,21 @@ impl Http2Client {
         use tokio::net::TcpStream;
 
         // Create a dedicated connection for streaming request
-        let tcp_stream = tokio::time::timeout(
-            self.config.connect_timeout,
-            TcpStream::connect(addr),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("Connection timeout"))?
-        .map_err(|e| anyhow::anyhow!("Failed to connect: {}", e))?;
+        let tcp_stream =
+            tokio::time::timeout(self.config.connect_timeout, TcpStream::connect(addr))
+                .await
+                .map_err(|_| anyhow::anyhow!("Connection timeout"))?
+                .map_err(|e| anyhow::anyhow!("Failed to connect: {}", e))?;
 
         let io = TokioIo::new(tcp_stream);
 
         // Build HTTP/2 connection with streaming body type
-        type StreamingBody = StreamBody<tokio_stream::wrappers::ReceiverStream<Result<Frame<Bytes>, Infallible>>>;
-        let (mut sender, conn): (http2::SendRequest<StreamingBody>, _) = http2::handshake(TokioExecutor::new(), io)
-            .await
-            .map_err(|e| anyhow::anyhow!("HTTP/2 handshake failed: {}", e))?;
+        type StreamingBody =
+            StreamBody<tokio_stream::wrappers::ReceiverStream<Result<Frame<Bytes>, Infallible>>>;
+        let (mut sender, conn): (http2::SendRequest<StreamingBody>, _) =
+            http2::handshake(TokioExecutor::new(), io)
+                .await
+                .map_err(|e| anyhow::anyhow!("HTTP/2 handshake failed: {}", e))?;
 
         // Spawn connection driver
         let cancel = self.cancel.clone();
@@ -366,7 +366,9 @@ impl Http2Client {
             }
 
             // Send end frame
-            let _ = tx.send(Ok(Frame::data(StreamFrame::end().to_binary()))).await;
+            let _ = tx
+                .send(Ok(Frame::data(StreamFrame::end().to_binary())))
+                .await;
         });
 
         // Build streaming request body

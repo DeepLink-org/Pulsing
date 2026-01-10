@@ -123,10 +123,12 @@ async def test_publish_various_data_types(actor_system):
     assert result.success is True
 
     # Nested
-    result = await writer.publish({
-        "nested": {"data": [1, 2, {"deep": True}]},
-        "list": [{"a": 1}, {"b": 2}],
-    })
+    result = await writer.publish(
+        {
+            "nested": {"data": [1, 2, {"deep": True}]},
+            "list": [{"a": 1}, {"b": 2}],
+        }
+    )
     assert result.success is True
 
 
@@ -398,7 +400,7 @@ async def test_publish_wait_all_acks(actor_system):
         {"mode": "wait_all"},
         mode=PublishMode.WAIT_ALL_ACKS,
     )
-    elapsed = time.time() - start
+    _elapsed = time.time() - start
 
     # Should wait for responses
     assert result.success is True
@@ -540,9 +542,9 @@ async def test_concurrent_subscribers(actor_system):
 
     # All subscribers should receive all messages
     for i in range(num_subscribers):
-        assert len(results[i]) == num_messages, (
-            f"Subscriber {i} got {len(results[i])} messages, expected {num_messages}"
-        )
+        assert (
+            len(results[i]) == num_messages
+        ), f"Subscriber {i} got {len(results[i])} messages, expected {num_messages}"
 
     for reader in readers:
         await reader.stop()
@@ -580,7 +582,7 @@ async def test_high_throughput(actor_system):
 
     total_elapsed = time.time() - start
 
-    print(f"\nHigh throughput test:")
+    print("\nHigh throughput test:")
     print(f"  Published: {num_messages} messages in {publish_elapsed:.2f}s")
     print(f"  Throughput: {num_messages / publish_elapsed:.0f} msg/s")
     print(f"  Received: {len(received)} messages in {total_elapsed:.2f}s")
@@ -612,6 +614,7 @@ async def test_producer_consumer_stress(actor_system):
             async def handler(msg):
                 async with locks[idx]:
                     all_received[idx].append(msg)
+
             return handler
 
         reader.add_callback(await make_handler(i))
@@ -635,7 +638,7 @@ async def test_producer_consumer_stress(actor_system):
 
     expected_per_consumer = num_producers * messages_per_producer
 
-    print(f"\nStress test results:")
+    print("\nStress test results:")
     for i in range(num_consumers):
         print(f"  Consumer {i}: {len(all_received[i])} messages")
         assert len(all_received[i]) == expected_per_consumer
@@ -652,7 +655,7 @@ async def test_producer_consumer_stress(actor_system):
 @pytest.mark.asyncio
 async def test_read_topic_auto_start(actor_system):
     """Test auto_start parameter."""
-    writer = await write_topic(actor_system, "auto_start_topic")
+    _writer = await write_topic(actor_system, "auto_start_topic")
 
     received = []
 

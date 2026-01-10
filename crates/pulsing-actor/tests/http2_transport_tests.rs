@@ -935,12 +935,6 @@ struct StreamingHandler {
 }
 
 impl StreamingHandler {
-    fn new() -> Self {
-        Self {
-            counters: Arc::new(TestCounters::default()),
-        }
-    }
-
     fn with_counters(counters: Arc<TestCounters>) -> Self {
         Self { counters }
     }
@@ -948,11 +942,7 @@ impl StreamingHandler {
 
 #[async_trait::async_trait]
 impl Http2ServerHandler for StreamingHandler {
-    async fn handle_message_full(
-        &self,
-        path: &str,
-        msg: Message,
-    ) -> anyhow::Result<Message> {
+    async fn handle_message_full(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
         use futures::StreamExt;
         self.counters.ask_count.fetch_add(1, Ordering::SeqCst);
 
@@ -1038,7 +1028,7 @@ async fn test_http2_streaming_request() {
 
     // Create a streaming request
     let (tx, rx) = tokio::sync::mpsc::channel::<anyhow::Result<Message>>(10);
-    
+
     // Send some messages through the stream
     tokio::spawn(async move {
         for i in 0..5 {
@@ -1066,7 +1056,7 @@ async fn test_http2_streaming_request() {
     let response_str = String::from_utf8_lossy(&data);
     assert!(response_str.contains("/actors/stream_test"));
     assert!(response_str.contains("collected:"));
-    
+
     // Verify handler was called
     assert_eq!(counters.ask_count.load(Ordering::SeqCst), 1);
 

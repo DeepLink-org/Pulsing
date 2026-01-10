@@ -86,11 +86,14 @@ class TopicWriter:
         """
         broker = await self._broker_ref()
         response = await broker.ask(
-            Message.from_json("Publish", {
-                "payload": message,
-                "mode": mode.value,
-                "sender_id": self._writer_id,
-            })
+            Message.from_json(
+                "Publish",
+                {
+                    "payload": message,
+                    "mode": mode.value,
+                    "sender_id": self._writer_id,
+                },
+            )
         )
 
         if response.msg_type == "Error":
@@ -212,16 +215,21 @@ class TopicReader:
         # 创建订阅者 Actor
         actor_name = f"_topic_sub_{self._topic}_{self._reader_id}"
         subscriber = _SubscriberActor(self._callbacks)
-        self._subscriber_ref = await self._system.spawn(actor_name, subscriber, public=True)
+        self._subscriber_ref = await self._system.spawn(
+            actor_name, subscriber, public=True
+        )
 
         # 向 broker 注册
         broker = await _get_broker(self._system, self._topic)
         response = await broker.ask(
-            Message.from_json("Subscribe", {
-                "subscriber_id": self._reader_id,
-                "actor_name": actor_name,
-                "node_id": self._system.node_id.id,
-            })
+            Message.from_json(
+                "Subscribe",
+                {
+                    "subscriber_id": self._reader_id,
+                    "actor_name": actor_name,
+                    "node_id": self._system.node_id.id,
+                },
+            )
         )
 
         if response.msg_type == "Error":
@@ -238,7 +246,9 @@ class TopicReader:
         # 从 broker 取消订阅
         try:
             broker = await _get_broker(self._system, self._topic)
-            await broker.ask(Message.from_json("Unsubscribe", {"subscriber_id": self._reader_id}))
+            await broker.ask(
+                Message.from_json("Unsubscribe", {"subscriber_id": self._reader_id})
+            )
         except Exception as e:
             logger.warning(f"Unsubscribe error: {e}")
 

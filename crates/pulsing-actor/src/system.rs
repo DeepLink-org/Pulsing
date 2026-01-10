@@ -875,11 +875,7 @@ impl Http2ServerHandler for SystemMessageHandler {
     /// This handler supports both single and streaming requests:
     /// - Single requests are dispatched to local actors
     /// - Streaming requests are passed through to actors that support streaming
-    async fn handle_message_full(
-        &self,
-        path: &str,
-        msg: Message,
-    ) -> anyhow::Result<Message> {
+    async fn handle_message_full(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
         self.dispatch_message(path, msg).await
     }
 
