@@ -54,7 +54,7 @@ from pulsing.actor import init, shutdown, remote
 class Counter:
     def __init__(self, value=0):
         self.value = value
-    def inc(self): 
+    def inc(self):
         self.value += 1
         return self.value
 
@@ -76,7 +76,7 @@ ray.init()
 class Counter:
     def __init__(self, value=0):
         self.value = value
-    def inc(self): 
+    def inc(self):
         self.value += 1
         return self.value
 

@@ -29,4 +29,3 @@ def test_ray_compat_init_inside_running_loop():
             ray.shutdown()
 
     asyncio.run(main())
-

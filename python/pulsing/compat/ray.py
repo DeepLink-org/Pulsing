@@ -83,11 +83,15 @@ def _start_background_loop() -> None:
             for task in pending:
                 task.cancel()
             if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
         finally:
             loop.close()
 
-    t = threading.Thread(target=_thread_main, name="pulsing-compat-ray-loop", daemon=True)
+    t = threading.Thread(
+        target=_thread_main, name="pulsing-compat-ray-loop", daemon=True
+    )
     _thread = t
     t.start()
     ready.wait()
@@ -175,13 +179,15 @@ class _ActorClass:
         self._cls = cls
         self._pulsing_class = None
         self._methods = [
-            n for n, _ in inspect.getmembers(cls, predicate=inspect.isfunction)
+            n
+            for n, _ in inspect.getmembers(cls, predicate=inspect.isfunction)
             if not n.startswith("_")
         ]
 
     def _ensure_wrapped(self):
         if self._pulsing_class is None:
             from pulsing.actor import remote
+
             self._pulsing_class = remote(self._cls)
 
     def remote(self, *args, **kwargs) -> _ActorHandle:

@@ -304,6 +304,7 @@ def test_migration_pattern():
 
     This test shows that the same logic works with both APIs.
     """
+
     # The actual computation logic
     def create_counter_class(decorator):
         @decorator
