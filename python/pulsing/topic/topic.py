@@ -16,6 +16,9 @@ from pulsing.actor import Actor, ActorId, ActorSystem, Message
 
 logger = logging.getLogger(__name__)
 
+# Default timeout for publish operations (seconds)
+DEFAULT_PUBLISH_TIMEOUT = 30.0
+
 
 class PublishMode(Enum):
     """发布模式"""
@@ -74,27 +77,42 @@ class TopicWriter:
         self,
         message: Any,
         mode: PublishMode = PublishMode.FIRE_AND_FORGET,
+        timeout: float | None = None,
     ) -> PublishResult:
         """发布消息
 
         Args:
             message: 要发布的消息（任意 Python 对象）
             mode: 发布模式
+            timeout: 超时时间（秒）。None 表示使用默认超时。
+                     对于 WAIT_ANY_ACK 和 WAIT_ALL_ACKS 模式，超时后本地任务会被取消，
+                     但远端 handler 可能仍在执行（依赖 HTTP/2 RST_STREAM 传播取消信号）。
 
         Returns:
             PublishResult: 发布结果
+
+        Raises:
+            asyncio.TimeoutError: 超时
+            RuntimeError: 其他错误
         """
         broker = await self._broker_ref()
-        response = await broker.ask(
-            Message.from_json(
-                "Publish",
-                {
-                    "payload": message,
-                    "mode": mode.value,
-                    "sender_id": self._writer_id,
-                },
+
+        # 确定超时值
+        effective_timeout = timeout if timeout is not None else DEFAULT_PUBLISH_TIMEOUT
+
+        async def _do_publish():
+            return await broker.ask(
+                Message.from_json(
+                    "Publish",
+                    {
+                        "payload": message,
+                        "mode": mode.value,
+                        "sender_id": self._writer_id,
+                    },
+                )
             )
-        )
+
+        response = await asyncio.wait_for(_do_publish(), timeout=effective_timeout)
 
         if response.msg_type == "Error":
             raise RuntimeError(response.to_json().get("error"))

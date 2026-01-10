@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 MAX_CONSECUTIVE_FAILURES = 3  # 连续失败次数阈值，超过后清退
 REF_TTL_SECONDS = 60.0  # ActorRef 缓存 TTL，过期后重新解析
 
+# 超时配置（方案 2+3：超时 + 幂等）
+DEFAULT_FANOUT_TIMEOUT = 30.0  # wait_any_ack / wait_all_acks 的默认超时
+
 
 @dataclass
 class _Subscriber:
@@ -255,9 +258,26 @@ class TopicBroker(Actor):
         )
 
     async def _fanout_ask(
-        self, envelope: dict, sender_id: str | None, wait_all: bool
+        self,
+        envelope: dict,
+        sender_id: str | None,
+        wait_all: bool,
+        timeout: float = DEFAULT_FANOUT_TIMEOUT,
     ) -> Message:
-        """等待 ack 模式"""
+        """等待 ack 模式
+
+        Args:
+            envelope: 消息信封
+            sender_id: 发送者 ID（用于排除自己）
+            wait_all: True=等待所有响应，False=等待任一响应(wait_any_ack)
+            timeout: 超时时间（秒）。超时后本地任务会被取消，
+                     远端 handler 可能仍在执行（依赖 HTTP/2 RST_STREAM 传播）。
+
+        注意（取消语义 - 方案 2+3）：
+        - 本地取消：通过 asyncio.wait 的 timeout 或 task.cancel() 实现
+        - 远端取消：依赖 HTTP/2 RST_STREAM 自动传播（当 body 读取中断时触发）
+        - 幂等性：Handler 应该实现幂等操作，确保重复请求不产生副作用
+        """
         tasks = []
         sub_ids = []
         resolve_failed: list[str] = []  # resolve 失败的订阅者
@@ -287,28 +307,58 @@ class TopicBroker(Actor):
         zombies: list[str] = resolve_failed.copy()
 
         if wait_all:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for i, result in enumerate(results):
-                sub = self._subscribers.get(sub_ids[i])
-                if isinstance(result, Exception):
-                    failed += 1
-                    failed_ids.append(sub_ids[i])
-                    if sub and self._record_failure(sub):
-                        zombies.append(sub_ids[i])
-                else:
-                    delivered += 1
-                    if sub:
-                        self._record_success(sub)
+            # wait_all_acks: 等待所有响应，带整体超时
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=timeout,
+                )
+                for i, result in enumerate(results):
+                    sub = self._subscribers.get(sub_ids[i])
+                    if isinstance(result, Exception):
+                        failed += 1
+                        failed_ids.append(sub_ids[i])
+                        if sub and self._record_failure(sub):
+                            zombies.append(sub_ids[i])
+                    else:
+                        delivered += 1
+                        if sub:
+                            self._record_success(sub)
+            except asyncio.TimeoutError:
+                # 超时：所有任务视为失败
+                logger.warning(
+                    f"TopicBroker[{self.topic}] wait_all_acks timeout after {timeout}s"
+                )
+                failed = len(tasks)
+                failed_ids = sub_ids.copy()
+                # 取消所有 pending tasks
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
         else:
-            done, pending = await asyncio.wait(
-                tasks, return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in done:
-                if not task.exception():
-                    delivered = 1
-                    break
-            for task in pending:
-                task.cancel()
+            # wait_any_ack: 等待任一响应，带整体超时
+            try:
+                done, pending = await asyncio.wait(
+                    tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                    timeout=timeout,
+                )
+                for task in done:
+                    if not task.exception():
+                        delivered = 1
+                        break
+                # 取消其他 pending tasks（本地取消，远端依赖 RST_STREAM）
+                for task in pending:
+                    task.cancel()
+            except asyncio.TimeoutError:
+                # 超时：没有任何响应
+                logger.warning(
+                    f"TopicBroker[{self.topic}] wait_any_ack timeout after {timeout}s"
+                )
+                # 取消所有任务
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
 
         # 清退僵尸订阅者
         await self._evict_zombies(zombies)

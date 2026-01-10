@@ -10,6 +10,7 @@ Provides:
 
 import asyncio
 from abc import ABC, abstractmethod
+from typing import Any
 
 from pulsing._core import (
     ActorId,
@@ -23,6 +24,69 @@ from pulsing._core import (
     StreamWriter,
     SystemConfig,
 )
+
+
+# =============================================================================
+# Timeout utilities for cancellation support (方案 2+3)
+# =============================================================================
+
+# Default timeout for ask operations (seconds)
+DEFAULT_ASK_TIMEOUT = 30.0
+
+
+async def ask_with_timeout(
+    actor_ref: ActorRef,
+    msg: Any,
+    timeout: float = DEFAULT_ASK_TIMEOUT,
+) -> Any:
+    """Send a message and wait for response with timeout.
+
+    This is a convenience wrapper around ActorRef.ask() that adds timeout support.
+    When timeout occurs, the local task is cancelled. Note that this does NOT
+    guarantee the remote handler will stop - it relies on HTTP/2 RST_STREAM
+    propagation for stream cancellation.
+
+    For handlers that may run long, implement idempotent operations and/or
+    check for stream closure in streaming scenarios.
+
+    Args:
+        actor_ref: Target actor reference
+        msg: Message to send (any Python object or Message)
+        timeout: Timeout in seconds (default: 30.0)
+
+    Returns:
+        Response from the actor
+
+    Raises:
+        asyncio.TimeoutError: If timeout expires before response
+        Exception: Any error from the actor
+
+    Example:
+        try:
+            result = await ask_with_timeout(actor_ref, {"action": "compute"}, timeout=10.0)
+        except asyncio.TimeoutError:
+            print("Request timed out")
+    """
+    return await asyncio.wait_for(actor_ref.ask(msg), timeout=timeout)
+
+
+async def tell_with_timeout(
+    actor_ref: ActorRef,
+    msg: Any,
+    timeout: float = DEFAULT_ASK_TIMEOUT,
+) -> None:
+    """Send a fire-and-forget message with timeout.
+
+    Args:
+        actor_ref: Target actor reference
+        msg: Message to send
+        timeout: Timeout in seconds (default: 30.0)
+
+    Raises:
+        asyncio.TimeoutError: If timeout expires
+    """
+    await asyncio.wait_for(actor_ref.tell(msg), timeout=timeout)
+
 
 from . import helpers
 from .remote import (
@@ -57,6 +121,10 @@ __all__ = [
     # Helper functions
     "create_actor_system",
     "helpers",
+    # Timeout utilities
+    "ask_with_timeout",
+    "tell_with_timeout",
+    "DEFAULT_ASK_TIMEOUT",
     # Actor decorator
     "as_actor",
     "ActorClass",

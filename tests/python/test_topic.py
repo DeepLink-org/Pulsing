@@ -773,5 +773,457 @@ async def test_list_topics(actor_system):
     assert "list_topic_2" in data["topics"]
 
 
+# ============================================================================
+# Timeout Tests (P0-4 修复验证)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_publish_with_timeout_success(actor_system):
+    """Test publish with explicit timeout (success case)."""
+    writer = await write_topic(actor_system, "timeout_success_topic")
+    reader = await read_topic(actor_system, "timeout_success_topic")
+
+    received = []
+
+    @reader.on_message
+    async def handle(msg):
+        received.append(msg)
+
+    await reader.start()
+    await asyncio.sleep(0.05)
+
+    # Publish with timeout (should succeed quickly)
+    result = await writer.publish(
+        {"data": "test"},
+        mode=PublishMode.WAIT_ALL_ACKS,
+        timeout=5.0,  # 5 秒超时，足够处理
+    )
+
+    assert result.success
+    assert result.delivered == 1
+
+    await reader.stop()
+
+
+@pytest.mark.asyncio
+async def test_publish_with_timeout_fire_and_forget(actor_system):
+    """Test publish fire_and_forget with timeout (should not block)."""
+    writer = await write_topic(actor_system, "timeout_ff_topic")
+
+    # Fire and forget with short timeout (should return immediately)
+    start = time.time()
+    result = await writer.publish(
+        {"data": "test"},
+        mode=PublishMode.FIRE_AND_FORGET,
+        timeout=0.1,  # 短超时
+    )
+    elapsed = time.time() - start
+
+    assert result.success
+    # fire_and_forget 应该很快返回
+    assert elapsed < 0.5
+
+
+@pytest.mark.asyncio
+async def test_publish_wait_any_ack_with_timeout(actor_system):
+    """Test wait_any_ack with timeout - fast subscriber responds first."""
+    writer = await write_topic(actor_system, "wait_any_timeout_topic")
+
+    # 创建两个订阅者
+    reader1 = await read_topic(actor_system, "wait_any_timeout_topic", reader_id="fast")
+    reader2 = await read_topic(actor_system, "wait_any_timeout_topic", reader_id="slow")
+
+    received_fast = []
+    received_slow = []
+
+    @reader1.on_message
+    async def handle_fast(msg):
+        # Fast handler - 立即响应
+        received_fast.append(msg)
+
+    @reader2.on_message
+    async def handle_slow(msg):
+        # Slow handler - 延迟响应
+        await asyncio.sleep(0.2)
+        received_slow.append(msg)
+
+    await reader1.start()
+    await reader2.start()
+    await asyncio.sleep(0.05)
+
+    # wait_any_ack 应该在 fast handler 响应后立即返回
+    start = time.time()
+    result = await writer.publish(
+        {"data": "test"},
+        mode=PublishMode.WAIT_ANY_ACK,
+        timeout=2.0,
+    )
+    elapsed = time.time() - start
+
+    assert result.success
+    assert result.delivered == 1
+    # 应该很快返回（fast handler 响应）
+    assert elapsed < 0.5
+
+    await reader1.stop()
+    await reader2.stop()
+
+
+@pytest.mark.asyncio
+async def test_publish_timeout_error(actor_system):
+    """Test that publish raises TimeoutError when timeout expires."""
+    from pulsing.actor import Actor, ActorId
+
+    # 创建一个故意慢的订阅者
+    class SlowSubscriber(Actor):
+        def on_start(self, actor_id: ActorId) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            pass
+
+        async def receive(self, msg):
+            # 故意延迟超过超时时间
+            await asyncio.sleep(5.0)
+            return {"ack": True}
+
+    writer = await write_topic(actor_system, "timeout_error_topic")
+
+    # 手动创建慢订阅者
+    slow_actor = SlowSubscriber()
+    actor_name = "_topic_sub_timeout_error_topic_slow_sub"
+    await actor_system.spawn(actor_name, slow_actor, public=True)
+
+    # 向 broker 注册
+    from pulsing.queue.manager import get_topic_broker
+    from pulsing.actor import Message
+
+    broker = await get_topic_broker(actor_system, "timeout_error_topic")
+    await broker.ask(
+        Message.from_json(
+            "Subscribe",
+            {
+                "subscriber_id": "slow_sub",
+                "actor_name": actor_name,
+                "node_id": actor_system.node_id.id,
+            },
+        )
+    )
+
+    # Publish with very short timeout - should timeout
+    with pytest.raises(asyncio.TimeoutError):
+        await writer.publish(
+            {"data": "test"},
+            mode=PublishMode.WAIT_ALL_ACKS,
+            timeout=0.1,  # 100ms 超时，订阅者需要 5s
+        )
+
+
+@pytest.mark.asyncio
+async def test_ask_with_timeout_success(actor_system):
+    """Test ask_with_timeout helper function (success case)."""
+    from pulsing.actor import Actor, ActorId, ask_with_timeout
+
+    class EchoActor(Actor):
+        def on_start(self, actor_id: ActorId) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            pass
+
+        async def receive(self, msg):
+            return {"echo": msg}
+
+    echo = EchoActor()
+    ref = await actor_system.spawn("echo_timeout_test", echo)
+
+    # ask_with_timeout 成功场景
+    result = await ask_with_timeout(ref, {"hello": "world"}, timeout=5.0)
+    assert result["echo"]["hello"] == "world"
+
+
+@pytest.mark.asyncio
+async def test_ask_with_timeout_error(actor_system):
+    """Test ask_with_timeout raises TimeoutError when timeout expires."""
+    from pulsing.actor import Actor, ActorId, ask_with_timeout
+
+    class SlowActor(Actor):
+        def on_start(self, actor_id: ActorId) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            pass
+
+        async def receive(self, msg):
+            await asyncio.sleep(5.0)  # 故意慢
+            return {"done": True}
+
+    slow = SlowActor()
+    ref = await actor_system.spawn("slow_timeout_test", slow)
+
+    # ask_with_timeout 超时场景
+    with pytest.raises(asyncio.TimeoutError):
+        await ask_with_timeout(ref, {"hello": "world"}, timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_tell_with_timeout_success(actor_system):
+    """Test tell_with_timeout helper function (success case)."""
+    from pulsing.actor import Actor, ActorId, tell_with_timeout
+
+    received = []
+
+    class CollectorActor(Actor):
+        def on_start(self, actor_id: ActorId) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            pass
+
+        async def receive(self, msg):
+            received.append(msg)
+            return None
+
+    collector = CollectorActor()
+    ref = await actor_system.spawn("collector_timeout_test", collector)
+
+    # tell_with_timeout 成功场景（fire-and-forget 不等待响应）
+    await tell_with_timeout(ref, {"hello": "world"}, timeout=5.0)
+
+    # 等待消息处理
+    await asyncio.sleep(0.1)
+    assert len(received) == 1
+
+
+@pytest.mark.asyncio
+async def test_default_publish_timeout():
+    """Test that DEFAULT_PUBLISH_TIMEOUT is reasonable."""
+    from pulsing.topic.topic import DEFAULT_PUBLISH_TIMEOUT
+
+    # 默认超时应该是合理的值（30 秒）
+    assert DEFAULT_PUBLISH_TIMEOUT == 30.0
+
+
+@pytest.mark.asyncio
+async def test_default_ask_timeout():
+    """Test that DEFAULT_ASK_TIMEOUT is reasonable."""
+    from pulsing.actor import DEFAULT_ASK_TIMEOUT
+
+    # 默认超时应该是合理的值（30 秒）
+    assert DEFAULT_ASK_TIMEOUT == 30.0
+
+
+# ============================================================================
+# Subscriber Lifecycle Tests (P0-3 修复验证)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_subscriber_failure_threshold_eviction(actor_system):
+    """Test that subscribers are evicted after consecutive failures.
+    
+    验证 P0-3 修复：连续失败 3 次后自动清退订阅者。
+    """
+    from pulsing.actor import Actor, ActorId, Message
+    from pulsing.queue.manager import get_topic_broker
+    from pulsing.topic.broker import MAX_CONSECUTIVE_FAILURES
+
+    # 验证配置常量
+    assert MAX_CONSECUTIVE_FAILURES == 3
+
+    writer = await write_topic(actor_system, "eviction_test_topic")
+
+    # 创建一个会失败的订阅者（模拟 actor 已停止）
+    class FailingSubscriber(Actor):
+        def on_start(self, actor_id: ActorId) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            pass
+
+        async def receive(self, msg):
+            raise RuntimeError("Simulated failure")
+
+    failing_actor = FailingSubscriber()
+    actor_name = "_topic_sub_eviction_test_topic_failing"
+    await actor_system.spawn(actor_name, failing_actor, public=True)
+
+    # 向 broker 注册失败订阅者
+    broker = await get_topic_broker(actor_system, "eviction_test_topic")
+    await broker.ask(
+        Message.from_json(
+            "Subscribe",
+            {
+                "subscriber_id": "failing_sub",
+                "actor_name": actor_name,
+                "node_id": actor_system.node_id.id,
+            },
+        )
+    )
+
+    # 获取初始统计
+    stats1 = await writer.stats()
+    initial_count = stats1.get("subscriber_count", 0)
+    assert initial_count >= 1, "Should have at least one subscriber"
+
+    # 发送消息触发失败（使用 best_effort 模式避免阻塞）
+    for i in range(MAX_CONSECUTIVE_FAILURES + 1):
+        await writer.publish(
+            {"trigger": i}, 
+            mode=PublishMode.BEST_EFFORT,
+            timeout=2.0
+        )
+        await asyncio.sleep(0.05)
+
+    # 等待清退生效
+    await asyncio.sleep(0.2)
+
+    # 验证订阅者已被清退
+    stats2 = await writer.stats()
+    final_count = stats2.get("subscriber_count", 0)
+    assert final_count < initial_count, (
+        f"Subscriber should be evicted after {MAX_CONSECUTIVE_FAILURES} failures. "
+        f"Initial: {initial_count}, Final: {final_count}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_subscriber_ttl_config():
+    """Test that TTL configuration constants are set correctly.
+    
+    验证 P0-3 修复：TTL re-resolve 配置。
+    """
+    from pulsing.topic.broker import REF_TTL_SECONDS, MAX_CONSECUTIVE_FAILURES
+
+    # 验证配置合理
+    assert REF_TTL_SECONDS == 60.0, "TTL should be 60 seconds"
+    assert MAX_CONSECUTIVE_FAILURES == 3, "Failure threshold should be 3"
+
+
+@pytest.mark.asyncio
+async def test_healthy_subscriber_not_evicted(actor_system):
+    """Test that healthy subscribers are NOT evicted.
+    
+    验证健康的订阅者不会被误清退。
+    """
+    writer = await write_topic(actor_system, "healthy_sub_topic")
+    reader = await read_topic(actor_system, "healthy_sub_topic")
+
+    received = []
+
+    @reader.on_message
+    async def handle(msg):
+        received.append(msg)
+
+    await reader.start()
+    await asyncio.sleep(0.05)
+
+    # 发送多条消息
+    for i in range(10):
+        await writer.publish({"seq": i}, mode=PublishMode.WAIT_ALL_ACKS, timeout=5.0)
+
+    # 验证所有消息都被接收
+    assert len(received) == 10
+
+    # 验证订阅者仍然存在
+    stats = await writer.stats()
+    assert stats.get("subscriber_count", 0) >= 1
+
+    await reader.stop()
+
+
+# ============================================================================
+# Mailbox Configuration Tests (P1-1 修复验证)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_default_mailbox_capacity_config():
+    """Test that default mailbox capacity is configurable.
+    
+    验证 P1-1 修复：SystemConfig 的默认 mailbox capacity。
+    """
+    # Python 侧通过 Rust 绑定使用，验证默认值存在
+    from pulsing.actor import SystemConfig
+
+    config = SystemConfig.standalone()
+    # 验证 config 可以正常创建
+    assert config is not None
+
+
+# ============================================================================
+# Load Balance Strategy Tests (P1-2 修复验证)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_resolve_named_returns_actor(actor_system):
+    """Test that resolve_named returns a valid ActorRef.
+    
+    验证 P1-2 修复：resolve_named 基本功能。
+    """
+    from pulsing.actor import Actor, ActorId
+
+    class TestActor(Actor):
+        def on_start(self, actor_id: ActorId) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            pass
+
+        async def receive(self, msg):
+            return {"echo": msg}
+
+    # Spawn a public actor
+    test_actor = TestActor()
+    await actor_system.spawn("lb_test_actor", test_actor, public=True)
+
+    # Resolve the named actor
+    ref = await actor_system.resolve_named("lb_test_actor")
+    assert ref is not None
+
+    # Verify it works
+    result = await ref.ask({"hello": "world"})
+    assert result["echo"]["hello"] == "world"
+
+
+@pytest.mark.asyncio
+async def test_resolve_named_multiple_calls(actor_system):
+    """Test that multiple resolve_named calls work correctly.
+    
+    验证 P1-2 修复：多次 resolve 应该返回有效的 ActorRef。
+    注意：在单节点环境下无法验证 RoundRobin，但可以验证基本功能。
+    """
+    from pulsing.actor import Actor, ActorId
+
+    class CounterActor(Actor):
+        def __init__(self):
+            self.count = 0
+
+        def on_start(self, actor_id: ActorId) -> None:
+            pass
+
+        def on_stop(self) -> None:
+            pass
+
+        async def receive(self, msg):
+            self.count += 1
+            return {"count": self.count}
+
+    counter = CounterActor()
+    await actor_system.spawn("counter_lb_test", counter, public=True)
+
+    # Multiple resolves and calls
+    results = []
+    for _ in range(5):
+        ref = await actor_system.resolve_named("counter_lb_test")
+        result = await ref.ask({})
+        results.append(result["count"])
+
+    # All calls should succeed and increment counter
+    assert results == [1, 2, 3, 4, 5]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

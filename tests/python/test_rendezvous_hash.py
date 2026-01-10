@@ -88,7 +88,9 @@ class TestRendezvousHashing:
         # 允许 20% 的偏差
         for node_id, count in distribution.items():
             ratio = count / expected
-            assert 0.8 <= ratio <= 1.2, f"Node {node_id} has {count} keys, expected ~{expected}"
+            assert (
+                0.8 <= ratio <= 1.2
+            ), f"Node {node_id} has {count} keys, expected ~{expected}"
 
     def test_minimal_migration_on_add_node(self):
         """添加节点时迁移比例应约为 1/(N+1)"""
@@ -113,10 +115,12 @@ class TestRendezvousHashing:
 
         # Rendezvous hashing: 迁移比例应接近 1/(N+1)
         # 允许 50% 的误差范围
-        assert migration_ratio < expected_ratio * 1.5, (
-            f"Migration ratio {migration_ratio:.2%} too high, expected ~{expected_ratio:.2%}"
+        assert (
+            migration_ratio < expected_ratio * 1.5
+        ), f"Migration ratio {migration_ratio:.2%} too high, expected ~{expected_ratio:.2%}"
+        print(
+            f"[Rendezvous] Add node: migration ratio = {migration_ratio:.2%} (expected ~{expected_ratio:.2%})"
         )
-        print(f"[Rendezvous] Add node: migration ratio = {migration_ratio:.2%} (expected ~{expected_ratio:.2%})")
 
     def test_minimal_migration_on_remove_node(self):
         """移除节点时迁移比例应约为 1/N"""
@@ -138,10 +142,12 @@ class TestRendezvousHashing:
         migration_ratio = migrated / num_keys
         expected_ratio = 1 / 6  # 约 16.7%
 
-        assert migration_ratio < expected_ratio * 1.5, (
-            f"Migration ratio {migration_ratio:.2%} too high, expected ~{expected_ratio:.2%}"
+        assert (
+            migration_ratio < expected_ratio * 1.5
+        ), f"Migration ratio {migration_ratio:.2%} too high, expected ~{expected_ratio:.2%}"
+        print(
+            f"[Rendezvous] Remove node: migration ratio = {migration_ratio:.2%} (expected ~{expected_ratio:.2%})"
         )
-        print(f"[Rendezvous] Remove node: migration ratio = {migration_ratio:.2%} (expected ~{expected_ratio:.2%})")
 
     def test_compare_with_old_algorithm(self):
         """对比新旧算法的迁移比例"""
@@ -171,12 +177,14 @@ class TestRendezvousHashing:
         old_ratio = old_migrated / num_keys
         new_ratio = new_migrated / num_keys
 
-        print(f"[Comparison] Old (hash%N): {old_ratio:.2%}, New (Rendezvous): {new_ratio:.2%}")
+        print(
+            f"[Comparison] Old (hash%N): {old_ratio:.2%}, New (Rendezvous): {new_ratio:.2%}"
+        )
 
         # 新算法应该显著优于旧算法
-        assert new_ratio < old_ratio * 0.5, (
-            f"New algorithm ({new_ratio:.2%}) should be much better than old ({old_ratio:.2%})"
-        )
+        assert (
+            new_ratio < old_ratio * 0.5
+        ), f"New algorithm ({new_ratio:.2%}) should be much better than old ({old_ratio:.2%})"
 
     def test_only_alive_nodes(self):
         """只选择 Alive 状态的节点"""
