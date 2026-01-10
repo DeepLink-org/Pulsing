@@ -17,8 +17,9 @@ hide: toc
 - **SWIM Protocol Discovery** - Built-in gossip-based node discovery and failure detection.
 - **Location Transparent** - ActorRef supports unified access to local and remote actors.
 - **Streaming Messages** - Native support for streaming requests and responses.
-- **Python First** - Full Python API via PyO3 with `@as_actor` decorator.
+- **Python First** - Full Python API via PyO3 with `@remote` decorator.
 - **High Performance** - Built on Tokio async runtime with HTTP/2 transport.
+- **Ray Compatible** - Drop-in replacement API for easy migration from Ray.
 
 ## Quick Start
 
@@ -29,9 +30,9 @@ maturin develop
 ```
 
 ```python
-from pulsing.actor import as_actor, create_actor_system, SystemConfig
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class Calculator:
     def __init__(self, initial: int = 0):
         self.value = initial
@@ -41,9 +42,10 @@ class Calculator:
         return self.value
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    calc = await Calculator.local(system, initial=100)
+    await init()
+    calc = await Calculator.spawn(initial=100)
     result = await calc.add(50)  # 150
+    await shutdown()
 ```
 
 ## Use Cases

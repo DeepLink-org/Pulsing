@@ -195,12 +195,14 @@ class ActorRef:
 
 ## Decorators
 
-### @as_actor
+### @remote
 
 Convert a class into an Actor automatically.
 
 ```python
-@as_actor
+from pulsing.actor import init, shutdown, remote
+
+@remote
 class MyActor:
     def __init__(self, value: int):
         self.value = value
@@ -210,12 +212,17 @@ class MyActor:
 
     async def process(self, data: str) -> dict:
         return {"result": data.upper()}
+
+async def main():
+    await init()
+    actor = await MyActor.spawn(value=10)
+    print(await actor.get())  # 10
+    await shutdown()
 ```
 
 After decoration, the class provides:
 
-- `local(system, **kwargs) -> ActorRef`: Create actor locally
-- `remote(system, **kwargs) -> ActorRef`: Create actor remotely (or locally if single node)
+- `spawn(**kwargs) -> ActorRef`: Create actor (uses global system from `init()`)
 
 ## Functions
 

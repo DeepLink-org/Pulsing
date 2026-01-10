@@ -1,11 +1,23 @@
 """
 Pulsing Actor System - Python bindings for distributed actor framework
 
-Provides:
-- ActorSystem: Manage actors and cluster membership
-- Actor: Base class for implementing actors
-- Message/StreamMessage: Single and streaming message types
-- ActorRef: Reference to local or remote actors
+Simple API:
+    from pulsing.actor import init, shutdown, remote
+
+    await init()
+
+    @remote
+    class Counter:
+        def __init__(self, init=0): self.value = init
+        def incr(self): self.value += 1; return self.value
+
+    counter = await Counter.spawn(init=10)
+    result = await counter.incr()
+
+    await shutdown()
+
+Advanced API:
+    from pulsing.actor import ActorSystem, Actor, Message, SystemConfig
 """
 
 import asyncio
@@ -27,7 +39,82 @@ from pulsing._core import (
 
 
 # =============================================================================
-# Timeout utilities for cancellation support (方案 2+3)
+# Global system for simple API
+# =============================================================================
+
+_global_system: ActorSystem = None
+
+
+async def init(
+    addr: str = None,
+    *,
+    seeds: list[str] = None,
+    passphrase: str = None,
+) -> ActorSystem:
+    """Initialize Pulsing actor system
+
+    Args:
+        addr: Bind address (e.g., "0.0.0.0:8000"). None for standalone mode.
+        seeds: Seed nodes to join cluster
+        passphrase: Enable TLS with this passphrase
+
+    Returns:
+        ActorSystem instance
+
+    Example:
+        # Standalone mode
+        await init()
+
+        # Cluster mode with TLS
+        await init(addr="0.0.0.0:8000", passphrase="my-secret")
+
+        # Join existing cluster
+        await init(addr="0.0.0.0:8001", seeds=["192.168.1.1:8000"])
+    """
+    global _global_system
+
+    if _global_system is not None:
+        return _global_system
+
+    # Build config
+    if addr:
+        config = SystemConfig.with_addr(addr)
+    else:
+        config = SystemConfig.standalone()
+
+    if seeds:
+        config = config.with_seeds(seeds)
+
+    if passphrase:
+        config = config.with_passphrase(passphrase)
+
+    _global_system = await create_actor_system(config)
+    return _global_system
+
+
+async def shutdown() -> None:
+    """Shutdown the global actor system"""
+    global _global_system
+
+    if _global_system is not None:
+        await _global_system.shutdown()
+        _global_system = None
+
+
+def get_system() -> ActorSystem:
+    """Get the global actor system (must call init() first)"""
+    if _global_system is None:
+        raise RuntimeError("Actor system not initialized. Call 'await init()' first.")
+    return _global_system
+
+
+def is_initialized() -> bool:
+    """Check if the global actor system is initialized"""
+    return _global_system is not None
+
+
+# =============================================================================
+# Timeout utilities for cancellation support
 # =============================================================================
 
 # Default timeout for ask operations (seconds)
@@ -94,7 +181,6 @@ from .remote import (
     ActorClass,
     ActorProxy,
     PythonActorService,
-    as_actor,
     get_metrics,
     get_node_info,
     health_check,
@@ -104,7 +190,13 @@ from .remote import (
 )
 
 __all__ = [
-    # Core types
+    # Simple API (recommended)
+    "init",
+    "shutdown",
+    "get_system",
+    "is_initialized",
+    "remote",  # @remote decorator (recommended)
+    # Core types (advanced)
     "ActorSystem",
     "NodeId",
     "ActorId",
@@ -125,11 +217,9 @@ __all__ = [
     "ask_with_timeout",
     "tell_with_timeout",
     "DEFAULT_ASK_TIMEOUT",
-    # Actor decorator
-    "as_actor",
+    # Actor decorator internals
     "ActorClass",
     "ActorProxy",
-    "remote",  # Alias for backward compatibility
     # System helper functions
     "list_actors",
     "get_metrics",

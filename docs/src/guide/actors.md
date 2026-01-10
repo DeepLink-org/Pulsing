@@ -177,14 +177,23 @@ sequenceDiagram
 
 ## Creating Actors
 
-### Method 1: Using @as_actor Decorator (Recommended)
+Pulsing offers two API styles to suit different needs:
 
-The `@as_actor` decorator is the simplest way to create actors:
+| API | Import | Style | Best For |
+|-----|--------|-------|----------|
+| **Native Async** | `from pulsing.actor import ...` | `async/await` | New projects, maximum performance |
+| **Ray-Compatible** | `from pulsing.compat import ray` | Synchronous | Migrating from Ray, quick prototyping |
+
+---
+
+### Method 1: Native Async API with @remote (Recommended)
+
+The `@remote` decorator with `init()/shutdown()` provides the cleanest async experience:
 
 ```python
-from pulsing.actor import as_actor, SystemConfig, create_actor_system
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class Calculator:
     """A simple calculator actor."""
 
@@ -208,31 +217,87 @@ class Calculator:
         """Get the current value."""
         return self.value
 
-    def get_history(self) -> list:
-        """Get operation history."""
-        return self.history
-
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
+    # Simple initialization
+    await init()
 
-    # Create local actor
-    calc = await Calculator.local(system, initial_value=100)
+    # Spawn actor with await
+    calc = await Calculator.spawn(initial_value=100)
 
-    # Call methods
+    # Call methods with await - clean and intuitive
     result = await calc.add(50)      # 150
     result = await calc.subtract(30) # 120
     value = await calc.get_value()   # 120
 
-    await system.shutdown()
+    await shutdown()
 ```
 
-**Benefits of @as_actor:**
+**Benefits of Native API:**
 
-- No boilerplate code
-- Methods become endpoints automatically
-- Type hints preserved
+- Clean `async/await` syntax
+- Maximum performance (no sync wrapper overhead)
 - IDE autocompletion works
+- Type hints preserved
+
+---
+
+### Method 2: Ray-Compatible API (Easy Migration)
+
+For users migrating from Ray, Pulsing provides a drop-in compatible API:
+
+```python
+from pulsing.compat import ray
+
+ray.init()
+
+@ray.remote
+class Calculator:
+    """A simple calculator actor."""
+
+    def __init__(self, initial_value: int = 0):
+        self.value = initial_value
+
+    def add(self, n: int) -> int:
+        self.value += n
+        return self.value
+
+    def get_value(self) -> int:
+        return self.value
+
+
+# Create actor instance
+calc = Calculator.remote(initial_value=100)
+
+# Call methods with .remote() and ray.get()
+result = ray.get(calc.add.remote(50))      # 150
+value = ray.get(calc.get_value.remote())   # 150
+
+ray.shutdown()
+```
+
+**Migration from Ray:**
+
+```python
+# Before (Ray):
+import ray
+ray.init()
+
+# After (Pulsing - just change import!):
+from pulsing.compat import ray
+ray.init()
+```
+
+**Benefits of Ray-Compatible API:**
+
+- One-line migration from Ray
+- Familiar synchronous interface
+- Same `ray.get()`, `ray.put()`, `ray.wait()` semantics
+- Great for existing Ray codebases
+
+---
+
+### Method 3: Using Actor Base Class (Advanced)
 
 ### Method 2: Using Actor Base Class
 
@@ -277,7 +342,7 @@ async def main():
 Actors can have async methods for I/O operations:
 
 ```python
-@as_actor
+@remote
 class AsyncWorker:
     """An actor with async methods."""
 
@@ -331,7 +396,7 @@ graph TD
 Send a message and wait for response:
 
 ```python
-# Using @as_actor
+# Using @remote
 result = await calc.add(10)
 
 # Using Actor base class
@@ -377,7 +442,7 @@ For continuous data flow:
 from pulsing.actor import StreamMessage
 
 # Actor that returns a streaming response
-@as_actor
+@remote
 class TokenGenerator:
     async def generate(self, prompt: str) -> Message:
         stream_msg, writer = StreamMessage.create("tokens")
@@ -559,7 +624,7 @@ await system.spawn(HelperActor(), "internal-helper", public=False)
 Most common pattern for actor communication:
 
 ```python
-@as_actor
+@remote
 class RequestHandler:
     async def handle_request(self, request: dict) -> dict:
         # Validate
@@ -578,7 +643,7 @@ class RequestHandler:
 Actors maintain state between calls:
 
 ```python
-@as_actor
+@remote
 class SessionManager:
     def __init__(self):
         self.sessions = {}
@@ -614,7 +679,7 @@ class SessionManager:
 Distribute work across multiple actors:
 
 ```python
-@as_actor
+@remote
 class WorkerPool:
     def __init__(self, num_workers: int):
         self.workers = []
@@ -645,7 +710,7 @@ class WorkerPool:
 Chain actors for data processing:
 
 ```python
-@as_actor
+@remote
 class PipelineStage:
     def __init__(self, next_stage=None):
         self.next_stage = next_stage
@@ -676,7 +741,7 @@ result = await stage1.process(input_data)
 ### 5. LLM Inference Service Pattern
 
 ```python
-@as_actor
+@remote
 class LLMService:
     """Actor for LLM inference."""
 
@@ -728,7 +793,7 @@ class LLMService:
 
 ```python
 # ✅ Good: All state in __init__
-@as_actor
+@remote
 class GoodActor:
     def __init__(self):
         self.counter = 0
@@ -743,7 +808,7 @@ class GoodActor:
 # ❌ Bad: Global state
 global_state = {}
 
-@as_actor
+@remote
 class BadActor:
     def update(self, key, value):
         global_state[key] = value  # Race conditions!
@@ -752,7 +817,7 @@ class BadActor:
 ### 3. Error Handling
 
 ```python
-@as_actor
+@remote
 class ResilientActor:
     async def risky_operation(self, data: dict) -> dict:
         try:
@@ -770,7 +835,7 @@ class ResilientActor:
 ### 4. Performance Tips
 
 ```python
-@as_actor
+@remote
 class OptimizedActor:
     def __init__(self):
         # ✅ Pre-allocate resources
@@ -819,12 +884,12 @@ async def test_calculator():
 
 ## Quick Reference
 
-### Basic Actor with @as_actor
+### Native Async API (Recommended)
 
 ```python
-from pulsing.actor import as_actor, create_actor_system, SystemConfig
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class MyActor:
     def __init__(self, param: int):
         self.param = param
@@ -833,10 +898,30 @@ class MyActor:
         return self.param + arg
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    actor = await MyActor.local(system, param=10)
+    await init()
+    actor = await MyActor.spawn(param=10)
     result = await actor.method(5)  # 15
-    await system.shutdown()
+    await shutdown()
+```
+
+### Ray-Compatible API
+
+```python
+from pulsing.compat import ray
+
+ray.init()
+
+@ray.remote
+class MyActor:
+    def __init__(self, param: int):
+        self.param = param
+
+    def method(self, arg: int) -> int:
+        return self.param + arg
+
+actor = MyActor.remote(param=10)
+result = ray.get(actor.method.remote(5))  # 15
+ray.shutdown()
 ```
 
 ### Cluster Setup
@@ -893,10 +978,11 @@ await system.shutdown()
 
 1. **Actors are Isolated**: Private state, message-based communication
 2. **Sequential Processing**: One message at a time, FIFO ordering
-3. **@as_actor Decorator**: Simplest way to create actors
+3. **Two API Styles**: Native async (`@remote`) or Ray-compatible (`@ray.remote`)
 4. **Location Transparent**: Same code for local/remote actors
 5. **Zero External Dependencies**: No etcd, NATS, or Consul needed
 6. **Built-in Clustering**: SWIM protocol for discovery
+7. **Easy Migration**: One-line import change from Ray
 
 ### Actor Lifecycle Recap
 

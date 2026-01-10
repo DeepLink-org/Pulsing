@@ -20,7 +20,7 @@ from pulsing.actor import (
     get_node_info,
     health_check,
     ping,
-    as_actor,
+    remote,
 )
 
 
@@ -277,13 +277,13 @@ async def test_python_actor_service_list_registry(system):
 
 
 # ============================================================================
-# Test: @as_actor with PythonActorService
+# Test: @remote with PythonActorService
 # ============================================================================
 
 
-@as_actor
+@remote
 class TestCounter:
-    """Test counter class for @as_actor."""
+    """Test counter class for @remote."""
 
     def __init__(self, init_value=0):
         self.value = init_value
@@ -297,8 +297,8 @@ class TestCounter:
 
 
 @pytest.mark.asyncio
-async def test_as_actor_local_creation(system):
-    """@as_actor should allow local actor creation."""
+async def test_remote_local_creation(system):
+    """@remote should allow local actor creation."""
     counter = await TestCounter.local(system, init_value=10)
 
     # Should be able to call methods
@@ -310,8 +310,8 @@ async def test_as_actor_local_creation(system):
 
 
 @pytest.mark.asyncio
-async def test_as_actor_class_registered(system):
-    """@as_actor decorated class should be registered in global registry."""
+async def test_remote_class_registered(system):
+    """@remote decorated class should be registered in global registry."""
     service_ref = await system.resolve_named("_python_actor_service")
     msg = Message.from_json("ListRegistry", {})
     resp = await service_ref.ask(msg)

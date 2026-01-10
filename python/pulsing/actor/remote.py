@@ -1,10 +1,10 @@
 """
-@as_actor decorator - Ray-like distributed object wrapper
+@remote decorator - Ray-like distributed object wrapper
 
 Usage:
-    from pulsing.actor import as_actor, create_actor_system, SystemConfig
+    from pulsing.actor import init, shutdown, remote
 
-    @as_actor
+    @remote
     class Counter:
         def __init__(self, init_value=0):
             self.value = init_value
@@ -13,16 +13,16 @@ Usage:
             self.value += n
             return self.value
 
-    system = await create_actor_system(config)
+    async def main():
+        await init()
 
-    # Local creation
-    counter = await Counter.local(system, init_value=10)
+        # Create actor
+        counter = await Counter.spawn(init_value=10)
 
-    # Remote creation (randomly selects a remote node)
-    counter = await Counter.remote(system, init_value=10)
+        # Call methods (automatically converted to actor messages)
+        result = await counter.increment(5)  # Returns 15
 
-    # Call methods (automatically converted to actor messages)
-    result = await counter.increment(5)  # Returns 15
+        await shutdown()
 """
 
 import asyncio
@@ -261,7 +261,18 @@ class PythonActorService(_ActorBase):
 
 
 class ActorClass:
-    """Actor class wrapper"""
+    """Actor class wrapper
+
+    Provides two ways to create actors:
+
+    1. Simple API (uses global system):
+        await init()
+        counter = await Counter.spawn(init=10)
+
+    2. Explicit system:
+        system = await create_actor_system(config)
+        counter = await Counter.local(system, init=10)
+    """
 
     def __init__(
         self,
@@ -286,6 +297,39 @@ class ActorClass:
         # Register class
         _actor_class_registry[self._class_name] = cls
 
+    async def spawn(
+        self,
+        *args,
+        name: str | None = None,
+        **kwargs,
+    ) -> ActorProxy:
+        """Create actor using global system (simple API)
+
+        Must call `await init()` before using this method.
+
+        Example:
+            from pulsing.actor import init, remote
+
+            await init()
+
+            @remote
+            class Counter:
+                def __init__(self, init=0): self.value = init
+                def incr(self): self.value += 1; return self.value
+
+            counter = await Counter.spawn(init=10)
+            result = await counter.incr()
+        """
+        # Import here to avoid circular import
+        from . import _global_system
+
+        if _global_system is None:
+            raise RuntimeError(
+                "Actor system not initialized. Call 'await init()' first."
+            )
+
+        return await self.local(_global_system, *args, name=name, **kwargs)
+
     async def local(
         self,
         system: ActorSystem,
@@ -293,7 +337,7 @@ class ActorClass:
         name: str | None = None,
         **kwargs,
     ) -> ActorProxy:
-        """Create actor locally.
+        """Create actor locally with explicit system.
 
         Note: Use create_actor_system() to create ActorSystem,
         which automatically registers PythonActorService.
@@ -393,7 +437,7 @@ class ActorClass:
         return self._cls(*args, **kwargs)
 
 
-def as_actor(
+def remote(
     cls: type[T] | None = None,
     *,
     restart_policy: str = "never",
@@ -401,7 +445,7 @@ def as_actor(
     min_backoff: float = 0.1,
     max_backoff: float = 30.0,
 ) -> ActorClass:
-    """@as_actor decorator
+    """@remote decorator
 
     Converts a regular class into a distributed deployable Actor.
 
@@ -412,7 +456,7 @@ def as_actor(
     - max_backoff: maximum backoff in seconds (default: 30.0)
 
     Example:
-        @as_actor(restart_policy="on-failure", max_restarts=5)
+        @remote(restart_policy="on-failure", max_restarts=5)
         class Counter:
             ...
     """
@@ -492,8 +536,6 @@ async def ping(system: ActorSystem, node_id: int | None = None) -> dict:
     return resp.to_json()
 
 
-# Keep `remote` as alias (backward compatibility)
-remote = as_actor
 RemoteClass = ActorClass
 # Keep old name as alias (backward compatibility)
 SystemActor = PythonActorService

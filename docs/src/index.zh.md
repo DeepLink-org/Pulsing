@@ -17,8 +17,9 @@ hide: toc
 - **SWIM 协议发现** - 内置基于 Gossip 的节点发现和故障检测。
 - **位置透明** - ActorRef 支持统一访问本地和远程 Actor。
 - **流式消息** - 原生支持流式请求和响应。
-- **Python 优先** - 通过 PyO3 提供完整的 Python API，支持 `@as_actor` 装饰器。
+- **Python 优先** - 通过 PyO3 提供完整的 Python API，支持 `@remote` 装饰器。
 - **高性能** - 基于 Tokio 异步运行时，使用 HTTP/2 传输。
+- **Ray 兼容** - 提供兼容 API，轻松从 Ray 迁移。
 
 ## 快速开始
 
@@ -29,9 +30,9 @@ maturin develop
 ```
 
 ```python
-from pulsing.actor import as_actor, create_actor_system, SystemConfig
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class Calculator:
     def __init__(self, initial: int = 0):
         self.value = initial
@@ -41,9 +42,10 @@ class Calculator:
         return self.value
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    calc = await Calculator.local(system, initial=100)
+    await init()
+    calc = await Calculator.spawn(initial=100)
     result = await calc.add(50)  # 150
+    await shutdown()
 ```
 
 ## 使用场景

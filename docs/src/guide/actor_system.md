@@ -31,14 +31,14 @@ async def main():
     await system.shutdown()
 ```
 
-### Using @as_actor Decorator
+### Using @remote Decorator
 
-The `@as_actor` decorator automatically converts a class into an Actor:
+The `@remote` decorator automatically converts a class into an Actor:
 
 ```python
-from pulsing.actor import as_actor, SystemConfig, create_actor_system
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class Counter:
     def __init__(self, value: int = 0):
         self.value = value
@@ -51,10 +51,10 @@ class Counter:
         return self.value
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    counter = await Counter.local(system, value=10)
+    await init()
+    counter = await Counter.spawn(value=10)
     print(await counter.get())  # 10
-    await system.shutdown()
+    await shutdown()
 ```
 
 ## Message Passing
@@ -102,7 +102,7 @@ await system.stop("my-actor")
 Actors encapsulate state. Each actor instance has its own isolated state:
 
 ```python
-@as_actor
+@remote
 class StatefulActor:
     def __init__(self):
         self.counter = 0

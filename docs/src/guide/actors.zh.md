@@ -169,14 +169,23 @@ sequenceDiagram
 
 ## 创建 Actor
 
-### 方法 1：使用 @as_actor 装饰器（推荐）
+Pulsing 提供两种 API 风格以满足不同需求：
 
-`@as_actor` 装饰器是创建 Actor 的最简单方式：
+| API | 导入方式 | 风格 | 适用场景 |
+|-----|---------|------|----------|
+| **原生异步** | `from pulsing.actor import ...` | `async/await` | 新项目，追求极致性能 |
+| **Ray 兼容** | `from pulsing.compat import ray` | 同步调用 | 从 Ray 迁移，快速原型 |
+
+---
+
+### 方法 1：原生异步 API 使用 @remote（推荐）
+
+`@remote` 装饰器配合 `init()/shutdown()` 提供最简洁的异步体验：
 
 ```python
-from pulsing.actor import as_actor, SystemConfig, create_actor_system
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class Calculator:
     """一个简单的计算器 Actor。"""
 
@@ -202,25 +211,85 @@ class Calculator:
 
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
+    # 简洁的初始化
+    await init()
 
-    # 创建本地 Actor
-    calc = await Calculator.local(system, initial_value=100)
+    # 使用 await 创建 actor
+    calc = await Calculator.spawn(initial_value=100)
 
-    # 调用方法
+    # await 调用方法 - 简洁直观
     result = await calc.add(50)      # 150
     result = await calc.subtract(30) # 120
     value = await calc.get_value()   # 120
 
-    await system.shutdown()
+    await shutdown()
 ```
 
-**@as_actor 的优点：**
+**原生 API 的优点：**
 
-- 无样板代码
-- 方法自动成为端点
-- 保留类型提示
+- 简洁的 `async/await` 语法
+- 最佳性能（无同步包装开销）
 - IDE 自动补全正常工作
+- 保留类型提示
+
+---
+
+### 方法 2：Ray 兼容 API（轻松迁移）
+
+对于从 Ray 迁移的用户，Pulsing 提供兼容的 API：
+
+```python
+from pulsing.compat import ray
+
+ray.init()
+
+@ray.remote
+class Calculator:
+    """一个简单的计算器 Actor。"""
+
+    def __init__(self, initial_value: int = 0):
+        self.value = initial_value
+
+    def add(self, n: int) -> int:
+        self.value += n
+        return self.value
+
+    def get_value(self) -> int:
+        return self.value
+
+
+# 创建 actor 实例
+calc = Calculator.remote(initial_value=100)
+
+# 使用 .remote() 和 ray.get() 调用方法
+result = ray.get(calc.add.remote(50))      # 150
+value = ray.get(calc.get_value.remote())   # 150
+
+ray.shutdown()
+```
+
+**从 Ray 迁移：**
+
+```python
+# 之前 (Ray):
+import ray
+ray.init()
+
+# 之后 (Pulsing - 只需改一行导入！):
+from pulsing.compat import ray
+ray.init()
+```
+
+**Ray 兼容 API 的优点：**
+
+- 一行代码完成 Ray 迁移
+- 熟悉的同步接口
+- 相同的 `ray.get()`、`ray.put()`、`ray.wait()` 语义
+- 适合现有 Ray 代码库
+
+---
+
+### 方法 3：使用 Actor 基类（高级）
 
 ### 方法 2：使用 Actor 基类
 
@@ -265,7 +334,7 @@ async def main():
 Actor 可以有用于 I/O 操作的异步方法：
 
 ```python
-@as_actor
+@remote
 class AsyncWorker:
     """具有异步方法的 Actor。"""
 
@@ -319,7 +388,7 @@ graph TD
 发送消息并等待响应：
 
 ```python
-# 使用 @as_actor
+# 使用 @remote
 result = await calc.add(10)
 
 # 使用 Actor 基类
@@ -346,7 +415,7 @@ do_other_work()
 from pulsing.actor import StreamMessage
 
 # 返回流式响应的 Actor
-@as_actor
+@remote
 class TokenGenerator:
     async def generate(self, prompt: str) -> Message:
         stream_msg, writer = StreamMessage.create("tokens")
@@ -445,7 +514,7 @@ await system.spawn(HelperActor(), "internal-helper", public=False)
 ### 1. LLM 推理服务模式
 
 ```python
-@as_actor
+@remote
 class LLMService:
     """用于 LLM 推理的 Actor。"""
 
@@ -470,7 +539,7 @@ class LLMService:
 ### 2. 工作池模式
 
 ```python
-@as_actor
+@remote
 class WorkerPool:
     def __init__(self, num_workers: int):
         self.workers = []
@@ -506,7 +575,7 @@ class WorkerPool:
 ### 2. 错误处理
 
 ```python
-@as_actor
+@remote
 class ResilientActor:
     async def risky_operation(self, data: dict) -> dict:
         try:
@@ -525,12 +594,12 @@ class ResilientActor:
 
 ## 快速参考
 
-### 基本 Actor
+### 原生异步 API（推荐）
 
 ```python
-from pulsing.actor import as_actor, create_actor_system, SystemConfig
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class MyActor:
     def __init__(self, param: int):
         self.param = param
@@ -539,10 +608,30 @@ class MyActor:
         return self.param + arg
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    actor = await MyActor.local(system, param=10)
+    await init()
+    actor = await MyActor.spawn(param=10)
     result = await actor.method(5)  # 15
-    await system.shutdown()
+    await shutdown()
+```
+
+### Ray 兼容 API
+
+```python
+from pulsing.compat import ray
+
+ray.init()
+
+@ray.remote
+class MyActor:
+    def __init__(self, param: int):
+        self.param = param
+
+    def method(self, arg: int) -> int:
+        return self.param + arg
+
+actor = MyActor.remote(param=10)
+result = ray.get(actor.method.remote(5))  # 15
+ray.shutdown()
 ```
 
 ### 集群设置
@@ -589,10 +678,11 @@ await system.shutdown()
 
 1. **Actor 是隔离的**：私有状态，基于消息的通信
 2. **顺序处理**：一次处理一条消息，FIFO 顺序
-3. **@as_actor 装饰器**：创建 Actor 的最简单方式
+3. **双 API 风格**：原生异步（`@remote`）或 Ray 兼容（`@ray.remote`）
 4. **位置透明**：本地/远程 Actor 使用相同代码
 5. **零外部依赖**：不需要 etcd、NATS 或 Consul
 6. **内置集群**：用于发现的 SWIM 协议
+7. **轻松迁移**：一行导入即可从 Ray 迁移
 
 ### 下一步
 

@@ -10,18 +10,18 @@ The simplest possible Pulsing application:
 
 ```python
 import asyncio
-from pulsing.actor import as_actor, create_actor_system, SystemConfig
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class HelloActor:
     def greet(self, name: str) -> str:
         return f"Hello, {name}!"
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    hello = await HelloActor.local(system)
+    await init()
+    hello = await HelloActor.spawn()
     print(await hello.greet("World"))
-    await system.shutdown()
+    await shutdown()
 
 asyncio.run(main())
 ```
@@ -31,7 +31,7 @@ asyncio.run(main())
 A stateful actor that maintains a counter:
 
 ```python
-@as_actor
+@remote
 class Counter:
     def __init__(self, initial: int = 0):
         self.value = initial
@@ -59,7 +59,9 @@ class Counter:
 Two actors communicating across nodes:
 
 ```python
-@as_actor
+from pulsing.actor import init, shutdown, remote, get_system
+
+@remote
 class PingActor:
     def __init__(self, pong_ref=None):
         self.pong = pong_ref
@@ -72,7 +74,7 @@ class PingActor:
             print(f"Received: {response}")
         return self.count
 
-@as_actor
+@remote
 class PongActor:
     def pong(self, n: int) -> str:
         return f"pong-{n}"
@@ -80,28 +82,18 @@ class PongActor:
 
 async def main():
     # Node 1: Start pong actor
-    system1 = await create_actor_system(
-        SystemConfig.with_addr("0.0.0.0:8000")
-    )
-    pong = await PongActor.local(system1)
-    await system1.register("pong", pong, public=True)
+    await init(addr="0.0.0.0:8000")
+    pong = await PongActor.spawn()
+    system = get_system()
+    await system.register("pong", pong, public=True)
 
-    # Node 2: Start ping actor
-    system2 = await create_actor_system(
-        SystemConfig.with_addr("0.0.0.0:8001")
-        .with_seeds(["127.0.0.1:8000"])
-    )
-    await asyncio.sleep(1.0)  # Wait for cluster sync
+    # Node 2: Would run on another machine
+    # await init(addr="0.0.0.0:8001", seeds=["node1:8000"])
+    # pong_ref = await get_system().find("pong")
+    # ping = await PingActor.spawn(pong_ref=pong_ref)
+    # await ping.start_ping(10)
 
-    pong_ref = await system2.find("pong")
-    ping = await PingActor.local(system2, pong_ref=pong_ref)
-
-    # Run ping-pong
-    count = await ping.start_ping(10)
-    print(f"Completed {count} ping-pong rounds")
-
-    await system1.shutdown()
-    await system2.shutdown()
+    await shutdown()
 ```
 
 ### Worker Pool
@@ -109,7 +101,7 @@ async def main():
 Distributing work across multiple workers:
 
 ```python
-@as_actor
+@remote
 class Worker:
     def __init__(self, worker_id: int):
         self.worker_id = worker_id
@@ -132,15 +124,15 @@ class Worker:
         }
 
 
-@as_actor
+@remote
 class WorkerPool:
     def __init__(self):
         self.workers = []
         self.next_worker = 0
 
-    async def initialize(self, system, num_workers: int):
+    async def initialize(self, num_workers: int):
         for i in range(num_workers):
-            worker = await Worker.local(system, worker_id=i)
+            worker = await Worker.spawn(worker_id=i)
             self.workers.append(worker)
 
     async def submit(self, task: dict) -> dict:
@@ -166,7 +158,7 @@ class WorkerPool:
 ### Simple LLM Service
 
 ```python
-@as_actor
+@remote
 class LLMService:
     def __init__(self, model_name: str):
         self.model_name = model_name
@@ -209,7 +201,7 @@ class LLMService:
 ### Load-Balanced LLM Cluster
 
 ```python
-@as_actor
+@remote
 class LLMRouter:
     """Routes requests to LLM workers with load balancing."""
 

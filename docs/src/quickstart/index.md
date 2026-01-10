@@ -51,26 +51,52 @@ graph LR
 
 ## Your First Actor (30 seconds)
 
+### Option 1: Native Async API (Recommended)
+
 ```python
 import asyncio
-from pulsing.actor import Actor, SystemConfig, create_actor_system
+from pulsing.actor import init, shutdown, remote
 
-class PingPong(Actor):
-    async def receive(self, msg):
-        if msg == "ping":
-            return "pong"
-        return f"echo: {msg}"
+@remote
+class Counter:
+    def __init__(self, value=0):
+        self.value = value
+
+    def inc(self):
+        self.value += 1
+        return self.value
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn("pingpong", PingPong())
-
-    print(await actor.ask("ping"))   # -> pong
-    print(await actor.ask("hello"))  # -> echo: hello
-
-    await system.shutdown()
+    await init()
+    counter = await Counter.spawn(value=0)
+    print(await counter.inc())  # 1
+    print(await counter.inc())  # 2
+    await shutdown()
 
 asyncio.run(main())
+```
+
+### Option 2: Ray-Compatible API (Easy Migration)
+
+```python
+from pulsing.compat import ray
+
+ray.init()
+
+@ray.remote
+class Counter:
+    def __init__(self, value=0):
+        self.value = value
+
+    def inc(self):
+        self.value += 1
+        return self.value
+
+counter = Counter.remote(value=0)
+print(ray.get(counter.inc.remote()))  # 1
+print(ray.get(counter.inc.remote()))  # 2
+
+ray.shutdown()
 ```
 
 **Any Python object** can be a message—strings, dicts, lists, or custom classes.
@@ -94,14 +120,19 @@ class Counter(Actor):
 
 ---
 
-## @as_actor Decorator
+## API Comparison
 
-For a more object-oriented API:
+| API | Style | Best For |
+|-----|-------|----------|
+| `pulsing.actor` | Async (`await`) | New projects, performance |
+| `pulsing.compat.ray` | Sync (Ray-style) | Ray migration, quick start |
+
+### @remote Decorator (Native API)
 
 ```python
-from pulsing.actor import as_actor
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class Counter:
     def __init__(self, initial=0):
         self.value = initial
@@ -111,9 +142,10 @@ class Counter:
         return self.value
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    counter = await Counter.local(system, initial=10)
+    await init()
+    counter = await Counter.spawn(initial=10)
     print(await counter.inc(5))   # 15
+    await shutdown()
 ```
 
 ---
@@ -146,8 +178,8 @@ result = await worker.ask("do_work")  # Same API!
 |---------|-------------|
 | **Actor** | Isolated unit with private state |
 | **Message** | Any Python object |
-| **ask/tell** | Request-response / Fire-and-forget |
-| **@as_actor** | Method-call style Actor |
+| **@remote** | Native async decorator (via `pulsing.actor`) |
+| **ray.remote** | Ray-compatible decorator (via `pulsing.compat.ray`) |
 | **Cluster** | SWIM protocol auto-discovery |
 
 ---

@@ -195,12 +195,14 @@ class ActorRef:
 
 ## 装饰器
 
-### @as_actor
+### @remote
 
 自动将类转换为 Actor。
 
 ```python
-@as_actor
+from pulsing.actor import init, shutdown, remote
+
+@remote
 class MyActor:
     def __init__(self, value: int):
         self.value = value
@@ -210,12 +212,17 @@ class MyActor:
 
     async def process(self, data: str) -> dict:
         return {"result": data.upper()}
+
+async def main():
+    await init()
+    actor = await MyActor.spawn(value=10)
+    print(await actor.get())  # 10
+    await shutdown()
 ```
 
 装饰后，类提供：
 
-- `local(system, **kwargs) -> ActorRef`: 本地创建 actor
-- `remote(system, **kwargs) -> ActorRef`: 远程创建 actor（单节点时回退到本地）
+- `spawn(**kwargs) -> ActorRef`: 创建 actor（使用 `init()` 初始化的全局系统）
 
 ## 函数
 

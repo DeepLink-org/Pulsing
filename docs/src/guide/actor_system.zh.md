@@ -31,14 +31,14 @@ async def main():
     await system.shutdown()
 ```
 
-### 使用 @as_actor 装饰器
+### 使用 @remote 装饰器
 
-`@as_actor` 装饰器可以自动将类转换为 Actor：
+`@remote` 装饰器可以自动将类转换为 Actor：
 
 ```python
-from pulsing.actor import as_actor, SystemConfig, create_actor_system
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class Counter:
     def __init__(self, value: int = 0):
         self.value = value
@@ -51,10 +51,10 @@ class Counter:
         return self.value
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    counter = await Counter.local(system, value=10)
+    await init()
+    counter = await Counter.spawn(value=10)
     print(await counter.get())  # 10
-    await system.shutdown()
+    await shutdown()
 ```
 
 ## 消息传递
@@ -102,7 +102,7 @@ await system.stop("my-actor")
 Actor 封装状态。每个 actor 实例都有自己独立的状态：
 
 ```python
-@as_actor
+@remote
 class StatefulActor:
     def __init__(self):
         self.counter = 0

@@ -174,12 +174,12 @@ Even with TLS, use network-level security:
 
 ```python
 import os
-from pulsing.actor import SystemConfig, create_actor_system, as_actor
+from pulsing.actor import init, shutdown, remote
 
 # Get passphrase from environment
 PASSPHRASE = os.environ.get("PULSING_SECRET", None)
 
-@as_actor
+@remote
 class SecureCounter:
     def __init__(self, init_value: int = 0):
         self.value = init_value

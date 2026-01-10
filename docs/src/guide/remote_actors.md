@@ -111,7 +111,7 @@ except Exception as e:
 ## Example: Distributed Counter
 
 ```python
-@as_actor
+@remote
 class DistributedCounter:
     def __init__(self, init_value: int = 0):
         self.value = init_value

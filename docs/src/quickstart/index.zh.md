@@ -51,26 +51,52 @@ graph LR
 
 ## 第一个 Actor（30秒）
 
+### 方式一：原生异步 API（推荐）
+
 ```python
 import asyncio
-from pulsing.actor import Actor, SystemConfig, create_actor_system
+from pulsing.actor import init, shutdown, remote
 
-class PingPong(Actor):
-    async def receive(self, msg):
-        if msg == "ping":
-            return "pong"
-        return f"echo: {msg}"
+@remote
+class Counter:
+    def __init__(self, value=0):
+        self.value = value
+
+    def inc(self):
+        self.value += 1
+        return self.value
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn("pingpong", PingPong())
-
-    print(await actor.ask("ping"))   # -> pong
-    print(await actor.ask("hello"))  # -> echo: hello
-
-    await system.shutdown()
+    await init()
+    counter = await Counter.spawn(value=0)
+    print(await counter.inc())  # 1
+    print(await counter.inc())  # 2
+    await shutdown()
 
 asyncio.run(main())
+```
+
+### 方式二：Ray 兼容 API（轻松迁移）
+
+```python
+from pulsing.compat import ray
+
+ray.init()
+
+@ray.remote
+class Counter:
+    def __init__(self, value=0):
+        self.value = value
+
+    def inc(self):
+        self.value += 1
+        return self.value
+
+counter = Counter.remote(value=0)
+print(ray.get(counter.inc.remote()))  # 1
+print(ray.get(counter.inc.remote()))  # 2
+
+ray.shutdown()
 ```
 
 **任意 Python 对象**都可以作为消息——字符串、字典、列表或自定义类。
@@ -94,14 +120,19 @@ class Counter(Actor):
 
 ---
 
-## @as_actor 装饰器
+## API 对比
 
-更面向对象的 API：
+| API | 风格 | 适用场景 |
+|-----|------|----------|
+| `pulsing.actor` | 异步 (`await`) | 新项目，高性能 |
+| `pulsing.compat.ray` | 同步 (Ray 风格) | Ray 迁移，快速上手 |
+
+### @remote 装饰器（原生 API）
 
 ```python
-from pulsing.actor import as_actor
+from pulsing.actor import init, shutdown, remote
 
-@as_actor
+@remote
 class Counter:
     def __init__(self, initial=0):
         self.value = initial
@@ -111,9 +142,10 @@ class Counter:
         return self.value
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    counter = await Counter.local(system, initial=10)
+    await init()
+    counter = await Counter.spawn(initial=10)
     print(await counter.inc(5))   # 15
+    await shutdown()
 ```
 
 ---
@@ -146,8 +178,8 @@ result = await worker.ask("do_work")  # API 完全相同！
 |------|------|
 | **Actor** | 具有私有状态的隔离单元 |
 | **消息** | 任意 Python 对象 |
-| **ask/tell** | 请求-响应 / 发后即忘 |
-| **@as_actor** | 方法调用风格的 Actor |
+| **@remote** | 原生异步装饰器 (via `pulsing.actor`) |
+| **ray.remote** | Ray 兼容装饰器 (via `pulsing.compat.ray`) |
 | **集群** | SWIM 协议自动发现 |
 
 ---
