@@ -8,7 +8,17 @@ Usage:
 
     # Query cluster
     pulsing actor list --seeds 127.0.0.1:8000,127.0.0.1:8001
+
+Limitations:
+    - Remote queries can only show actor name, type, and node info
+    - Actor ID and Python class info are not available via remote queries
+    - Use local process queries for full metadata
 """
+
+import os
+
+# Suppress Rust logs before importing pulsing
+os.environ["RUST_LOG"] = "off"
 
 import asyncio
 
@@ -55,11 +65,11 @@ async def query_single_endpoint(endpoint: str, all_actors: bool, output_format: 
     node_id = str(target_node.get("node_id"))
     node_addr = target_node.get("addr")
 
-    print(f"Connected to node {node_id} ({node_addr})")
+    print(f"Connected to node ({node_addr})")
     print()
 
-    # Get actors on this node using instance lookup
-    actors_data = await _get_node_actors_via_instances(system, node_id, all_actors)
+    # Get actors on this node
+    actors_data = await _get_node_actors(system, node_id, all_actors)
     _print_output(actors_data, output_format)
 
     await system.shutdown()
@@ -104,7 +114,8 @@ async def query_cluster(seeds: list[str], all_actors: bool, output_format: str):
 
     if len(real_members) > MAX_NODES_DISPLAY:
         print(
-            f"Warning: Cluster has {len(real_members)} nodes, showing first {MAX_NODES_DISPLAY}"
+            f"Warning: Cluster has {len(real_members)} nodes, "
+            f"showing first {MAX_NODES_DISPLAY}"
         )
         real_members = real_members[:MAX_NODES_DISPLAY]
 
@@ -118,11 +129,11 @@ async def query_cluster(seeds: list[str], all_actors: bool, output_format: str):
         node_addr = member.get("addr")
 
         if output_format == "table":
-            print(f"{'='*70}")
+            print(f"{'='*60}")
             print(f"[{i+1}/{len(real_members)}] Node ({node_addr})")
-            print(f"{'='*70}")
+            print(f"{'='*60}")
 
-        actors_data = await _get_node_actors_via_instances(system, node_id, all_actors)
+        actors_data = await _get_node_actors(system, node_id, all_actors)
 
         if output_format == "table":
             _print_actors_table(actors_data)
@@ -144,57 +155,43 @@ async def query_cluster(seeds: list[str], all_actors: bool, output_format: str):
 
     # Summary
     if output_format == "table":
-        total = (
-            sum(len(d.get("actors", [])) for d in all_nodes_data)
-            if all_nodes_data
-            else 0
-        )
-        print(f"{'='*70}")
+        print(f"{'='*60}")
         print(f"Cluster: {len(real_members)} nodes")
-        print(f"{'='*70}")
+        print(f"{'='*60}")
 
     await system.shutdown()
 
 
-async def _get_node_actors_via_instances(
-    system, target_node_id: str, all_actors: bool
-) -> list[dict]:
-    """Get actors on a specific node by looking up instances for each named actor"""
+async def _get_node_actors(system, target_node_id: str, all_actors: bool) -> list[dict]:
+    """Get actors on a specific node"""
     try:
         all_named = await system.all_named_actors()
     except Exception as e:
         return [{"error": str(e)}]
 
-    # Build node -> actors mapping by checking instances
     node_actors = []
 
     for actor_info in all_named:
         path = str(actor_info.get("path", ""))
         name = path[7:] if path.startswith("actors/") else path
 
+        # Skip system/core
+        if path == "system/core":
+            continue
+
         # Skip internal actors unless all_actors is True
         if not all_actors and name.startswith("_"):
             continue
 
-        instance_count = actor_info.get("instance_count", 0)
-        if instance_count == 0:
-            continue
-
-        # Get instances for this actor
-        try:
-            instances = await system.get_named_instances(name)
-            for inst in instances:
-                inst_node_id = str(inst.get("node_id", ""))
-                if inst_node_id == target_node_id:
-                    node_actors.append(
-                        {
-                            "name": name,
-                            "type": "system" if name.startswith("_") else "user",
-                            "actor_id": inst.get("actor_id", "-"),
-                        }
-                    )
-        except Exception:
-            pass  # Skip on error
+        # Check if this actor has instances on target node
+        instances = actor_info.get("instances", [])
+        if target_node_id in [str(i) for i in instances]:
+            node_actors.append(
+                {
+                    "name": name,
+                    "type": "system" if name.startswith("_") else "user",
+                }
+            )
 
     return node_actors
 
@@ -220,16 +217,13 @@ def _print_actors_table(actors_data: list[dict]):
         print(f"  Error: {actors_data[0]['error']}")
         return
 
-    print(f"  {'Name':<40} {'Type':<10} {'Actor ID':<20}")
-    print(f"  {'-'*70}")
+    print(f"  {'Name':<40} {'Type':<10}")
+    print(f"  {'-'*50}")
 
     for actor in actors_data:
         name = actor.get("name", "")
         actor_type = actor.get("type", "user")
-        actor_id = actor.get("actor_id", "-")
-        if actor_id is None:
-            actor_id = "-"
-        print(f"  {name:<40} {actor_type:<10} {actor_id:<20}")
+        print(f"  {name:<40} {actor_type:<10}")
 
     print(f"\n  Total: {len(actors_data)} actor(s)")
 
@@ -255,31 +249,20 @@ async def list_actors_impl(all_actors: bool = False, output_format: str = "table
         path = actor_info.get("path", "")
         name = path[7:] if path.startswith("actors/") else path
 
+        # Skip system/core
+        if path == "system/core":
+            continue
+
         # Filter internal actors if needed
         if not all_actors and name.startswith("_"):
             continue
 
-        # Get detailed instance information
-        try:
-            instances = await system.get_named_instances(name)
-            for inst in instances:
-                actors_data.append(
-                    {
-                        "name": name,
-                        "type": "system" if name.startswith("_") else "user",
-                        "actor_id": inst.get("actor_id", "-"),
-                        "uptime": inst.get("uptime_s", 0),
-                    }
-                )
-        except Exception:
-            actors_data.append(
-                {
-                    "name": name,
-                    "type": "system" if name.startswith("_") else "user",
-                    "actor_id": "-",
-                    "uptime": 0,
-                }
-            )
+        actors_data.append(
+            {
+                "name": name,
+                "type": "system" if name.startswith("_") else "user",
+            }
+        )
 
     _print_output(actors_data, output_format)
 
