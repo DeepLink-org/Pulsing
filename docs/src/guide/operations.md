@@ -11,12 +11,18 @@ This page is a practical entry point for operating and inspecting Pulsing system
 
 ## Commands
 
+## Quick links
+
+- [Actor List](actor_list.md)
+- [Inspect](inspect.md)
+- [Bench](bench.md)
+
 ### Start services (router / workers)
 
 - Router (OpenAI-compatible HTTP API):
 
 ```bash
-pulsing actor router --http_port 8080 --model_name my-llm
+pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
 ```
 
 - Transformers worker:
@@ -28,7 +34,7 @@ pulsing actor transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:80
 - vLLM worker:
 
 ```bash
-pulsing actor vllm --model Qwen/Qwen2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
+pulsing actor vllm --model Qwen/Qwen2 --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
 ```
 
 ### Inspect cluster

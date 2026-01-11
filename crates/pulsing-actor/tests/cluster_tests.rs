@@ -1,7 +1,12 @@
 //! Cluster and Gossip protocol tests
+//!
+//! This file contains integration tests for cluster functionality.
+//! Unit tests for member types are in tests/cluster/member_tests.rs
+
+mod cluster;
 
 use pulsing_actor::actor::{ActorId, NodeId};
-use pulsing_actor::cluster::{GossipConfig, MemberInfo, MemberStatus};
+use pulsing_actor::cluster::GossipConfig;
 use pulsing_actor::prelude::*;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -16,114 +21,6 @@ fn test_gossip_config_default() {
 
     assert_eq!(config.gossip_interval, Duration::from_millis(200));
     assert_eq!(config.fanout, 3);
-}
-
-// ============================================================================
-// Member Status Tests
-// ============================================================================
-
-#[test]
-fn test_member_status_alive() {
-    let status = MemberStatus::Alive;
-    assert!(status.is_alive());
-    assert!(status.is_reachable());
-}
-
-#[test]
-fn test_member_status_suspect() {
-    let status = MemberStatus::Suspect;
-    assert!(!status.is_alive());
-    assert!(status.is_reachable()); // Suspect is still reachable
-}
-
-#[test]
-fn test_member_status_dead() {
-    let status = MemberStatus::Dead;
-    assert!(!status.is_alive());
-    assert!(!status.is_reachable());
-}
-
-#[test]
-fn test_member_status_leaving() {
-    let status = MemberStatus::Leaving;
-    assert!(!status.is_alive());
-    assert!(!status.is_reachable());
-}
-
-// ============================================================================
-// MemberInfo Tests
-// ============================================================================
-
-#[test]
-fn test_member_info_creation() {
-    let node_id = NodeId::generate();
-    let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
-    let gossip_addr: SocketAddr = "127.0.0.1:7000".parse().unwrap();
-
-    let member = MemberInfo::new(node_id, addr, gossip_addr);
-
-    assert_eq!(member.node_id, node_id);
-    assert_eq!(member.addr, addr);
-    assert_eq!(member.gossip_addr, gossip_addr);
-    assert_eq!(member.status, MemberStatus::Alive);
-    assert_eq!(member.incarnation, 0);
-}
-
-#[test]
-fn test_member_info_refute() {
-    let node_id = NodeId::generate();
-    let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
-
-    let mut member = MemberInfo::new(node_id, addr, addr);
-    member.suspect();
-    assert_eq!(member.status, MemberStatus::Suspect);
-
-    member.refute();
-    assert_eq!(member.status, MemberStatus::Alive);
-    assert_eq!(member.incarnation, 1);
-}
-
-#[test]
-fn test_member_info_supersedes_by_incarnation() {
-    let node_id = NodeId::generate();
-    let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
-
-    let mut m1 = MemberInfo::new(node_id, addr, addr);
-    let m2 = MemberInfo::new(node_id, addr, addr);
-
-    // Same incarnation - neither supersedes
-    assert!(!m1.supersedes(&m2));
-    assert!(!m2.supersedes(&m1));
-
-    // Higher incarnation supersedes
-    m1.incarnation = 1;
-    assert!(m1.supersedes(&m2));
-    assert!(!m2.supersedes(&m1));
-}
-
-#[test]
-fn test_member_info_supersedes_by_status() {
-    let node_id = NodeId::generate();
-    let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
-
-    let mut alive = MemberInfo::new(node_id, addr, addr);
-    let mut suspect = MemberInfo::new(node_id, addr, addr);
-    let mut dead = MemberInfo::new(node_id, addr, addr);
-
-    alive.status = MemberStatus::Alive;
-    suspect.status = MemberStatus::Suspect;
-    dead.status = MemberStatus::Dead;
-
-    // Dead supersedes all
-    assert!(dead.supersedes(&alive));
-    assert!(dead.supersedes(&suspect));
-
-    // Suspect supersedes Alive
-    assert!(suspect.supersedes(&alive));
-
-    // Alive doesn't supersede others
-    assert!(!alive.supersedes(&suspect));
-    assert!(!alive.supersedes(&dead));
 }
 
 // ============================================================================

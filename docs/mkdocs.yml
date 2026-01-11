@@ -93,6 +93,9 @@ plugins:
             Security: 安全
             Reliability: 可靠性
             Operations: 运维（CLI）
+            Actor List: Actor 列表
+            Inspect: 巡检
+            Bench: 压测
             Agent: Agent 框架
             Overview: 概述
             AutoGen: AutoGen
@@ -130,6 +133,9 @@ nav:
     - Security: guide/security.md
     - Reliability: guide/reliability.md
     - Operations: guide/operations.md
+    - Actor List: guide/actor_list.md
+    - Inspect: guide/inspect.md
+    - Bench: guide/bench.md
     - Distributed Queue: guide/queue.md
     - Semantics: guide/semantics.md
   - Agent:

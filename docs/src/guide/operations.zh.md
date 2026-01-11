@@ -11,12 +11,18 @@
 
 ## 常用命令
 
+## 快速入口
+
+- [Actor 列表](actor_list.zh.md)
+- [巡检](inspect.zh.md)
+- [压测](bench.zh.md)
+
 ### 启动服务（router / workers）
 
 - Router（OpenAI 兼容 HTTP API）：
 
 ```bash
-pulsing actor router --http_port 8080 --model_name my-llm
+pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
 ```
 
 - Transformers Worker：
@@ -28,7 +34,7 @@ pulsing actor transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:80
 - vLLM Worker：
 
 ```bash
-pulsing actor vllm --model Qwen/Qwen2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
+pulsing actor vllm --model Qwen/Qwen2 --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
 ```
 
 ### 巡检集群

@@ -1,5 +1,12 @@
 # Pulsing Actor List 完整实现总结
 
+!!! note "文档迁移"
+    本页偏实现细节，面向用户的最新版已迁移到文档站点的 **Guide**：
+    - `docs/src/guide/actor_list.zh.md`
+    - `docs/src/guide/actor_list.md`
+    - `docs/src/guide/operations.zh.md`
+    - `docs/src/guide/operations.md`
+
 ## ✅ 已完成功能
 
 ### 1. 本地查询模式

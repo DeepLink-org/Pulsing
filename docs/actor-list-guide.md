@@ -1,5 +1,10 @@
 # Actor List 命令使用指南
 
+!!! note "文档迁移"
+    本页已迁移到文档站点的 **Guide** 中，并会以站点版本为准：
+    - `docs/src/guide/actor_list.zh.md`
+    - `docs/src/guide/actor_list.md`
+
 `pulsing actor list` 命令用于列出当前 Actor 系统中的 actors。
 
 ## 基本用法

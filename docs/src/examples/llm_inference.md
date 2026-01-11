@@ -1,25 +1,84 @@
-# LLM Inference (overview)
+# LLM Inference (runnable)
 
-Pulsing is a **general-purpose distributed actor framework** and also a good fit for **LLM inference services**, especially when you need:
+This guide shows how to run a **router + worker** LLM service with Pulsing, and expose an **OpenAI-compatible HTTP API**.
 
-- a router + worker architecture
-- distributed scheduling / load awareness
-- streaming responses (`ask_stream`)
+## Architecture
 
-This page is currently an overview (Draft). See:
+- **Router**: accepts HTTP requests, selects a worker, forwards `GenerateRequest` / `GenerateStreamRequest`
+- **Workers**: host model replicas
 
-- `docs/src/design/http2-transport.md` for the HTTP/2 streaming protocol design
-- `docs/src/design/load_sync.md` for load sync concepts
+## 0) Prerequisites
 
-## Suggested architecture
+- `pip install pulsing`
+- Choose one backend:
+  - **Transformers**: install `torch` + `transformers`
+  - **vLLM**: install `vllm`
 
-- **Router**: accepts client requests, chooses a worker, forwards request
-- **Workers**: host model replicas, expose `generate` / `generate_stream`
+## 1) Start the Router (Terminal A)
 
-## Next step
+The router needs an **actor system address** so workers can join the same cluster:
 
-If you want this page to become a runnable example, tell me which backend you want:
+```bash
+pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+```
 
-- `transformers` + `torch`
-- `vllm`
-- `triton` / custom engine
+## 2) Start workers
+
+You can run **one or more** workers. Each worker should join the router node via `--seeds`.
+
+### Option A: Transformers worker (Terminal B)
+
+```bash
+pulsing actor transformers --model gpt2 --device cpu --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
+```
+
+### Option B: vLLM worker (Terminal C)
+
+```bash
+pulsing actor vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+```
+
+## 3) Verify cluster + workers
+
+### List actors (observer mode)
+
+```bash
+pulsing actor list --endpoint 127.0.0.1:8000
+```
+
+### Inspect cluster
+
+```bash
+pulsing inspect --seeds 127.0.0.1:8000
+```
+
+## 4) Call the OpenAI-compatible API
+
+### Non-streaming
+
+```bash
+curl -s http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"my-llm","messages":[{"role":"user","content":"Hello"}],"stream":false}'
+```
+
+### Streaming (SSE)
+
+```bash
+curl -N http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"my-llm","messages":[{"role":"user","content":"Tell me a joke"}],"stream":true}'
+```
+
+## Troubleshooting
+
+- If you see `No available workers`, ensure:
+  - router is started with `--addr`
+  - workers join via `--seeds <router_addr>`
+  - the worker actor name is `worker` (default)
+
+See also:
+
+- [Operations (CLI)](../guide/operations.md)
+- [HTTP2 Transport (design)](../design/http2-transport.md)
+- [Load Sync (design)](../design/load_sync.md)
