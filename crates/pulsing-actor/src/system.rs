@@ -6,6 +6,7 @@ use crate::actor::{
 };
 use crate::cluster::{
     GossipCluster, GossipConfig, GossipMessage, MemberInfo, MemberStatus, NamedActorInfo,
+    NamedActorInstance,
 };
 use crate::metrics::{metrics, SystemMetrics as PrometheusMetrics};
 use crate::supervision::SupervisionSpec;
@@ -135,6 +136,8 @@ pub struct SpawnOptions {
     pub public: bool,
     /// Supervision specification (restart policy)
     pub supervision: SupervisionSpec,
+    /// Actor metadata (e.g., Python class, module, file path)
+    pub metadata: HashMap<String, String>,
 }
 
 impl SpawnOptions {
@@ -158,6 +161,12 @@ impl SpawnOptions {
     /// Set supervision specification
     pub fn supervision(mut self, supervision: SupervisionSpec) -> Self {
         self.supervision = supervision;
+        self
+    }
+
+    /// Set actor metadata
+    pub fn metadata(mut self, metadata: HashMap<String, String>) -> Self {
+        self.metadata = metadata;
         self
     }
 }
@@ -610,7 +619,7 @@ impl ActorSystem {
         let (sender, receiver) = mailbox.split();
 
         let stats = Arc::new(ActorStats::default());
-        let metadata = HashMap::new();
+        let metadata = options.metadata.clone();
 
         // Create context
         let ctx = ActorContext::new(actor_id);
@@ -633,7 +642,7 @@ impl ActorSystem {
             sender: sender.clone(),
             join_handle,
             stats: stats.clone(),
-            metadata,
+            metadata: metadata.clone(),
             named_path: Some(path.clone()),
             actor_id,
         };
@@ -642,9 +651,15 @@ impl ActorSystem {
         self.named_actor_paths
             .insert(path.as_str().to_string(), local_name.to_string());
 
-        // Register in cluster
+        // Register in cluster with full details
         if let Some(cluster) = self.cluster.read().await.as_ref() {
-            cluster.register_named_actor(path.clone()).await;
+            if metadata.is_empty() {
+                cluster.register_named_actor(path.clone()).await;
+            } else {
+                cluster
+                    .register_named_actor_full(path.clone(), actor_id, metadata)
+                    .await;
+            }
         }
 
         // Create ActorRef
@@ -842,6 +857,19 @@ impl ActorSystem {
         let cluster_guard = self.cluster.read().await;
         if let Some(cluster) = cluster_guard.as_ref() {
             cluster.get_named_actor_instances(path).await
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get detailed instances with actor_id and metadata
+    pub async fn get_named_instances_detailed(
+        &self,
+        path: &ActorPath,
+    ) -> Vec<(MemberInfo, Option<NamedActorInstance>)> {
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            cluster.get_named_actor_instances_detailed(path).await
         } else {
             Vec::new()
         }
@@ -1404,5 +1432,89 @@ impl Http2ServerHandler for SystemMessageHandler {
 
         // Export using global metrics registry
         metrics().export_prometheus(&system_metrics)
+    }
+
+    async fn cluster_members(&self) -> serde_json::Value {
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            let members = cluster.all_members().await;
+            let result: Vec<_> = members
+                .iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "node_id": m.node_id.to_string(),
+                        "addr": m.addr.to_string(),
+                        "status": format!("{:?}", m.status),
+                    })
+                })
+                .collect();
+            serde_json::json!(result)
+        } else {
+            // Single node mode - return empty (no cluster)
+            serde_json::json!([{
+                "node_id": self.node_id.to_string(),
+                "status": "Alive",
+            }])
+        }
+    }
+
+    async fn actors_list(&self, include_internal: bool) -> serde_json::Value {
+        let cluster_guard = self.cluster.read().await;
+        let all_named = if let Some(cluster) = cluster_guard.as_ref() {
+            cluster.all_named_actors().await
+        } else {
+            Vec::new()
+        };
+        drop(cluster_guard);
+
+        // Build actors list with detailed info
+        let mut actors = Vec::new();
+        for info in all_named {
+            let path_str = info.path.as_str();
+
+            // Skip system/core
+            if path_str == "system/core" {
+                continue;
+            }
+
+            // Check if this actor is on this node
+            if !info.instance_nodes.contains(&self.node_id) {
+                continue;
+            }
+
+            let name = if path_str.starts_with("actors/") {
+                &path_str[7..]
+            } else {
+                &path_str
+            };
+
+            // Skip internal actors unless requested
+            if !include_internal && name.starts_with('_') {
+                continue;
+            }
+
+            let actor_type = if name.starts_with('_') {
+                "system"
+            } else {
+                "user"
+            };
+
+            // Get detailed instance info if available
+            let mut actor_json = serde_json::json!({
+                "name": name,
+                "type": actor_type,
+            });
+
+            if let Some(instance) = info.get_instance(&self.node_id) {
+                actor_json["actor_id"] = serde_json::json!(instance.actor_id.to_string());
+                for (k, v) in &instance.metadata {
+                    actor_json[k] = serde_json::json!(v);
+                }
+            }
+
+            actors.push(actor_json);
+        }
+
+        serde_json::json!(actors)
     }
 }

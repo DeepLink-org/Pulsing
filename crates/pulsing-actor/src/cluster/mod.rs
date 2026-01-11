@@ -10,5 +10,5 @@ mod member;
 pub mod swim;
 
 pub use gossip::{GossipCluster, GossipConfig, GossipMessage};
-pub use member::{ActorLocation, MemberInfo, MemberStatus, NamedActorInfo};
+pub use member::{ActorLocation, MemberInfo, MemberStatus, NamedActorInfo, NamedActorInstance};
 pub use swim::{SwimConfig, SwimDetector, SwimMessage};

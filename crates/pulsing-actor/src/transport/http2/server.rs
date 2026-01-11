@@ -82,6 +82,21 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
     async fn prometheus_metrics(&self) -> String {
         String::new()
     }
+
+    /// Get cluster members list (for CLI tools)
+    ///
+    /// Returns JSON array of member information.
+    async fn cluster_members(&self) -> serde_json::Value {
+        serde_json::json!([])
+    }
+
+    /// Get actors list on this node (for CLI tools)
+    ///
+    /// Returns JSON array of actor information.
+    async fn actors_list(&self, include_internal: bool) -> serde_json::Value {
+        let _ = include_internal;
+        serde_json::json!([])
+    }
 }
 
 /// HTTP/2 Server
@@ -346,6 +361,34 @@ impl Http2Server {
                 .status(StatusCode::OK)
                 .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
                 .body(full_body(metrics.into_bytes()))
+                .unwrap());
+        }
+
+        // Cluster members endpoint (for CLI tools)
+        if path == "/cluster/members" && method == Method::GET {
+            let members = handler.cluster_members().await;
+            let body = serde_json::to_vec(&members).unwrap_or_default();
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(full_body(body))
+                .unwrap());
+        }
+
+        // Actors list endpoint (for CLI tools)
+        if (path == "/actors" || path == "/actors/") && method == Method::GET {
+            // Check for ?all=true query parameter
+            let include_internal = req
+                .uri()
+                .query()
+                .map(|q| q.contains("all=true"))
+                .unwrap_or(false);
+            let actors = handler.actors_list(include_internal).await;
+            let body = serde_json::to_vec(&actors).unwrap_or_default();
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(full_body(body))
                 .unwrap());
         }
 

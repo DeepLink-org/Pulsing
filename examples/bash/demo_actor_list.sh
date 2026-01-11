@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 演示 pulsing actor list 命令
+# 使用简单的 HTTP API 查询，不加入 gossip 集群
 
 set -e
 
@@ -96,32 +97,32 @@ echo "   等待服务启动..."
 sleep 3
 
 echo ""
-echo -e "${GREEN}2. 测试连接单个 endpoint${NC}"
+echo -e "${GREEN}2. 测试连接单个 endpoint (HTTP API)${NC}"
 echo "   命令: pulsing actor list --endpoint 127.0.0.1:${PORT}"
 echo ""
 
-RUST_LOG=off $PYTHON -m pulsing.cli actor list --endpoint 127.0.0.1:${PORT} 2>&1 | grep -v "^2" | grep -v "pulsing_actor"
+$PYTHON -m pulsing.cli actor list --endpoint 127.0.0.1:${PORT}
 
 echo ""
 echo -e "${GREEN}3. 显示所有 actors (包括内部)${NC}"
 echo "   命令: pulsing actor list --endpoint 127.0.0.1:${PORT} --all_actors True"
 echo ""
 
-RUST_LOG=off $PYTHON -m pulsing.cli actor list --endpoint 127.0.0.1:${PORT} --all_actors True 2>&1 | grep -v "^2" | grep -v "pulsing_actor"
+$PYTHON -m pulsing.cli actor list --endpoint 127.0.0.1:${PORT} --all_actors True
 
 echo ""
 echo -e "${GREEN}4. JSON 格式输出${NC}"
 echo "   命令: pulsing actor list --endpoint 127.0.0.1:${PORT} --json True"
 echo ""
 
-RUST_LOG=off $PYTHON -m pulsing.cli actor list --endpoint 127.0.0.1:${PORT} --json True 2>&1 | grep -v "^2" | grep -v "pulsing_actor"
+$PYTHON -m pulsing.cli actor list --endpoint 127.0.0.1:${PORT} --json True
 
 echo ""
 echo -e "${GREEN}5. 使用 --seeds 查询集群${NC}"
 echo "   命令: pulsing actor list --seeds 127.0.0.1:${PORT}"
 echo ""
 
-RUST_LOG=off $PYTHON -m pulsing.cli actor list --seeds 127.0.0.1:${PORT} 2>&1 | grep -v "^2" | grep -v "pulsing_actor"
+$PYTHON -m pulsing.cli actor list --seeds 127.0.0.1:${PORT}
 
 # 清理
 echo ""
@@ -149,6 +150,6 @@ echo ""
 echo -e "  ${BLUE}# JSON 格式输出${NC}"
 echo "  pulsing actor list --endpoint 127.0.0.1:8000 --json True"
 echo ""
-echo -e "${YELLOW}注意: Python 模块名和代码路径只能在本地进程内查询时显示。${NC}"
-echo -e "${YELLOW}      远程查询只能获取 actor 名称、类型和 ID。${NC}"
+echo -e "${GREEN}✓ 使用简单 HTTP API，不加入 gossip 集群${NC}"
+echo -e "${GREEN}✓ 支持显示完整 Python 元信息: 类名、模块、代码路径、Actor ID${NC}"
 echo ""

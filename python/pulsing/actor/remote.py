@@ -144,6 +144,26 @@ class _WrappedActor(_ActorBase):
 
     def __init__(self, instance: Any):
         self._instance = instance
+        # Store original class info for metadata extraction
+        self._original_class = instance.__class__
+
+    @property
+    def __original_module__(self):
+        """Return original class module for Rust metadata extraction"""
+        return self._original_class.__module__
+
+    @property
+    def __original_qualname__(self):
+        """Return original class qualified name for Rust metadata extraction"""
+        return self._original_class.__qualname__
+
+    @property
+    def __original_file__(self):
+        """Return original class file path for Rust metadata extraction"""
+        try:
+            return inspect.getfile(self._original_class)
+        except (TypeError, OSError):
+            return None
 
     def on_start(self, actor_id) -> None:
         if hasattr(self._instance, "on_start"):

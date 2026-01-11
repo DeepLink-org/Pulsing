@@ -1,6 +1,6 @@
 """Actor list command implementation
 
-Query actors from a remote actor system or cluster.
+Query actors from remote actor systems via simple HTTP API.
 
 Usage:
     # Query single endpoint
@@ -9,228 +9,176 @@ Usage:
     # Query cluster
     pulsing actor list --seeds 127.0.0.1:8000,127.0.0.1:8001
 
-Limitations:
-    - Remote queries can only show actor name, type, and node info
-    - Actor ID and Python class info are not available via remote queries
-    - Use local process queries for full metadata
+This implementation uses direct HTTP/2 requests instead of joining the gossip cluster,
+making it a lightweight observer tool.
 """
 
-import os
-
-# Suppress Rust logs before importing pulsing
-os.environ["RUST_LOG"] = "off"
-
 import asyncio
+import json
+import subprocess
 
 MAX_NODES_DISPLAY = 64  # Maximum number of nodes to display
+HTTP_TIMEOUT = 10  # seconds
+
+
+def http_get_sync(url: str) -> dict | list | None:
+    """Make HTTP/2 GET request using curl (which supports h2c)"""
+    try:
+        result = subprocess.run(
+            [
+                "curl",
+                "-s",  # Silent
+                "--http2-prior-knowledge",  # Use h2c (HTTP/2 over cleartext)
+                "-m",
+                str(HTTP_TIMEOUT),  # Timeout
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=HTTP_TIMEOUT + 2,
+        )
+        if result.returncode == 0 and result.stdout:
+            return json.loads(result.stdout)
+        return None
+    except Exception:
+        return None
 
 
 async def query_single_endpoint(endpoint: str, all_actors: bool, output_format: str):
-    """Query a single actor system endpoint"""
-    from pulsing.actor import SystemConfig, create_actor_system
+    """Query a single actor system endpoint via HTTP API"""
 
-    print(f"Connecting to {endpoint}...")
-
-    # Parse endpoint
+    # Ensure endpoint has port
     if ":" not in endpoint:
         endpoint = f"{endpoint}:8000"
 
-    # Create temporary system to connect
-    host = endpoint.rsplit(":", 1)[0]
-    if host in ("127.0.0.1", "localhost"):
-        config = SystemConfig.with_addr("127.0.0.1:0").with_seeds([endpoint])
-    else:
-        config = SystemConfig.standalone().with_seeds([endpoint])
+    # Ensure http:// prefix
+    if not endpoint.startswith("http"):
+        endpoint = f"http://{endpoint}"
 
-    system = await create_actor_system(config)
+    print(f"Connecting to {endpoint}...")
 
-    # Wait for connection
-    await asyncio.sleep(1.0)
+    # Get actors list
+    url = f"{endpoint}/actors"
+    if all_actors:
+        url += "?all=true"
 
-    # Find the target node
-    members = await system.members()
-    target_node = None
-    for m in members:
-        addr = m.get("addr", "")
-        if addr == endpoint or endpoint in addr:
-            target_node = m
-            break
-
-    if not target_node:
-        print(f"Error: Cannot find node at {endpoint}")
-        print(f"Found nodes: {[m.get('addr') for m in members]}")
-        await system.shutdown()
+    actors = http_get_sync(url)
+    if actors is None:
+        print(f"Error: Cannot connect to {endpoint}")
         return
 
-    node_id = str(target_node.get("node_id"))
-    node_addr = target_node.get("addr")
-
-    print(f"Connected to node ({node_addr})")
+    print(f"Connected to {endpoint}")
     print()
 
-    # Get actors on this node
-    actors_data = await _get_node_actors(system, node_id, all_actors)
-    _print_output(actors_data, output_format)
-
-    await system.shutdown()
+    _print_output(actors, output_format)
 
 
 async def query_cluster(seeds: list[str], all_actors: bool, output_format: str):
-    """Query all nodes in a cluster"""
-    from pulsing.actor import SystemConfig, create_actor_system
+    """Query all nodes in a cluster via HTTP API"""
+
+    # Normalize seeds
+    normalized_seeds = []
+    for seed in seeds:
+        if ":" not in seed:
+            seed = f"{seed}:8000"
+        if not seed.startswith("http"):
+            seed = f"http://{seed}"
+        normalized_seeds.append(seed)
 
     print(f"Connecting to cluster via seeds: {seeds}...")
 
-    # Create temporary system to join cluster
-    if any(s.startswith("127.0.0.1") or s.startswith("localhost") for s in seeds):
-        config = SystemConfig.with_addr("127.0.0.1:0").with_seeds(seeds)
-    else:
-        config = SystemConfig.standalone().with_seeds(seeds)
+    # Get cluster members from first available seed
+    members = None
+    for seed in normalized_seeds:
+        members = http_get_sync(f"{seed}/cluster/members")
+        if members:
+            break
 
-    system = await create_actor_system(config)
+    if not members:
+        print("Error: Cannot connect to any seed node")
+        return
 
-    # Wait for cluster discovery
-    await asyncio.sleep(1.5)
+    # Filter alive members
+    alive_members = [m for m in members if m.get("status") == "Alive"]
+    print(f"Found {len(alive_members)} alive nodes")
 
-    members = await system.members()
-    # Filter to only include seed nodes
-    seed_ports = {s.split(":")[-1] for s in seeds}
-    real_members = [
-        m
-        for m in members
-        if m.get("status") == "Alive" and m.get("addr", "").split(":")[-1] in seed_ports
-    ]
-
-    if not real_members:
-        # If no seed matches, just use all alive members except ourselves
-        my_addr = system.addr
-        real_members = [
-            m
-            for m in members
-            if m.get("status") == "Alive" and m.get("addr") != my_addr
-        ]
-
-    print(f"Found {len(real_members)} target nodes")
-
-    if len(real_members) > MAX_NODES_DISPLAY:
+    if len(alive_members) > MAX_NODES_DISPLAY:
         print(
-            f"Warning: Cluster has {len(real_members)} nodes, "
+            f"Warning: Cluster has {len(alive_members)} nodes, "
             f"showing first {MAX_NODES_DISPLAY}"
         )
-        real_members = real_members[:MAX_NODES_DISPLAY]
+        alive_members = alive_members[:MAX_NODES_DISPLAY]
 
     print()
 
-    # Collect actors per node
+    # Collect actors from each node
     all_nodes_data = []
 
-    for i, member in enumerate(real_members):
-        node_id = str(member.get("node_id"))
-        node_addr = member.get("addr")
+    for i, member in enumerate(alive_members):
+        addr = member.get("addr")
+        node_id = member.get("node_id")
+
+        if not addr:
+            continue
+
+        # Ensure http:// prefix
+        if not addr.startswith("http"):
+            addr = f"http://{addr}"
 
         if output_format == "table":
-            print(f"{'='*60}")
-            print(f"[{i+1}/{len(real_members)}] Node ({node_addr})")
-            print(f"{'='*60}")
+            print(f"{'='*80}")
+            print(f"[{i+1}/{len(alive_members)}] Node {node_id} ({addr})")
+            print(f"{'='*80}")
 
-        actors_data = await _get_node_actors(system, node_id, all_actors)
+        # Get actors from this node
+        url = f"{addr}/actors"
+        if all_actors:
+            url += "?all=true"
+
+        actors = http_get_sync(url)
+        if actors is None:
+            if output_format == "table":
+                print("  Error: Cannot connect to this node")
+                print()
+            continue
 
         if output_format == "table":
-            _print_actors_table(actors_data)
+            _print_actors_table(actors)
             print()
         else:
             all_nodes_data.append(
                 {
                     "node_id": node_id,
-                    "addr": node_addr,
-                    "actors": actors_data,
+                    "addr": addr,
+                    "actors": actors,
                 }
             )
 
     # Print JSON if needed
     if output_format == "json":
-        import json
-
         print(json.dumps(all_nodes_data, indent=2))
 
     # Summary
     if output_format == "table":
-        print(f"{'='*60}")
-        print(f"Cluster: {len(real_members)} nodes")
-        print(f"{'='*60}")
-
-    await system.shutdown()
-
-
-async def _get_node_actors(system, target_node_id: str, all_actors: bool) -> list[dict]:
-    """Get actors on a specific node"""
-    try:
-        all_named = await system.all_named_actors()
-    except Exception as e:
-        return [{"error": str(e)}]
-
-    node_actors = []
-
-    for actor_info in all_named:
-        path = str(actor_info.get("path", ""))
-        name = path[7:] if path.startswith("actors/") else path
-
-        # Skip system/core
-        if path == "system/core":
-            continue
-
-        # Skip internal actors unless all_actors is True
-        if not all_actors and name.startswith("_"):
-            continue
-
-        # Check if this actor has instances on target node
-        instances = actor_info.get("instances", [])
-        if target_node_id in [str(i) for i in instances]:
-            node_actors.append(
-                {
-                    "name": name,
-                    "type": "system" if name.startswith("_") else "user",
-                }
-            )
-
-    return node_actors
+        print(f"{'='*80}")
+        print(f"Cluster: {len(alive_members)} nodes")
+        print(f"{'='*80}")
 
 
 def _print_output(actors_data: list[dict], output_format: str):
     """Print actors in specified format"""
     if output_format == "json":
-        import json
-
         print(json.dumps(actors_data, indent=2))
     else:
         _print_actors_table(actors_data)
 
 
-def _print_actors_table(actors_data: list[dict]):
-    """Print actors in table format"""
-    if not actors_data:
-        print("  No actors found.")
-        return
-
-    # Check for errors
-    if actors_data and "error" in actors_data[0]:
-        print(f"  Error: {actors_data[0]['error']}")
-        return
-
-    print(f"  {'Name':<40} {'Type':<10}")
-    print(f"  {'-'*50}")
-
-    for actor in actors_data:
-        name = actor.get("name", "")
-        actor_type = actor.get("type", "user")
-        print(f"  {name:<40} {actor_type:<10}")
-
-    print(f"\n  Total: {len(actors_data)} actor(s)")
-
-
 async def list_actors_impl(all_actors: bool = False, output_format: str = "table"):
     """
-    Implementation for listing actors in the current system (for testing).
+    List actors in the current (local) system.
+
+    This function is for testing and in-process usage.
+    For CLI, use list_actors_command which uses HTTP API.
 
     Args:
         all_actors: Show all actors including internal system actors
@@ -239,11 +187,8 @@ async def list_actors_impl(all_actors: bool = False, output_format: str = "table
     from pulsing.actor import get_system
 
     system = get_system()
-
-    # Get all named actors
     all_named = await system.all_named_actors()
 
-    # Build actors list
     actors_data = []
     for actor_info in all_named:
         path = actor_info.get("path", "")
@@ -257,14 +202,60 @@ async def list_actors_impl(all_actors: bool = False, output_format: str = "table
         if not all_actors and name.startswith("_"):
             continue
 
-        actors_data.append(
-            {
-                "name": name,
-                "type": "system" if name.startswith("_") else "user",
-            }
-        )
+        actor_data = {
+            "name": name,
+            "type": "system" if name.startswith("_") else "user",
+            "uptime": 0,
+        }
+
+        # Get detailed instance info
+        detailed = actor_info.get("detailed_instances", [])
+        if detailed:
+            inst = detailed[0]
+            actor_data["actor_id"] = inst.get("actor_id", "-")
+            actor_data["module"] = inst.get("module", "-")
+            actor_data["class"] = inst.get("class", "-")
+            actor_data["file"] = inst.get("file", "-")
+
+        actors_data.append(actor_data)
 
     _print_output(actors_data, output_format)
+
+
+def _print_actors_table(actors_data: list[dict]):
+    """Print actors in table format"""
+    if not actors_data:
+        print("  No actors found.")
+        return
+
+    # Check for errors
+    if actors_data and "error" in actors_data[0]:
+        print(f"  Error: {actors_data[0]['error']}")
+        return
+
+    # Check if we have detailed info (class, module)
+    has_details = any(a.get("class") for a in actors_data)
+
+    if has_details:
+        print(f"  {'Name':<25} {'Type':<8} {'Class':<25} {'Module':<30}")
+        print(f"  {'-'*90}")
+
+        for actor in actors_data:
+            name = actor.get("name", "")
+            actor_type = actor.get("type", "user")
+            cls = actor.get("class", "-")
+            module = actor.get("module", "-")
+            print(f"  {name:<25} {actor_type:<8} {cls:<25} {module:<30}")
+    else:
+        print(f"  {'Name':<40} {'Type':<10}")
+        print(f"  {'-'*50}")
+
+        for actor in actors_data:
+            name = actor.get("name", "")
+            actor_type = actor.get("type", "user")
+            print(f"  {name:<40} {actor_type:<10}")
+
+    print(f"\n  Total: {len(actors_data)} actor(s)")
 
 
 def list_actors_command(
@@ -275,6 +266,8 @@ def list_actors_command(
 ):
     """
     List actors from a remote actor system or cluster.
+
+    Uses simple HTTP/2 API calls - does NOT join the gossip cluster.
 
     Args:
         endpoint: Single actor system endpoint (e.g., '127.0.0.1:8000')
@@ -292,8 +285,6 @@ def list_actors_command(
         # Show all actors as JSON
         pulsing actor list --endpoint 127.0.0.1:8000 --all_actors True --json True
     """
-    import uvloop
-
     if not endpoint and not seeds:
         print("Error: Either --endpoint or --seeds is required.")
         print()
@@ -310,7 +301,7 @@ def list_actors_command(
     output_format = "json" if json_output else "table"
 
     if endpoint:
-        uvloop.run(query_single_endpoint(endpoint, all_actors, output_format))
+        asyncio.run(query_single_endpoint(endpoint, all_actors, output_format))
     else:
         seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
-        uvloop.run(query_cluster(seed_list, all_actors, output_format))
+        asyncio.run(query_cluster(seed_list, all_actors, output_format))

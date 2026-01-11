@@ -7,7 +7,8 @@
 //! - PFail/Fail failure detection
 
 use super::member::{
-    ActorLocation, ClusterNode, FailureInfo, MemberInfo, MemberStatus, NamedActorInfo, NodeStatus,
+    ActorLocation, ClusterNode, FailureInfo, MemberInfo, MemberStatus, NamedActorInfo,
+    NamedActorInstance, NodeStatus,
 };
 use super::swim::SwimConfig;
 use crate::actor::{ActorId, ActorPath, NodeId, StopReason};
@@ -127,6 +128,12 @@ pub enum GossipMessage {
     NamedActorRegistered {
         path: ActorPath,
         node_id: NodeId,
+        /// Actor ID (optional for backward compatibility)
+        #[serde(default)]
+        actor_id: Option<ActorId>,
+        /// Metadata (e.g., Python class, module, file path)
+        #[serde(default)]
+        metadata: std::collections::HashMap<String, String>,
     },
     NamedActorUnregistered {
         path: ActorPath,
@@ -552,13 +559,28 @@ impl GossipCluster {
                 self.state.actors.write().await.remove(&actor_id);
                 Ok(None)
             }
-            GossipMessage::NamedActorRegistered { path, node_id } => {
+            GossipMessage::NamedActorRegistered {
+                path,
+                node_id,
+                actor_id,
+                metadata,
+            } => {
                 let mut named = self.state.named_actors.write().await;
                 let key = path.as_str();
-                named
-                    .entry(key.clone())
-                    .and_modify(|info| info.add_instance(node_id))
-                    .or_insert_with(|| NamedActorInfo::with_instance(path, node_id));
+                if let Some(aid) = actor_id {
+                    // Full registration with actor_id and metadata
+                    let instance = NamedActorInstance::with_metadata(node_id, aid, metadata);
+                    named
+                        .entry(key.clone())
+                        .and_modify(|info| info.add_full_instance(instance.clone()))
+                        .or_insert_with(|| NamedActorInfo::with_full_instance(path, instance));
+                } else {
+                    // Legacy registration (no actor_id)
+                    named
+                        .entry(key.clone())
+                        .and_modify(|info| info.add_instance(node_id))
+                        .or_insert_with(|| NamedActorInfo::with_instance(path, node_id));
+                }
                 Ok(None)
             }
             GossipMessage::NamedActorUnregistered { path, node_id } => {
@@ -624,6 +646,33 @@ impl GossipCluster {
     // Named Actor Registry
     // ========================================================================
 
+    /// Register a named actor with full details (actor_id and metadata)
+    pub async fn register_named_actor_full(
+        &self,
+        path: ActorPath,
+        actor_id: ActorId,
+        metadata: std::collections::HashMap<String, String>,
+    ) {
+        let key = path.as_str();
+        let instance =
+            NamedActorInstance::with_metadata(self.state.local_node, actor_id, metadata.clone());
+        {
+            let mut named = self.state.named_actors.write().await;
+            named
+                .entry(key.clone())
+                .and_modify(|info| info.add_full_instance(instance.clone()))
+                .or_insert_with(|| NamedActorInfo::with_full_instance(path.clone(), instance));
+        }
+        let msg = GossipMessage::NamedActorRegistered {
+            path,
+            node_id: self.state.local_node,
+            actor_id: Some(actor_id),
+            metadata,
+        };
+        let _ = self.broadcast(&msg).await;
+    }
+
+    /// Register a named actor (legacy, without actor_id)
     pub async fn register_named_actor(&self, path: ActorPath) {
         let key = path.as_str();
         {
@@ -638,6 +687,8 @@ impl GossipCluster {
         let msg = GossipMessage::NamedActorRegistered {
             path,
             node_id: self.state.local_node,
+            actor_id: None,
+            metadata: std::collections::HashMap::new(),
         };
         let _ = self.broadcast(&msg).await;
     }
@@ -687,18 +738,44 @@ impl GossipCluster {
     }
 
     pub async fn get_named_actor_instances(&self, path: &ActorPath) -> Vec<MemberInfo> {
-        let instances = {
+        let node_ids = {
             let named = self.state.named_actors.read().await;
             match named.get(&path.as_str()) {
-                Some(info) => info.instances.clone(),
+                Some(info) => info.instance_nodes.clone(),
                 None => return Vec::new(),
             }
         };
 
         let nodes = self.state.cluster_nodes.read().await;
-        instances
+        node_ids
             .iter()
             .filter_map(|id| nodes.get(id).map(ClusterState::node_to_member))
+            .collect()
+    }
+
+    /// Get detailed instance information for a named actor
+    pub async fn get_named_actor_instances_detailed(
+        &self,
+        path: &ActorPath,
+    ) -> Vec<(MemberInfo, Option<NamedActorInstance>)> {
+        let (node_ids, instances_map) = {
+            let named = self.state.named_actors.read().await;
+            match named.get(&path.as_str()) {
+                Some(info) => (info.instance_nodes.clone(), info.instances.clone()),
+                None => return Vec::new(),
+            }
+        };
+
+        let nodes = self.state.cluster_nodes.read().await;
+        node_ids
+            .iter()
+            .filter_map(|id| {
+                nodes.get(id).map(|node| {
+                    let member = ClusterState::node_to_member(node);
+                    let instance = instances_map.get(id).cloned();
+                    (member, instance)
+                })
+            })
             .collect()
     }
 
