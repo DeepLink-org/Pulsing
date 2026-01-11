@@ -1272,7 +1272,8 @@ impl PyActorSystem {
                                 );
                                 // Add metadata
                                 for (k, v) in &inst.metadata {
-                                    inst_map.insert(k.clone(), serde_json::Value::String(v.clone()));
+                                    inst_map
+                                        .insert(k.clone(), serde_json::Value::String(v.clone()));
                                 }
                                 serde_json::Value::Object(inst_map)
                             })

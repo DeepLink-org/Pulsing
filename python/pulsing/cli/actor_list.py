@@ -44,7 +44,9 @@ def http_get_sync(url: str) -> dict | list | None:
         return None
 
 
-async def query_single_endpoint(endpoint: str, all_actors: bool, output_format: str):
+async def query_single_endpoint(
+    endpoint: str, all_actors: bool, output_format: str
+) -> bool:
     """Query a single actor system endpoint via HTTP API"""
 
     # Ensure endpoint has port
@@ -65,15 +67,16 @@ async def query_single_endpoint(endpoint: str, all_actors: bool, output_format: 
     actors = http_get_sync(url)
     if actors is None:
         print(f"Error: Cannot connect to {endpoint}")
-        return
+        return False
 
     print(f"Connected to {endpoint}")
     print()
 
     _print_output(actors, output_format)
+    return True
 
 
-async def query_cluster(seeds: list[str], all_actors: bool, output_format: str):
+async def query_cluster(seeds: list[str], all_actors: bool, output_format: str) -> bool:
     """Query all nodes in a cluster via HTTP API"""
 
     # Normalize seeds
@@ -96,7 +99,7 @@ async def query_cluster(seeds: list[str], all_actors: bool, output_format: str):
 
     if not members:
         print("Error: Cannot connect to any seed node")
-        return
+        return False
 
     # Filter alive members
     alive_members = [m for m in members if m.get("status") == "Alive"]
@@ -163,6 +166,8 @@ async def query_cluster(seeds: list[str], all_actors: bool, output_format: str):
         print(f"{'='*80}")
         print(f"Cluster: {len(alive_members)} nodes")
         print(f"{'='*80}")
+
+    return True
 
 
 def _print_output(actors_data: list[dict], output_format: str):

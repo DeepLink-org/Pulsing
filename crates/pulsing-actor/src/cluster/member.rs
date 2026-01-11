@@ -707,4 +707,143 @@ mod tests {
         assert!(dead.supersedes(&alive));
         assert!(!alive.supersedes(&dead));
     }
+
+    // ========================================================================
+    // NamedActorInstance Tests
+    // ========================================================================
+
+    #[test]
+    fn test_named_actor_instance_new() {
+        let node_id = NodeId::generate();
+        let actor_id = ActorId::local(42);
+
+        let instance = NamedActorInstance::new(node_id, actor_id);
+
+        assert_eq!(instance.node_id, node_id);
+        assert_eq!(instance.actor_id, actor_id);
+        assert!(instance.metadata.is_empty());
+    }
+
+    #[test]
+    fn test_named_actor_instance_with_metadata() {
+        let node_id = NodeId::generate();
+        let actor_id = ActorId::local(42);
+        let mut metadata = HashMap::new();
+        metadata.insert("class".to_string(), "Counter".to_string());
+        metadata.insert("module".to_string(), "__main__".to_string());
+        metadata.insert("file".to_string(), "/app/main.py".to_string());
+
+        let instance = NamedActorInstance::with_metadata(node_id, actor_id, metadata.clone());
+
+        assert_eq!(instance.node_id, node_id);
+        assert_eq!(instance.actor_id, actor_id);
+        assert_eq!(instance.metadata.get("class"), Some(&"Counter".to_string()));
+        assert_eq!(
+            instance.metadata.get("module"),
+            Some(&"__main__".to_string())
+        );
+        assert_eq!(
+            instance.metadata.get("file"),
+            Some(&"/app/main.py".to_string())
+        );
+    }
+
+    #[test]
+    fn test_named_actor_info_with_full_instance() {
+        let path = ActorPath::new("actors/counter").unwrap();
+        let node_id = NodeId::generate();
+        let actor_id = ActorId::local(42);
+        let mut metadata = HashMap::new();
+        metadata.insert("class".to_string(), "Counter".to_string());
+
+        let instance = NamedActorInstance::with_metadata(node_id, actor_id, metadata);
+        let info = NamedActorInfo::with_full_instance(path.clone(), instance);
+
+        assert_eq!(info.path, path);
+        assert_eq!(info.instance_count(), 1);
+        assert!(info.instance_nodes.contains(&node_id));
+        assert!(info.instances.contains_key(&node_id));
+
+        let retrieved = info.get_instance(&node_id).unwrap();
+        assert_eq!(retrieved.actor_id, actor_id);
+        assert_eq!(
+            retrieved.metadata.get("class"),
+            Some(&"Counter".to_string())
+        );
+    }
+
+    #[test]
+    fn test_named_actor_info_add_full_instance() {
+        let path = ActorPath::new("actors/counter").unwrap();
+        let node1 = NodeId::generate();
+        let node2 = NodeId::generate();
+        let actor_id1 = ActorId::local(1);
+        let actor_id2 = ActorId::local(2);
+
+        let mut info = NamedActorInfo::new(path);
+
+        let instance1 = NamedActorInstance::new(node1, actor_id1);
+        info.add_full_instance(instance1);
+        assert_eq!(info.instance_count(), 1);
+
+        let instance2 = NamedActorInstance::new(node2, actor_id2);
+        info.add_full_instance(instance2);
+        assert_eq!(info.instance_count(), 2);
+
+        assert!(info.get_instance(&node1).is_some());
+        assert!(info.get_instance(&node2).is_some());
+        assert_eq!(info.get_instance(&node1).unwrap().actor_id, actor_id1);
+        assert_eq!(info.get_instance(&node2).unwrap().actor_id, actor_id2);
+    }
+
+    #[test]
+    fn test_named_actor_info_get_instance_not_found() {
+        let path = ActorPath::new("actors/counter").unwrap();
+        let node_id = NodeId::generate();
+
+        let info = NamedActorInfo::new(path);
+
+        assert!(info.get_instance(&node_id).is_none());
+    }
+
+    #[test]
+    fn test_named_actor_info_merge_with_full_instances() {
+        let path = ActorPath::new("actors/counter").unwrap();
+        let node1 = NodeId::generate();
+        let node2 = NodeId::generate();
+        let actor_id1 = ActorId::local(1);
+        let actor_id2 = ActorId::local(2);
+
+        let mut metadata1 = HashMap::new();
+        metadata1.insert("class".to_string(), "Counter".to_string());
+        let instance1 = NamedActorInstance::with_metadata(node1, actor_id1, metadata1);
+        let mut info1 = NamedActorInfo::with_full_instance(path.clone(), instance1);
+
+        let mut metadata2 = HashMap::new();
+        metadata2.insert("class".to_string(), "Counter".to_string());
+        let instance2 = NamedActorInstance::with_metadata(node2, actor_id2, metadata2);
+        let info2 = NamedActorInfo::with_full_instance(path.clone(), instance2);
+
+        info1.merge(&info2);
+
+        assert_eq!(info1.instance_count(), 2);
+        assert!(info1.get_instance(&node1).is_some());
+        assert!(info1.get_instance(&node2).is_some());
+    }
+
+    #[test]
+    fn test_named_actor_info_node_ids_iterator() {
+        let path = ActorPath::new("actors/counter").unwrap();
+        let node1 = NodeId::generate();
+        let node2 = NodeId::generate();
+
+        let mut info = NamedActorInfo::new(path);
+        info.add_instance(node1);
+        info.add_instance(node2);
+
+        let node_ids: Vec<_> = info.node_ids().collect();
+        assert_eq!(node_ids.len(), 2);
+        assert!(node_ids.contains(&&node1));
+        assert!(node_ids.contains(&&node2));
+    }
 }

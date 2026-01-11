@@ -56,7 +56,7 @@ from pulsing.actor import init, remote, get_system
 class Counter:
     def __init__(self):
         self.count = 0
-    
+
     def increment(self):
         self.count += 1
         return self.count
@@ -71,14 +71,14 @@ class Calculator:
 async def main():
     await init(addr="127.0.0.1:${PORT}")
     system = get_system()
-    
+
     await Counter.remote(system, name="counter-1")
     await Counter.remote(system, name="counter-2")
     await Calculator.remote(system, name="calculator")
-    
+
     # Signal ready
     print("READY", flush=True)
-    
+
     await asyncio.Event().wait()
 
 
