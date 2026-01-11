@@ -22,8 +22,9 @@ def actor(
     mlx_device: str | None = None,  # 'gpu' 或 'cpu'，默认 'gpu'
     metal_memory_fraction: float | None = None,  # 0.0-1.0，默认 0.8
     # Actor list parameters
-    all_actors: bool = False,  # Show all actors including internal ones
-    json: bool = False,  # Output as JSON
+    endpoint: str | None = None,  # Single actor system endpoint (list only)
+    all_actors: bool = False,  # Show all actors including internal ones (list only)
+    json: bool = False,  # Output as JSON (list only)
 ):
     r"""
     Start an Actor-based service or list actors.
@@ -51,6 +52,7 @@ def actor(
         http_port: HTTP server port (for router). Default: 8080
         mlx_device: MLX device type for macOS ('gpu' or 'cpu'). Default: 'gpu'
         metal_memory_fraction: Metal memory fraction for macOS (0.0-1.0). Default: 0.8
+        endpoint: (list only) Single actor system endpoint (e.g., '127.0.0.1:8000')
         all_actors: (list only) Show all actors including internal system actors
         json: (list only) Output in JSON format
 
@@ -67,21 +69,29 @@ def actor(
         # Start worker on CPU
         pulsing actor transformers --model gpt2 --device cpu
 
-        # List user actors
-        pulsing actor list
+        # List actors from single endpoint
+        pulsing actor list --endpoint 127.0.0.1:8000
+
+        # List actors from cluster
+        pulsing actor list --seeds 127.0.0.1:8000,127.0.0.1:8001
 
         # List all actors including internal ones
-        pulsing actor list --all_actors
+        pulsing actor list --endpoint 127.0.0.1:8000 --all_actors True
 
         # Output as JSON
-        pulsing actor list --json
+        pulsing actor list --endpoint 127.0.0.1:8000 --json True
     """
     from .actors import start_router, start_transformers, start_vllm
 
     # Handle 'list' subcommand
     if actor_type == "list":
         from .actor_list import list_actors_command
-        list_actors_command(all_actors=all_actors, json_output=json)
+        list_actors_command(
+            endpoint=endpoint,
+            seeds=seeds,
+            all_actors=all_actors,
+            json_output=json,
+        )
         return
 
     # Parse seeds

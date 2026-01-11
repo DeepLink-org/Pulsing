@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Pulsing Actor List 命令演示
-# 演示在实际应用场景中如何使用 actor list 功能
+# 演示 pulsing actor list 命令
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 export PYTHONPATH="$PROJECT_ROOT/python:$PYTHONPATH"
+
+# 设置日志级别为 ERROR，减少刷屏
+export RUST_LOG=error
 
 # 颜色
 GREEN='\033[0;32m'
@@ -15,7 +17,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo "======================================================================"
-echo "  Pulsing Actor List 演示"
+echo "  Pulsing Actor List - 演示"
 echo "======================================================================"
 echo ""
 
@@ -26,114 +28,151 @@ if ! command -v pyenv &> /dev/null; then
 fi
 
 PYTHON="pyenv exec python"
-echo -e "${BLUE}Python:${NC} $($PYTHON --version)"
-echo ""
 
-# 创建演示应用
-DEMO_APP=$(mktemp /tmp/pulsing_demo.XXXXXX.py)
+# 清理可能残留的进程
+echo -e "${YELLOW}清理残留进程...${NC}"
+pkill -f "pulsing_server" 2>/dev/null || true
+pkill -f "127.0.0.1:19001" 2>/dev/null || true
+sleep 1
 
-cat > "$DEMO_APP" << 'EOF'
+# 使用随机端口避免冲突
+PORT=$((19000 + RANDOM % 1000))
+
+# 创建一个临时服务端脚本
+SERVER_SCRIPT=$(mktemp /tmp/pulsing_server_XXXXXX.py)
+
+cat > "$SERVER_SCRIPT" << EOF
 import asyncio
+import os
+os.environ["RUST_LOG"] = "error"
+
 from pulsing.actor import init, remote, get_system
-from pulsing.cli.actor_list import list_actors_impl
 
 
 @remote
 class Counter:
+    """A simple counter actor"""
     def __init__(self):
         self.count = 0
+    
     def increment(self):
         self.count += 1
+        return self.count
+    
+    def get(self):
         return self.count
 
 
 @remote
 class Calculator:
+    """A calculator actor"""
     def add(self, a, b):
         return a + b
+    
+    def multiply(self, a, b):
+        return a * b
 
 
 async def main():
-    print("=" * 80)
-    print("演示：在应用中使用 pulsing actor list")
-    print("=" * 80)
-    print()
-    
-    # 初始化
-    print("1. 初始化 actor system...")
-    await init()
+    # Start actor system
+    await init(addr="127.0.0.1:${PORT}")
     system = get_system()
-    print(f"   ✓ 系统启动: {system.addr}\n")
+    print(f"Actor system started: {system.addr}", flush=True)
     
-    # 创建 actors
-    print("2. 创建业务 actors...")
-    await Counter.remote(system, name="counter-1")
-    await Counter.remote(system, name="counter-2")
-    await Calculator.remote(system, name="calculator")
-    print("   ✓ 创建了 3 个 actors\n")
+    # Create some actors
+    counter1 = await Counter.remote(system, name="counter-1")
+    counter2 = await Counter.remote(system, name="counter-2")
+    calc = await Calculator.remote(system, name="calculator")
     
-    # 使用 Python API 列出 actors
-    print("3. 使用 Python API 查看 actors:")
-    print("   " + "-" * 76)
-    names = system.local_actor_names()
-    user_actors = [n for n in names if not n.startswith("_")]
-    print(f"   本地 actors: {', '.join(sorted(user_actors))}\n")
+    print("Created actors: counter-1, counter-2, calculator", flush=True)
+    print("READY", flush=True)
     
-    # 使用 CLI 功能（表格格式）
-    print("4. 使用 CLI 格式化输出（只显示用户 actors）:")
-    print("   " + "-" * 76)
-    await list_actors_impl(all_actors=False, output_format="table")
-    print()
-    
-    # 显示所有 actors
-    print("5. 显示所有 actors（包括系统 actors）:")
-    print("   " + "-" * 76)
-    await list_actors_impl(all_actors=True, output_format="table")
-    print()
-    
-    # JSON 格式
-    print("6. JSON 格式输出:")
-    print("   " + "-" * 76)
-    await list_actors_impl(all_actors=False, output_format="json")
-    print()
-    
-    print("=" * 80)
-    print("✓ 演示完成")
-    print("=" * 80)
+    # Keep running
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
 EOF
 
-echo -e "${GREEN}运行演示...${NC}"
+echo -e "${GREEN}1. 启动 Actor System (127.0.0.1:${PORT})${NC}"
 echo ""
 
-# 运行演示（过滤日志）
-$PYTHON "$DEMO_APP" 2>&1 | grep -v "INFO"
+# 启动服务端（后台运行）
+$PYTHON "$SERVER_SCRIPT" &
+SERVER_PID=$!
+
+# 等待服务就绪
+echo "   等待服务启动..."
+for i in {1..10}; do
+    if $PYTHON -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    s.connect(('127.0.0.1', ${PORT}))
+    s.close()
+    exit(0)
+except:
+    exit(1)
+" 2>/dev/null; then
+        echo "   服务已就绪"
+        break
+    fi
+    sleep 0.5
+done
+sleep 1
+
+echo ""
+echo -e "${GREEN}2. 测试连接单个 endpoint${NC}"
+echo "   命令: pulsing actor list --endpoint 127.0.0.1:${PORT}"
+echo ""
+
+$PYTHON -m pulsing.cli actor list --endpoint 127.0.0.1:${PORT} 2>/dev/null
+
+echo ""
+echo -e "${GREEN}3. 显示所有 actors (包括内部)${NC}"
+echo "   命令: pulsing actor list --endpoint 127.0.0.1:${PORT} --all_actors True"
+echo ""
+
+$PYTHON -m pulsing.cli actor list --endpoint 127.0.0.1:${PORT} --all_actors True 2>/dev/null
+
+echo ""
+echo -e "${GREEN}4. JSON 格式输出${NC}"
+echo "   命令: pulsing actor list --endpoint 127.0.0.1:${PORT} --json True"
+echo ""
+
+$PYTHON -m pulsing.cli actor list --endpoint 127.0.0.1:${PORT} --json True 2>/dev/null
+
+echo ""
+echo -e "${GREEN}5. 使用 --seeds 查询集群${NC}"
+echo "   命令: pulsing actor list --seeds 127.0.0.1:${PORT}"
+echo ""
+
+$PYTHON -m pulsing.cli actor list --seeds 127.0.0.1:${PORT} 2>/dev/null
 
 # 清理
-rm -f "$DEMO_APP"
+echo ""
+echo -e "${GREEN}清理...${NC}"
+kill $SERVER_PID 2>/dev/null || true
+wait $SERVER_PID 2>/dev/null || true
+rm -f "$SERVER_SCRIPT"
 
 echo ""
 echo "======================================================================"
-echo "  使用说明"
+echo "  演示完成"
 echo "======================================================================"
 echo ""
-echo "在你的应用中集成 actor list:"
+echo "用法总结:"
 echo ""
-echo -e "${BLUE}  from pulsing.actor import init, get_system${NC}"
-echo -e "${BLUE}  from pulsing.cli.actor_list import list_actors_impl${NC}"
+echo -e "  ${BLUE}# 查询单个 actor system${NC}"
+echo "  pulsing actor list --endpoint 127.0.0.1:8000"
 echo ""
-echo -e "${BLUE}  await init()${NC}"
-echo -e "${BLUE}  # ... 创建 actors ...${NC}"
+echo -e "  ${BLUE}# 查询整个集群${NC}"
+echo "  pulsing actor list --seeds 127.0.0.1:8000,127.0.0.1:8001"
 echo ""
-echo -e "${BLUE}  # 表格格式${NC}"
-echo -e "${BLUE}  await list_actors_impl(all_actors=False, output_format='table')${NC}"
+echo -e "  ${BLUE}# 显示所有 actors (包括内部)${NC}"
+echo "  pulsing actor list --endpoint 127.0.0.1:8000 --all_actors True"
 echo ""
-echo -e "${BLUE}  # JSON 格式${NC}"
-echo -e "${BLUE}  await list_actors_impl(all_actors=False, output_format='json')${NC}"
-echo ""
-echo -e "${BLUE}  # 或使用底层 API${NC}"
-echo -e "${BLUE}  names = get_system().local_actor_names()${NC}"
+echo -e "  ${BLUE}# JSON 格式输出${NC}"
+echo "  pulsing actor list --endpoint 127.0.0.1:8000 --json True"
 echo ""

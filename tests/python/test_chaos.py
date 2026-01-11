@@ -88,24 +88,22 @@ async def test_actor_death_recovery(actor_system):
 
 
 @pytest.mark.asyncio
-async def test_cluster_node_failure_detection(actor_system):
+async def test_cluster_node_failure_detection():
     """
     Chaos Test: Simulate a 3-node cluster and kill one node.
     Verify that other nodes eventually detect the failure (via gossip).
     """
-    # Setup 3 nodes
-    port_base = 19000
+    # Setup 3 nodes (use port 0 for automatic port assignment to avoid conflicts)
     systems = []
 
-    # Seed node
-    seed_addr = f"127.0.0.1:{port_base}"
-    sys1 = await create_actor_system(SystemConfig.with_addr(seed_addr))
+    # Seed node (let OS assign port)
+    sys1 = await create_actor_system(SystemConfig.with_addr("127.0.0.1:0"))
     systems.append(sys1)
+    seed_addr = sys1.addr  # Get the actual assigned address
 
     # Other nodes
-    for i in range(1, 3):
-        addr = f"127.0.0.1:{port_base + i}"
-        cfg = SystemConfig.with_addr(addr).with_seeds([seed_addr])
+    for i in range(2):
+        cfg = SystemConfig.with_addr("127.0.0.1:0").with_seeds([seed_addr])
         sys = await create_actor_system(cfg)
         systems.append(sys)
 

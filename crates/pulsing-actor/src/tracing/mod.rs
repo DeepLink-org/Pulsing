@@ -65,9 +65,9 @@ impl Default for TracingConfig {
             otlp_endpoint: None,
             sampling_ratio: 1.0,
             console_output: true,
-            // Filter out HTTP request/client logs by default to avoid span ID spam
-            // Users can enable with RUST_LOG=pulsing_actor::transport=debug
-            log_filter: "info,pulsing_actor::transport::http2=warn".to_string(),
+            // Filter out HTTP request/client logs and gossip logs by default to avoid span ID spam
+            // Users can enable with RUST_LOG=pulsing_actor::transport=debug,pulsing_actor::cluster=debug
+            log_filter: "info,pulsing_actor::transport::http2=warn,pulsing_actor::cluster::gossip=warn".to_string(),
         }
     }
 }
@@ -110,11 +110,13 @@ pub fn init_tracing(config: TracingConfig) -> anyhow::Result<()> {
     let tracer = provider.tracer("pulsing");
 
     if config.console_output {
+        // Use compact format to avoid printing nested span contexts
         let fmt_layer = tracing_subscriber::fmt::layer()
             .with_target(true)
             .with_thread_ids(false)
             .with_file(false)
-            .with_line_number(false);
+            .with_line_number(false)
+            .compact(); // Compact format reduces span field verbosity
 
         let subscriber = tracing_subscriber::registry()
             .with(env_filter)

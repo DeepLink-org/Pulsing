@@ -13,3 +13,17 @@ import pytest
 def nats_and_etcd():
     """Override parent fixture - actor system tests don't need NATS/ETCD."""
     yield None
+
+
+@pytest.fixture(scope="function", autouse=True)
+async def cleanup_global_system():
+    """Ensure global actor system is cleaned up between tests."""
+    yield
+    
+    # Clean up after test
+    try:
+        from pulsing.actor import _global_system, shutdown
+        if _global_system is not None:
+            await shutdown()
+    except Exception:
+        pass
