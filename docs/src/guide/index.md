@@ -36,4 +36,6 @@ Welcome to the Pulsing User Guide. This guide covers the core concepts and usage
 
 - **New to Pulsing?** Start with the [Quick Start Guide](../quickstart/index.md)
 - **Want to understand the design?** Check out the [Design Documents](../design/actor-system.md)
+- **Reliability rules**: see [Reliability](reliability.md)
+- **Operating a cluster?** See [Operations (CLI)](operations.md)
 - **Need API details?** See the [API Reference](../api_reference.md)

@@ -10,7 +10,13 @@ Get up and running with Pulsing quickly.
 - **Rust toolchain** (for building native extensions)
 - **Linux/macOS**
 
-### From Source
+### From PyPI (recommended)
+
+```bash
+pip install pulsing
+```
+
+### From Source (development)
 
 ```bash
 git clone https://github.com/reiase/pulsing.git
@@ -22,12 +28,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # Build and install
 pip install maturin
 maturin develop
-```
-
-### From PyPI
-
-```bash
-pip install pulsing
 ```
 
 ---
@@ -188,4 +188,6 @@ result = await worker.ask("do_work")  # Same API!
 
 - [Actor Guide](../guide/actors.md) - Advanced patterns
 - [Agent Frameworks](../agent/index.md) - AutoGen and LangGraph integration
+- [Operations (CLI)](../guide/operations.md) - Inspect/list/benchmark
+- [LLM Inference](../examples/llm_inference.md) - Router + worker architecture
 - [Examples](../examples/index.md) - Real-world use cases

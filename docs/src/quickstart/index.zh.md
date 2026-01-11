@@ -10,7 +10,13 @@
 - **Rust 工具链** (用于构建原生扩展)
 - **Linux/macOS**
 
-### 从源码安装
+### 从 PyPI 安装（推荐）
+
+```bash
+pip install pulsing
+```
+
+### 从源码安装（开发用）
 
 ```bash
 git clone https://github.com/reiase/pulsing.git
@@ -22,12 +28,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # 构建和安装
 pip install maturin
 maturin develop
-```
-
-### 从 PyPI 安装
-
-```bash
-pip install pulsing
 ```
 
 ---
@@ -188,4 +188,6 @@ result = await worker.ask("do_work")  # API 完全相同！
 
 - [Actor 指南](../guide/actors.zh.md) - 高级模式
 - [Agent 框架](../agent/index.zh.md) - AutoGen 和 LangGraph 集成
+- [运维（CLI）](../guide/operations.zh.md) - 巡检/列表/压测
+- [LLM 推理](../examples/llm_inference.zh.md) - Router + Worker 架构
 - [示例](../examples/index.zh.md) - 真实用例

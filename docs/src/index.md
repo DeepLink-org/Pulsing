@@ -24,10 +24,11 @@ hide: toc
 ## Quick Start
 
 ```bash
-# Install
-pip install maturin
-maturin develop
+# Install (recommended)
+pip install pulsing
 ```
+
+For development builds from source, see [Getting Started](quickstart/index.md#installation).
 
 ```python
 from pulsing.actor import init, shutdown, remote
@@ -53,6 +54,11 @@ async def main():
 - **LLM Inference Services** - Build scalable LLM inference backends with streaming token generation.
 - **Distributed Computing** - Replace Ray for lightweight distributed workloads.
 - **Kubernetes Native** - Service discovery works seamlessly with K8s Service IPs.
+
+## Next
+
+- **Run an LLM service**: see [LLM Inference](examples/llm_inference.md)
+- **Operate/inspect a cluster**: see [Operations (CLI)](guide/operations.md)
 
 ## Community
 

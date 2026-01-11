@@ -2,8 +2,11 @@
 //!
 //! Tests for the built-in SystemActor functionality
 
+use pulsing_actor::actor::ActorId;
 use pulsing_actor::prelude::*;
-use pulsing_actor::system_actor::{ActorInfo, SystemMessage, SystemResponse, SYSTEM_ACTOR_PATH};
+use pulsing_actor::system_actor::{
+    ActorInfo, ActorRegistry, SystemMessage, SystemMetrics, SystemResponse, SYSTEM_ACTOR_PATH,
+};
 use std::time::Duration;
 
 // ============================================================================
@@ -416,4 +419,86 @@ async fn test_system_actor_uptime_increases() {
     assert!(later_uptime >= initial_uptime);
 
     system.shutdown().await.unwrap();
+}
+
+// ============================================================================
+// ActorRegistry Tests (moved from src/system_actor/mod.rs)
+// ============================================================================
+
+#[test]
+fn test_actor_registry() {
+    let registry = ActorRegistry::new();
+    let actor_id = ActorId::local(1);
+
+    registry.register("test", actor_id, "TestActor", true);
+    assert!(registry.contains("test"));
+    assert_eq!(registry.count(), 1);
+
+    let info = registry.get_info("test").unwrap();
+    assert_eq!(info.name, "test");
+    assert_eq!(info.actor_type, "TestActor");
+
+    registry.unregister("test");
+    assert!(!registry.contains("test"));
+}
+
+#[test]
+fn test_actor_registry_list_all() {
+    let registry = ActorRegistry::new();
+
+    registry.register("actor1", ActorId::local(1), "TypeA", true);
+    registry.register("actor2", ActorId::local(2), "TypeB", false);
+
+    let actors = registry.list_all();
+    assert_eq!(actors.len(), 2);
+}
+
+#[test]
+fn test_actor_registry_get_not_found() {
+    let registry = ActorRegistry::new();
+    assert!(registry.get("nonexistent").is_none());
+    assert!(registry.get_info("nonexistent").is_none());
+}
+
+// ============================================================================
+// SystemMetrics Tests (moved from src/system_actor/mod.rs)
+// ============================================================================
+
+#[test]
+fn test_system_metrics() {
+    let metrics = SystemMetrics::new();
+
+    metrics.inc_message();
+    metrics.inc_message();
+    assert_eq!(metrics.messages_total(), 2);
+
+    metrics.inc_actor_created();
+    assert_eq!(metrics.actors_created(), 1);
+
+    metrics.inc_actor_stopped();
+    assert_eq!(metrics.actors_stopped(), 1);
+}
+
+#[test]
+fn test_system_metrics_concurrent() {
+    use std::sync::Arc;
+    use std::thread;
+
+    let metrics = Arc::new(SystemMetrics::new());
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let m = metrics.clone();
+        handles.push(thread::spawn(move || {
+            for _ in 0..100 {
+                m.inc_message();
+            }
+        }));
+    }
+
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    assert_eq!(metrics.messages_total(), 1000);
 }

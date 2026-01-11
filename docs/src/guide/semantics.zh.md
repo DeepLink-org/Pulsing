@@ -36,7 +36,8 @@
 ### 异常与失败
 
 - `receive` 内抛异常或返回错误（如 `"Error"`）时，调用方会观察到失败（通常表现为异常或错误消息）。
-- Pulsing **不保证**自动重启/监督（supervision tree）；需要应用层自行实现。
+- Pulsing 支持 **actor 级别重启**（可配置重启策略 + 退避），但 **不会引入 supervision tree**。
+  - 参见：[可靠性实践](reliability.zh.md)
 
 ## 远程消息语义（`ask` / `tell`）
 

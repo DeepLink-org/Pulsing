@@ -38,7 +38,8 @@ Practical implication:
 ### Failure & exceptions
 
 - If `receive` raises an exception (or returns an error message), the caller will observe a failure (typically surfaced as an exception in the client wrapper).
-- Pulsing does **not** automatically restart an actor (no supervision tree guarantees unless you implement one at the application layer).
+- Pulsing supports **actor-level restarts** (configurable restart policy + backoff) but does **not** provide a supervision tree.
+  - See: [Reliability](reliability.md)
 
 ## Remote messaging semantics (`ask` / `tell`)
 

@@ -457,7 +457,7 @@ match actor_ref.ask::<Ping, Pong>(msg).await {
 
 ## 未来规划
 
-- [ ] Actor 监督树 (Supervision)
+- [ ] Actor 监督树 (Supervision)（不计划引入）
 - [ ] 持久化支持
 - [ ] 更完善的 Leader Election
 - [ ] Metrics 和 Tracing 集成

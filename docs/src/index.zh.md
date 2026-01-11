@@ -24,10 +24,11 @@ hide: toc
 ## 快速开始
 
 ```bash
-# 安装
-pip install maturin
-maturin develop
+# 安装（推荐）
+pip install pulsing
 ```
+
+如需从源码构建（开发用），请参考[快速开始](quickstart/index.zh.md#安装)。
 
 ```python
 from pulsing.actor import init, shutdown, remote
@@ -53,6 +54,11 @@ async def main():
 - **LLM 推理服务** - 构建可扩展的 LLM 推理后端，支持流式 Token 生成。
 - **分布式计算** - 替代 Ray 用于轻量级分布式工作负载。
 - **Kubernetes 原生** - 服务发现与 K8s Service IP 无缝配合。
+
+## 下一步
+
+- **跑一个 LLM 服务**：[LLM 推理](examples/llm_inference.zh.md)
+- **运维/巡检集群**：[运维（CLI）](guide/operations.zh.md)
 
 ## 社区
 

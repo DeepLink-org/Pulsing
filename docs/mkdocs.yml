@@ -1,10 +1,11 @@
 site_name: Pulsing
 site_description: A lightweight distributed Actor framework for building scalable systems
-site_url: https://github.com/DeepLink-org/Pulsing
+# Docs may be hosted elsewhere, but repo is the canonical entry point.
+site_url: https://github.com/reiase/pulsing
 docs_dir: src
 
-repo_name: DeepLink-org/Pulsing
-repo_url: https://github.com/DeepLink-org/Pulsing
+repo_name: reiase/pulsing
+repo_url: https://github.com/reiase/pulsing
 
 theme:
   name: material
@@ -90,6 +91,8 @@ plugins:
             Actor System: Actor 系统
             Remote Actors: 远程 Actor
             Security: 安全
+            Reliability: 可靠性
+            Operations: 运维（CLI）
             Agent: Agent 框架
             Overview: 概述
             AutoGen: AutoGen
@@ -125,6 +128,8 @@ nav:
     - Actor System: guide/actor_system.md
     - Remote Actors: guide/remote_actors.md
     - Security: guide/security.md
+    - Reliability: guide/reliability.md
+    - Operations: guide/operations.md
     - Distributed Queue: guide/queue.md
     - Semantics: guide/semantics.md
   - Agent:
@@ -154,4 +159,4 @@ extra:
 extra_css:
   - assets/stylesheets/home.css
 
-copyright: © 2025 Pulsing. All rights reserved.
+copyright: © 2026 Pulsing. All rights reserved.
