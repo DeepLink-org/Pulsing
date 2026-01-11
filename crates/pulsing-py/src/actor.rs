@@ -707,7 +707,7 @@ impl Actor for PythonActorWrapper {
     fn metadata(&self) -> std::collections::HashMap<String, String> {
         Python::with_gil(|py| {
             let mut result = std::collections::HashMap::new();
-            
+
             // First, try to extract built-in Python class information
             if let Ok(class) = self.handler.getattr(py, "__class__") {
                 // Get class name
@@ -716,14 +716,14 @@ impl Actor for PythonActorWrapper {
                         result.insert("python_class".to_string(), name_str);
                     }
                 }
-                
+
                 // Get module name
                 if let Ok(module) = class.getattr(py, "__module__") {
                     if let Ok(module_str) = module.extract::<String>(py) {
                         result.insert("python_module".to_string(), module_str);
                     }
                 }
-                
+
                 // Get source file path
                 if let Ok(module_name) = class.getattr(py, "__module__") {
                     if let Ok(module_str) = module_name.extract::<String>(py) {
@@ -742,7 +742,7 @@ impl Actor for PythonActorWrapper {
                     }
                 }
             }
-            
+
             // Then, check if the actor has custom metadata attribute
             if let Ok(metadata_attr) = self.handler.getattr(py, "metadata") {
                 let bound = metadata_attr.bind(py);
@@ -761,7 +761,7 @@ impl Actor for PythonActorWrapper {
                     }
                 }
             }
-            
+
             result
         })
     }

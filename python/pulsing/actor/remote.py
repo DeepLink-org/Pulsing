@@ -68,19 +68,19 @@ _actor_metadata_registry: dict[str, dict[str, str]] = {}
 def _register_actor_metadata(name: str, cls: type):
     """Register actor metadata for later retrieval"""
     import inspect
-    
+
     metadata = {
         "python_class": f"{cls.__module__}.{cls.__name__}",
         "python_module": cls.__module__,
     }
-    
+
     # Try to get source file
     try:
         source_file = inspect.getfile(cls)
         metadata["python_file"] = source_file
     except (TypeError, OSError):
         pass
-    
+
     _actor_metadata_registry[name] = metadata
 
 

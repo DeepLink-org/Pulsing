@@ -67,7 +67,9 @@ impl Default for TracingConfig {
             console_output: true,
             // Filter out HTTP request/client logs and gossip logs by default to avoid span ID spam
             // Users can enable with RUST_LOG=pulsing_actor::transport=debug,pulsing_actor::cluster=debug
-            log_filter: "info,pulsing_actor::transport::http2=warn,pulsing_actor::cluster::gossip=warn".to_string(),
+            log_filter:
+                "info,pulsing_actor::transport::http2=warn,pulsing_actor::cluster::gossip=warn"
+                    .to_string(),
         }
     }
 }

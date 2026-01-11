@@ -99,7 +99,7 @@ pulsing actor list --list_seeds "127.0.0.1:8000" --json True
    ```python
    def _register_actor_metadata(name: str, cls: type):
        """在创建 actor 时注册类型信息"""
-   
+
    def get_actor_metadata(name: str) -> dict[str, str] | None:
        """查询 actor 的元信息"""
    ```
@@ -113,11 +113,11 @@ pulsing actor list --list_seeds "127.0.0.1:8000" --json True
 
 ### 本地查询（表格格式）
 ```
-Name                           Type            Class                               Code Path                                         
+Name                           Type            Class                               Code Path
 ----------------------------------------------------------------------------------------------------------------------------------
-counter-1                      user            __main__.Counter                    /tmp/demo.py                       
-counter-2                      user            __main__.Counter                    /tmp/demo.py                       
-calculator                     user            __main__.Calculator                 /tmp/demo.py                       
+counter-1                      user            __main__.Counter                    /tmp/demo.py
+counter-2                      user            __main__.Counter                    /tmp/demo.py
+calculator                     user            __main__.Calculator                 /tmp/demo.py
 
 Total: 3 actor(s)
 ```
@@ -131,23 +131,23 @@ Found 2 nodes in cluster
 Node 12345 (127.0.0.1:9001) - Status: Alive
 ================================================================================
   Node is responsive (ping: 1234567890)
-  Name                           Type            Class                               Code Path                                         
+  Name                           Type            Class                               Code Path
   ----------------------------------------------------------------------------------------------------------------------------------
-  service-a-1                    user            -                                   -                                                 
-  service-a-2                    user            -                                   -                                                 
-  
+  service-a-1                    user            -                                   -
+  service-a-2                    user            -                                   -
+
   Total: 2 actor(s)
 
 ================================================================================
 Node 67890 (127.0.0.1:9002) - Status: Alive
 ================================================================================
   Node is responsive (ping: 1234567891)
-  Name                           Type            Class                               Code Path                                         
+  Name                           Type            Class                               Code Path
   ----------------------------------------------------------------------------------------------------------------------------------
-  service-b-1                    user            -                                   -                                                 
-  service-b-2                    user            -                                   -                                                 
-  service-b-3                    user            -                                   -                                                 
-  
+  service-b-1                    user            -                                   -
+  service-b-2                    user            -                                   -
+  service-b-3                    user            -                                   -
+
   Total: 3 actor(s)
 ```
 
@@ -210,7 +210,7 @@ pulsing actor list --list_seeds "127.0.0.1:8000" --all_actors True
 
 - [ ] **P1**: 在 Rust 的 ActorRegistry 中存储并返回 metadata
   - 让远程查询也能看到类型信息
-  
+
 - [ ] **P2**: 添加每个 actor 的精确 uptime
   - 修改 `local_actor_names()` 返回更详细信息
 

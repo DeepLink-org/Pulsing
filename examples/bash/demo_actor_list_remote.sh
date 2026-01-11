@@ -45,12 +45,12 @@ async def main():
     await init(addr="127.0.0.1:9001")
     system = get_system()
     print(f"Node 1 started: {system.addr}")
-    
+
     # Create actors
     await ServiceA.remote(system, name="service-a-1")
     await ServiceA.remote(system, name="service-a-2")
     print("Created 2 actors on Node 1")
-    
+
     # Keep running
     await asyncio.Event().wait()
 
@@ -74,15 +74,15 @@ async def main():
     config = SystemConfig.with_addr("127.0.0.1:9002").with_seeds(["127.0.0.1:9001"])
     system = await create_actor_system(config)
     print(f"Node 2 started: {system.addr}, joining cluster...")
-    
+
     await asyncio.sleep(1)
-    
+
     # Create actors
     await ServiceB.remote(system, name="service-b-1")
     await ServiceB.remote(system, name="service-b-2")
     await ServiceB.remote(system, name="service-b-3")
     print("Created 3 actors on Node 2")
-    
+
     # Keep running
     await asyncio.Event().wait()
 

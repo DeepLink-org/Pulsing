@@ -9,7 +9,7 @@ from pulsing.actor import init, remote
 class Counter:
     def __init__(self):
         self.count = 0
-    
+
     def increment(self):
         self.count += 1
         return self.count
@@ -24,15 +24,15 @@ class Calculator:
 async def main():
     await init(addr="0.0.0.0:8888")
     print("Actor system started on 0.0.0.0:8888")
-    
+
     # Create some named actors
     counter1 = await Counter.remote(name="counter-1")
     counter2 = await Counter.remote(name="counter-2")
     calc = await Calculator.remote(name="calculator")
-    
+
     print("Created actors: counter-1, counter-2, calculator")
     print("Actor system is running. Press Ctrl+C to stop.")
-    
+
     # Keep running
     try:
         while True:

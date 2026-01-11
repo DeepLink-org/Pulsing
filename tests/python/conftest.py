@@ -19,10 +19,11 @@ def nats_and_etcd():
 async def cleanup_global_system():
     """Ensure global actor system is cleaned up between tests."""
     yield
-    
+
     # Clean up after test
     try:
         from pulsing.actor import _global_system, shutdown
+
         if _global_system is not None:
             await shutdown()
     except Exception:

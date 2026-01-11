@@ -86,6 +86,7 @@ def actor(
     # Handle 'list' subcommand
     if actor_type == "list":
         from .actor_list import list_actors_command
+
         list_actors_command(
             endpoint=endpoint,
             seeds=seeds,

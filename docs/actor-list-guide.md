@@ -87,14 +87,14 @@ async def main():
     # 初始化系统
     await init()
     system = get_system()
-    
+
     # 创建一些 actors
     await Counter.remote(system, name="counter-1")
     await Counter.remote(system, name="counter-2")
-    
+
     # 列出 actors
     await list_actors_impl(all_actors=False, output_format="table")
-    
+
     # 或者直接使用底层 API
     actor_names = system.local_actor_names()
     user_actors = [n for n in actor_names if not n.startswith("_")]
