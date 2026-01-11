@@ -21,8 +21,18 @@ class TestRestApiHelpers:
     def test_print_actors_table_user_only(self, capsys):
         """Test printing user actors table"""
         actors = [
-            {"name": "counter-1", "type": "user", "class": "Counter", "module": "__main__"},
-            {"name": "calculator", "type": "user", "class": "Calculator", "module": "app"},
+            {
+                "name": "counter-1",
+                "type": "user",
+                "class": "Counter",
+                "module": "__main__",
+            },
+            {
+                "name": "calculator",
+                "type": "user",
+                "class": "Calculator",
+                "module": "app",
+            },
         ]
         _print_actors_table(actors)
         captured = capsys.readouterr()
@@ -102,16 +112,14 @@ class TestQuerySingleEndpoint:
                 "actor_id": "123:1",
                 "class": "Counter",
                 "module": "__main__",
-                "file": "/app/main.py"
+                "file": "/app/main.py",
             }
         ]
 
         with patch("pulsing.cli.actor_list.http_get_sync") as mock_http:
             mock_http.return_value = mock_actors_response
             result = await query_single_endpoint(
-                "127.0.0.1:8000",
-                all_actors=False,
-                output_format="table"
+                "127.0.0.1:8000", all_actors=False, output_format="table"
             )
             assert result is True
 
@@ -121,9 +129,7 @@ class TestQuerySingleEndpoint:
         with patch("pulsing.cli.actor_list.http_get_sync") as mock_http:
             mock_http.return_value = None
             result = await query_single_endpoint(
-                "127.0.0.1:8000",
-                all_actors=False,
-                output_format="table"
+                "127.0.0.1:8000", all_actors=False, output_format="table"
             )
             assert result is False
 
@@ -137,22 +143,22 @@ class TestQuerySingleEndpoint:
                 "type": "user",
                 "actor_id": "123:1",
                 "class": "Test",
-                "module": "app"
+                "module": "app",
             }
         ]
 
         with patch("pulsing.cli.actor_list.http_get_sync") as mock_http:
             mock_http.return_value = mock_response
             result = await query_single_endpoint(
-                "127.0.0.1:8000",
-                all_actors=False,
-                output_format="json"
+                "127.0.0.1:8000", all_actors=False, output_format="json"
             )
             assert result is True
             captured = capsys.readouterr()
             # Extract JSON from output (skip connection info lines)
             lines = captured.out.strip().split("\n")
-            json_start = next(i for i, line in enumerate(lines) if line.strip().startswith("["))
+            json_start = next(
+                i for i, line in enumerate(lines) if line.strip().startswith("[")
+            )
             json_str = "\n".join(lines[json_start:])
             data = json.loads(json_str)
             assert len(data) == 1
@@ -176,7 +182,7 @@ class TestQueryCluster:
                 "type": "user",
                 "actor_id": "123:1",
                 "class": "Counter",
-                "module": "__main__"
+                "module": "__main__",
             }
         ]
 
@@ -189,9 +195,7 @@ class TestQueryCluster:
 
         with patch("pulsing.cli.actor_list.http_get_sync", side_effect=mock_http_get):
             result = await query_cluster(
-                ["127.0.0.1:8000"],
-                all_actors=False,
-                output_format="table"
+                ["127.0.0.1:8000"], all_actors=False, output_format="table"
             )
             assert result is True
 
@@ -201,9 +205,7 @@ class TestQueryCluster:
         with patch("pulsing.cli.actor_list.http_get_sync") as mock_http:
             mock_http.return_value = None
             result = await query_cluster(
-                ["127.0.0.1:8000"],
-                all_actors=False,
-                output_format="table"
+                ["127.0.0.1:8000"], all_actors=False, output_format="table"
             )
             assert result is False
 
@@ -221,9 +223,9 @@ class TestActorMetadataParsing:
                     "actor_id": "12345:42",
                     "class": "MyCounter",
                     "module": "myapp.counters",
-                    "file": "/app/myapp/counters.py"
+                    "file": "/app/myapp/counters.py",
                 }
-            ]
+            ],
         }
 
         path = actor_data.get("path", "")
@@ -243,9 +245,7 @@ class TestActorMetadataParsing:
         """Test parsing actor with minimal metadata"""
         actor_data = {
             "path": "actors/simple",
-            "detailed_instances": [
-                {"node_id": 12345}
-            ]
+            "detailed_instances": [{"node_id": 12345}],
         }
 
         instances = actor_data.get("detailed_instances", [])
@@ -265,9 +265,9 @@ class TestActorMetadataParsing:
                     "node_id": 12345,
                     "actor_id": "12345:0",
                     "class": "PythonActorService",
-                    "module": "pulsing.actor.remote"
+                    "module": "pulsing.actor.remote",
                 }
-            ]
+            ],
         }
 
         path = actor_data.get("path", "")

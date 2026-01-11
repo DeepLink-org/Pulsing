@@ -1482,11 +1482,7 @@ impl Http2ServerHandler for SystemMessageHandler {
                 continue;
             }
 
-            let name = if path_str.starts_with("actors/") {
-                &path_str[7..]
-            } else {
-                &path_str
-            };
+            let name = path_str.strip_prefix("actors/").unwrap_or(&path_str);
 
             // Skip internal actors unless requested
             if !include_internal && name.starts_with('_') {

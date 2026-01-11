@@ -26,9 +26,9 @@ async def main():
     print("Actor system started on 0.0.0.0:8888")
 
     # Create some named actors
-    counter1 = await Counter.remote(name="counter-1")
-    counter2 = await Counter.remote(name="counter-2")
-    calc = await Calculator.remote(name="calculator")
+    _counter1 = await Counter.remote(name="counter-1")
+    _counter2 = await Counter.remote(name="counter-2")
+    _calc = await Calculator.remote(name="calculator")
 
     print("Created actors: counter-1, counter-2, calculator")
     print("Actor system is running. Press Ctrl+C to stop.")
