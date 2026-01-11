@@ -154,6 +154,9 @@ pub struct ActorInfo {
     pub uptime_secs: u64,
     /// Whether public
     pub public: bool,
+    /// Actor metadata (e.g., Python class info)
+    #[serde(default)]
+    pub metadata: std::collections::HashMap<String, String>,
 }
 
 /// Actor status info
@@ -207,6 +210,7 @@ mod tests {
             actor_type: "TestActor".to_string(),
             uptime_secs: 60,
             public: true,
+            metadata: std::collections::HashMap::new(),
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("test"));

@@ -166,6 +166,7 @@ fn test_actor_info_serialization() {
         actor_type: "TestActor".to_string(),
         uptime_secs: 60,
         public: true,
+        metadata: std::collections::HashMap::new(),
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(json.contains("test"));

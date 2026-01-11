@@ -65,7 +65,9 @@ impl Default for TracingConfig {
             otlp_endpoint: None,
             sampling_ratio: 1.0,
             console_output: true,
-            log_filter: "info".to_string(),
+            // Filter out HTTP request/client logs by default to avoid span ID spam
+            // Users can enable with RUST_LOG=pulsing_actor::transport=debug
+            log_filter: "info,pulsing_actor::transport::http2=warn".to_string(),
         }
     }
 }

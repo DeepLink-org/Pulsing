@@ -138,6 +138,7 @@ impl ActorRegistry {
                 actor_type: e.actor_type.clone(),
                 uptime_secs: e.created_at.elapsed().as_secs(),
                 public: e.public,
+                metadata: std::collections::HashMap::new(), // TODO: get from actor
             })
             .collect()
     }
@@ -149,6 +150,7 @@ impl ActorRegistry {
             actor_type: e.actor_type.clone(),
             uptime_secs: e.created_at.elapsed().as_secs(),
             public: e.public,
+            metadata: std::collections::HashMap::new(), // TODO: get from actor
         })
     }
 }

@@ -189,43 +189,24 @@ from .remote import (
     remote,
 )
 
+# NOTE: `__all__` is the *public, stable surface* for `from pulsing.actor import *`.
+# We intentionally keep it minimal. Advanced/diagnostic APIs may still be
+# importable by name, but are not part of the stable top-level contract.
 __all__ = [
-    # Simple API (recommended)
+    # Minimal async API (recommended)
     "init",
     "shutdown",
+    "remote",
     "get_system",
     "is_initialized",
-    "remote",  # @remote decorator (recommended)
-    # Core types (advanced)
-    "ActorSystem",
-    "NodeId",
-    "ActorId",
-    "ActorRef",
-    "SystemConfig",
+    # Minimal core types commonly used in docs/examples
     "Actor",
-    # Message types
     "Message",
     "StreamMessage",
-    "SealedPyMessage",
-    # Streaming types
-    "StreamReader",
-    "StreamWriter",
-    # Helper functions
+    "SystemConfig",
+    "ActorSystem",
+    # Advanced constructor (documented)
     "create_actor_system",
-    "helpers",
-    # Timeout utilities
-    "ask_with_timeout",
-    "tell_with_timeout",
-    "DEFAULT_ASK_TIMEOUT",
-    # Actor decorator internals
-    "ActorClass",
-    "ActorProxy",
-    # System helper functions
-    "list_actors",
-    "get_metrics",
-    "get_node_info",
-    "health_check",
-    "ping",
 ]
 
 

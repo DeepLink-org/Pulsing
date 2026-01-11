@@ -5,7 +5,7 @@ import hyperparameter as hp
 
 @hp.param("actor")
 def actor(
-    actor_type: str,  # 位置参数，支持: router, transformers, vllm
+    actor_type: str,  # 位置参数，支持: router, transformers, vllm, list
     namespace: str = "pulsing",
     addr: str | None = None,
     seeds: str | None = None,
@@ -21,18 +21,22 @@ def actor(
     # macOS Metal/MLX 支持参数
     mlx_device: str | None = None,  # 'gpu' 或 'cpu'，默认 'gpu'
     metal_memory_fraction: float | None = None,  # 0.0-1.0，默认 0.8
+    # Actor list parameters
+    all_actors: bool = False,  # Show all actors including internal ones
+    json: bool = False,  # Output as JSON
 ):
-    """
-    Start an Actor-based service.
+    r"""
+    Start an Actor-based service or list actors.
 
-    This command starts actors based on the Pulsing Actor System.
+    This command starts actors based on the Pulsing Actor System or lists existing actors.
     Supported actor types:
     - router: Load balancing router (with OpenAI-compatible HTTP API)
     - transformers: Transformers-based inference worker
     - vllm: vLLM-based high-performance inference worker
+    - list: List actors in the current system
 
     Args:
-        actor_type: Actor type (positional argument). Options: 'router', 'transformers', 'vllm'
+        actor_type: Actor type (positional argument). Options: 'router', 'transformers', 'vllm', 'list'
         namespace: Service namespace. Default: 'pulsing'
         addr: Actor System bind address (e.g., '0.0.0.0:8000')
         seeds: Comma-separated list of seed nodes (e.g., '192.168.1.1:8000,192.168.1.2:8000')
@@ -47,27 +51,38 @@ def actor(
         http_port: HTTP server port (for router). Default: 8080
         mlx_device: MLX device type for macOS ('gpu' or 'cpu'). Default: 'gpu'
         metal_memory_fraction: Metal memory fraction for macOS (0.0-1.0). Default: 0.8
+        all_actors: (list only) Show all actors including internal system actors
+        json: (list only) Output in JSON format
 
     Examples:
         # Start a router with OpenAI-compatible API on port 8080
         pulsing actor router --http_port 8080 --model_name my-llm
 
-        # Test with curl
-        curl http://localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"my-llm","messages":[{"role":"user","content":"Hello"}]}'
-
         # Start a vLLM worker
-        pulsing actor vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
-
-        # Start a vLLM worker on macOS with Metal support
-        pulsing actor vllm --model Qwen/Qwen3-0.6B --mlx_device gpu --metal_memory_fraction 0.8 --addr 0.0.0.0:8001
+        pulsing actor vllm --model Qwen/Qwen2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
 
         # Start a transformers worker
-        pulsing actor transformers --model Qwen/Qwen3-0.6B --addr 0.0.0.0:8001 --seeds 192.168.1.100:8000
+        pulsing actor transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 192.168.1.100:8000
 
         # Start worker on CPU
         pulsing actor transformers --model gpt2 --device cpu
+
+        # List user actors
+        pulsing actor list
+
+        # List all actors including internal ones
+        pulsing actor list --all_actors
+
+        # Output as JSON
+        pulsing actor list --json
     """
     from .actors import start_router, start_transformers, start_vllm
+
+    # Handle 'list' subcommand
+    if actor_type == "list":
+        from .actor_list import list_actors_command
+        list_actors_command(all_actors=all_actors, json_output=json)
+        return
 
     # Parse seeds
     seed_list = []
@@ -105,7 +120,7 @@ def actor(
         )
     else:
         raise ValueError(
-            f"Unknown actor type: {actor_type}. Supported types: router, transformers, vllm"
+            f"Unknown actor type: {actor_type}. Supported types: router, transformers, vllm, list"
         )
 
 
@@ -169,13 +184,13 @@ def bench(
 
     Examples:
         # Basic throughput test (uses model name for tokenizer)
-        pulsing bench Qwen/Qwen3-0.6B --url http://localhost:8080
+        pulsing bench gpt2 --url http://localhost:8080
 
         # Use different tokenizer
         pulsing bench gpt-4 --tokenizer gpt2 --url http://api.openai.com
 
         # Concurrency sweep test
-        pulsing bench Qwen/Qwen3-0.6B --benchmark_kind csweep --max_vus 64
+        pulsing bench gpt2 --benchmark_kind csweep --max_vus 64
 
         # Rate test with specific rates
         pulsing bench gpt2 --benchmark_kind rate --rates 1,5,10,20

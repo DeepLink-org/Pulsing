@@ -707,6 +707,43 @@ impl Actor for PythonActorWrapper {
     fn metadata(&self) -> std::collections::HashMap<String, String> {
         Python::with_gil(|py| {
             let mut result = std::collections::HashMap::new();
+            
+            // First, try to extract built-in Python class information
+            if let Ok(class) = self.handler.getattr(py, "__class__") {
+                // Get class name
+                if let Ok(name) = class.getattr(py, "__name__") {
+                    if let Ok(name_str) = name.extract::<String>(py) {
+                        result.insert("python_class".to_string(), name_str);
+                    }
+                }
+                
+                // Get module name
+                if let Ok(module) = class.getattr(py, "__module__") {
+                    if let Ok(module_str) = module.extract::<String>(py) {
+                        result.insert("python_module".to_string(), module_str);
+                    }
+                }
+                
+                // Get source file path
+                if let Ok(module_name) = class.getattr(py, "__module__") {
+                    if let Ok(module_str) = module_name.extract::<String>(py) {
+                        // Try to get the module and its file path
+                        if let Ok(sys) = py.import("sys") {
+                            if let Ok(modules) = sys.getattr("modules") {
+                                if let Ok(module_obj) = modules.get_item(module_str.as_str()) {
+                                    if let Ok(file_attr) = module_obj.getattr("__file__") {
+                                        if let Ok(file_path) = file_attr.extract::<String>() {
+                                            result.insert("python_file".to_string(), file_path);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Then, check if the actor has custom metadata attribute
             if let Ok(metadata_attr) = self.handler.getattr(py, "metadata") {
                 let bound = metadata_attr.bind(py);
                 let value = if bound.is_callable() {
@@ -724,6 +761,7 @@ impl Actor for PythonActorWrapper {
                     }
                 }
             }
+            
             result
         })
     }
