@@ -220,6 +220,43 @@ async def main():
     await shutdown()
 ```
 
+#### 监督（actor 级别重启）
+
+`@remote` 支持通过可选参数配置 **actor 级别重启**：
+
+- `restart_policy`：`"never"`（默认）、`"always"`、`"on-failure"`
+- `max_restarts`：最大重启次数（默认 `3`）
+- `min_backoff` / `max_backoff`：退避时间下限/上限（单位秒）
+
+示例：
+
+```python
+from pulsing.actor import remote
+
+@remote(restart_policy="on-failure", max_restarts=5, min_backoff=0.2, max_backoff=10.0)
+class Worker:
+    def work(self, x: int) -> int:
+        return 100 // x
+```
+
+说明：
+
+- 这**不是** supervision tree。
+- 重启也**不等于** exactly-once；业务逻辑需要幂等与去重。
+
+## 辅助函数
+
+### ask_with_timeout
+
+为 `ActorRef.ask()` 提供一个带超时的便捷封装：
+
+```python
+from pulsing.actor import ask_with_timeout
+
+result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
+```
+
+
 装饰后，类提供：
 
 - `spawn(**kwargs) -> ActorRef`: 创建 actor（使用 `init()` 初始化的全局系统）

@@ -220,6 +220,43 @@ async def main():
     await shutdown()
 ```
 
+#### Supervision (actor-level restarts)
+
+`@remote` supports **actor-level restarts** via optional parameters:
+
+- `restart_policy`: `"never"` (default), `"always"`, `"on-failure"`
+- `max_restarts`: maximum number of restarts (default: `3`)
+- `min_backoff` / `max_backoff`: backoff bounds in seconds
+
+Example:
+
+```python
+from pulsing.actor import remote
+
+@remote(restart_policy="on-failure", max_restarts=5, min_backoff=0.2, max_backoff=10.0)
+class Worker:
+    def work(self, x: int) -> int:
+        return 100 // x
+```
+
+Notes:
+
+- This is **not** a supervision tree.
+- Restarts do **not** imply exactly-once semantics; design idempotent handlers.
+
+## Helpers
+
+### ask_with_timeout
+
+Convenience wrapper around `ActorRef.ask()` with timeout support:
+
+```python
+from pulsing.actor import ask_with_timeout
+
+result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
+```
+
+
 After decoration, the class provides:
 
 - `spawn(**kwargs) -> ActorRef`: Create actor (uses global system from `init()`)

@@ -11,6 +11,16 @@ Pulsing supports **passphrase-based mTLS (Mutual TLS)** for secure cluster commu
 - **Cluster isolation**: Different passphrases create completely isolated clusters
 - **Mutual authentication**: Both server and client verify each other's certificates
 
+!!! danger "Pickle serialization risk (RCE)"
+    Pulsing currently uses **Python Pickle** for Python-to-Python message payloads.
+    **Never accept untrusted payloads** or expose Pulsing ports to an untrusted network.
+
+    Production guidance:
+
+    - **Enable mTLS** by setting a `passphrase` (required for any real deployment)
+    - **Network isolation** (private VPC/subnet + firewall) is still recommended
+    - Treat the cluster as a **trusted boundary** until non-pickle codecs are the default
+
 ## Enabling TLS
 
 ### Development Mode (No TLS)
