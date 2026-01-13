@@ -51,4 +51,3 @@ For streaming responses, assume partial streams are possible. Make chunks indepe
 
 - include `seq` / offsets / ids per chunk
 - allow resume or dedup on the client side
-

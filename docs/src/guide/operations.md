@@ -1,65 +1,107 @@
-# Operations (CLI)
+# CLI Operations
 
-This page is a practical entry point for operating and inspecting Pulsing systems using the built-in CLI.
+Pulsing ships with built-in CLI tools for running, inspecting, and benchmarking distributed systems.
 
-## What you can do
+---
 
-- **Run services**: start a router or inference workers
-- **Inspect a cluster**: view nodes + named actors
-- **List actors**: query actors via HTTP (observer mode)
-- **Benchmark**: run load tests against an OpenAI-compatible endpoint
+## Running Services
 
-## Commands
-
-## Quick links
-
-- [Actor List](actor_list.md)
-- [Inspect](inspect.md)
-- [Bench](bench.md)
-
-### Start services (router / workers)
-
-- Router (OpenAI-compatible HTTP API):
+### Router (OpenAI-compatible HTTP API)
 
 ```bash
 pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
 ```
 
-- Transformers worker:
+### Transformers Worker
 
 ```bash
 pulsing actor transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
 ```
 
-- vLLM worker:
+### vLLM Worker
 
 ```bash
 pulsing actor vllm --model Qwen/Qwen2 --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
 ```
 
-### Inspect cluster
+---
+
+## Actor List
+
+`pulsing actor list` is a lightweight **observer** that queries actors via HTTP (no cluster join required).
+
+### Single Node
+
+```bash
+pulsing actor list --endpoint 127.0.0.1:8000
+```
+
+### Cluster (via Seeds)
+
+```bash
+pulsing actor list --seeds 127.0.0.1:8000,127.0.0.1:8001
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--all_actors True` | Include internal/system actors |
+| `--json True` | Output as JSON |
+
+!!! note
+    Uses HTTP/2 (h2c). Node must expose HTTP endpoints.
+
+---
+
+## Inspect
+
+`pulsing inspect` joins a cluster (via seeds) and prints a human-friendly snapshot of members and actors.
 
 ```bash
 pulsing inspect --seeds 127.0.0.1:8000
 ```
 
-### List actors (observer mode)
+Output includes:
 
-```bash
-# single node
-pulsing actor list --endpoint 127.0.0.1:8000
+- **Cluster members**: node id, addr, status
+- **Named actors**: distribution across nodes
 
-# cluster (via seeds)
-pulsing actor list --seeds 127.0.0.1:8000,127.0.0.1:8001
-```
+!!! tip
+    For local seeds (`127.0.0.1`), the CLI auto-binds to `127.0.0.1:0`.
 
-### Benchmark an endpoint
+---
+
+## Bench
+
+`pulsing bench` runs load tests against an OpenAI-compatible inference endpoint.
 
 ```bash
 pulsing bench gpt2 --url http://localhost:8080
 ```
 
-## Next
+!!! note "Optional Extension"
+    If you see `pulsing._bench module not found`:
 
-- For a runnable end-to-end guide, see [LLM Inference](../examples/llm_inference.md).
+    ```bash
+    maturin develop --manifest-path crates/pulsing-bench-py/Cargo.toml
+    ```
 
+---
+
+## Quick Reference
+
+| Task | Command |
+|------|---------|
+| Start router | `pulsing actor router --addr 0.0.0.0:8000 --http_port 8080` |
+| Start worker | `pulsing actor transformers --model gpt2 --seeds ...` |
+| List actors | `pulsing actor list --endpoint 127.0.0.1:8000` |
+| Inspect cluster | `pulsing inspect --seeds 127.0.0.1:8000` |
+| Benchmark | `pulsing bench gpt2 --url http://localhost:8080` |
+
+---
+
+## Next Steps
+
+- [LLM Inference](../examples/llm_inference.md) - runnable end-to-end tutorial
+- [Security](security.md) - mTLS and cluster isolation

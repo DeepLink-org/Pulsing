@@ -1,41 +1,43 @@
 # 用户指南
 
-欢迎阅读 Pulsing 用户指南。本指南涵盖了使用 Pulsing 构建分布式应用的核心概念和使用模式。
+本指南介绍**如何使用** Pulsing 构建应用。设计原理请参阅 [设计文档](../design/architecture.md)。
 
 ## 主题
 
 <div class="grid cards" markdown>
 
--   :material-lightning-bolt:{ .lg .middle } **架构**
+-   :material-account-group:{ .lg .middle } **Actor 模式**
 
     ---
 
-    了解系统架构和设计原则
+    构建健壮分布式应用的进阶模式
 
-    [:octicons-arrow-right-24: 架构概述](architecture.md)
-
--   :material-account-group:{ .lg .middle } **Actor 系统**
-
-    ---
-
-    学习如何创建和使用 Actor
-
-    [:octicons-arrow-right-24: Actor 系统指南](actor_system.md)
+    [:octicons-arrow-right-24: Actor 指南](actors.zh.md)
 
 -   :material-cloud-sync:{ .lg .middle } **远程 Actor**
 
     ---
 
-    使用位置透明性构建分布式应用
+    位置透明的集群通信
 
-    [:octicons-arrow-right-24: 远程 Actor 指南](remote_actors.md)
+    [:octicons-arrow-right-24: 远程 Actor](remote_actors.zh.md)
+
+-   :material-tools:{ .lg .middle } **CLI 运维**
+
+    ---
+
+    运行、检查和基准测试集群
+
+    [:octicons-arrow-right-24: 运维操作](operations.zh.md)
 
 </div>
 
 ## 快速链接
 
-- **刚接触 Pulsing？** 从[快速开始指南](../quickstart/index.md)开始
-- **想了解设计？** 查看[设计文档](../design/actor-system.md)
-- **可靠性实践口径**：查看[可靠性实践](reliability.zh.md)
-- **运维/巡检集群？** 查看[运维（CLI）](operations.zh.md)
-- **需要 API 详情？** 查看 [API 参考](../api_reference.md)
+| 目标 | 链接 |
+|------|------|
+| 刚接触 Pulsing？ | [快速开始](../quickstart/index.zh.md) |
+| 可靠性模式 | [可靠性](reliability.zh.md) |
+| 保护集群安全 | [安全](security.zh.md) |
+| 运行 LLM 推理 | [LLM 推理](../examples/llm_inference.zh.md) |
+| API 详情 | [API 参考](../api_reference.md) |

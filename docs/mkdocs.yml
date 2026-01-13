@@ -83,19 +83,17 @@ plugins:
           nav_translations:
             Home: 首页
             Getting Started: 快速开始
+            LLM Inference: LLM 推理
+            Distributed Agents: 分布式 Agent
+            Migrate from Ray: 从 Ray 迁移
             Guide: 用户指南
-            Actors: Actor 完整指南
-            Architecture: 架构
-            Distributed Queue: 分布式内存队列
-            Semantics: 语义与保证
-            Actor System: Actor 系统
+            Actors: Actor 指南
             Remote Actors: 远程 Actor
             Security: 安全
             Reliability: 可靠性
-            Operations: 运维（CLI）
-            Actor List: Actor 列表
-            Inspect: 巡检
-            Bench: 压测
+            Operations: CLI 运维
+            Distributed Queue: 分布式内存队列
+            Semantics: 语义与保证
             Agent: Agent 框架
             Overview: 概述
             AutoGen: AutoGen
@@ -103,8 +101,9 @@ plugins:
             Examples: 示例
             Ping-Pong: Ping-Pong
             Distributed Counter: 分布式计数器
-            LLM Inference: LLM 推理
             Design: 设计文档
+            Architecture: 架构概览
+            Actor System: Actor 系统
             Node Discovery: 节点发现
             Actor Addressing: Actor 寻址
             HTTP2 Transport: HTTP2 传输
@@ -123,19 +122,18 @@ plugins:
 
 nav:
   - Home: index.md
-  - Getting Started: quickstart/index.md
+  - Getting Started:
+    - quickstart/index.md
+    - LLM Inference: quickstart/llm_inference.md
+    - Distributed Agents: quickstart/agent.md
+    - Migrate from Ray: quickstart/migrate_from_ray.md
   - Guide:
     - guide/index.md
     - Actors: guide/actors.md
-    - Architecture: guide/architecture.md
-    - Actor System: guide/actor_system.md
     - Remote Actors: guide/remote_actors.md
-    - Security: guide/security.md
-    - Reliability: guide/reliability.md
     - Operations: guide/operations.md
-    - Actor List: guide/actor_list.md
-    - Inspect: guide/inspect.md
-    - Bench: guide/bench.md
+    - Reliability: guide/reliability.md
+    - Security: guide/security.md
     - Distributed Queue: guide/queue.md
     - Semantics: guide/semantics.md
   - Agent:
@@ -146,8 +144,8 @@ nav:
     - examples/index.md
     - Ping-Pong: examples/ping_pong.md
     - Distributed Counter: examples/distributed_counter.md
-    - LLM Inference: examples/llm_inference.md
   - Design:
+    - Architecture: design/architecture.md
     - Actor System: design/actor-system.md
     - Node Discovery: design/node-discovery.md
     - Actor Addressing: design/actor-addressing.md

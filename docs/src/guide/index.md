@@ -1,41 +1,43 @@
 # User Guide
 
-Welcome to the Pulsing User Guide. This guide covers the core concepts and usage patterns for building distributed applications with Pulsing.
+This guide covers **how to build** with Pulsing. For design rationale, see [Design Documents](../design/architecture.md).
 
 ## Topics
 
 <div class="grid cards" markdown>
 
--   :material-lightning-bolt:{ .lg .middle } **Architecture**
+-   :material-account-group:{ .lg .middle } **Actor Patterns**
 
     ---
 
-    Understand the system architecture and design principles
+    Advanced patterns for building robust distributed applications
 
-    [:octicons-arrow-right-24: Architecture Overview](architecture.md)
-
--   :material-account-group:{ .lg .middle } **Actor System**
-
-    ---
-
-    Learn how to create and use actors
-
-    [:octicons-arrow-right-24: Actor System Guide](actor_system.md)
+    [:octicons-arrow-right-24: Actor Guide](actors.md)
 
 -   :material-cloud-sync:{ .lg .middle } **Remote Actors**
 
     ---
 
-    Build distributed applications with location transparency
+    Cluster communication with location transparency
 
-    [:octicons-arrow-right-24: Remote Actors Guide](remote_actors.md)
+    [:octicons-arrow-right-24: Remote Actors](remote_actors.md)
+
+-   :material-tools:{ .lg .middle } **CLI Operations**
+
+    ---
+
+    Run, inspect, and benchmark your cluster
+
+    [:octicons-arrow-right-24: Operations](operations.md)
 
 </div>
 
 ## Quick Links
 
-- **New to Pulsing?** Start with the [Quick Start Guide](../quickstart/index.md)
-- **Want to understand the design?** Check out the [Design Documents](../design/actor-system.md)
-- **Reliability rules**: see [Reliability](reliability.md)
-- **Operating a cluster?** See [Operations (CLI)](operations.md)
-- **Need API details?** See the [API Reference](../api_reference.md)
+| Goal | Link |
+|------|------|
+| New to Pulsing? | [Quickstart](../quickstart/index.md) |
+| Reliability patterns | [Reliability](reliability.md) |
+| Secure your cluster | [Security](security.md) |
+| Run LLM inference | [LLM Inference](../examples/llm_inference.md) |
+| API details | [API Reference](../api_reference.md) |

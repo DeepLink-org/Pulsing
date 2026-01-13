@@ -51,4 +51,3 @@ class Worker:
 
 - 每个 chunk 带 `seq` / offset / id
 - 客户端可恢复或去重
-

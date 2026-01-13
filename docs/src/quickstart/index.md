@@ -1,57 +1,16 @@
 # Getting Started
 
-Get up and running with Pulsing quickly.
+Get Pulsing running in **5 minutes**.
 
 ## Installation
-
-### Prerequisites
-
-- **Python 3.10+**
-- **Rust toolchain** (for building native extensions)
-- **Linux/macOS**
-
-### From PyPI (recommended)
 
 ```bash
 pip install pulsing
 ```
 
-### From Source (development)
-
-```bash
-git clone https://github.com/reiase/pulsing.git
-cd pulsing
-
-# Install Rust (if not already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Build and install
-pip install maturin
-maturin develop
-```
-
 ---
 
-## What is an Actor?
-
-An Actor is an isolated computational unit with private state that processes messages sequentially. Local and remote Actors use the same API.
-
-```mermaid
-graph LR
-    A[Sender] -->|Message| B[Actor Mailbox]
-    B --> C[Actor]
-    C -->|Response| A
-
-    style A fill:#6366F1,color:#fff
-    style B fill:#818CF8,color:#fff
-    style C fill:#818CF8,color:#fff
-```
-
----
-
-## Your First Actor (30 seconds)
-
-### Option 1: Native Async API (Recommended)
+## Your First Actor
 
 ```python
 import asyncio
@@ -76,118 +35,46 @@ async def main():
 asyncio.run(main())
 ```
 
-### Option 2: Ray-Compatible API (Easy Migration)
-
-```python
-from pulsing.compat import ray
-
-ray.init()
-
-@ray.remote
-class Counter:
-    def __init__(self, value=0):
-        self.value = value
-
-    def inc(self):
-        self.value += 1
-        return self.value
-
-counter = Counter.remote(value=0)
-print(ray.get(counter.inc.remote()))  # 1
-print(ray.get(counter.inc.remote()))  # 2
-
-ray.shutdown()
-```
-
-**Any Python object** can be a message—strings, dicts, lists, or custom classes.
+The `@remote` decorator turns any Python class into a distributed Actor.
 
 ---
 
-## Stateful Actors
+## Next: Choose Your Path
 
-```python
-class Counter(Actor):
-    def __init__(self):
-        self.value = 0
+<div class="grid cards" markdown>
 
-    async def receive(self, msg):
-        if msg == "inc":
-            self.value += 1
-            return self.value
-        if msg == "get":
-            return self.value
-```
+-   :material-robot:{ .lg .middle } **LLM Inference Service**
 
----
+    ---
 
-## API Comparison
+    Build a scalable inference backend with streaming and OpenAI-compatible API.
 
-| API | Style | Best For |
-|-----|-------|----------|
-| `pulsing.actor` | Async (`await`) | New projects, performance |
-| `pulsing.compat.ray` | Sync (Ray-style) | Ray migration, quick start |
+    [:octicons-arrow-right-24: ~10 minutes](llm_inference.md)
 
-### @remote Decorator (Native API)
+-   :material-account-group:{ .lg .middle } **Distributed Agents**
 
-```python
-from pulsing.actor import init, shutdown, remote
+    ---
 
-@remote
-class Counter:
-    def __init__(self, initial=0):
-        self.value = initial
+    Integrate with AutoGen and LangGraph to distribute agents across machines.
 
-    def inc(self, n=1):
-        self.value += n
-        return self.value
+    [:octicons-arrow-right-24: ~10 minutes](agent.md)
 
-async def main():
-    await init()
-    counter = await Counter.spawn(initial=10)
-    print(await counter.inc(5))   # 15
-    await shutdown()
-```
+-   :material-swap-horizontal:{ .lg .middle } **Migrate from Ray**
+
+    ---
+
+    Replace Ray with one import change. Zero external dependencies.
+
+    [:octicons-arrow-right-24: ~5 minutes](migrate_from_ray.md)
+
+</div>
 
 ---
 
-## Cluster Communication
+## Go Deeper
 
-Pulsing uses SWIM gossip protocol—no external services needed!
-
-**Node 1 (Seed):**
-```python
-config = SystemConfig.with_addr("0.0.0.0:8000")
-system = await create_actor_system(config)
-await system.spawn("worker", MyActor(), public=True)
-```
-
-**Node 2 (Join):**
-```python
-config = SystemConfig.with_addr("0.0.0.0:8001").with_seeds(["node1:8000"])
-system = await create_actor_system(config)
-
-worker = await system.resolve_named("worker")
-result = await worker.ask("do_work")  # Same API!
-```
-
----
-
-## Core Concepts
-
-| Concept | Description |
-|---------|-------------|
-| **Actor** | Isolated unit with private state |
-| **Message** | Any Python object |
-| **@remote** | Native async decorator (via `pulsing.actor`) |
-| **ray.remote** | Ray-compatible decorator (via `pulsing.compat.ray`) |
-| **Cluster** | SWIM protocol auto-discovery |
-
----
-
-## Next Steps
-
-- [Actor Guide](../guide/actors.md) - Advanced patterns
-- [Agent Frameworks](../agent/index.md) - AutoGen and LangGraph integration
-- [Operations (CLI)](../guide/operations.md) - Inspect/list/benchmark
-- [LLM Inference](../examples/llm_inference.md) - Router + worker architecture
-- [Examples](../examples/index.md) - Real-world use cases
+| Goal | Link |
+|------|------|
+| Understand the Actor model | [Guide: Actors](../guide/actors.md) |
+| Build a cluster | [Guide: Remote Actors](../guide/remote_actors.md) |
+| Operate your system | [Guide: Operations](../guide/operations.md) |

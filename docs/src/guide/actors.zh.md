@@ -1,598 +1,65 @@
-# Pulsing Actors: 完整指南
+# Actor 指南
 
-## 目录
+本指南介绍 **Actor 模型** 概念和构建健壮分布式应用的模式。
 
-1. [简介](#简介)
-2. [什么是 Actor？](#什么是-actor)
-3. [Actor 生命周期](#actor-生命周期)
-4. [创建 Actor](#创建-actor)
-5. [消息传递](#消息传递)
-6. [Actor 上下文](#actor-上下文)
-7. [远程 Actor](#远程-actor)
-8. [高级模式](#高级模式)
-9. [最佳实践](#最佳实践)
-10. [快速参考](#快速参考)
-
----
-
-## 简介
-
-Actor 是 Pulsing 应用的基本构建块。它们是通过异步消息传递进行通信的隔离并发状态机。本文档提供了在 Pulsing 中理解和使用 Actor 的完整指南。
-
-> **核心设计理念**: Pulsing 设计为轻量级且自包含。与其他 Actor 框架不同，它不需要 etcd、NATS 或 Consul 等外部依赖。所需的一切都是内置的。
+!!! tip "前置要求"
+    如果尚未完成 [快速开始](../quickstart/index.zh.md)，请先阅读。
 
 ---
 
 ## 什么是 Actor？
 
-### 定义
+**Actor** 是并发和分布式系统中的基本计算单元。Actor 模型由 Carl Hewitt 于 1973 年提出，提供了一种构建以下系统的原则性方法：
 
-Pulsing 中的 **Actor** 是：
+- **并发**：多个 Actor 并行运行
+- **分布式**：Actor 可以在不同机器上
+- **容错**：故障被隔离
 
-- 具有私有状态的隔离计算单元
-- 按顺序处理消息的消息处理器
-- 具有用于远程调用的方法的类型化实体
-- 位置透明：本地和远程 Actor 使用相同的 API
+### 核心原则
 
-### 核心特性
-
-```mermaid
-graph LR
-    A[Actor] --> B[私有状态]
-    A --> C[消息邮箱]
-    A --> D[方法/端点]
-    A --> E[生命周期钩子]
-
-    style A fill:#6366F1,stroke:#333,stroke-width:2px,color:#fff
-    style B fill:#818CF8,color:#fff
-    style C fill:#818CF8,color:#fff
-    style D fill:#818CF8,color:#fff
-    style E fill:#818CF8,color:#fff
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         Actor                               │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
+│  │ 私有状态     │    │  消息邮箱    │    │  行为       │     │
+│  │ (State)     │    │  (FIFO)     │    │  (Methods)  │     │
+│  └─────────────┘    └─────────────┘    └─────────────┘     │
+│        ▲                  │                   │             │
+│        │                  ▼                   ▼             │
+│        └───────── 每次只处理一条消息 ──────────────────────│
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**1. 隔离性**
+| 原则 | 描述 |
+|------|------|
+| **隔离性** | 每个 Actor 有私有状态；无共享内存 |
+| **消息传递** | Actor 仅通过异步消息通信 |
+| **顺序处理** | 每次只处理一条消息（无内部锁） |
+| **位置透明** | 本地和远程 Actor 使用相同 API |
 
-- 每个 Actor 都有自己的私有状态
-- 其他 Actor 永远不能直接访问状态
-- 所有交互都通过消息进行
+### 为什么选择 Pulsing 而非 Ray？
 
-**2. 顺序处理**
+Ray 的 "actor" 本质上是**带状态的远程对象** — 你调用它的方法，但没有正式的消息队列或投递语义。
 
-- 消息一次处理一条
-- 下一条消息等待当前消息处理完成
-- 保证 Actor 内部状态一致性
+Pulsing 遵循**经典 Actor 模型**（类似 Erlang/Akka）：
 
-**3. 异步通信**
-
-- 消息异步发送
-- 发送者可以等待响应或即发即忘
-- 结果作为可等待的 future 返回
-
-**4. 位置透明**
-
-- Actor 可以是本地或远程的
-- 无论位置如何，API 都相同
-- 框架处理序列化和路由
+| 特性 | Pulsing | Ray |
+|------|---------|-----|
+| 消息队列（邮箱） | ✅ FIFO | ❌ 直接调用 |
+| 顺序保证 | ✅ 每 Actor | ⚠️ 每方法 |
+| 监督/重启 | ✅ 内置 | ❌ 手动 |
+| 零外部依赖 | ✅ | ❌ （需 Ray 集群） |
+| 流式消息 | ✅ 原生 | ❌ |
 
 ---
 
-## Actor 生命周期
-
-### 生命周期阶段
-
-```mermaid
-stateDiagram-v2
-    [*] --> 创建中: spawn()
-    创建中 --> 初始化中: __init__()
-    初始化中 --> 运行中: on_start()
-    运行中 --> 运行中: 处理消息
-    运行中 --> 停止中: stop()
-    停止中 --> [*]: on_stop()
-
-    运行中 --> 失败: 未处理的错误
-    失败 --> [*]: 传播错误
-```
-
-### 1. 创建阶段
-
-**生成 Actor：**
-
-```python
-from pulsing.actor import ActorSystem, SystemConfig
-
-# 创建 Actor 系统
-system = await ActorSystem.create(SystemConfig.standalone())
-
-# 生成 Actor
-actor_ref = await system.spawn(MyActor(), "my-actor")
-```
-
-**发生了什么：**
-
-1. 运行时为 Actor 分配资源
-2. Actor 在系统中注册
-3. 创建用于消息传递的邮箱
-4. 分配 Actor ID
-
-### 2. 初始化阶段
-
-**`__init__` 方法：**
-
-```python
-class DataProcessor:
-    def __init__(self, buffer_size: int):
-        # 初始化状态
-        self.buffer_size = buffer_size
-        self.buffer = []
-        self.processed_count = 0
-```
-
-**重要说明：**
-
-- `__init__` 在 Actor 构造期间调用
-- 只应初始化状态
-- 还没有消息传递 - Actor 尚未完全注册
-
-### 3. 运行阶段
-
-初始化后，Actor 进入主生命周期，开始处理消息。
-
-```mermaid
-sequenceDiagram
-    participant 发送者
-    participant 邮箱
-    participant Actor
-
-    loop 消息处理
-        发送者->>邮箱: 发送消息
-        邮箱->>Actor: 传递消息
-        Actor->>Actor: 处理消息
-        Actor-->>发送者: 返回结果
-    end
-```
-
-### 4. 终止阶段
-
-**正常终止：**
-
-- 处理所有待处理消息
-- 清空邮箱
-- 清理资源
-- 通知系统
-
-**错误终止：**
-
-- 处理器中未处理的异常
-- 错误传播给调用者
-
----
-
-## 创建 Actor
-
-Pulsing 提供两种 API 风格以满足不同需求：
+## 两种 API 风格
 
 | API | 导入方式 | 风格 | 适用场景 |
 |-----|---------|------|----------|
 | **原生异步** | `from pulsing.actor import ...` | `async/await` | 新项目，追求极致性能 |
 | **Ray 兼容** | `from pulsing.compat import ray` | 同步调用 | 从 Ray 迁移，快速原型 |
-
----
-
-### 方法 1：原生异步 API 使用 @remote（推荐）
-
-`@remote` 装饰器配合 `init()/shutdown()` 提供最简洁的异步体验：
-
-```python
-from pulsing.actor import init, shutdown, remote
-
-@remote
-class Calculator:
-    """一个简单的计算器 Actor。"""
-
-    def __init__(self, initial_value: int = 0):
-        self.value = initial_value
-        self.history = []
-
-    def add(self, n: int) -> int:
-        """将 n 加到当前值。"""
-        self.value += n
-        self.history.append(("add", n, self.value))
-        return self.value
-
-    def subtract(self, n: int) -> int:
-        """从当前值减去 n。"""
-        self.value -= n
-        self.history.append(("subtract", n, self.value))
-        return self.value
-
-    def get_value(self) -> int:
-        """获取当前值。"""
-        return self.value
-
-
-async def main():
-    # 简洁的初始化
-    await init()
-
-    # 使用 await 创建 actor
-    calc = await Calculator.spawn(initial_value=100)
-
-    # await 调用方法 - 简洁直观
-    result = await calc.add(50)      # 150
-    result = await calc.subtract(30) # 120
-    value = await calc.get_value()   # 120
-
-    await shutdown()
-```
-
-**原生 API 的优点：**
-
-- 简洁的 `async/await` 语法
-- 最佳性能（无同步包装开销）
-- IDE 自动补全正常工作
-- 保留类型提示
-
----
-
-### 方法 2：Ray 兼容 API（轻松迁移）
-
-对于从 Ray 迁移的用户，Pulsing 提供兼容的 API：
-
-```python
-from pulsing.compat import ray
-
-ray.init()
-
-@ray.remote
-class Calculator:
-    """一个简单的计算器 Actor。"""
-
-    def __init__(self, initial_value: int = 0):
-        self.value = initial_value
-
-    def add(self, n: int) -> int:
-        self.value += n
-        return self.value
-
-    def get_value(self) -> int:
-        return self.value
-
-
-# 创建 actor 实例
-calc = Calculator.remote(initial_value=100)
-
-# 使用 .remote() 和 ray.get() 调用方法
-result = ray.get(calc.add.remote(50))      # 150
-value = ray.get(calc.get_value.remote())   # 150
-
-ray.shutdown()
-```
-
-**从 Ray 迁移：**
-
-```python
-# 之前 (Ray):
-import ray
-ray.init()
-
-# 之后 (Pulsing - 只需改一行导入！):
-from pulsing.compat import ray
-ray.init()
-```
-
-**Ray 兼容 API 的优点：**
-
-- 一行代码完成 Ray 迁移
-- 熟悉的同步接口
-- 相同的 `ray.get()`、`ray.put()`、`ray.wait()` 语义
-- 适合现有 Ray 代码库
-
----
-
-### 方法 3：使用 Actor 基类（高级）
-
-### 方法 2：使用 Actor 基类
-
-需要更多控制时，扩展 Actor 基类：
-
-```python
-from pulsing.actor import Actor, Message, SystemConfig, create_actor_system
-
-class EchoActor(Actor):
-    """回显消息的 Actor。"""
-
-    def __init__(self):
-        self.message_count = 0
-
-    async def receive(self, msg: Message) -> Message:
-        """处理传入消息。"""
-        self.message_count += 1
-
-        if msg.msg_type == "echo":
-            return Message.single("echo_response", msg.payload)
-        elif msg.msg_type == "count":
-            return Message.single("count_response",
-                                  str(self.message_count).encode())
-        else:
-            raise ValueError(f"未知消息类型: {msg.msg_type}")
-
-
-async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-
-    actor_ref = await system.spawn(EchoActor(), "echo")
-
-    # 发送消息并获取响应
-    response = await actor_ref.ask(Message.single("echo", b"hello"))
-    print(response.payload)  # b"hello"
-
-    await system.shutdown()
-```
-
-### 方法 3：异步方法
-
-Actor 可以有用于 I/O 操作的异步方法：
-
-```python
-@remote
-class AsyncWorker:
-    """具有异步方法的 Actor。"""
-
-    def __init__(self):
-        self.cache = {}
-
-    async def fetch_data(self, url: str) -> dict:
-        """从 URL 获取数据（异步操作）。"""
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                data = await response.json()
-                self.cache[url] = data
-                return data
-
-    async def process_batch(self, items: list) -> list:
-        """使用异步操作处理项目。"""
-        results = []
-        for item in items:
-            await asyncio.sleep(0.01)  # 模拟异步工作
-            results.append(item.upper())
-        return results
-```
-
----
-
-## 消息传递
-
-### 消息类型
-
-Pulsing 支持两种类型的消息：
-
-```mermaid
-graph TD
-    A[消息类型] --> B[单条消息]
-    A --> C[流式消息]
-
-    B --> B1[请求-响应]
-    B --> B2[即发即忘]
-
-    C --> C1[持续数据流]
-    C --> C2[分块处理]
-
-    style A fill:#6366F1,color:#fff
-    style B fill:#818CF8,color:#fff
-    style C fill:#818CF8,color:#fff
-```
-
-### Ask 模式（请求-响应）
-
-发送消息并等待响应：
-
-```python
-# 使用 @remote
-result = await calc.add(10)
-
-# 使用 Actor 基类
-response = await actor_ref.ask(Message.single("operation", data))
-```
-
-### Tell 模式（即发即忘）
-
-发送消息而不等待响应：
-
-```python
-# 即发即忘
-await actor_ref.tell(Message.single("notify", b"event_data"))
-
-# 立即继续
-do_other_work()
-```
-
-### 流式消息
-
-用于持续数据流：
-
-```python
-from pulsing.actor import StreamMessage
-
-# 返回流式响应的 Actor
-@remote
-class TokenGenerator:
-    async def generate(self, prompt: str) -> Message:
-        stream_msg, writer = StreamMessage.create("tokens")
-
-        async def produce():
-            for i, token in enumerate(self.generate_tokens(prompt)):
-                # 直接写入 Python 对象 - 自动序列化
-                await writer.write({"token": token, "index": i})
-            await writer.close()
-
-        asyncio.create_task(produce())
-        return stream_msg
-
-# 客户端消费流
-response = await generator.generate("Hello")
-async for chunk in response.stream_reader():
-    # chunk 已经是 Python dict - 自动反序列化
-    print(chunk["token"], end="", flush=True)
-```
-
-**核心特性：**
-
-- **透明序列化**：直接读写 Python 对象
-- **异构流**：每个 chunk 可以有不同的结构
-- **背压控制**：有界缓冲防止内存溢出
-
----
-
-## 远程 Actor
-
-### 集群设置
-
-**启动种子节点：**
-
-```python
-# 节点 1：启动种子节点
-config = SystemConfig.with_addr("0.0.0.0:8000")
-system = await create_actor_system(config)
-
-# 生成公共 Actor（对集群可见）
-await system.spawn(WorkerActor(), "worker", public=True)
-```
-
-**加入集群：**
-
-```python
-# 节点 2：加入集群
-config = (SystemConfig
-          .with_addr("0.0.0.0:8001")
-          .with_seeds(["192.168.1.1:8000"]))
-system = await create_actor_system(config)
-
-# 等待集群同步
-await asyncio.sleep(1.0)
-
-# 查找远程 Actor
-worker = await system.find("worker")
-result = await worker.process(data)
-```
-
-### 位置透明
-
-```python
-# 本地 Actor
-local_ref = await system.spawn(MyActor(), "local")
-
-# 远程 Actor（通过集群找到）
-remote_ref = await system.find("remote-worker")
-
-# 两者使用相同的 API！
-response1 = await local_ref.process(data)
-response2 = await remote_ref.process(data)
-```
-
-### 公共 vs 私有 Actor
-
-| 特性 | 公共 Actor | 私有 Actor |
-|------|-----------|-----------|
-| 集群可见性 | ✅ 对所有节点可见 | ❌ 仅本地 |
-| 通过 find() 发现 | ✅ 是 | ❌ 否 |
-| Gossip 注册 | ✅ 已注册 | ❌ 未注册 |
-| 用例 | 服务、共享工作器 | 内部辅助器 |
-
-```python
-# 公共 Actor - 可被其他节点找到
-await system.spawn(ServiceActor(), "api-service", public=True)
-
-# 私有 Actor - 仅本地
-await system.spawn(HelperActor(), "internal-helper", public=False)
-```
-
----
-
-## 高级模式
-
-### 1. LLM 推理服务模式
-
-```python
-@remote
-class LLMService:
-    """用于 LLM 推理的 Actor。"""
-
-    def __init__(self, model_name: str):
-        self.model_name = model_name
-        self.model = None
-        self.tokenizer = None
-
-    async def load_model(self):
-        """加载模型（创建后调用一次）。"""
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(self.model_name)
-
-    async def generate(self, prompt: str, max_tokens: int = 100) -> str:
-        """从提示生成文本。"""
-        inputs = self.tokenizer(prompt, return_tensors="pt")
-        outputs = self.model.generate(**inputs, max_new_tokens=max_tokens)
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-```
-
-### 2. 工作池模式
-
-```python
-@remote
-class WorkerPool:
-    def __init__(self, num_workers: int):
-        self.workers = []
-        self.current_worker = 0
-
-    async def submit(self, task: dict) -> any:
-        """将任务提交给下一个可用的工作器（轮询）。"""
-        worker = self.workers[self.current_worker]
-        self.current_worker = (self.current_worker + 1) % len(self.workers)
-        return await worker.process(task)
-```
-
----
-
-## 最佳实践
-
-### 1. Actor 设计
-
-✅ **应该：**
-
-- 保持 Actor 专注于单一职责
-- 尽可能使用不可变消息
-- 优雅地处理错误
-- 记录方法契约
-
-❌ **不应该：**
-
-- 在 Actor 之间共享可变状态
-- 在方法中阻塞（使用 async）
-- 创建循环依赖
-- 忽略错误处理
-
-### 2. 错误处理
-
-```python
-@remote
-class ResilientActor:
-    async def risky_operation(self, data: dict) -> dict:
-        try:
-            result = await self.process(data)
-            return {"success": True, "result": result}
-        except ValueError as e:
-            # 预期错误 - 返回错误响应
-            return {"success": False, "error": str(e)}
-        except Exception as e:
-            # 意外错误 - 记录并重新抛出
-            logger.error(f"意外错误: {e}")
-            raise
-```
-
----
-
-## 快速参考
 
 ### 原生异步 API（推荐）
 
@@ -600,17 +67,18 @@ class ResilientActor:
 from pulsing.actor import init, shutdown, remote
 
 @remote
-class MyActor:
-    def __init__(self, param: int):
-        self.param = param
+class Calculator:
+    def __init__(self, initial_value: int = 0):
+        self.value = initial_value
 
-    def method(self, arg: int) -> int:
-        return self.param + arg
+    def add(self, n: int) -> int:
+        self.value += n
+        return self.value
 
 async def main():
     await init()
-    actor = await MyActor.spawn(param=10)
-    result = await actor.method(5)  # 15
+    calc = await Calculator.spawn(initial_value=100)
+    result = await calc.add(50)  # 150
     await shutdown()
 ```
 
@@ -622,71 +90,214 @@ from pulsing.compat import ray
 ray.init()
 
 @ray.remote
-class MyActor:
-    def __init__(self, param: int):
-        self.param = param
+class Calculator:
+    def __init__(self, initial_value: int = 0):
+        self.value = initial_value
 
-    def method(self, arg: int) -> int:
-        return self.param + arg
+    def add(self, n: int) -> int:
+        self.value += n
+        return self.value
 
-actor = MyActor.remote(param=10)
-result = ray.get(actor.method.remote(5))  # 15
+calc = Calculator.remote(initial_value=100)
+result = ray.get(calc.add.remote(50))  # 150
 ray.shutdown()
 ```
 
-### 集群设置
+**从 Ray 迁移** — 只需修改导入：
 
 ```python
-# 种子节点
-config = SystemConfig.with_addr("0.0.0.0:8000")
-system = await create_actor_system(config)
-await system.spawn(MyActor(), "service", public=True)
-
-# 加入节点
-config = SystemConfig.with_addr("0.0.0.0:8001").with_seeds(["seed:8000"])
-system = await create_actor_system(config)
-service = await system.find("service")
+# 之前:  import ray
+# 之后:  from pulsing.compat import ray
 ```
+
+---
+
+## 消息模式
+
+### Ask（请求-响应）
+
+```python
+result = await calc.add(10)
+```
+
+### Tell（即发即忘）
+
+```python
+await actor_ref.tell(Message.single("notify", b"event_data"))
+```
+
+### 流式消息
+
+用于持续数据流（如 LLM token 生成）：
+
+```python
+from pulsing.actor import StreamMessage
+
+@remote
+class TokenGenerator:
+    async def generate(self, prompt: str) -> Message:
+        stream_msg, writer = StreamMessage.create("tokens")
+
+        async def produce():
+            for token in self.generate_tokens(prompt):
+                await writer.write({"token": token})
+            await writer.close()
+
+        asyncio.create_task(produce())
+        return stream_msg
+
+# 消费流
+response = await generator.generate("Hello")
+async for chunk in response.stream_reader():
+    print(chunk["token"], end="", flush=True)
+```
+
+---
+
+## 监督（Actor 级重启）
+
+Pulsing 支持 Actor 失败后自动重启：
+
+```python
+@remote(
+    restart_policy="on_failure",  # "never" | "on_failure" | "always"
+    max_restarts=3,
+    min_backoff=1.0,
+    max_backoff=60.0
+)
+class ReliableWorker:
+    def process(self, data):
+        # 如果崩溃，Actor 会自动重启
+        return heavy_computation(data)
+```
+
+!!! note
+    重启恢复 Actor 但**不恢复**内存状态。参阅 [可靠性指南](reliability.zh.md) 了解幂等模式。
+
+---
+
+## 进阶模式
+
+### 1. 有状态 Actor
+
+```python
+@remote
+class SessionManager:
+    def __init__(self):
+        self.sessions = {}
+
+    def create_session(self, user_id: str) -> str:
+        session_id = str(uuid.uuid4())
+        self.sessions[session_id] = {"user_id": user_id, "data": {}}
+        return session_id
+
+    def get_session(self, session_id: str) -> dict | None:
+        return self.sessions.get(session_id)
+```
+
+### 2. Worker 池（轮询）
+
+```python
+@remote
+class WorkerPool:
+    def __init__(self, workers: list):
+        self.workers = workers
+        self.idx = 0
+
+    async def submit(self, task: dict):
+        worker = self.workers[self.idx]
+        self.idx = (self.idx + 1) % len(self.workers)
+        return await worker.process(task)
+```
+
+### 3. 流水线
+
+```python
+@remote
+class PipelineStage:
+    def __init__(self, next_stage=None):
+        self.next_stage = next_stage
+
+    async def process(self, data: dict) -> dict:
+        result = await self.transform(data)
+        if self.next_stage:
+            return await self.next_stage.process(result)
+        return result
+```
+
+### 4. LLM 推理服务
+
+```python
+@remote
+class LLMService:
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self.model = None
+
+    async def load_model(self):
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(self.model_name)
+
+    async def generate(self, prompt: str, max_tokens: int = 100) -> str:
+        inputs = self.tokenizer(prompt, return_tensors="pt")
+        outputs = self.model.generate(**inputs, max_new_tokens=max_tokens)
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+```
+
+---
+
+## 最佳实践
+
+| ✅ 应该 | ❌ 不应该 |
+|--------|----------|
+| Actor 单一职责 | 在 Actor 间共享可变状态 |
+| I/O 使用 async | 在方法中阻塞 |
+| 优雅处理错误 | 忽略异常 |
+| 在 `__init__` 初始化状态 | 使用全局变量 |
+
+### 错误处理
+
+```python
+@remote
+class ResilientActor:
+    async def risky_operation(self, data: dict) -> dict:
+        try:
+            result = await self.process(data)
+            return {"success": True, "result": result}
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"意外错误: {e}")
+            raise
+```
+
+---
+
+## 快速参考
 
 ### 常用操作
 
 ```python
-# 生成本地 Actor
-actor = await system.spawn(MyActor(), "name")
+# 创建
+actor = await MyActor.spawn(param=10)
 
-# 生成公共 Actor
+# 调用方法
+result = await actor.method(arg)
+
+# 使用 system handle
+system = await create_actor_system(config)
 actor = await system.spawn(MyActor(), "name", public=True)
-
-# 查找远程 Actor
-actor = await system.find("name")
-
-# 检查 Actor 是否存在
-exists = await system.has_actor("name")
-
-# 停止 Actor
+remote_actor = await system.find("remote-name")
 await system.stop("name")
-
-# 关闭系统
 await system.shutdown()
 ```
 
 ---
 
-## 总结
+## 下一步
 
-### 关键要点
-
-1. **Actor 是隔离的**：私有状态，基于消息的通信
-2. **顺序处理**：一次处理一条消息，FIFO 顺序
-3. **双 API 风格**：原生异步（`@remote`）或 Ray 兼容（`@ray.remote`）
-4. **位置透明**：本地/远程 Actor 使用相同代码
-5. **零外部依赖**：不需要 etcd、NATS 或 Consul
-6. **内置集群**：用于发现的 SWIM 协议
-7. **轻松迁移**：一行导入即可从 Ray 迁移
-
-### 下一步
-
-- 阅读[远程 Actor 指南](remote_actors.md)了解集群详情
-- 探索[设计文档](../design/actor-system.md)了解实现细节
-- 查看[示例](../examples/index.zh.md)了解实用模式
-- 参阅 [API 参考](../api_reference.md)获取完整文档
+- [远程 Actor](remote_actors.zh.md) — 集群通信
+- [可靠性](reliability.zh.md) — 幂等、重试、超时
+- [运维操作](operations.zh.md) — CLI 检查工具
+- [LLM 推理](../examples/llm_inference.zh.md) — 生产推理部署

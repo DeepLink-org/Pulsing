@@ -1,67 +1,127 @@
 ---
 template: home.html
 title: Pulsing - 轻量级分布式 Actor 框架
-description: 一个为构建可扩展 AI 系统设计的轻量级分布式 Actor 框架。零外部依赖，SWIM 协议发现，Python 优先设计。
+description: 基于 Rust 和 Tokio 构建的轻量级分布式 Actor 框架，专为 AI 系统设计。零外部依赖，内置服务发现，Python 优先。
 hide: toc
 ---
 
-<!-- 此内容被 home.html 模板隐藏，但可被搜索引擎索引 -->
+<!-- This content is hidden by the home.html template but indexed for search -->
 
 # Pulsing
 
-**Pulsing** 是一个为构建可扩展 AI 系统设计的轻量级分布式 Actor 框架。
+基于 Rust 和 Tokio 构建的**轻量级分布式 Actor 框架**。
 
-## 核心特性
+## 为什么选择 Pulsing？
 
-- **零外部依赖** - 纯 Rust + Tokio 实现，无需 etcd、NATS 或 Consul。
-- **SWIM 协议发现** - 内置基于 Gossip 的节点发现和故障检测。
-- **位置透明** - ActorRef 支持统一访问本地和远程 Actor。
-- **流式消息** - 原生支持流式请求和响应。
-- **Python 优先** - 通过 PyO3 提供完整的 Python API，支持 `@remote` 装饰器。
-- **高性能** - 基于 Tokio 异步运行时，使用 HTTP/2 传输。
-- **Ray 兼容** - 提供兼容 API，轻松从 Ray 迁移。
+<div class="grid cards" markdown>
+
+-   :material-package-variant-closed:{ .lg .middle } **零外部依赖**
+
+    ---
+
+    纯 Rust + Tokio 实现。无需 etcd、NATS、Redis 或 Consul。
+
+-   :material-radar:{ .lg .middle } **内置集群发现**
+
+    ---
+
+    SWIM/Gossip 协议实现自动节点发现和故障检测。
+
+-   :material-lightning-bolt:{ .lg .middle } **高性能**
+
+    ---
+
+    异步运行时 + HTTP/2 传输 + 原生流式支持。
+
+-   :material-language-python:{ .lg .middle } **Python 优先**
+
+    ---
+
+    通过 PyO3 提供完整 Python API。`@remote` 装饰器将任意类变成 Actor。
+
+</div>
+
+---
+
+## 你可以构建什么？
+
+<div class="grid cards" markdown>
+
+-   :material-robot:{ .lg .middle } **LLM 推理服务**
+
+    ---
+
+    可扩展的推理后端，支持流式 token 生成。开箱即用的 OpenAI 兼容 API。
+
+    [:octicons-arrow-right-24: LLM 推理](quickstart/llm_inference.zh.md)
+
+-   :material-account-group:{ .lg .middle } **分布式 Agent**
+
+    ---
+
+    原生集成 AutoGen 和 LangGraph。跨机器分布你的 Agent。
+
+    [:octicons-arrow-right-24: 分布式 Agent](quickstart/agent.zh.md)
+
+-   :material-swap-horizontal:{ .lg .middle } **替代 Ray**
+
+    ---
+
+    兼容 API，一行导入即可从 Ray 迁移。
+
+    [:octicons-arrow-right-24: 从 Ray 迁移](quickstart/migrate_from_ray.zh.md)
+
+</div>
+
+---
 
 ## 快速开始
 
 ```bash
-# 安装（推荐）
 pip install pulsing
 ```
 
-如需从源码构建（开发用），请参考[快速开始](quickstart/index.zh.md#安装)。
-
 ```python
+import asyncio
 from pulsing.actor import init, shutdown, remote
 
 @remote
-class Calculator:
-    def __init__(self, initial: int = 0):
-        self.value = initial
+class Counter:
+    def __init__(self, value=0):
+        self.value = value
 
-    def add(self, n: int) -> int:
-        self.value += n
+    def inc(self):
+        self.value += 1
         return self.value
 
 async def main():
     await init()
-    calc = await Calculator.spawn(initial=100)
-    result = await calc.add(50)  # 150
+    counter = await Counter.spawn(value=0)
+    print(await counter.inc())  # 1
+    print(await counter.inc())  # 2
     await shutdown()
+
+asyncio.run(main())
 ```
 
-## 使用场景
+[:octicons-arrow-right-24: 快速开始](quickstart/index.zh.md){ .md-button }
 
-- **LLM 推理服务** - 构建可扩展的 LLM 推理后端，支持流式 Token 生成。
-- **分布式计算** - 替代 Ray 用于轻量级分布式工作负载。
-- **Kubernetes 原生** - 服务发现与 K8s Service IP 无缝配合。
+---
 
-## 下一步
+## 深入了解
 
-- **跑一个 LLM 服务**：[LLM 推理](examples/llm_inference.zh.md)
-- **运维/巡检集群**：[运维（CLI）](guide/operations.zh.md)
+| 目标 | 链接 |
+|------|------|
+| 理解 Actor 模型 | [指南：Actor](guide/actors.zh.md) |
+| 构建集群 | [指南：远程 Actor](guide/remote_actors.zh.md) |
+| 运维系统 | [指南：CLI 操作](guide/operations.zh.md) |
+| 深入设计 | [设计文档](design/architecture.md) |
+| API 详情 | [API 参考](api_reference.md) |
+
+---
 
 ## 社区
 
 - [GitHub 仓库](https://github.com/reiase/pulsing)
-- [问题追踪](https://github.com/reiase/pulsing/issues)
+- [Issue 追踪](https://github.com/reiase/pulsing/issues)
 - [讨论区](https://github.com/reiase/pulsing/discussions)
