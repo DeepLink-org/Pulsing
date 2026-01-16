@@ -1,99 +1,51 @@
 //! Message Patterns Example
 //!
 //! Three core patterns:
-//! 1. Single -> Single (RPC)
-//! 2. Single -> Stream (Server Streaming) - e.g., LLM token generation
-//! 3. Stream -> Single (Client Streaming) - e.g., file upload
+//! 1. RPC (Single -> Single)
+//! 2. Server Streaming (Single -> Stream)
+//! 3. Client Streaming (Stream -> Single)
 //!
 //! Run: cargo run --example message_patterns -p pulsing-actor
 
 use pulsing_actor::prelude::*;
-use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 
-// Pattern 1: RPC
-#[derive(Serialize, Deserialize, Debug)]
-struct Greet {
-    name: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Greeting {
-    message: String,
-}
-
-// Pattern 2: Server Streaming
-#[derive(Serialize, Deserialize, Debug)]
-struct CountTo {
-    n: i32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct CountItem {
-    value: i32,
-}
-
-// Pattern 3: Client Streaming
-#[derive(Serialize, Deserialize, Debug)]
-struct SumItem {
-    value: i32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct SumResult {
-    total: i32,
-}
-
-struct DemoActor;
+struct Demo;
 
 #[async_trait]
-impl Actor for DemoActor {
+impl Actor for Demo {
     async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
         match msg.msg_type() {
-            // Pattern 1: RPC - receive request, return response
-            t if t.ends_with("Greet") => {
-                let req: Greet = msg.unpack()?;
-                println!("[Actor] Greet: {}", req.name);
-                Message::pack(&Greeting {
-                    message: format!("Hello, {}!", req.name),
-                })
+            // Pattern 1: RPC - String in, String out
+            "echo" => {
+                let s: String = msg.unpack()?;
+                Message::pack(&format!("Hello, {}!", s))
             }
 
-            // Pattern 2: Server Streaming - return a stream of items
-            t if t.ends_with("CountTo") => {
-                let req: CountTo = msg.unpack()?;
-                println!("[Actor] CountTo: {}", req.n);
-
+            // Pattern 2: Server Streaming - return stream of i32
+            "count" => {
+                let n: i32 = msg.unpack()?;
                 let (tx, rx) = tokio::sync::mpsc::channel(32);
                 tokio::spawn(async move {
-                    for i in 1..=req.n {
-                        let data = bincode::serialize(&CountItem { value: i }).unwrap();
-                        let _ = tx.send(Ok(Message::single("CountItem", data))).await;
+                    for i in 1..=n {
+                        let _ = tx.send(Ok(Message::pack(&i).unwrap())).await;
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     }
                 });
-                Ok(Message::from_channel("CountItem", rx))
+                Ok(Message::from_channel("i32", rx))
             }
 
-            // Pattern 3: Client Streaming - receive a stream, return single result
-            t if t.ends_with("StreamSum") => {
-                println!("[Actor] StreamSum");
+            // Pattern 3: Client Streaming - sum stream of i32
+            "sum" => {
                 let Message::Stream { mut stream, .. } = msg else {
                     return Err(anyhow::anyhow!("Expected stream"));
                 };
-
-                let mut total = 0;
+                let mut total = 0i32;
                 while let Some(chunk) = stream.next().await {
-                    // Stream now contains Message items
-                    let chunk_msg = chunk?;
-                    let Message::Single { data, .. } = chunk_msg else {
-                        continue;
-                    };
-                    let item: SumItem = bincode::deserialize(&data)?;
-                    println!("[Actor]   +{}", item.value);
-                    total += item.value;
+                    let n: i32 = chunk?.unpack()?;
+                    total += n;
                 }
-                Message::pack(&SumResult { total })
+                Message::pack(&total)
             }
 
             _ => Err(anyhow::anyhow!("Unknown: {}", msg.msg_type())),
@@ -103,50 +55,40 @@ impl Actor for DemoActor {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("=== Pulsing Message Patterns ===\n");
+    println!("=== Message Patterns ===\n");
 
-    let system = ActorSystem::new(SystemConfig::standalone()).await?;
-    let actor = system.spawn("demo", DemoActor).await?;
+    let system = ActorSystem::builder().build().await?;
+    let actor = system.spawn("demo", Demo).await?;
 
     // Pattern 1: RPC
-    println!("--- Pattern 1: RPC ---");
-    let resp: Greeting = actor
-        .ask(Greet {
-            name: "Pulsing".into(),
-        })
-        .await?;
-    println!("Response: {}\n", resp.message);
+    println!("--- RPC ---");
+    let resp: String = actor.ask("Pulsing".to_string()).await?;
+    println!("{}\n", resp);
 
     // Pattern 2: Server Streaming
-    println!("--- Pattern 2: Server Streaming ---");
-    let req = Message::pack(&CountTo { n: 3 })?;
+    println!("--- Server Streaming ---");
+    let req = Message::single("count", bincode::serialize(&3i32)?);
     let Message::Stream { mut stream, .. } = actor.send(req).await? else {
         return Err(anyhow::anyhow!("Expected stream"));
     };
     while let Some(chunk) = stream.next().await {
-        // Stream now contains Message items
-        let chunk_msg = chunk?;
-        let Message::Single { data, .. } = chunk_msg else {
-            continue;
-        };
-        let item: CountItem = bincode::deserialize(&data)?;
-        println!("Received: {}", item.value);
+        let n: i32 = chunk?.unpack()?;
+        println!("Received: {}", n);
     }
 
     // Pattern 3: Client Streaming
-    println!("\n--- Pattern 3: Client Streaming ---");
+    println!("\n--- Client Streaming ---");
     let (tx, rx) = tokio::sync::mpsc::channel(32);
     tokio::spawn(async move {
         for v in [10, 20, 30] {
-            let data = bincode::serialize(&SumItem { value: v }).unwrap();
-            let _ = tx.send(Ok(Message::single("SumItem", data))).await;
+            let _ = tx.send(Ok(Message::pack(&v).unwrap())).await;
         }
     });
-    let resp: SumResult = actor
-        .send(Message::from_channel("StreamSum", rx))
+    let total: i32 = actor
+        .send(Message::from_channel("sum", rx))
         .await?
         .unpack()?;
-    println!("Sum: {}\n", resp.total);
+    println!("Sum: {}\n", total);
 
     system.shutdown().await
 }

@@ -6,51 +6,21 @@
 //!   Terminal 1: cargo run --example cluster -p pulsing-actor -- --node 1
 //!   Terminal 2: cargo run --example cluster -p pulsing-actor -- --node 2
 
-use pulsing_actor::actor::ActorPath;
 use pulsing_actor::prelude::*;
 use std::time::Duration;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct GetCount;
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct Increment(i32);
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct CountResponse {
-    count: i32,
-    from_node: String,
-}
-
-struct SharedCounter {
+struct Counter {
     count: i32,
     node_id: String,
 }
 
 #[async_trait]
-impl Actor for SharedCounter {
-    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
-        println!("[{}] Started on {}", ctx.id(), self.node_id);
-        Ok(())
-    }
-
+impl Actor for Counter {
     async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
-        match msg.msg_type() {
-            t if t.ends_with("GetCount") => Message::pack(&CountResponse {
-                count: self.count,
-                from_node: self.node_id.clone(),
-            }),
-            t if t.ends_with("Increment") => {
-                let Increment(n) = msg.unpack()?;
-                self.count += n;
-                println!("[{}] +{} -> {}", self.node_id, n, self.count);
-                Message::pack(&CountResponse {
-                    count: self.count,
-                    from_node: self.node_id.clone(),
-                })
-            }
-            _ => Err(anyhow::anyhow!("Unknown: {}", msg.msg_type())),
-        }
+        let n: i32 = msg.unpack()?;
+        self.count += n;
+        println!("[{}] +{} -> {}", self.node_id, n, self.count);
+        Message::pack(&self.count)
     }
 }
 
@@ -64,24 +34,32 @@ async fn main() -> anyhow::Result<()> {
     println!("=== Pulsing Cluster - Node {} ===\n", node_num);
 
     // Node 1: port 8001, no seeds. Node 2+: join via node 1
-    let (port, seeds) = match node_num {
-        1 => (8001, vec![]),
-        _ => (8000 + node_num as u16, vec!["127.0.0.1:8001".parse()?]),
+    let system = match node_num {
+        1 => {
+            ActorSystem::builder()
+                .addr("127.0.0.1:8001")
+                .build()
+                .await?
+        }
+        n => {
+            ActorSystem::builder()
+                .addr(format!("127.0.0.1:{}", 8000 + n as u16))
+                .seeds(["127.0.0.1:8001"])
+                .build()
+                .await?
+        }
     };
-
-    let config = SystemConfig::with_addr(format!("127.0.0.1:{}", port).parse()?).with_seeds(seeds);
-    let system = ActorSystem::new(config).await?;
     println!("✓ Node started: {} @ {}\n", system.node_id(), system.addr());
 
-    let path = ActorPath::new("services/counter").unwrap();
+    let path = "services/counter";
 
     if node_num == 1 {
         // Node 1: Create actor and wait
         system
             .spawn_named(
-                path.clone(),
+                path,
                 "counter",
-                SharedCounter {
+                Counter {
                     count: 0,
                     node_id: system.node_id().to_string(),
                 },
@@ -104,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
 
         // Resolve remote actor
         let actor = loop {
-            match system.resolve_named(&path, None).await {
+            match system.resolve_named(path, None).await {
                 Ok(a) => break a,
                 Err(_) => {
                     print!(".");
@@ -115,17 +93,12 @@ async fn main() -> anyhow::Result<()> {
         println!("✓ Resolved actor\n");
 
         // Interact with remote actor
-        let resp: CountResponse = actor.ask(GetCount).await?;
-        println!("Initial: {} (from {})", resp.count, resp.from_node);
+        let count: i32 = actor.ask(0).await?;
+        println!("Initial: {}", count);
 
         for i in 1..=3 {
-            let resp: CountResponse = actor.ask(Increment(i * 10)).await?;
-            println!(
-                "After +{}: {} (from {})",
-                i * 10,
-                resp.count,
-                resp.from_node
-            );
+            let count: i32 = actor.ask(i * 10).await?;
+            println!("After +{}: {}", i * 10, count);
         }
 
         println!("\n✓ Done!");

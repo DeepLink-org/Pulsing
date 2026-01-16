@@ -85,6 +85,10 @@ path = "../../examples/rust/message_patterns.rs"
 name = "named_actors"
 path = "../../examples/rust/named_actors.rs"
 
+[[example]]
+name = "behavior_counter"
+path = "../../examples/rust/behavior_counter.rs"
+
 [[test]]
 name = "integration"
 path = "tests/integration_tests.rs"

@@ -201,62 +201,9 @@ impl Http2Server {
             return Self::serve_h2_generic(io, peer_addr, handler, config, cancel).await;
         }
 
-        // Plain TCP mode (h2c)
+        // Plain TCP mode (h2c) - HTTP/2 only (prior knowledge)
         let io = TokioIo::new(stream);
-
-        // Try to detect HTTP/2 preface
-        // For simplicity, we'll use auto detection with http1 fallback
-        if config.enable_http1_fallback {
-            // Use auto connection that handles both HTTP/1.1 and HTTP/2
-            Self::serve_auto(io, peer_addr, handler, config, cancel).await
-        } else {
-            // HTTP/2 only (prior knowledge)
-            Self::serve_h2(io, peer_addr, handler, config, cancel).await
-        }
-    }
-
-    /// Serve with automatic HTTP version detection
-    async fn serve_auto(
-        io: TokioIo<tokio::net::TcpStream>,
-        peer_addr: SocketAddr,
-        handler: Arc<dyn Http2ServerHandler>,
-        config: Http2Config,
-        cancel: CancellationToken,
-    ) -> anyhow::Result<()> {
-        // For now, we'll check the first bytes to detect HTTP/2
-        // HTTP/2 preface starts with "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        // This is a simplified approach - in production you might use hyper-util's auto
-
-        let service = service_fn(move |req| {
-            let handler = handler.clone();
-            async move { Self::handle_request(req, handler, peer_addr).await }
-        });
-
-        // Try HTTP/2 first, fall back to HTTP/1.1
-        let mut h2_builder = http2::Builder::new(TokioExecutor::new());
-        h2_builder
-            .max_concurrent_streams(config.max_concurrent_streams)
-            .initial_stream_window_size(config.initial_window_size)
-            .initial_connection_window_size(config.initial_connection_window_size)
-            .max_frame_size(config.max_frame_size)
-            .max_header_list_size(config.max_header_list_size);
-
-        let conn = h2_builder.serve_connection(io, service);
-
-        tokio::select! {
-            result = conn => {
-                if let Err(e) = result {
-                    // If HTTP/2 fails, the connection might be HTTP/1.1
-                    // For now, just log and continue
-                    tracing::debug!(peer = %peer_addr, error = %e, "Connection ended");
-                }
-            }
-            _ = cancel.cancelled() => {
-                tracing::debug!(peer = %peer_addr, "Connection cancelled");
-            }
-        }
-
-        Ok(())
+        Self::serve_h2(io, peer_addr, handler, config, cancel).await
     }
 
     /// Serve HTTP/2 only (prior knowledge mode)
@@ -347,32 +294,20 @@ impl Http2Server {
         if path == "/health" && method == Method::GET {
             let health = handler.health_check().await;
             let body = serde_json::to_vec(&health).unwrap_or_default();
-            return Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "application/json")
-                .body(full_body(body))
-                .unwrap());
+            return Ok(json_response(StatusCode::OK, body));
         }
 
         // Prometheus metrics endpoint
         if path == "/metrics" && method == Method::GET {
             let metrics = handler.prometheus_metrics().await;
-            return Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
-                .body(full_body(metrics.into_bytes()))
-                .unwrap());
+            return Ok(text_response(StatusCode::OK, metrics.into_bytes()));
         }
 
         // Cluster members endpoint (for CLI tools)
         if path == "/cluster/members" && method == Method::GET {
             let members = handler.cluster_members().await;
             let body = serde_json::to_vec(&members).unwrap_or_default();
-            return Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "application/json")
-                .body(full_body(body))
-                .unwrap());
+            return Ok(json_response(StatusCode::OK, body));
         }
 
         // Actors list endpoint (for CLI tools)
@@ -385,19 +320,15 @@ impl Http2Server {
                 .unwrap_or(false);
             let actors = handler.actors_list(include_internal).await;
             let body = serde_json::to_vec(&actors).unwrap_or_default();
-            return Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "application/json")
-                .body(full_body(body))
-                .unwrap());
+            return Ok(json_response(StatusCode::OK, body));
         }
 
         // Only POST for actor messages
         if method != Method::POST {
-            return Ok(Response::builder()
-                .status(StatusCode::METHOD_NOT_ALLOWED)
-                .body(full_body(b"Method not allowed".to_vec()))
-                .unwrap());
+            return Ok(error_response(
+                StatusCode::METHOD_NOT_ALLOWED,
+                b"Method not allowed".to_vec(),
+            ));
         }
 
         // Extract headers
@@ -429,12 +360,10 @@ impl Http2Server {
             let body_bytes = match req.collect().await {
                 Ok(collected) => collected.to_bytes().to_vec(),
                 Err(e) => {
-                    return Ok(Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .body(full_body(
-                            format!("Failed to read body: {}", e).into_bytes(),
-                        ))
-                        .unwrap());
+                    return Ok(error_response(
+                        StatusCode::BAD_REQUEST,
+                        format!("Failed to read body: {}", e).into_bytes(),
+                    ));
                 }
             };
             return Self::handle_gossip_request(&handler, body_bytes, peer_addr).await;
@@ -446,12 +375,10 @@ impl Http2Server {
                 let body_bytes = match req.collect().await {
                     Ok(collected) => collected.to_bytes().to_vec(),
                     Err(e) => {
-                        return Ok(Response::builder()
-                            .status(StatusCode::BAD_REQUEST)
-                            .body(full_body(
-                                format!("Failed to read body: {}", e).into_bytes(),
-                            ))
-                            .unwrap());
+                        return Ok(error_response(
+                            StatusCode::BAD_REQUEST,
+                            format!("Failed to read body: {}", e).into_bytes(),
+                        ));
                     }
                 };
                 Self::handle_tell_request(&handler, &path, &msg_type, body_bytes).await
@@ -464,12 +391,10 @@ impl Http2Server {
                         let body_bytes = match req.collect().await {
                             Ok(collected) => collected.to_bytes().to_vec(),
                             Err(e) => {
-                                return Ok(Response::builder()
-                                    .status(StatusCode::BAD_REQUEST)
-                                    .body(full_body(
-                                        format!("Failed to read body: {}", e).into_bytes(),
-                                    ))
-                                    .unwrap());
+                                return Ok(error_response(
+                                    StatusCode::BAD_REQUEST,
+                                    format!("Failed to read body: {}", e).into_bytes(),
+                                ));
                             }
                         };
                         let msg = Message::single(&msg_type, body_bytes);
@@ -551,19 +476,12 @@ impl Http2Server {
         peer_addr: SocketAddr,
     ) -> Result<Response<BoxBody>, Infallible> {
         match handler.handle_gossip(payload, peer_addr).await {
-            Ok(Some(response)) => Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "application/octet-stream")
-                .body(full_body(response))
-                .unwrap()),
-            Ok(None) => Ok(Response::builder()
-                .status(StatusCode::OK)
-                .body(empty_body())
-                .unwrap()),
-            Err(e) => Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(full_body(e.to_string().into_bytes()))
-                .unwrap()),
+            Ok(Some(response)) => Ok(octet_response(StatusCode::OK, response)),
+            Ok(None) => Ok(empty_response(StatusCode::OK)),
+            Err(e) => Ok(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string().into_bytes(),
+            )),
         }
     }
 
@@ -576,12 +494,11 @@ impl Http2Server {
         match handler.handle_message_full(path, msg).await {
             Ok(Message::Single { data, .. }) => {
                 // Single response - return directly with response type header
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "application/octet-stream")
-                    .header(headers::RESPONSE_TYPE, "single")
-                    .body(full_body(data))
-                    .unwrap())
+                Ok(octet_response_with_headers(
+                    StatusCode::OK,
+                    full_body(data),
+                    &[(headers::RESPONSE_TYPE, "single")],
+                ))
             }
             Ok(Message::Stream {
                 default_msg_type,
@@ -613,17 +530,16 @@ impl Http2Server {
                 let body_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
                 let body = StreamBody::new(body_stream);
 
-                Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "application/octet-stream")
-                    .header(headers::RESPONSE_TYPE, "stream")
-                    .body(BoxBody::new(body))
-                    .unwrap())
+                Ok(octet_response_with_headers(
+                    StatusCode::OK,
+                    BoxBody::new(body),
+                    &[(headers::RESPONSE_TYPE, "stream")],
+                ))
             }
-            Err(e) => Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(full_body(e.to_string().into_bytes()))
-                .unwrap()),
+            Err(e) => Ok(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string().into_bytes(),
+            )),
         }
     }
 
@@ -634,14 +550,11 @@ impl Http2Server {
         payload: Vec<u8>,
     ) -> Result<Response<BoxBody>, Infallible> {
         match handler.handle_tell(path, msg_type, payload).await {
-            Ok(()) => Ok(Response::builder()
-                .status(StatusCode::ACCEPTED)
-                .body(empty_body())
-                .unwrap()),
-            Err(e) => Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(full_body(e.to_string().into_bytes()))
-                .unwrap()),
+            Ok(()) => Ok(empty_response(StatusCode::ACCEPTED)),
+            Err(e) => Ok(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string().into_bytes(),
+            )),
         }
     }
 }
@@ -655,6 +568,70 @@ fn full_body(data: Vec<u8>) -> BoxBody {
 
 fn empty_body() -> BoxBody {
     BoxBody::new(http_body_util::Empty::new().map_err(|_| unreachable!()))
+}
+
+// ============================================================================
+// Response builder helpers - eliminates unwrap() calls with proper error handling
+// ============================================================================
+
+/// Build a JSON response with the given status code
+fn json_response(status: StatusCode, body: Vec<u8>) -> Response<BoxBody> {
+    Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .body(full_body(body))
+        .expect("failed to build JSON response with valid headers")
+}
+
+/// Build an octet-stream response with the given status code
+fn octet_response(status: StatusCode, body: Vec<u8>) -> Response<BoxBody> {
+    Response::builder()
+        .status(status)
+        .header("content-type", "application/octet-stream")
+        .body(full_body(body))
+        .expect("failed to build octet-stream response with valid headers")
+}
+
+/// Build an octet-stream response with custom headers
+fn octet_response_with_headers(
+    status: StatusCode,
+    body: BoxBody,
+    headers: &[(&str, &str)],
+) -> Response<BoxBody> {
+    let mut builder = Response::builder()
+        .status(status)
+        .header("content-type", "application/octet-stream");
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    builder
+        .body(body)
+        .expect("failed to build response with valid headers")
+}
+
+/// Build a text response (for metrics endpoint)
+fn text_response(status: StatusCode, body: Vec<u8>) -> Response<BoxBody> {
+    Response::builder()
+        .status(status)
+        .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
+        .body(full_body(body))
+        .expect("failed to build text response with valid headers")
+}
+
+/// Build an empty response with the given status code
+fn empty_response(status: StatusCode) -> Response<BoxBody> {
+    Response::builder()
+        .status(status)
+        .body(empty_body())
+        .expect("failed to build empty response")
+}
+
+/// Build an error response with the given status code and message
+fn error_response(status: StatusCode, message: impl Into<Vec<u8>>) -> Response<BoxBody> {
+    Response::builder()
+        .status(status)
+        .body(full_body(message.into()))
+        .expect("failed to build error response")
 }
 
 #[cfg(test)]

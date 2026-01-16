@@ -173,6 +173,43 @@ impl TryFrom<&str> for ActorPath {
     }
 }
 
+impl TryFrom<String> for ActorPath {
+    type Error = AddressParseError;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::new(s)
+    }
+}
+
+/// Trait for types that can be converted to ActorPath
+pub trait IntoActorPath {
+    fn into_actor_path(self) -> anyhow::Result<ActorPath>;
+}
+
+impl IntoActorPath for &str {
+    fn into_actor_path(self) -> anyhow::Result<ActorPath> {
+        ActorPath::new(self).map_err(Into::into)
+    }
+}
+
+impl IntoActorPath for String {
+    fn into_actor_path(self) -> anyhow::Result<ActorPath> {
+        ActorPath::new(self).map_err(Into::into)
+    }
+}
+
+impl IntoActorPath for ActorPath {
+    fn into_actor_path(self) -> anyhow::Result<ActorPath> {
+        Ok(self)
+    }
+}
+
+impl IntoActorPath for &ActorPath {
+    fn into_actor_path(self) -> anyhow::Result<ActorPath> {
+        Ok(self.clone())
+    }
+}
+
 /// Actor address - unified addressing for all actor types
 ///
 /// Supports three address formats:

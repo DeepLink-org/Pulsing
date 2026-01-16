@@ -194,14 +194,17 @@ pub struct ActorSystem {
 }
 
 impl ActorSystem {
-    /// 创建新系统
-    pub async fn new(config: SystemConfig) -> anyhow::Result<Arc<Self>>;
+    /// Builder 模式创建系统 (推荐)
+    pub fn builder() -> ActorSystemBuilder;
 
     /// 创建 Actor
-    pub async fn spawn<A: Actor>(&self, actor: A) -> anyhow::Result<ActorRef>;
+    pub async fn spawn<A: Actor>(&self, name: &str, actor: A) -> anyhow::Result<ActorRef>;
 
-    /// 获取 Actor 引用
-    pub async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef>;
+    /// 创建命名 Actor (支持跨节点发现)
+    pub async fn spawn_named(&self, path: &str, name: &str, actor: A) -> anyhow::Result<ActorRef>;
+
+    /// 解析命名 Actor
+    pub async fn resolve_named(&self, path: &str, node_id: Option<&NodeId>) -> anyhow::Result<ActorRef>;
 
     /// 停止 Actor
     pub async fn stop(&self, actor_name: &str) -> anyhow::Result<()>;
@@ -278,6 +281,28 @@ pub struct GossipCluster {
 
 ## 配置选项
 
+使用 Builder 模式配置 ActorSystem：
+
+```rust
+// 单机模式
+let system = ActorSystem::builder().build().await?;
+
+// 指定绑定地址
+let system = ActorSystem::builder()
+    .addr("0.0.0.0:8001")
+    .build()
+    .await?;
+
+// 集群模式 (加入现有集群)
+let system = ActorSystem::builder()
+    .addr("0.0.0.0:8002")
+    .seeds(&["127.0.0.1:8001"])
+    .build()
+    .await?;
+```
+
+### 内部配置结构
+
 ```rust
 pub struct SystemConfig {
     /// HTTP 绑定地址
@@ -288,66 +313,46 @@ pub struct SystemConfig {
 
     /// Gossip 配置
     pub gossip_config: GossipConfig,
-
-    /// HTTP 传输配置
-    pub http_config: HttpTransportConfig,
-}
-
-pub struct HttpTransportConfig {
-    /// 请求超时 (默认 30s)
-    pub request_timeout: Duration,
-
-    /// 连接超时 (默认 5s)
-    pub connect_timeout: Duration,
-
-    /// Keep-alive 超时 (默认 60s)
-    pub keepalive_timeout: Duration,
-
-    /// 每主机最大连接数 (默认 32)
-    pub max_connections_per_host: usize,
 }
 ```
 
 ## 使用示例
 
-### 定义 Actor
+### 定义 Actor (简洁版)
 
 ```rust
+use pulsing_actor::prelude::*;
+
+struct Echo;
+
+#[async_trait]
+impl Actor for Echo {
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+        let s: String = msg.unpack()?;
+        Message::pack(&format!("echo: {}", s))
+    }
+}
+```
+
+### 定义 Actor (类型消息)
+
+```rust
+use pulsing_actor::prelude::*;
+use serde::{Serialize, Deserialize};
+
 #[derive(Serialize, Deserialize)]
 struct Ping { value: i32 }
-
-impl Message for Ping {
-    fn type_id() -> &'static str { "Ping" }
-}
 
 #[derive(Serialize, Deserialize)]
 struct Pong { result: i32 }
 
-impl Message for Pong {
-    fn type_id() -> &'static str { "Pong" }
-}
-
-struct EchoActor {
-    id: ActorId,
-}
+struct Calculator;
 
 #[async_trait]
-impl Actor for EchoActor {
-    fn id(&self) -> &ActorId { &self.id }
-
-    async fn receive(
-        &mut self,
-        msg: RawMessage,
-        _ctx: &mut ActorContext,
-    ) -> anyhow::Result<RawMessage> {
-        match msg.msg_type.as_str() {
-            "Ping" => {
-                let ping: Ping = bincode::deserialize(&msg.payload)?;
-                let pong = Pong { result: ping.value * 2 };
-                RawMessage::from_message(&pong)
-            }
-            _ => Err(anyhow::anyhow!("Unknown message type")),
-        }
+impl Actor for Calculator {
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+        let ping: Ping = msg.unpack()?;
+        Message::pack(&Pong { result: ping.value * 2 })
     }
 }
 ```
@@ -357,12 +362,11 @@ impl Actor for EchoActor {
 ```rust
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 创建系统
-    let system = ActorSystem::new(SystemConfig::standalone()).await?;
+    // 创建系统 (builder 模式)
+    let system = ActorSystem::builder().build().await?;
 
     // 创建 Actor
-    let actor = EchoActor { id: ActorId::local("echo") };
-    let actor_ref = system.spawn(actor).await?;
+    let actor_ref = system.spawn("echo", EchoActor).await?;
 
     // 发送消息
     let response: Pong = actor_ref.ask(Ping { value: 21 }).await?;
@@ -378,25 +382,26 @@ async fn main() -> anyhow::Result<()> {
 
 ```rust
 // 节点 1 (Seed)
-let system1 = ActorSystem::new(
-    SystemConfig::with_addr("0.0.0.0:8001".parse()?)
-).await?;
+let system1 = ActorSystem::builder()
+    .addr("0.0.0.0:8001")
+    .build()
+    .await?;
 
-let actor = EchoActor { id: ActorId::local("echo") };
-let _ref = system1.spawn(actor).await?;
+// 创建命名 Actor (可跨节点发现)
+system1.spawn_named("services/echo", "echo", EchoActor).await?;
 
 // 节点 2 (加入集群)
-let system2 = ActorSystem::new(
-    SystemConfig::with_addr("0.0.0.0:8002".parse()?)
-        .with_seeds(vec!["127.0.0.1:8001".parse()?])
-).await?;
+let system2 = ActorSystem::builder()
+    .addr("0.0.0.0:8002")
+    .seeds(&["127.0.0.1:8001"])
+    .build()
+    .await?;
 
 // 等待集群同步
 tokio::time::sleep(Duration::from_millis(500)).await;
 
-// 从节点 2 访问节点 1 的 Actor
-let remote_id = ActorId::new(system1.node_id().clone(), "echo");
-let remote_ref = system2.actor_ref(&remote_id).await?;
+// 通过路径解析远程 Actor
+let remote_ref = system2.resolve_named("services/echo", None).await?;
 
 let response: Pong = remote_ref.ask(Ping { value: 10 }).await?;
 assert_eq!(response.result, 20);

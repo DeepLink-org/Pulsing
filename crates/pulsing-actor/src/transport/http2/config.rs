@@ -50,9 +50,6 @@ pub struct Http2Config {
     /// Keep-alive timeout (default: 10s)
     pub keepalive_timeout: Duration,
 
-    /// Enable HTTP/1.1 fallback for compatibility (default: true)
-    pub enable_http1_fallback: bool,
-
     /// Enable HTTP/2 prior knowledge mode (default: true)
     /// When true, client sends HTTP/2 preface directly without upgrade
     pub http2_prior_knowledge: bool,
@@ -96,7 +93,6 @@ impl Default for Http2Config {
             // Common defaults
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_timeout: Duration::from_secs(10),
-            enable_http1_fallback: true,
             http2_prior_knowledge: true,
 
             // Retry defaults
@@ -210,12 +206,6 @@ impl Http2Config {
         self
     }
 
-    /// Disable HTTP/1.1 fallback
-    pub fn disable_http1_fallback(mut self) -> Self {
-        self.enable_http1_fallback = false;
-        self
-    }
-
     /// Disable HTTP/2 prior knowledge (use upgrade instead)
     pub fn disable_prior_knowledge(mut self) -> Self {
         self.http2_prior_knowledge = false;
@@ -304,7 +294,6 @@ mod tests {
         let config = Http2Config::default();
         assert_eq!(config.max_concurrent_streams, 100);
         assert_eq!(config.connect_timeout, Duration::from_secs(5));
-        assert!(config.enable_http1_fallback);
         assert!(config.http2_prior_knowledge);
         assert_eq!(config.max_retries, 3);
     }
@@ -314,12 +303,10 @@ mod tests {
         let config = Http2Config::new()
             .max_concurrent_streams(200)
             .connect_timeout(Duration::from_secs(10))
-            .disable_http1_fallback()
             .max_retries(5);
 
         assert_eq!(config.max_concurrent_streams, 200);
         assert_eq!(config.connect_timeout, Duration::from_secs(10));
-        assert!(!config.enable_http1_fallback);
         assert_eq!(config.max_retries, 5);
     }
 

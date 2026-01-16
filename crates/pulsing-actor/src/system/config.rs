@@ -83,6 +83,111 @@ impl SystemConfig {
     }
 }
 
+// ============================================================================
+// ActorSystem Builder
+// ============================================================================
+
+/// Builder for creating ActorSystem with fluent API
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // Standalone mode (simplest)
+/// let system = ActorSystem::builder().build().await?;
+///
+/// // With custom address
+/// let system = ActorSystem::builder()
+///     .addr("0.0.0.0:8000")
+///     .build()
+///     .await?;
+///
+/// // Cluster mode with seeds
+/// let system = ActorSystem::builder()
+///     .addr("0.0.0.0:8000")
+///     .seeds(&["192.168.1.1:8000", "192.168.1.2:8000"])
+///     .mailbox_capacity(512)
+///     .build()
+///     .await?;
+/// ```
+#[derive(Default)]
+pub struct ActorSystemBuilder {
+    config: SystemConfig,
+}
+
+impl ActorSystemBuilder {
+    /// Create a new builder with default configuration
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the bind address
+    ///
+    /// Accepts `&str` or `SocketAddr`
+    pub fn addr(mut self, addr: impl Into<AddrInput>) -> Self {
+        self.config.addr = addr.into().0;
+        self
+    }
+
+    /// Add seed nodes for cluster joining
+    ///
+    /// Accepts `&[&str]` or `Vec<SocketAddr>`
+    pub fn seeds(mut self, seeds: impl IntoIterator<Item = impl Into<AddrInput>>) -> Self {
+        self.config.seed_nodes = seeds.into_iter().map(|s| s.into().0).collect();
+        self
+    }
+
+    /// Set default mailbox capacity for actors
+    pub fn mailbox_capacity(mut self, capacity: usize) -> Self {
+        self.config.default_mailbox_capacity = capacity;
+        self
+    }
+
+    /// Enable TLS with passphrase
+    #[cfg(feature = "tls")]
+    pub fn tls(mut self, passphrase: &str) -> anyhow::Result<Self> {
+        self.config.http2_config = self.config.http2_config.with_tls(passphrase)?;
+        Ok(self)
+    }
+
+    /// Set gossip configuration
+    pub fn gossip(mut self, config: GossipConfig) -> Self {
+        self.config.gossip_config = config;
+        self
+    }
+
+    /// Build the ActorSystem
+    pub async fn build(self) -> anyhow::Result<Arc<crate::system::ActorSystem>> {
+        crate::system::ActorSystem::new(self.config).await
+    }
+}
+
+/// Helper type for flexible address input
+pub struct AddrInput(SocketAddr);
+
+impl From<SocketAddr> for AddrInput {
+    fn from(addr: SocketAddr) -> Self {
+        AddrInput(addr)
+    }
+}
+
+impl From<&str> for AddrInput {
+    fn from(s: &str) -> Self {
+        AddrInput(s.parse().expect("invalid address format"))
+    }
+}
+
+impl From<String> for AddrInput {
+    fn from(s: String) -> Self {
+        AddrInput(s.parse().expect("invalid address format"))
+    }
+}
+
+impl From<&&str> for AddrInput {
+    fn from(s: &&str) -> Self {
+        AddrInput(s.parse().expect("invalid address format"))
+    }
+}
+
 /// Options for spawning an actor
 #[derive(Default, Clone, Debug)]
 pub struct SpawnOptions {

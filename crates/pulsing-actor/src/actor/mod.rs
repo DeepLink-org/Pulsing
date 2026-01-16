@@ -6,7 +6,7 @@ mod mailbox;
 mod reference;
 mod traits;
 
-pub use address::{ActorAddress, ActorPath, AddressParseError};
+pub use address::{ActorAddress, ActorPath, AddressParseError, IntoActorPath};
 pub use context::{ActorContext, ActorSystemRef};
 pub use mailbox::{Envelope, Mailbox, MailboxSender, ResponseChannel, DEFAULT_MAILBOX_SIZE};
 pub use reference::{ActorRef, ActorRefInner, RemoteActorRef, RemoteTransport};

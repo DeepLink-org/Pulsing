@@ -190,8 +190,6 @@ pub struct Http2ServerConfig {
     pub keepalive_interval: Option<Duration>,
     /// Keep-alive 超时
     pub keepalive_timeout: Duration,
-    /// 是否启用 HTTP/1.1 回退
-    pub enable_http1_fallback: bool,
 }
 
 /// HTTP/2 服务端
@@ -553,8 +551,6 @@ pub struct Http2TransportConfig {
     pub keepalive_interval: Duration,
     /// Keep-alive 超时 (默认: 10s)
     pub keepalive_timeout: Duration,
-    /// 是否启用 HTTP/1.1 回退 (默认: true)
-    pub enable_http1_fallback: bool,
 }
 
 impl Default for Http2TransportConfig {
@@ -571,7 +567,6 @@ impl Default for Http2TransportConfig {
             max_connections_per_host: 10,
             keepalive_interval: Duration::from_secs(30),
             keepalive_timeout: Duration::from_secs(10),
-            enable_http1_fallback: true,
         }
     }
 }

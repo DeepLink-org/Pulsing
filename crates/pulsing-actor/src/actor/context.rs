@@ -1,9 +1,13 @@
 //! Actor execution context
 
+use super::mailbox::Envelope;
 use super::reference::ActorRef;
-use super::traits::{ActorId, NodeId};
+use super::traits::{ActorId, Message, NodeId};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 /// Context provided to actors during message handling
@@ -12,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 /// - `id()` - The actor's assigned ID
 /// - `actor_ref()` - Get references to other actors
 /// - `watch()`/`unwatch()` - Monitor other actors
+/// - `schedule_self()` - Schedule a delayed message to self
 /// - `is_cancelled()` - Check if shutdown was requested
 pub struct ActorContext {
     /// The actor's own ID
@@ -28,6 +33,9 @@ pub struct ActorContext {
 
     /// System reference for spawning new actors
     system: Option<Arc<dyn ActorSystemRef>>,
+
+    /// Self mailbox sender for schedule_self
+    self_sender: Option<mpsc::Sender<Envelope>>,
 }
 
 /// Trait for system reference (to avoid circular dependency)
@@ -55,6 +63,7 @@ impl ActorContext {
             cancel_token: CancellationToken::new(),
             actor_refs: HashMap::new(),
             system: None,
+            self_sender: None,
         }
     }
 
@@ -63,6 +72,7 @@ impl ActorContext {
         actor_id: ActorId,
         system: Arc<dyn ActorSystemRef>,
         cancel_token: CancellationToken,
+        self_sender: mpsc::Sender<Envelope>,
     ) -> Self {
         let node_id = Some(system.node_id());
         Self {
@@ -71,6 +81,7 @@ impl ActorContext {
             cancel_token,
             actor_refs: HashMap::new(),
             system: Some(system),
+            self_sender: Some(self_sender),
         }
     }
 
@@ -112,9 +123,39 @@ impl ActorContext {
     }
 
     /// Schedule a delayed message to self
-    pub fn schedule_self<M>(&self, _msg: M, _delay: std::time::Duration) {
-        // TODO: implement scheduling
-        todo!("Scheduling not yet implemented")
+    ///
+    /// Sends a message to this actor after the specified delay.
+    /// The message is serialized and sent as a fire-and-forget (tell pattern).
+    ///
+    /// # Example
+    /// ```ignore
+    /// ctx.schedule_self(MyMessage { value: 42 }, Duration::from_secs(5));
+    /// ```
+    ///
+    /// # Panics
+    /// Returns an error if the actor context doesn't have a self sender (e.g., in tests).
+    pub fn schedule_self<M: Serialize + Send + 'static>(
+        &self,
+        msg: M,
+        delay: Duration,
+    ) -> anyhow::Result<()> {
+        let sender = self.self_sender.clone().ok_or_else(|| {
+            anyhow::anyhow!("No self sender available (context not fully initialized)")
+        })?;
+
+        // Serialize the message
+        let message = Message::pack(&msg)?;
+
+        // Spawn a task that waits for the delay and then sends the message
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let envelope = Envelope::tell(message);
+            if let Err(e) = sender.send(envelope).await {
+                tracing::warn!("Failed to deliver scheduled message: {}", e);
+            }
+        });
+
+        Ok(())
     }
 
     /// Watch another actor - will receive a termination message (ActorId, StopReason) when it stops

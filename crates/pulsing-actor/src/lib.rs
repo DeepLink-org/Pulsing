@@ -104,6 +104,7 @@
 //! ```
 
 pub mod actor;
+pub mod behavior;
 pub mod circuit_breaker;
 pub mod cluster;
 pub mod metrics;

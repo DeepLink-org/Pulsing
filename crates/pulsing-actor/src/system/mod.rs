@@ -11,15 +11,15 @@ mod handle;
 mod handler;
 mod runtime;
 
-pub use config::{ResolveOptions, SpawnOptions, SystemConfig};
+pub use config::{ActorSystemBuilder, ResolveOptions, SpawnOptions, SystemConfig};
 pub use handle::ActorStats;
 
 use crate::actor::{
-    Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Mailbox,
-    NodeId, StopReason,
+    Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, IntoActorPath,
+    Mailbox, NodeId, StopReason,
 };
 use crate::cluster::{GossipCluster, MemberInfo, MemberStatus, NamedActorInfo};
-use crate::policies::{LoadBalancingPolicy, RoundRobinPolicy};
+use crate::policies::{LoadBalancingPolicy, RoundRobinPolicy, Worker};
 use crate::system_actor::{
     BoxedActorFactory, SystemActor, SystemRef, SYSTEM_ACTOR_LOCAL_NAME, SYSTEM_ACTOR_PATH,
 };
@@ -35,6 +35,52 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
+
+/// Wrapper to adapt MemberInfo to the Worker trait for load balancing
+#[derive(Debug)]
+struct MemberWorker {
+    url: String,
+    is_alive: bool,
+}
+
+impl MemberWorker {
+    fn new(member: &MemberInfo) -> Self {
+        Self {
+            url: member.addr.to_string(),
+            is_alive: member.status == MemberStatus::Alive,
+        }
+    }
+}
+
+impl Worker for MemberWorker {
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn is_healthy(&self) -> bool {
+        self.is_alive
+    }
+
+    fn set_healthy(&mut self, healthy: bool) {
+        self.is_alive = healthy;
+    }
+
+    fn load(&self) -> usize {
+        0 // MemberInfo doesn't track load
+    }
+
+    fn increment_load(&self) {}
+    fn decrement_load(&self) {}
+    fn increment_processed(&self) {}
+
+    fn processed(&self) -> u64 {
+        0
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 
 /// The Actor System - manages actors and cluster membership
 pub struct ActorSystem {
@@ -73,6 +119,17 @@ pub struct ActorSystem {
 }
 
 impl ActorSystem {
+    /// Create a builder for configuring ActorSystem
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let system = ActorSystem::builder().build().await?;
+    /// ```
+    pub fn builder() -> ActorSystemBuilder {
+        ActorSystemBuilder::new()
+    }
+
     /// Create a new actor system
     pub async fn new(config: SystemConfig) -> anyhow::Result<Arc<Self>> {
         let cancel_token = CancellationToken::new();
@@ -233,6 +290,15 @@ impl ActorSystem {
         self.local_actors.iter().map(|e| e.key().clone()).collect()
     }
 
+    /// Get a local actor reference by name
+    ///
+    /// Returns None if the actor doesn't exist locally
+    pub fn local_actor_ref_by_name(&self, name: &str) -> Option<ActorRef> {
+        self.local_actors
+            .get(name)
+            .map(|handle| ActorRef::local(handle.actor_id, handle.sender.clone()))
+    }
+
     /// Generate a new unique local actor ID
     fn next_actor_id(&self) -> ActorId {
         let local_id = self.actor_id_counter.fetch_add(1, Ordering::Relaxed);
@@ -252,7 +318,11 @@ impl ActorSystem {
     }
 
     /// Spawn an actor with a local name (uses system default mailbox capacity)
-    pub async fn spawn<A>(&self, name: impl AsRef<str>, actor: A) -> anyhow::Result<ActorRef>
+    pub async fn spawn<A>(
+        self: &Arc<Self>,
+        name: impl AsRef<str>,
+        actor: A,
+    ) -> anyhow::Result<ActorRef>
     where
         A: Actor,
     {
@@ -262,7 +332,7 @@ impl ActorSystem {
 
     /// Spawn an actor with custom options
     pub async fn spawn_with_options<A>(
-        &self,
+        self: &Arc<Self>,
         name: impl AsRef<str>,
         actor: A,
         options: SpawnOptions,
@@ -276,7 +346,7 @@ impl ActorSystem {
 
     /// Spawn an actor using a factory function (enables supervision restarts)
     pub async fn spawn_factory<F, A>(
-        &self,
+        self: &Arc<Self>,
         name: impl AsRef<str>,
         factory: F,
         options: SpawnOptions,
@@ -304,8 +374,13 @@ impl ActorSystem {
         let stats = Arc::new(ActorStats::default());
         let metadata = HashMap::new();
 
-        // Create context
-        let ctx = ActorContext::new(actor_id);
+        // Create context with system reference for actor_ref/watch/schedule_self
+        let ctx = ActorContext::with_system(
+            actor_id,
+            self.clone() as Arc<dyn ActorSystemRef>,
+            self.cancel_token.clone(),
+            sender.clone(),
+        );
 
         // Spawn actor loop
         let stats_clone = stats.clone();
@@ -337,15 +412,23 @@ impl ActorSystem {
     }
 
     /// Spawn a named actor (publicly accessible via named path)
-    pub async fn spawn_named<A>(
-        &self,
-        path: ActorPath,
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Path can be &str, String, or ActorPath
+    /// system.spawn_named("services/echo", "echo", MyActor).await?;
+    /// ```
+    pub async fn spawn_named<P, A>(
+        self: &Arc<Self>,
+        path: P,
         local_name: impl AsRef<str>,
         actor: A,
     ) -> anyhow::Result<ActorRef>
     where
+        P: IntoActorPath,
         A: Actor,
     {
+        let path = path.into_actor_path()?;
         self.spawn_named_factory(
             path,
             local_name,
@@ -356,32 +439,36 @@ impl ActorSystem {
     }
 
     /// Spawn a named actor with custom options
-    pub async fn spawn_named_with_options<A>(
-        &self,
-        path: ActorPath,
+    pub async fn spawn_named_with_options<P, A>(
+        self: &Arc<Self>,
+        path: P,
         local_name: impl AsRef<str>,
         actor: A,
         options: SpawnOptions,
     ) -> anyhow::Result<ActorRef>
     where
+        P: IntoActorPath,
         A: Actor,
     {
+        let path = path.into_actor_path()?;
         self.spawn_named_factory(path, local_name, Self::once_factory(actor), options)
             .await
     }
 
     /// Spawn a named actor using a factory function
-    pub async fn spawn_named_factory<F, A>(
-        &self,
-        path: ActorPath,
+    pub async fn spawn_named_factory<P, F, A>(
+        self: &Arc<Self>,
+        path: P,
         local_name: impl AsRef<str>,
         factory: F,
         options: SpawnOptions,
     ) -> anyhow::Result<ActorRef>
     where
+        P: IntoActorPath,
         F: FnMut() -> anyhow::Result<A> + Send + 'static,
         A: Actor,
     {
+        let path = path.into_actor_path()?;
         let local_name = local_name.as_ref();
 
         // Check for duplicate local name
@@ -412,8 +499,13 @@ impl ActorSystem {
         let stats = Arc::new(ActorStats::default());
         let metadata = options.metadata.clone();
 
-        // Create context
-        let ctx = ActorContext::new(actor_id);
+        // Create context with system reference for actor_ref/watch/schedule_self
+        let ctx = ActorContext::with_system(
+            actor_id,
+            self.clone() as Arc<dyn ActorSystemRef>,
+            self.cancel_token.clone(),
+            sender.clone(),
+        );
 
         // Spawn actor loop
         let stats_clone = stats.clone();
@@ -494,17 +586,27 @@ impl ActorSystem {
     }
 
     /// Resolve a named actor and get an ActorRef (uses default load balancing: RoundRobin)
-    pub async fn resolve_named(
+    /// Resolve a named actor by path
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let actor = system.resolve_named("services/echo", None).await?;
+    /// ```
+    pub async fn resolve_named<P>(
         &self,
-        path: &ActorPath,
+        path: P,
         node_id: Option<&NodeId>,
-    ) -> anyhow::Result<ActorRef> {
+    ) -> anyhow::Result<ActorRef>
+    where
+        P: IntoActorPath,
+    {
+        let path = path.into_actor_path()?;
         let options = if let Some(nid) = node_id {
             ResolveOptions::new().node_id(*nid)
         } else {
             ResolveOptions::new()
         };
-        self.resolve_named_with_options(path, options).await
+        self.resolve_named_with_options(&path, options).await
     }
 
     /// Resolve a named actor with custom options (load balancing, health filtering)
@@ -584,9 +686,14 @@ impl ActorSystem {
         instances: &'a [MemberInfo],
         policy: &dyn LoadBalancingPolicy,
     ) -> &'a MemberInfo {
-        // Convert MemberInfo to a format compatible with LoadBalancingPolicy
-        // For now, use simple index-based selection
-        let idx = policy.select_worker(&[], None).unwrap_or(0) % instances.len();
+        // Convert MemberInfo to Worker wrappers for the policy
+        let workers: Vec<Arc<dyn crate::policies::Worker>> = instances
+            .iter()
+            .map(|m| Arc::new(MemberWorker::new(m)) as Arc<dyn crate::policies::Worker>)
+            .collect();
+
+        // Use the policy to select a worker index
+        let idx = policy.select_worker(&workers, None).unwrap_or(0);
         &instances[idx]
     }
 
@@ -731,11 +838,57 @@ impl ActorSystem {
     }
 
     /// Shutdown the entire actor system
+    ///
+    /// This method performs a graceful shutdown:
+    /// 1. Signals cancellation to all actors
+    /// 2. Triggers lifecycle cleanup for each actor (watch notifications, cluster broadcast, etc.)
+    /// 3. Leaves the cluster gracefully
+    /// 4. Clears all actors and watch relationships
     pub async fn shutdown(&self) -> anyhow::Result<()> {
         tracing::info!("Shutting down actor system");
 
-        // Signal cancellation
+        // Signal cancellation first - this tells actors to stop processing new messages
         self.cancel_token.cancel();
+
+        // Collect all actor info before processing to avoid holding locks during cleanup
+        let actor_entries: Vec<_> = self
+            .local_actors
+            .iter()
+            .map(|entry| {
+                (
+                    entry.key().clone(),
+                    entry.actor_id,
+                    entry.named_path.clone(),
+                    entry.join_handle.abort_handle(),
+                )
+            })
+            .collect();
+
+        // Process each actor's termination with proper lifecycle handling
+        for (actor_name, actor_id, named_path, abort_handle) in actor_entries {
+            // Abort the actor task
+            abort_handle.abort();
+
+            // Trigger lifecycle cleanup (watch notifications, cluster broadcast, routing cleanup)
+            let local_actors = self.local_actors.clone();
+            self.lifecycle
+                .handle_termination(
+                    &actor_id,
+                    &actor_name,
+                    named_path,
+                    StopReason::SystemShutdown,
+                    &self.named_actor_paths,
+                    &self.cluster,
+                    |name| local_actors.get(name).map(|h| h.sender.clone()),
+                )
+                .await;
+        }
+
+        // Clear all actors
+        self.local_actors.clear();
+
+        // Clear all watch relationships
+        self.lifecycle.clear().await;
 
         // Leave cluster gracefully
         {
@@ -745,12 +898,7 @@ impl ActorSystem {
             }
         }
 
-        // Stop all actors
-        for entry in self.local_actors.iter() {
-            entry.join_handle.abort();
-        }
-        self.local_actors.clear();
-
+        tracing::info!("Actor system shutdown complete");
         Ok(())
     }
 
