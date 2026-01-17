@@ -30,7 +30,7 @@ import json
 import operator
 import os
 from dataclasses import asdict, dataclass
-from typing import Annotated, Any, Literal, Sequence, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
