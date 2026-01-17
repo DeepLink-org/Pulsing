@@ -94,38 +94,97 @@ PYTHON_ACTOR_SERVICE_NAME = "_python_actor_service"
 
 
 class ActorProxy:
-    """Actor proxy: automatically converts method calls to ask messages"""
+    """Actor proxy: automatically converts method calls to ask messages
 
-    def __init__(self, actor_ref: ActorRef, method_names: list[str]):
+    支持两种方法类型：
+    - 普通方法: 同步 ask/response
+    - async 方法: 流式响应，不阻塞 actor
+    """
+
+    def __init__(
+        self,
+        actor_ref: ActorRef,
+        method_names: list[str] | None = None,
+        async_methods: set[str] | None = None,
+    ):
         self._ref = actor_ref
-        self._method_names = set(method_names)
+        self._method_names = set(method_names) if method_names else None
+        self._async_methods = async_methods or set()
 
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(f"Cannot access private attribute: {name}")
-        if name not in self._method_names:
+        # 如果没有方法列表，允许任意方法调用（动态模式）
+        if self._method_names is not None and name not in self._method_names:
             raise AttributeError(f"No method '{name}'")
-        return _MethodCaller(self._ref, name)
+        is_async = name in self._async_methods
+        return _MethodCaller(self._ref, name, is_async=is_async)
 
     @property
     def ref(self) -> ActorRef:
         """Get underlying ActorRef"""
         return self._ref
 
+    @classmethod
+    def from_ref(
+        cls,
+        actor_ref: ActorRef,
+        methods: list[str] | None = None,
+        async_methods: set[str] | None = None,
+    ) -> "ActorProxy":
+        """从 ActorRef 创建 ActorProxy
+
+        Args:
+            actor_ref: 底层 actor 引用
+            methods: 可选的方法名列表。如果不提供，允许调用任意方法（动态模式）
+            async_methods: async 方法名集合，这些方法使用流式响应
+
+        Example:
+            # 动态模式 - 允许任意方法调用
+            ref = await system.resolve_named("my_counter")
+            proxy = ActorProxy.from_ref(ref)
+            await proxy.increment(5)  # 可调用任意方法
+
+            # 静态模式 - 只允许指定的方法
+            proxy = ActorProxy.from_ref(ref, methods=["increment", "get_value"])
+
+            # 带 async 方法标记
+            proxy = ActorProxy.from_ref(
+                ref,
+                methods=["get", "generate"],
+                async_methods={"generate"}
+            )
+        """
+        return cls(actor_ref, methods, async_methods)
+
 
 class _MethodCaller:
     """Method caller: executes remote method calls"""
 
-    def __init__(self, actor_ref: ActorRef, method_name: str):
+    def __init__(self, actor_ref: ActorRef, method_name: str, is_async: bool = False):
         self._ref = actor_ref
         self._method = method_name
+        self._is_async = is_async
 
-    async def __call__(self, *args, **kwargs) -> Any:
-        # Use simple dict message (will be pickled automatically)
-        call_msg = {"__call__": self._method, "args": args, "kwargs": kwargs}
+    def __call__(self, *args, **kwargs):
+        if self._is_async:
+            # 返回一个可以被 await 或 async for 的对象
+            return _AsyncMethodCall(self._ref, self._method, args, kwargs)
+        else:
+            # 返回一个 coroutine 用于同步方法
+            return self._sync_call(*args, **kwargs)
+
+    async def _sync_call(self, *args, **kwargs) -> Any:
+        """同步方法调用"""
+        call_msg = {
+            "__call__": self._method,
+            "args": args,
+            "kwargs": kwargs,
+            "__async__": False,
+        }
         resp = await self._ref.ask(call_msg)
 
-        # Handle response
+        # Handle normal response
         if isinstance(resp, dict):
             if "__error__" in resp:
                 raise RuntimeError(resp["__error__"])
@@ -137,6 +196,109 @@ class _MethodCaller:
                 raise RuntimeError(data.get("error", "Remote call failed"))
             return data.get("result")
         return resp
+
+
+class _AsyncMethodCall:
+    """异步方法调用 - 支持 await 和 async for
+
+    用法:
+        # 直接 await 获取最终结果
+        result = await service.generate("hello")
+
+        # 流式获取中间结果
+        async for chunk in service.generate("hello"):
+            print(chunk)
+    """
+
+    def __init__(self, actor_ref: ActorRef, method_name: str, args: tuple, kwargs: dict):
+        self._ref = actor_ref
+        self._method = method_name
+        self._args = args
+        self._kwargs = kwargs
+        self._stream_reader = None
+        self._final_result = None
+        self._got_result = False
+
+    async def _get_stream(self):
+        """获取流（惰性初始化）"""
+        if self._stream_reader is None:
+            call_msg = {
+                "__call__": self._method,
+                "args": self._args,
+                "kwargs": self._kwargs,
+                "__async__": True,
+            }
+            resp = await self._ref.ask(call_msg)
+
+            # 响应可能是 PyMessage（流式）或直接的 Python 对象
+            if isinstance(resp, Message):
+                # 检查是否是流式消息
+                if resp.is_stream:
+                    self._stream_reader = resp.stream_reader()
+                else:
+                    # 不是流式，可能是错误
+                    data = resp.to_json()
+                    if resp.msg_type == "Error":
+                        raise RuntimeError(data.get("error", "Remote call failed"))
+                    # 包装为单次迭代器
+                    self._stream_reader = _SingleValueIterator(data)
+            else:
+                # 普通 Python 对象（可能是 dict）
+                self._stream_reader = _SingleValueIterator(resp)
+
+        return self._stream_reader
+
+    def __aiter__(self):
+        """支持异步迭代，获取中间结果"""
+        return self
+
+    async def __anext__(self):
+        """获取下一个流式数据"""
+        reader = await self._get_stream()
+        try:
+            item = await reader.__anext__()
+            # 检查是否是最终结果
+            if isinstance(item, dict):
+                if "__final__" in item:
+                    self._final_result = item.get("__result__")
+                    self._got_result = True
+                    raise StopAsyncIteration
+                if "__error__" in item:
+                    raise RuntimeError(item["__error__"])
+                if "__yield__" in item:
+                    return item["__yield__"]
+            return item
+        except StopAsyncIteration:
+            raise
+
+    def __await__(self):
+        """支持 await，获取最终结果"""
+        return self._await_result().__await__()
+
+    async def _await_result(self):
+        """消费整个流，返回最终结果"""
+        async for _ in self:
+            pass  # 消费所有 yield 的中间值
+        if self._got_result:
+            return self._final_result
+        return None
+
+
+class _SingleValueIterator:
+    """单值异步迭代器 - 将单个值包装为异步迭代器"""
+
+    def __init__(self, value):
+        self._value = value
+        self._consumed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._consumed:
+            raise StopAsyncIteration
+        self._consumed = True
+        return self._value
 
 
 class _WrappedActor(_ActorBase):
@@ -179,6 +341,7 @@ class _WrappedActor(_ActorBase):
             method = msg["__call__"]
             args = msg.get("args", ())
             kwargs = msg.get("kwargs", {})
+            is_async_call = msg.get("__async__", False)
 
             if not method or method.startswith("_"):
                 return {"__error__": f"Invalid method: {method}"}
@@ -187,6 +350,24 @@ class _WrappedActor(_ActorBase):
             if func is None or not callable(func):
                 return {"__error__": f"Not found: {method}"}
 
+            # 检测是否是 async 方法（包括异步生成器）
+            is_async_method = (
+                inspect.iscoroutinefunction(func)
+                or inspect.isasyncgenfunction(func)
+                or (
+                    hasattr(func, "__func__")
+                    and (
+                        inspect.iscoroutinefunction(func.__func__)
+                        or inspect.isasyncgenfunction(func.__func__)
+                    )
+                )
+            )
+
+            # 对于 async 方法，使用流式响应
+            if is_async_method and is_async_call:
+                return self._handle_async_method(func, args, kwargs)
+
+            # 普通方法或未标记为 async 调用的情况
             try:
                 result = func(*args, **kwargs)
                 if asyncio.iscoroutine(result):
@@ -223,6 +404,41 @@ class _WrappedActor(_ActorBase):
                 return Message.from_json("Error", {"error": str(e)})
 
         return {"__error__": f"Unknown message type: {type(msg)}"}
+
+    def _handle_async_method(self, func, args, kwargs) -> StreamMessage:
+        """处理 async 方法，返回流式响应"""
+        stream_msg, writer = StreamMessage.create("AsyncMethodStream")
+
+        async def execute():
+            try:
+                result = func(*args, **kwargs)
+
+                # 检查结果类型
+                if inspect.isasyncgen(result):
+                    # 异步生成器
+                    async for item in result:
+                        await writer.write({"__yield__": item})
+                    await writer.write({"__final__": True, "__result__": None})
+                elif asyncio.iscoroutine(result):
+                    # 普通 async 函数
+                    final_result = await result
+                    await writer.write({"__final__": True, "__result__": final_result})
+                elif inspect.isgenerator(result):
+                    # 同步生成器
+                    for item in result:
+                        await writer.write({"__yield__": item})
+                    await writer.write({"__final__": True, "__result__": None})
+                else:
+                    # 普通返回值
+                    await writer.write({"__final__": True, "__result__": result})
+            except Exception as e:
+                await writer.write({"__error__": str(e)})
+            finally:
+                await writer.close()
+
+        # 在后台任务中执行，不阻塞 actor
+        asyncio.create_task(execute())
+        return stream_msg
 
 
 class PythonActorService(_ActorBase):
@@ -340,11 +556,18 @@ class ActorClass:
         self._min_backoff = min_backoff
         self._max_backoff = max_backoff
 
-        self._methods = [
-            n
-            for n, _ in inspect.getmembers(cls, predicate=inspect.isfunction)
-            if not n.startswith("_")
-        ]
+        # 收集所有公开方法
+        self._methods = []
+        self._async_methods = set()
+
+        for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
+            if name.startswith("_"):
+                continue
+            self._methods.append(name)
+            # 检测是否是 async 方法（包括 async 函数和异步生成器）
+            if inspect.iscoroutinefunction(method) or inspect.isasyncgenfunction(method):
+                self._async_methods.add(name)
+
         # Register class
         _actor_class_registry[self._class_name] = cls
 
@@ -418,7 +641,7 @@ class ActorClass:
         # Register actor metadata
         _register_actor_metadata(actor_name, self._cls)
 
-        return ActorProxy(actor_ref, self._methods)
+        return ActorProxy(actor_ref, self._methods, self._async_methods)
 
     async def remote(
         self,
@@ -484,11 +707,77 @@ class ActorClass:
         remote_id = ActorId(data["actor_id"], NodeId(data["node_id"]))
         actor_ref = await system.actor_ref(remote_id)
 
-        return ActorProxy(actor_ref, data.get("methods", self._methods))
+        return ActorProxy(
+            actor_ref, data.get("methods", self._methods), self._async_methods
+        )
 
     def __call__(self, *args, **kwargs):
         """Direct call returns local instance (not an Actor)"""
         return self._cls(*args, **kwargs)
+
+    def proxy(self, actor_ref: ActorRef) -> ActorProxy:
+        """将 ActorRef 包装成带类型的 ActorProxy
+
+        Args:
+            actor_ref: 底层 actor 引用
+
+        Returns:
+            ActorProxy: 带方法类型信息的代理
+
+        Example:
+            ref = await system.resolve_named("my_counter")
+            counter = Counter.proxy(ref)
+            await counter.increment()
+        """
+        return ActorProxy(actor_ref, self._methods, self._async_methods)
+
+    async def resolve(
+        self,
+        name: str,
+        *,
+        system: ActorSystem | None = None,
+        node_id: int | None = None,
+    ) -> ActorProxy:
+        """通过名字解析 actor，返回带类型的 ActorProxy
+
+        Args:
+            name: actor 名字
+            system: ActorSystem 实例，如果不提供则使用全局 system
+            node_id: 目标节点 ID，如果不提供则在集群中查找
+
+        Returns:
+            ActorProxy: 带方法类型信息的代理
+
+        Example:
+            @remote
+            class Counter:
+                def __init__(self, init=0): self.value = init
+                async def generate(self, prompt): ...  # async 方法，流式响应
+
+            # 节点 A 创建 actor
+            counter = await Counter.spawn(name="my_counter")
+
+            # 节点 B 解析并调用
+            counter = await Counter.resolve("my_counter")
+
+            # 调用 async 方法，可以流式获取结果
+            result = counter.generate("hello")
+            async for chunk in result:
+                print(chunk)
+            # 或者直接 await 获取最终结果
+            final = await counter.generate("hello")
+        """
+        from . import _global_system
+
+        if system is None:
+            if _global_system is None:
+                raise RuntimeError(
+                    "Actor system not initialized. Call 'await init()' first."
+                )
+            system = _global_system
+
+        actor_ref = await system.resolve_named(name, node_id=node_id)
+        return ActorProxy(actor_ref, self._methods, self._async_methods)
 
 
 def remote(
@@ -588,6 +877,54 @@ async def ping(system: ActorSystem, node_id: int | None = None) -> dict:
         sys_actor = await system.remote_system(node_id)
     resp = await sys_actor.ask(Message.from_json("SystemMessage", {"type": "Ping"}))
     return resp.to_json()
+
+
+async def resolve(
+    name: str,
+    *,
+    system: ActorSystem | None = None,
+    node_id: int | None = None,
+    methods: list[str] | None = None,
+) -> ActorProxy:
+    """通过名字解析一个 named actor，返回可调用方法的 ActorProxy
+
+    Args:
+        name: actor 名字
+        system: ActorSystem 实例，如果不提供则使用全局 system
+        node_id: 目标节点 ID，如果不提供则在集群中查找
+        methods: 可选的方法名列表。如果不提供，允许调用任意方法（动态模式）
+
+    Returns:
+        ActorProxy: 可以直接调用方法的代理对象
+
+    Example:
+        from pulsing.actor import init, remote, resolve
+
+        await init()
+
+        @remote
+        class Counter:
+            def __init__(self, init=0): self.value = init
+            def increment(self): self.value += 1; return self.value
+
+        # 节点 A 创建 actor
+        counter = await Counter.spawn(name="my_counter")
+
+        # 节点 B 解析并调用
+        proxy = await resolve("my_counter")
+        result = await proxy.increment()  # 远程调用
+    """
+    from . import _global_system
+
+    if system is None:
+        if _global_system is None:
+            raise RuntimeError(
+                "Actor system not initialized. Call 'await init()' first."
+            )
+        system = _global_system
+
+    actor_ref = await system.resolve_named(name, node_id=node_id)
+    return ActorProxy(actor_ref, methods)
 
 
 RemoteClass = ActorClass

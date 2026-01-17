@@ -187,6 +187,7 @@ from .remote import (
     list_actors,
     ping,
     remote,
+    resolve,
 )
 
 # NOTE: `__all__` is the *public, stable surface* for `from pulsing.actor import *`.
@@ -197,6 +198,7 @@ __all__ = [
     "init",
     "shutdown",
     "remote",
+    "resolve",
     "get_system",
     "is_initialized",
     # Minimal core types commonly used in docs/examples
