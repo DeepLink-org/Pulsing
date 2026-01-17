@@ -40,13 +40,13 @@ class Researcher:
 ```python
 async with runtime():
     r = await Researcher.spawn(name="researcher")
-    
+
     # Get metadata by name
     meta = get_agent_meta("researcher")
     print(meta.role)       # "Researcher"
     print(meta.goal)       # "Deep analysis"
     print(meta.tags)       # {"domain": "AI"}
-    
+
     # List all agents
     for name, meta in list_agents().items():
         print(f"{name}: {meta.role}")
@@ -130,27 +130,27 @@ from pulsing.agent import agent, runtime, llm, parse_json, get_agent_meta
 @remote
 class Moderator:
     """Coordinator using @remote (basic Actor)"""
-    
+
     def __init__(self, topic: str):
         self.topic = topic
         self.opinions = []
-    
+
     async def collect_opinion(self, agent_name: str, opinion: str):
         self.opinions.append({"agent": agent_name, "opinion": opinion})
         return {"received": True}
-    
+
     async def summarize(self):
         return {"topic": self.topic, "opinions": self.opinions}
 
 @agent(role="Analyst", goal="Provide insights", domain="tech")
 class Analyst:
     """Analyst using @agent (Actor with metadata)"""
-    
+
     def __init__(self, name: str, moderator: str, mock: bool = True):
         self.name = name
         self.moderator_name = moderator
         self.mock = mock
-    
+
     async def analyze(self, topic: str):
         if self.mock:
             opinion = f"[{self.name}] Analysis of {topic}: looks promising"
@@ -158,7 +158,7 @@ class Analyst:
             client = await llm()
             resp = await client.ainvoke(f"Brief analysis of: {topic}")
             opinion = resp.content
-        
+
         # Submit to moderator
         moderator = await resolve(self.moderator_name)
         await moderator.collect_opinion(self.name, opinion)
@@ -168,7 +168,7 @@ async def main():
     async with runtime():
         # Create moderator
         moderator = await Moderator.spawn(topic="AI Trends", name="moderator")
-        
+
         # Create analysts
         for i in range(3):
             name = f"analyst_{i}"
@@ -178,17 +178,17 @@ async def main():
                 mock=True,
                 name=name,
             )
-        
+
         # Show agent metadata
         print("Registered agents:")
         for name, meta in list_agents().items():
             print(f"  {name}: {meta.role}")
-        
+
         # Run analysis
         for i in range(3):
             analyst = await resolve(f"analyst_{i}")
             await analyst.analyze("AI Trends")
-        
+
         # Get summary
         result = await moderator.summarize()
         print(f"Summary: {result}")

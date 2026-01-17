@@ -71,10 +71,10 @@ class MyAgent:
 async with runtime():
     # 3. spawn() 创建 Agent 实例
     agent = await MyAgent.spawn(name="my_agent")
-    
+
     # 4. 直接调用方法（自动变成远程调用）
     result = await agent.hello()
-    
+
     # 5. resolve() 通过名字找到其他 Agent
     same_agent = await resolve("my_agent")
 ```

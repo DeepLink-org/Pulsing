@@ -1,62 +1,62 @@
 """
-Pulsing Agent 工具箱
+Pulsing Agent Toolbox
 
-轻量的 multi-agent 开发工具，与 pulsing.actor 完全兼容。
+Lightweight multi-agent development tools, fully compatible with pulsing.actor.
 
-核心 API:
-- runtime(): Actor 系统生命周期管理
-- agent(): 带元信息的 @remote（用于可视化）
-- llm(): LLM 客户端
-- parse_json(): JSON 解析
+Core APIs:
+- runtime(): Actor system lifecycle management
+- agent(): @remote with metadata (for visualization)
+- llm(): LLM client
+- parse_json(): JSON parsing
 
 Example:
     from pulsing.actor import remote, resolve
     from pulsing.agent import agent, runtime, llm, get_agent_meta
 
-    # @remote: 基础 Actor
+    # @remote: Basic Actor
     @remote
     class Worker:
         async def work(self): ...
 
-    # @agent: 带元信息的 Actor（用于可视化/调试）
-    @agent(role="研究员", goal="深入分析")
+    # @agent: Actor with metadata (for visualization/debugging)
+    @agent(role="Researcher", goal="Deep analysis")
     class Researcher:
         async def analyze(self, topic: str) -> str:
             client = await llm()
-            return await client.ainvoke(f"分析: {topic}")
+            return await client.ainvoke(f"Analyze: {topic}")
 
     async def main():
         async with runtime():
             r = await Researcher.spawn(name="researcher")
             result = await r.analyze("AI")
 
-            # 获取元信息
+            # Get metadata
             meta = get_agent_meta("researcher")
-            print(meta.role)  # "研究员"
+            print(meta.role)  # "Researcher"
 """
 
-# 运行时
+# Runtime
 from .runtime import runtime
 
-# Agent 装饰器（带元信息的 @remote）
+# Agent decorator (@remote with metadata)
 from .base import agent, AgentMeta, get_agent_meta, list_agents, clear_agent_registry
 
 # LLM
 from .llm import llm, reset_llm
 
-# 工具函数
+# Utility functions
 from .utils import parse_json, extract_field
 
 
 def cleanup():
     """
-    清理所有 agent 相关的全局状态。
+    Clean up all agent-related global state.
 
-    包括：
-    - Agent 元信息注册表
-    - LLM 单例
+    Includes:
+    - Agent metadata registry
+    - LLM singleton
 
-    推荐在反复创建销毁 runtime 时调用，避免内存泄漏。
+    Recommended to call when repeatedly creating/destroying runtime to avoid memory leaks.
 
     Example:
         from pulsing.agent import runtime, cleanup
@@ -66,14 +66,14 @@ def cleanup():
                 agent = await MyAgent.spawn(name="agent")
                 await agent.work()
         finally:
-            cleanup()  # 清理所有全局状态
+            cleanup()  # Clean up all global state
     """
     clear_agent_registry()
     reset_llm()
 
 
 __all__ = [
-    # 运行时
+    # Runtime
     "runtime",
     "cleanup",
     # Agent
@@ -85,7 +85,7 @@ __all__ = [
     # LLM
     "llm",
     "reset_llm",
-    # 工具函数
+    # Utility functions
     "parse_json",
     "extract_field",
 ]

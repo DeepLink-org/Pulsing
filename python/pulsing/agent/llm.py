@@ -1,4 +1,4 @@
-"""LLM 客户端管理"""
+"""LLM client management"""
 
 from __future__ import annotations
 
@@ -16,17 +16,17 @@ async def llm(
     **kwargs: Any,
 ):
     """
-    获取 LLM 客户端（懒加载）。
+    Get LLM client (lazy loading).
 
     Args:
-        model: 模型名称，默认从 LLM_MODEL 环境变量读取
-        temperature: 采样温度
-        new: 是否创建新实例（而非复用单例）
+        model: Model name, defaults to LLM_MODEL environment variable
+        temperature: Sampling temperature
+        new: Whether to create a new instance (instead of reusing singleton)
 
     Environment:
-        OPENAI_API_KEY: API 密钥（必需）
-        OPENAI_BASE_URL: API 地址（可选）
-        LLM_MODEL: 默认模型名（可选，默认 gpt-4o-mini）
+        OPENAI_API_KEY: API key (required)
+        OPENAI_BASE_URL: API base URL (optional)
+        LLM_MODEL: Default model name (optional, default: gpt-4o-mini)
 
     Example:
         from pulsing.agent import llm
@@ -46,7 +46,7 @@ async def llm(
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("未设置 OPENAI_API_KEY（或使用 --mock 模式）")
+        raise ValueError("OPENAI_API_KEY not set (or use --mock mode)")
 
     instance = ChatOpenAI(
         model=model or os.getenv("LLM_MODEL", "gpt-4o-mini"),
@@ -63,6 +63,6 @@ async def llm(
 
 
 def reset_llm():
-    """重置 LLM 单例"""
+    """Reset LLM singleton"""
     global _default_llm
     _default_llm = None

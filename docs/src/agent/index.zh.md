@@ -35,7 +35,7 @@ class Researcher:
 async with runtime():
     r = await Researcher.spawn(name="researcher")
     result = await r.analyze("AI 趋势")
-    
+
     # 访问元信息用于可视化
     for name, meta in list_agents().items():
         print(f"{name}: {meta.role}")

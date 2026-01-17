@@ -9,10 +9,10 @@
 
 **轻量级分布式框架，专为高性能 AI 应用设计。**
 
-🚀 **零外部依赖** — 纯 Rust + Tokio，无需 NATS/etcd/Redis  
-🌐 **自动发现** — 内置 Gossip 协议管理集群  
-🔀 **位置透明** — 本地和远程 Actor 使用相同 API  
-⚡ **流式支持** — 原生支持 LLM 流式响应  
+🚀 **零外部依赖** — 纯 Rust + Tokio，无需 NATS/etcd/Redis
+🌐 **自动发现** — 内置 Gossip 协议管理集群
+🔀 **位置透明** — 本地和远程 Actor 使用相同 API
+⚡ **流式支持** — 原生支持 LLM 流式响应
 🤖 **Agent 友好** — 开箱即用集成 AutoGen、LangGraph
 
 ## 🚀 5分钟快速体验
@@ -34,10 +34,10 @@ from pulsing.agent import runtime
 class Greeter:
     def __init__(self, display_name: str):
         self.display_name = display_name
-    
+
     def greet(self, message: str) -> str:
         return f"[{self.display_name}] 收到: {message}"
-    
+
     async def chat_with(self, peer_name: str, message: str) -> str:
         peer = await resolve(peer_name)
         return await peer.greet(f"来自 {self.display_name}: {message}")
@@ -47,7 +47,7 @@ async def main():
         # 创建两个 Agent
         alice = await Greeter.spawn(display_name="Alice", name="alice")
         bob = await Greeter.spawn(display_name="Bob", name="bob")
-        
+
         # Agent 间对话
         reply = await alice.chat_with("bob", "你好！")
         print(reply)  # [Bob] 收到: 来自 Alice: 你好！
@@ -82,7 +82,7 @@ class Researcher:
         client = await llm()
         return await client.ainvoke(f"分析: {topic}")
 
-@agent(role="评审", goal="评估方案质量")  
+@agent(role="评审", goal="评估方案质量")
 class Reviewer:
     async def review(self, proposal: str) -> str:
         client = await llm()
@@ -91,7 +91,7 @@ class Reviewer:
 async with runtime():
     researcher = await Researcher.spawn(name="researcher")
     reviewer = await Reviewer.spawn(name="reviewer")
-    
+
     # 并行工作，互相协作
     analysis = await researcher.analyze("AI 发展趋势")
     feedback = await reviewer.review(analysis)

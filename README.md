@@ -9,10 +9,10 @@
 
 **Lightweight distributed framework designed for high-performance AI applications.**
 
-🚀 **Zero Dependencies** — Pure Rust + Tokio, no NATS/etcd/Redis  
-🌐 **Auto Discovery** — Built-in Gossip protocol for cluster management  
-🔀 **Location Transparent** — Same API for local and remote Actors  
-⚡ **Streaming Ready** — Native support for LLM streaming responses  
+🚀 **Zero Dependencies** — Pure Rust + Tokio, no NATS/etcd/Redis
+🌐 **Auto Discovery** — Built-in Gossip protocol for cluster management
+🔀 **Location Transparent** — Same API for local and remote Actors
+⚡ **Streaming Ready** — Native support for LLM streaming responses
 🤖 **Agent Friendly** — Integrates with AutoGen, LangGraph out of the box
 
 ## 🚀 Get Started in 5 Minutes
@@ -34,10 +34,10 @@ from pulsing.agent import runtime
 class Greeter:
     def __init__(self, display_name: str):
         self.display_name = display_name
-    
+
     def greet(self, message: str) -> str:
         return f"[{self.display_name}] Received: {message}"
-    
+
     async def chat_with(self, peer_name: str, message: str) -> str:
         peer = await resolve(peer_name)
         return await peer.greet(f"From {self.display_name}: {message}")
@@ -47,7 +47,7 @@ async def main():
         # Create two agents
         alice = await Greeter.spawn(display_name="Alice", name="alice")
         bob = await Greeter.spawn(display_name="Bob", name="bob")
-        
+
         # Agent communication
         reply = await alice.chat_with("bob", "Hello!")
         print(reply)  # [Bob] Received: From Alice: Hello!
@@ -82,7 +82,7 @@ class Researcher:
         client = await llm()
         return await client.ainvoke(f"Analyze: {topic}")
 
-@agent(role="Reviewer", goal="Evaluate proposals")  
+@agent(role="Reviewer", goal="Evaluate proposals")
 class Reviewer:
     async def review(self, proposal: str) -> str:
         client = await llm()
@@ -91,7 +91,7 @@ class Reviewer:
 async with runtime():
     researcher = await Researcher.spawn(name="researcher")
     reviewer = await Reviewer.spawn(name="reviewer")
-    
+
     # Parallel work and collaboration
     analysis = await researcher.analyze("AI trends")
     feedback = await reviewer.review(analysis)

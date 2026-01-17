@@ -35,7 +35,7 @@ class Researcher:
 async with runtime():
     r = await Researcher.spawn(name="researcher")
     result = await r.analyze("AI trends")
-    
+
     # Access metadata for visualization
     for name, meta in list_agents().items():
         print(f"{name}: {meta.role}")

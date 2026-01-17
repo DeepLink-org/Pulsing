@@ -1,7 +1,7 @@
-"""TopicBroker - 轻量级 Pub/Sub Broker Actor（内部实现）
+"""TopicBroker - Lightweight Pub/Sub Broker Actor (internal implementation)
 
-TopicBroker 的生命周期由 queue/manager.py 的 StorageManager 管理，
-使用一致性哈希保证每个 topic 在集群中只有一个 broker。
+TopicBroker lifecycle is managed by StorageManager in queue/manager.py,
+uses consistent hashing to ensure only one broker per topic in the cluster.
 """
 
 from __future__ import annotations
@@ -19,36 +19,36 @@ from pulsing.actor import Actor, ActorId, Message
 
 logger = logging.getLogger(__name__)
 
-# 订阅者生命周期管理配置
-MAX_CONSECUTIVE_FAILURES = 3  # 连续失败次数阈值，超过后清退
-REF_TTL_SECONDS = 60.0  # ActorRef 缓存 TTL，过期后重新解析
+# Subscriber lifecycle management configuration
+MAX_CONSECUTIVE_FAILURES = 3  # Consecutive failure threshold, evict after exceeding
+REF_TTL_SECONDS = 60.0  # ActorRef cache TTL, re-resolve after expiration
 
-# 超时配置（方案 2+3：超时 + 幂等）
-DEFAULT_FANOUT_TIMEOUT = 30.0  # wait_any_ack / wait_all_acks 的默认超时
+# Timeout configuration (approach 2+3: timeout + idempotency)
+DEFAULT_FANOUT_TIMEOUT = 30.0  # Default timeout for wait_any_ack / wait_all_acks
 
 
 @dataclass
 class _Subscriber:
-    """订阅者信息（内部使用）"""
+    """Subscriber information (internal use)"""
 
     subscriber_id: str
     actor_name: str
     node_id: int | None = None
     subscribed_at: float = field(default_factory=time.time)
     _ref: "ActorRef | None" = field(default=None, repr=False)
-    _ref_resolved_at: float = 0  # ActorRef 解析时间，用于 TTL 判断
+    _ref_resolved_at: float = 0  # ActorRef resolution time, for TTL judgment
     messages_delivered: int = 0
     messages_failed: int = 0
-    consecutive_failures: int = 0  # 连续失败次数，用于清退判断
+    consecutive_failures: int = 0  # Consecutive failures, for eviction judgment
 
 
 class TopicBroker(Actor):
-    """Topic Broker Actor（内部实现）
+    """Topic Broker Actor (internal implementation)
 
-    每个 topic 对应一个 broker，负责：
-    1. 管理订阅者列表
-    2. 接收发布请求并分发给订阅者
-    3. 根据发布模式决定是否等待 ack
+    Each topic corresponds to one broker, responsible for:
+    1. Managing subscriber list
+    2. Receiving publish requests and distributing to subscribers
+    3. Deciding whether to wait for ack based on publish mode
     """
 
     def __init__(self, topic: str, system: "ActorSystem"):
@@ -133,20 +133,20 @@ class TopicBroker(Actor):
             return Message.from_json("UnsubscribeResult", {"success": False})
 
     async def _resolve(self, sub: _Subscriber) -> "ActorRef | None":
-        """解析订阅者 ActorRef（带 TTL 缓存）
+        """Resolve subscriber ActorRef (with TTL cache)
 
-        缓存策略：
-        - 首次解析后缓存 ActorRef
-        - TTL 过期后重新解析，发现节点故障
-        - 解析失败时清除缓存，下次重试
+        Cache strategy:
+        - Cache ActorRef after first resolution
+        - Re-resolve after TTL expiration to detect node failures
+        - Clear cache on resolution failure, retry next time
         """
         now = time.time()
 
-        # 检查缓存是否有效（存在且未过期）
+        # Check if cache is valid (exists and not expired)
         if sub._ref is not None and (now - sub._ref_resolved_at) < REF_TTL_SECONDS:
             return sub._ref
 
-        # TTL 过期或无缓存，重新解析
+        # TTL expired or no cache, re-resolve
         try:
             sub._ref = await self.system.resolve_named(
                 sub.actor_name, node_id=sub.node_id
@@ -155,7 +155,7 @@ class TopicBroker(Actor):
             return sub._ref
         except Exception as e:
             logger.warning(f"Failed to resolve {sub.subscriber_id}: {e}")
-            sub._ref = None  # 清除失效缓存
+            sub._ref = None  # Clear invalid cache
             sub._ref_resolved_at = 0
             return None
 
@@ -191,22 +191,22 @@ class TopicBroker(Actor):
             return Message.from_json("Error", {"error": f"Unknown mode: {mode}"})
 
     def _record_success(self, sub: _Subscriber) -> None:
-        """记录投递成功，重置连续失败计数"""
+        """Record delivery success, reset consecutive failure count"""
         sub.messages_delivered += 1
         sub.consecutive_failures = 0
 
     def _record_failure(self, sub: _Subscriber) -> bool:
-        """记录投递失败，返回是否应该清退
+        """Record delivery failure, return whether should evict
 
         Returns:
-            True 如果连续失败次数超过阈值，应该清退
+            True if consecutive failures exceed threshold, should evict
         """
         sub.messages_failed += 1
         sub.consecutive_failures += 1
         return sub.consecutive_failures >= MAX_CONSECUTIVE_FAILURES
 
     async def _evict_zombies(self, zombie_ids: list[str]) -> None:
-        """清退僵尸订阅者"""
+        """Evict zombie subscribers"""
         if not zombie_ids:
             return
         async with self._lock:
@@ -218,7 +218,7 @@ class TopicBroker(Actor):
                     )
 
     async def _fanout_tell(self, envelope: dict, sender_id: str | None) -> Message:
-        """Fire-and-forget: tell 不等响应"""
+        """Fire-and-forget: tell without waiting for response"""
         sent = 0
         failed = 0
         zombies: list[str] = []
@@ -241,7 +241,7 @@ class TopicBroker(Actor):
                 if self._record_failure(sub):
                     zombies.append(sub_id)
 
-        # 清退僵尸订阅者
+        # Evict zombie subscribers
         await self._evict_zombies(zombies)
 
         self._total_delivered += sent
@@ -264,23 +264,23 @@ class TopicBroker(Actor):
         wait_all: bool,
         timeout: float = DEFAULT_FANOUT_TIMEOUT,
     ) -> Message:
-        """等待 ack 模式
+        """Wait for ack mode
 
         Args:
-            envelope: 消息信封
-            sender_id: 发送者 ID（用于排除自己）
-            wait_all: True=等待所有响应，False=等待任一响应(wait_any_ack)
-            timeout: 超时时间（秒）。超时后本地任务会被取消，
-                     远端 handler 可能仍在执行（依赖 HTTP/2 RST_STREAM 传播）。
+            envelope: Message envelope
+            sender_id: Sender ID (to exclude self)
+            wait_all: True=wait for all responses, False=wait for any response (wait_any_ack)
+            timeout: Timeout in seconds. Local task will be cancelled after timeout,
+                     remote handler may still be executing (relies on HTTP/2 RST_STREAM propagation).
 
-        注意（取消语义 - 方案 2+3）：
-        - 本地取消：通过 asyncio.wait 的 timeout 或 task.cancel() 实现
-        - 远端取消：依赖 HTTP/2 RST_STREAM 自动传播（当 body 读取中断时触发）
-        - 幂等性：Handler 应该实现幂等操作，确保重复请求不产生副作用
+        Note (cancellation semantics - approach 2+3):
+        - Local cancellation: via asyncio.wait timeout or task.cancel()
+        - Remote cancellation: relies on HTTP/2 RST_STREAM auto-propagation (triggered when body read is interrupted)
+        - Idempotency: Handler should implement idempotent operations to ensure repeated requests don't produce side effects
         """
         tasks = []
         sub_ids = []
-        resolve_failed: list[str] = []  # resolve 失败的订阅者
+        resolve_failed: list[str] = []  # Subscribers that failed to resolve
 
         for sub_id, sub in list(self._subscribers.items()):
             if sender_id and sub_id == sender_id:
@@ -290,7 +290,7 @@ class TopicBroker(Actor):
                 tasks.append(ref.ask(envelope))
                 sub_ids.append(sub_id)
             else:
-                # resolve 失败也计入失败
+                # Resolve failures also count as failures
                 if self._record_failure(sub):
                     resolve_failed.append(sub_id)
 
@@ -307,7 +307,7 @@ class TopicBroker(Actor):
         zombies: list[str] = resolve_failed.copy()
 
         if wait_all:
-            # wait_all_acks: 等待所有响应，带整体超时
+            # wait_all_acks: wait for all responses with overall timeout
             try:
                 results = await asyncio.wait_for(
                     asyncio.gather(*tasks, return_exceptions=True),
@@ -325,18 +325,18 @@ class TopicBroker(Actor):
                         if sub:
                             self._record_success(sub)
             except asyncio.TimeoutError:
-                # 超时：所有任务视为失败
+                # Timeout: all tasks considered failed
                 logger.warning(
                     f"TopicBroker[{self.topic}] wait_all_acks timeout after {timeout}s"
                 )
                 failed = len(tasks)
                 failed_ids = sub_ids.copy()
-                # 取消所有 pending tasks
+                # Cancel all pending tasks
                 for task in tasks:
                     if not task.done():
                         task.cancel()
         else:
-            # wait_any_ack: 等待任一响应，带整体超时
+            # wait_any_ack: wait for any response with overall timeout
             try:
                 done, pending = await asyncio.wait(
                     tasks,
@@ -347,20 +347,20 @@ class TopicBroker(Actor):
                     if not task.exception():
                         delivered = 1
                         break
-                # 取消其他 pending tasks（本地取消，远端依赖 RST_STREAM）
+                # Cancel other pending tasks (local cancellation, remote relies on RST_STREAM)
                 for task in pending:
                     task.cancel()
             except asyncio.TimeoutError:
-                # 超时：没有任何响应
+                # Timeout: no response
                 logger.warning(
                     f"TopicBroker[{self.topic}] wait_any_ack timeout after {timeout}s"
                 )
-                # 取消所有任务
+                # Cancel all tasks
                 for task in tasks:
                     if not task.done():
                         task.cancel()
 
-        # 清退僵尸订阅者
+        # Evict zombie subscribers
         await self._evict_zombies(zombies)
 
         self._total_delivered += delivered
@@ -380,7 +380,7 @@ class TopicBroker(Actor):
     async def _fanout_best_effort(
         self, envelope: dict, sender_id: str | None
     ) -> Message:
-        """Best-effort: 尝试发送，记录失败"""
+        """Best-effort: try to send, record failures"""
         delivered = 0
         failed = 0
         failed_ids = []
@@ -406,7 +406,7 @@ class TopicBroker(Actor):
                 if self._record_failure(sub):
                     zombies.append(sub_id)
 
-        # 清退僵尸订阅者
+        # Evict zombie subscribers
         await self._evict_zombies(zombies)
 
         self._total_delivered += delivered

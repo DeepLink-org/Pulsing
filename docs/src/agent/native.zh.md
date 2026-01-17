@@ -40,13 +40,13 @@ class Researcher:
 ```python
 async with runtime():
     r = await Researcher.spawn(name="researcher")
-    
+
     # 通过名称获取元信息
     meta = get_agent_meta("researcher")
     print(meta.role)       # "研究员"
     print(meta.goal)       # "深入分析"
     print(meta.tags)       # {"domain": "AI"}
-    
+
     # 列出所有 Agent
     for name, meta in list_agents().items():
         print(f"{name}: {meta.role}")
@@ -130,27 +130,27 @@ from pulsing.agent import agent, runtime, llm, parse_json, list_agents
 @remote
 class Moderator:
     """使用 @remote 的协调者（基础 Actor）"""
-    
+
     def __init__(self, topic: str):
         self.topic = topic
         self.opinions = []
-    
+
     async def collect_opinion(self, agent_name: str, opinion: str):
         self.opinions.append({"agent": agent_name, "opinion": opinion})
         return {"received": True}
-    
+
     async def summarize(self):
         return {"topic": self.topic, "opinions": self.opinions}
 
 @agent(role="分析师", goal="提供洞见", domain="tech")
 class Analyst:
     """使用 @agent 的分析师（带元信息的 Actor）"""
-    
+
     def __init__(self, name: str, moderator: str, mock: bool = True):
         self.name = name
         self.moderator_name = moderator
         self.mock = mock
-    
+
     async def analyze(self, topic: str):
         if self.mock:
             opinion = f"[{self.name}] 对 {topic} 的分析：前景看好"
@@ -158,7 +158,7 @@ class Analyst:
             client = await llm()
             resp = await client.ainvoke(f"简要分析: {topic}")
             opinion = resp.content
-        
+
         # 提交给协调者
         moderator = await resolve(self.moderator_name)
         await moderator.collect_opinion(self.name, opinion)
@@ -168,7 +168,7 @@ async def main():
     async with runtime():
         # 创建协调者
         moderator = await Moderator.spawn(topic="AI 趋势", name="moderator")
-        
+
         # 创建分析师
         for i in range(3):
             name = f"analyst_{i}"
@@ -178,17 +178,17 @@ async def main():
                 mock=True,
                 name=name,
             )
-        
+
         # 显示 Agent 元信息
         print("已注册的 Agent:")
         for name, meta in list_agents().items():
             print(f"  {name}: {meta.role}")
-        
+
         # 运行分析
         for i in range(3):
             analyst = await resolve(f"analyst_{i}")
             await analyst.analyze("AI 趋势")
-        
+
         # 获取总结
         result = await moderator.summarize()
         print(f"总结: {result}")

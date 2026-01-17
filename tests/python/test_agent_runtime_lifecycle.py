@@ -92,17 +92,17 @@ class TestRuntimeLifecycle:
 
         # 第二轮 - 检查注册表是否残留
         registry_before = list_agents()
-        
+
         async with runtime():
             await TestAgent.spawn(name="test_agent", value=2)
             meta = get_agent_meta("test_agent")
             assert meta is not None
-            
+
         registry_after = list_agents()
-        
+
         # 注册表会积累 (这是预期行为，需要手动清理)
         assert len(registry_after) >= 1
-        
+
         # 手动清理
         clear_agent_registry()
         assert len(list_agents()) == 0
@@ -114,7 +114,7 @@ class TestRuntimeLifecycle:
             async with runtime():
                 await TestAgent.spawn(name="agent", value=i)
                 assert get_agent_meta("agent") is not None
-            
+
             # 推荐：每次退出后清理
             clear_agent_registry()
             assert len(list_agents()) == 0
@@ -124,25 +124,26 @@ class TestRuntimeLifecycle:
         """测试 LLM 单例是否需要清理"""
         # 跳过如果没有配置 OPENAI_API_KEY
         pytest.importorskip("langchain_openai")
-        
+
         import os
+
         if not os.getenv("OPENAI_API_KEY"):
             pytest.skip("需要 OPENAI_API_KEY")
-        
+
         # 第一轮
         async with runtime():
             client1 = await llm()
             assert client1 is not None
-        
+
         # 第二轮 - LLM 单例会保留
         async with runtime():
             client2 = await llm()
             # 单例模式下是同一个实例
             assert client2 is client1
-        
+
         # 手动清理
         reset_llm()
-        
+
         # 第三轮 - 创建新实例
         async with runtime():
             client3 = await llm()
@@ -158,11 +159,11 @@ class TestRuntimeLifecycle:
             for i in range(10):
                 agent = await TestAgent.spawn(name=f"agent_{i}", value=i)
                 agents.append(agent)
-            
+
             # 验证都能正常工作
             results = await asyncio.gather(*[a.get_value() for a in agents])
             assert results == list(range(10))
-        
+
         # runtime 退出后，system 应该清理所有 actor
         with pytest.raises(RuntimeError):
             get_system()
@@ -175,13 +176,13 @@ class TestRuntimeLifecycle:
             a1 = await TestAgent.spawn(name="agent1", value=1)
             # @remote 装饰的
             a2 = await TestActor.spawn(name="actor1", data="test")
-            
+
             v1 = await a1.get_value()
             v2 = await a2.echo()
-            
+
             assert v1 == 1
             assert v2 == "test"
-        
+
         # 清理
         clear_agent_registry()
 
@@ -196,11 +197,11 @@ class TestRuntimeLifecycle:
                 raise ValueError("故意抛出的异常")
         except ValueError:
             pass
-        
+
         # 即使有异常，系统也应该被清理
         with pytest.raises(RuntimeError):
             get_system()
-        
+
         clear_agent_registry()
 
     @pytest.mark.asyncio
@@ -210,17 +211,17 @@ class TestRuntimeLifecycle:
             agent1 = await TestAgent.spawn(name="outer", value=1)
             v1 = await agent1.get_value()
             assert v1 == 1
-            
+
             # 嵌套 runtime - init() 会返回已存在的系统
             async with runtime():
                 agent2 = await TestAgent.spawn(name="inner", value=2)
                 v2 = await agent2.get_value()
                 assert v2 == 2
-            
+
             # 内层退出后，外层的 agent 应该已经失效
             # (因为 shutdown 被调用了)
             # 这里的行为取决于实现
-        
+
         clear_agent_registry()
 
     @pytest.mark.asyncio
@@ -232,7 +233,7 @@ class TestRuntimeLifecycle:
                 await agent.increment()
                 result = await agent.get_value()
                 assert result == i + 1
-            
+
             if i % 5 == 0:
                 # 定期清理注册表
                 clear_agent_registry()
@@ -241,6 +242,7 @@ class TestRuntimeLifecycle:
     @pytest.mark.asyncio
     async def test_concurrent_runtimes_sequential(self):
         """顺序执行多个并发任务"""
+
         async def run_task(task_id: int):
             async with runtime():
                 agent = await TestAgent.spawn(name=f"agent_{task_id}", value=task_id)
@@ -248,7 +250,7 @@ class TestRuntimeLifecycle:
                     await agent.increment()
                 result = await agent.get_value()
                 return result
-        
+
         # 注意：由于使用全局 _global_system，并发运行会有问题
         # 这里顺序执行
         results = []
@@ -262,19 +264,19 @@ class TestRuntimeLifecycle:
     async def test_actor_garbage_collection(self):
         """测试 actor 对象是否能被 GC"""
         weak_refs = []
-        
+
         for i in range(3):
             async with runtime():
                 agent = await TestAgent.spawn(name=f"agent_{i}", value=i)
                 # 创建弱引用
                 weak_refs.append(weakref.ref(agent))
                 await agent.get_value()
-            
+
             clear_agent_registry()
-        
+
         # 强制 GC
         gc.collect()
-        
+
         # 注意：由于 actor 的实现细节，弱引用可能仍然存活
         # 这个测试主要是为了观察行为，不一定 assert
         alive_count = sum(1 for ref in weak_refs if ref() is not None)
@@ -283,34 +285,35 @@ class TestRuntimeLifecycle:
     @pytest.mark.asyncio
     async def test_distributed_mode_cleanup(self):
         """测试分布式模式下的清理
-        
+
         注意：发现的问题 - 端口可能需要时间释放
         """
         import time
-        
+
         # 使用不同的地址避免端口冲突
         async with runtime(addr="127.0.0.1:18001"):
             agent = await TestAgent.spawn(name="dist_agent", value=42)
             result = await agent.get_value()
             assert result == 42
-        
+
         # 清理
         clear_agent_registry()
-        
+
         # 给系统一些时间释放端口 (已知问题)
         await asyncio.sleep(0.1)
-        
+
         # 再次使用不同地址 (使用相同地址可能会因端口未释放而失败)
         async with runtime(addr="127.0.0.1:18002"):
             agent = await TestAgent.spawn(name="dist_agent2", value=99)
             result = await agent.get_value()
             assert result == 99
-        
+
         clear_agent_registry()
 
     @pytest.mark.asyncio
     async def test_cleanup_helper_pattern(self):
         """推荐的清理模式 - 使用 helper 函数"""
+
         async def run_with_cleanup():
             try:
                 async with runtime():
@@ -321,12 +324,12 @@ class TestRuntimeLifecycle:
                 # 确保清理
                 clear_agent_registry()
                 reset_llm()
-        
+
         # 多次调用
         for i in range(5):
             result = await run_with_cleanup()
             assert result == 2
-            
+
             # 验证清理成功
             assert len(list_agents()) == 0
 
@@ -339,7 +342,7 @@ class TestRuntimeEdgeCases:
         """空 runtime (不创建任何 actor)"""
         async with runtime():
             pass
-        
+
         with pytest.raises(RuntimeError):
             get_system()
 
@@ -356,15 +359,15 @@ class TestRuntimeEdgeCases:
         """多次调用清理函数应该是安全的"""
         async with runtime():
             await TestAgent.spawn(name="agent", value=1)
-        
+
         # 多次清理
         clear_agent_registry()
         clear_agent_registry()
         clear_agent_registry()
-        
+
         reset_llm()
         reset_llm()
-        
+
         assert len(list_agents()) == 0
 
     @pytest.mark.asyncio
@@ -374,22 +377,23 @@ class TestRuntimeEdgeCases:
         async with runtime():
             await TestAgent.spawn(name="agent1", value=1)
             await TestAgent.spawn(name="agent2", value=2)
-        
+
         # 确认有注册表条目
         assert len(list_agents()) >= 2
-        
+
         # 使用 cleanup() 一次清理所有
         cleanup()
-        
+
         # 验证清理成功
         assert len(list_agents()) == 0
-        
+
         # 再次调用应该是安全的
         cleanup()
 
     @pytest.mark.asyncio
     async def test_cleanup_recommended_pattern(self):
         """推荐使用模式：try-finally 搭配 cleanup()"""
+
         async def run_with_cleanup_pattern():
             try:
                 async with runtime():
@@ -398,7 +402,7 @@ class TestRuntimeEdgeCases:
                     return result
             finally:
                 cleanup()
-        
+
         # 多次调用
         for _ in range(3):
             result = await run_with_cleanup_pattern()

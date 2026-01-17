@@ -1,13 +1,13 @@
 """
-🗣️ AI 聊天室 - 多个 AI Agent 自由对话
+🗣️ AI Chat Room - Multiple AI Agents Free Conversation
 
-运行: python examples/quickstart/ai_chat_room.py
+Run: python examples/quickstart/ai_chat_room.py
 
-观看不同性格的 AI 们讨论一个话题！
+Watch AIs with different personalities discuss a topic!
 
-可选参数:
-  --topic "你的话题"  设置讨论话题
-  --rounds 5          设置讨论轮数
+Optional arguments:
+  --topic "your topic"  Set discussion topic
+  --rounds 5            Set number of discussion rounds
 """
 
 import argparse
@@ -16,34 +16,50 @@ import random
 from pulsing.actor import remote, resolve
 from pulsing.agent import runtime
 
-# AI 角色配置
+# AI persona configuration
 AI_PERSONAS = {
-    "乐观派": {
+    "Optimist": {
         "emoji": "😊",
-        "style": "总是看到事物积极的一面，用鼓励的语气说话",
-        "phrases": ["我觉得这很棒！", "往好的方面想...", "这是个好机会！"],
+        "style": "Always sees the positive side, speaks with encouragement",
+        "phrases": [
+            "I think this is great!",
+            "Looking on the bright side...",
+            "This is a good opportunity!",
+        ],
     },
-    "理性派": {
+    "Rationalist": {
         "emoji": "🤔",
-        "style": "用数据和逻辑说话，喜欢分析利弊",
-        "phrases": ["从数据来看...", "逻辑上讲...", "我们需要考虑..."],
+        "style": "Speaks with data and logic, likes to analyze pros and cons",
+        "phrases": [
+            "From the data...",
+            "Logically speaking...",
+            "We need to consider...",
+        ],
     },
-    "创意派": {
+    "Creative": {
         "emoji": "💡",
-        "style": "喜欢跳跃性思维，提出新奇的想法",
-        "phrases": ["如果我们换个角度...", "有个疯狂的想法...", "想象一下..."],
+        "style": "Likes jumping thinking, proposes novel ideas",
+        "phrases": [
+            "If we change perspective...",
+            "Here's a crazy idea...",
+            "Imagine if...",
+        ],
     },
-    "务实派": {
+    "Pragmatist": {
         "emoji": "🔧",
-        "style": "关注可行性和执行细节",
-        "phrases": ["具体怎么做呢？", "实际操作中...", "落地的话..."],
+        "style": "Focuses on feasibility and execution details",
+        "phrases": [
+            "How do we do this specifically?",
+            "In practice...",
+            "For implementation...",
+        ],
     },
 }
 
 
 @remote
 class ChatAgent:
-    """聊天室中的 AI Agent"""
+    """AI agent in the chat room"""
 
     def __init__(self, agent_name: str, persona: str, topic: str):
         self.agent_name = agent_name
@@ -53,27 +69,27 @@ class ChatAgent:
         self.history: list[str] = []
 
     def receive_message(self, from_agent: str, message: str) -> str:
-        """接收其他 Agent 的消息"""
+        """Receive messages from other agents"""
         self.history.append(f"{from_agent}: {message}")
-        return "已收到"
+        return "Received"
 
     def generate_response(self) -> str:
-        """生成回复（模拟模式）"""
+        """Generate response (mock mode)"""
         phrase = random.choice(self.config["phrases"])
 
         responses = [
-            f"{phrase} 关于「{self.topic}」，我认为这是个值得深入探讨的话题。",
-            f"{phrase} 说到这个话题，我想补充一点自己的看法。",
-            f"{phrase} 听了大家的讨论，我有一些新的想法。",
-            f"{phrase} 这个话题很有意思，让我想到了一些事情。",
+            f"{phrase} Regarding '{self.topic}', I think this is a topic worth exploring in depth.",
+            f"{phrase} Speaking of this topic, I'd like to add my own perspective.",
+            f"{phrase} After hearing everyone's discussion, I have some new ideas.",
+            f"{phrase} This topic is very interesting, it reminds me of some things.",
         ]
         return random.choice(responses)
 
     async def speak(self, room_name: str) -> dict:
-        """在聊天室发言"""
+        """Speak in the chat room"""
         response = self.generate_response()
 
-        # 通知聊天室
+        # Notify the chat room
         room = await resolve(room_name)
         await room.broadcast(self.agent_name, response)
 
@@ -82,7 +98,7 @@ class ChatAgent:
 
 @remote
 class ChatRoom:
-    """聊天室 - 协调 Agent 对话"""
+    """Chat room - coordinates agent conversations"""
 
     def __init__(self, topic: str):
         self.topic = topic
@@ -90,20 +106,20 @@ class ChatRoom:
         self.messages: list[dict] = []
 
     def join(self, agent_name: str, persona: str) -> str:
-        """Agent 加入聊天室"""
+        """Agent joins the chat room"""
         self.agents.append(agent_name)
         emoji = AI_PERSONAS[persona]["emoji"]
-        print(f"  {emoji} [{agent_name}] ({persona}) 加入聊天室")
-        return "欢迎加入！"
+        print(f"  {emoji} [{agent_name}] ({persona}) joined the chat room")
+        return "Welcome!"
 
     def broadcast(self, from_agent: str, message: str) -> None:
-        """广播消息"""
+        """Broadcast message"""
         persona = None
         for name in self.agents:
             if name == from_agent:
-                # 找到发言者的 persona
+                # Find the speaker's persona
                 for p, config in AI_PERSONAS.items():
-                    if name.startswith(p.replace("派", "")):
+                    if name.startswith(p):
                         persona = p
                         break
                 break
@@ -113,26 +129,26 @@ class ChatRoom:
         print(f"\n  {emoji} [{from_agent}]: {message}")
 
     def get_history(self) -> list[dict]:
-        """获取聊天历史"""
+        """Get chat history"""
         return self.messages
 
 
 async def main(topic: str, rounds: int):
     print("=" * 60)
-    print("🗣️  AI 聊天室")
+    print("🗣️  AI Chat Room")
     print("=" * 60)
-    print(f"\n📋 讨论话题: {topic}")
-    print(f"🔄 讨论轮数: {rounds}")
-    print("\n--- 参与者入场 ---\n")
+    print(f"\n📋 Discussion topic: {topic}")
+    print(f"🔄 Discussion rounds: {rounds}")
+    print("\n--- Participants entering ---\n")
 
     async with runtime():
-        # 创建聊天室
+        # Create chat room
         room = await ChatRoom.spawn(topic=topic, name="chat_room")
 
-        # 创建不同性格的 AI Agent
+        # Create AI agents with different personalities
         agents = []
         for persona in AI_PERSONAS.keys():
-            agent_name = persona.replace("派", "") + "_AI"
+            agent_name = persona + "_AI"
             agent = await ChatAgent.spawn(
                 agent_name=agent_name,
                 persona=persona,
@@ -142,41 +158,45 @@ async def main(topic: str, rounds: int):
             await room.join(agent_name, persona)
             agents.append((agent_name, agent))
 
-        print("\n--- 开始讨论 ---")
+        print("\n--- Discussion begins ---")
 
-        # 进行多轮讨论
+        # Conduct multiple rounds of discussion
         for round_num in range(1, rounds + 1):
             print(f"\n{'─' * 40}")
-            print(f"第 {round_num} 轮")
+            print(f"Round {round_num}")
             print(f"{'─' * 40}")
 
-            # 随机打乱发言顺序
+            # Randomize speaking order
             random.shuffle(agents)
 
             for agent_name, agent in agents:
                 await agent.speak("chat_room")
-                await asyncio.sleep(0.1)  # 模拟思考时间
+                await asyncio.sleep(0.1)  # Simulate thinking time
 
-        # 显示统计
+        # Display statistics
         history = await room.get_history()
         print("\n" + "=" * 60)
-        print("📊 讨论统计")
+        print("📊 Discussion Statistics")
         print("=" * 60)
-        print(f"  总发言数: {len(history)}")
-        print(f"  参与者: {len(agents)} 位 AI")
-        print(f"  讨论轮数: {rounds}")
+        print(f"  Total messages: {len(history)}")
+        print(f"  Participants: {len(agents)} AIs")
+        print(f"  Discussion rounds: {rounds}")
 
     print("\n" + "=" * 60)
-    print("✅ 聊天结束！")
+    print("✅ Chat ended!")
     print("=" * 60)
-    print("\n💡 提示: 修改 AI_PERSONAS 可以自定义 AI 的性格")
-    print("💡 提示: 设置 OPENAI_API_KEY 后可以接入真实 LLM")
+    print("\n💡 Tip: Modify AI_PERSONAS to customize AI personalities")
+    print("💡 Tip: Set OPENAI_API_KEY to connect to real LLM")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="AI 聊天室")
-    parser.add_argument("--topic", default="人工智能会取代人类工作吗？", help="讨论话题")
-    parser.add_argument("--rounds", type=int, default=3, help="讨论轮数")
+    parser = argparse.ArgumentParser(description="AI Chat Room")
+    parser.add_argument(
+        "--topic", default="Will AI replace human jobs?", help="Discussion topic"
+    )
+    parser.add_argument(
+        "--rounds", type=int, default=3, help="Number of discussion rounds"
+    )
     args = parser.parse_args()
 
     asyncio.run(main(args.topic, args.rounds))

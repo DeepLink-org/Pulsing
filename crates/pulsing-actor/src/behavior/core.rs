@@ -68,8 +68,8 @@ where
     }
 }
 
-// Behavior 不能 Clone，因为它包含可变状态
-// 但可以通过工厂函数创建新的实例
+// Behavior cannot Clone because it contains mutable state
+// But new instances can be created via factory functions
 
 /// Create a stateless behavior (no internal state, just message handling)
 ///

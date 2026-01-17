@@ -1,4 +1,4 @@
-"""Actor 系统生命周期管理"""
+"""Actor system lifecycle management"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ async def runtime(
     passphrase: str | None = None,
 ):
     """
-    Actor 系统运行时上下文管理器。
+    Actor system runtime context manager.
 
     Example:
         from pulsing.agent import runtime
@@ -24,7 +24,7 @@ async def runtime(
             agent = await MyAgent.spawn(name="agent")
             result = await agent.run()
 
-        # 分布式模式
+        # Distributed mode
         async with runtime(addr="0.0.0.0:8001", seeds=["node1:8001"]):
             ...
     """

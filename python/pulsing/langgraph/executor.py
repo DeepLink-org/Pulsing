@@ -1,10 +1,10 @@
 """
-LangGraph Node Executor - 在 Pulsing Actor 中执行 LangGraph 节点
+LangGraph Node Executor - Execute LangGraph nodes in Pulsing Actor
 
 Features:
-- 可配置的线程池大小
-- 有界队列 + backpressure 支持
-- 优雅的过载处理
+- Configurable thread pool size
+- Bounded queue + backpressure support
+- Graceful overload handling
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ DEFAULT_QUEUE_SIZE = 100
 
 
 class ExecutorConfig:
-    """执行器配置"""
+    """Executor configuration"""
 
     def __init__(
         self,
@@ -35,9 +35,9 @@ class ExecutorConfig:
     ):
         """
         Args:
-            max_workers: 线程池中的最大工作线程数
-            queue_size: 有界队列的最大容量
-            queue_timeout: 队列满时等待的超时时间 (秒)
+            max_workers: Maximum number of worker threads in thread pool
+            queue_size: Maximum capacity of bounded queue
+            queue_timeout: Timeout (seconds) when queue is full
         """
         self.max_workers = max_workers
         self.queue_size = queue_size
@@ -45,7 +45,7 @@ class ExecutorConfig:
 
 
 class BoundedExecutor:
-    """带有界队列和 backpressure 的线程池执行器"""
+    """Thread pool executor with bounded queue and backpressure"""
 
     def __init__(self, config: ExecutorConfig | None = None):
         self._config = config or ExecutorConfig()
@@ -56,15 +56,15 @@ class BoundedExecutor:
 
     async def submit(self, func: Callable, *args, **kwargs) -> Any:
         """
-        提交任务到线程池
+        Submit task to thread pool
 
-        如果队列已满，会等待 queue_timeout 秒。
-        超时后抛出 asyncio.TimeoutError。
+        If queue is full, waits for queue_timeout seconds.
+        Raises asyncio.TimeoutError after timeout.
 
         Returns:
-            任务执行结果
+            Task execution result
         """
-        # 等待获取信号量 (backpressure)
+        # Wait to acquire semaphore (backpressure)
         try:
             acquired = await asyncio.wait_for(
                 self._semaphore.acquire(), timeout=self._config.queue_timeout
@@ -91,26 +91,26 @@ class BoundedExecutor:
 
     @property
     def pending_count(self) -> int:
-        """当前等待执行的任务数"""
+        """Number of tasks currently waiting to execute"""
         return self._pending_count
 
     @property
     def queue_capacity(self) -> int:
-        """队列容量"""
+        """Queue capacity"""
         return self._config.queue_size
 
     @property
     def available_slots(self) -> int:
-        """可用的队列槽位数"""
+        """Number of available queue slots"""
         return self._config.queue_size - self._pending_count
 
     def shutdown(self, wait: bool = True):
-        """关闭执行器"""
+        """Shutdown executor"""
         self._executor.shutdown(wait=wait)
 
 
 class LangGraphNodeActor(Actor):
-    """将 LangGraph 节点函数包装为 Pulsing Actor"""
+    """Wrap LangGraph node function as Pulsing Actor"""
 
     def __init__(
         self,
@@ -147,7 +147,7 @@ class LangGraphNodeActor(Actor):
 
         msg_type = msg.get("type")
 
-        # 健康检查 / 状态查询
+        # Health check / status query
         if msg_type == "status":
             return {
                 "success": True,
@@ -157,7 +157,7 @@ class LangGraphNodeActor(Actor):
                 "queue_capacity": self._executor.queue_capacity,
             }
 
-        # 执行节点
+        # Execute node
         if msg_type != "execute":
             return {"success": False, "error": f"Unknown message type: {msg_type}"}
 
@@ -167,7 +167,7 @@ class LangGraphNodeActor(Actor):
             if asyncio.iscoroutinefunction(self.node_func):
                 result = await self.node_func(state)
             else:
-                # 使用有界执行器 (支持 backpressure)
+                # Use bounded executor (supports backpressure)
                 result = await self._executor.submit(self.node_func, state)
 
             return {"success": True, "state": result, "node": self.node_name}
@@ -185,7 +185,7 @@ class LangGraphNodeActor(Actor):
 
 
 class NodeExecutorPool:
-    """管理到远程节点的连接"""
+    """Manage connections to remote nodes"""
 
     def __init__(self, system, node_mapping: Dict[str, str]):
         self._system = system
@@ -195,7 +195,7 @@ class NodeExecutorPool:
     async def execute(
         self, node_name: str, state: dict, config: dict | None = None
     ) -> dict:
-        """执行节点（可能是远程的）"""
+        """Execute node (may be remote)"""
         actor_ref = await self._get_node_ref(node_name)
 
         if actor_ref is None:
@@ -211,7 +211,7 @@ class NodeExecutorPool:
         return self._deserialize(result)
 
     async def get_status(self, node_name: str) -> dict:
-        """获取节点状态（包括 backpressure 信息）"""
+        """Get node status (including backpressure information)"""
         actor_ref = await self._get_node_ref(node_name)
 
         if actor_ref is None:
@@ -221,7 +221,7 @@ class NodeExecutorPool:
         return self._deserialize(result)
 
     def _deserialize(self, response) -> dict:
-        """反序列化响应 (处理 pickle 序列化的 Python 对象)"""
+        """Deserialize response (handles pickle-serialized Python objects)"""
         if hasattr(response, "msg_type") and hasattr(response, "payload"):
             if not response.msg_type and isinstance(response.payload, bytes):
                 try:
@@ -235,7 +235,7 @@ class NodeExecutorPool:
         )
 
     async def _get_node_ref(self, node_name: str) -> ActorRef | None:
-        """获取节点的 ActorRef"""
+        """Get node's ActorRef"""
         if node_name in self._node_refs:
             return self._node_refs[node_name]
 
@@ -264,17 +264,17 @@ async def start_worker(
     queue_timeout: float = 30.0,
 ):
     """
-    启动 LangGraph 节点 Worker
+    Start LangGraph node worker
 
     Args:
-        node_name: 节点名称
-        node_func: 节点处理函数
-        addr: 绑定地址
-        seeds: 集群种子节点
-        actor_name: Actor 名称 (默认为 langgraph_node_{node_name})
-        max_workers: 线程池最大工作线程数
-        queue_size: 有界队列容量
-        queue_timeout: 队列满时的等待超时
+        node_name: Node name
+        node_func: Node processing function
+        addr: Bind address
+        seeds: Cluster seed nodes
+        actor_name: Actor name (default: langgraph_node_{node_name})
+        max_workers: Maximum worker threads in thread pool
+        queue_size: Bounded queue capacity
+        queue_timeout: Wait timeout when queue is full
 
     Example:
         await start_worker(

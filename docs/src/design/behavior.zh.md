@@ -235,16 +235,16 @@ fn counter(initial: i32) -> Behavior<CounterMsg> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let system = ActorSystem::builder().build().await?;
-    
+
     // 启动 behavior 风格的 Actor
     let counter = system.spawn_behavior("counter", counter(0)).await?;
-    
+
     // 类型安全的消息发送
     counter.tell(CounterMsg::Increment(5)).await?;
     counter.tell(CounterMsg::Increment(3)).await?;
     counter.tell(CounterMsg::Decrement(2)).await?;
     counter.tell(CounterMsg::Get).await?;
-    
+
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     system.shutdown().await
 }

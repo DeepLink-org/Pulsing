@@ -1,4 +1,4 @@
-"""StorageManager - 每个节点一个，负责管理本节点的所有 BucketStorage Actor"""
+"""StorageManager - One per node, manages all BucketStorage Actors on this node"""
 
 import asyncio
 import hashlib
@@ -11,27 +11,27 @@ from .storage import BucketStorage
 
 logger = logging.getLogger(__name__)
 
-# StorageManager 的固定服务名
+# StorageManager fixed service name
 STORAGE_MANAGER_NAME = "queue_storage_manager"
 
 
 def _compute_owner(bucket_key: str, nodes: list[dict]) -> int | None:
-    """根据 bucket key 计算 owner 节点 ID
+    """Compute owner node ID based on bucket key
 
-    使用 Rendezvous Hashing（最高随机权重哈希），确保：
-    1. 同一个 bucket 总是由同一个节点负责
-    2. 节点变化时只影响 ~1/N 的 key（最小迁移）
-    3. 负载自然均匀分布
+    Uses Rendezvous Hashing (highest random weight hashing) to ensure:
+    1. Same bucket is always handled by the same node
+    2. Node changes only affect ~1/N keys (minimal migration)
+    3. Natural uniform load distribution
 
-    算法：对每个 (key, node) 组合计算分数，选择分数最高的节点
+    Algorithm: Calculate score for each (key, node) combination, select node with highest score
     """
     if not nodes:
         return None
 
-    # 只选择 Alive 状态的节点
+    # Only select nodes in Alive state
     alive_nodes = [n for n in nodes if n.get("state") == "Alive"]
     if not alive_nodes:
-        # 如果没有 Alive 节点，退回到所有节点
+        # If no Alive nodes, fallback to all nodes
         alive_nodes = nodes
 
     best_score = -1
@@ -42,7 +42,7 @@ def _compute_owner(bucket_key: str, nodes: list[dict]) -> int | None:
         if node_id is None:
             continue
         node_id = int(node_id)
-        # 组合 key 和 node_id 计算哈希分数
+        # Combine key and node_id to calculate hash score
         combined = f"{bucket_key}:{node_id}"
         score = int(hashlib.md5(combined.encode()).hexdigest(), 16)
         if score > best_score:
@@ -53,15 +53,15 @@ def _compute_owner(bucket_key: str, nodes: list[dict]) -> int | None:
 
 
 class StorageManager(Actor):
-    """存储管理器 Actor
+    """Storage manager Actor
 
-    每个节点一个实例，负责：
-    1. 接收 GetBucket/GetTopic 请求
-    2. 判断资源是否属于本节点（一致性哈希）
-    3. 属于本节点：创建/返回对应 Actor
-    4. 不属于本节点：返回 Redirect 响应，指向正确节点
+    One instance per node, responsible for:
+    1. Receiving GetBucket/GetTopic requests
+    2. Determining if resource belongs to this node (consistent hashing)
+    3. If belongs to this node: create/return corresponding Actor
+    4. If not belongs to this node: return Redirect response pointing to correct node
 
-    支持的资源类型：
+    Supported resource types:
     - Queue Bucket: GetBucket -> BucketStorage Actor
     - Topic Broker: GetTopic -> TopicBroker Actor
     """
@@ -76,13 +76,13 @@ class StorageManager(Actor):
         self.base_storage_path = base_storage_path
         self.default_backend = default_backend
 
-        # 本节点管理的 bucket: {(topic, bucket_id): ActorRef}
+        # Buckets managed by this node: {(topic, bucket_id): ActorRef}
         self._buckets: dict[tuple[str, int], ActorRef] = {}
-        # 本节点管理的 topic broker: {topic_name: ActorRef}
+        # Topic brokers managed by this node: {topic_name: ActorRef}
         self._topics: dict[str, ActorRef] = {}
         self._lock = asyncio.Lock()
 
-        # 缓存的集群成员信息
+        # Cached cluster member information
         self._members: list[dict] = []
         self._members_updated_at: float = 0
 
@@ -93,21 +93,21 @@ class StorageManager(Actor):
         logger.info("StorageManager stopping")
 
     async def _refresh_members(self) -> list[dict]:
-        """刷新集群成员列表（带缓存）"""
+        """Refresh cluster member list (with cache)"""
         import time
 
         now = time.time()
-        if now - self._members_updated_at > 1.0:  # 1 秒缓存
+        if now - self._members_updated_at > 1.0:  # 1 second cache
             self._members = await self.system.members()
             self._members_updated_at = now
         return self._members
 
     def _bucket_key(self, topic: str, bucket_id: int) -> str:
-        """生成 bucket 的唯一 key"""
+        """Generate unique key for bucket"""
         return f"{topic}:bucket_{bucket_id}"
 
     def _topic_key(self, topic_name: str) -> str:
-        """生成 topic 的唯一 key"""
+        """Generate unique key for topic"""
         return f"topic:{topic_name}"
 
     async def _get_or_create_bucket(
@@ -119,7 +119,7 @@ class StorageManager(Actor):
         backend: str | type | None = None,
         backend_options: dict | None = None,
     ) -> ActorRef:
-        """获取或创建本地 BucketStorage Actor"""
+        """Get or create local BucketStorage Actor"""
         key = (topic, bucket_id)
 
         if key in self._buckets:
@@ -129,9 +129,9 @@ class StorageManager(Actor):
             if key in self._buckets:
                 return self._buckets[key]
 
-            # 创建 BucketStorage Actor
+            # Create BucketStorage Actor
             actor_name = f"bucket_{topic}_{bucket_id}"
-            # 使用传入的 storage_path 或默认路径
+            # Use provided storage_path or default path
             if storage_path:
                 bucket_storage_path = f"{storage_path}/bucket_{bucket_id}"
             else:
@@ -140,11 +140,11 @@ class StorageManager(Actor):
                 )
 
             try:
-                # 尝试解析已存在的
+                # Try to resolve existing
                 self._buckets[key] = await self.system.resolve_named(actor_name)
                 logger.debug(f"Resolved existing bucket: {actor_name}")
             except Exception:
-                # 创建新的，使用指定后端或默认后端
+                # Create new, use specified backend or default backend
                 storage = BucketStorage(
                     bucket_id=bucket_id,
                     storage_path=bucket_storage_path,
@@ -160,7 +160,7 @@ class StorageManager(Actor):
             return self._buckets[key]
 
     async def _get_or_create_topic_broker(self, topic_name: str) -> ActorRef:
-        """获取或创建本地 TopicBroker Actor"""
+        """Get or create local TopicBroker Actor"""
         if topic_name in self._topics:
             return self._topics[topic_name]
 
@@ -173,7 +173,7 @@ class StorageManager(Actor):
                 self._topics[topic_name] = await self.system.resolve_named(actor_name)
                 logger.debug(f"Resolved existing topic broker: {actor_name}")
             except Exception:
-                # 延迟导入避免循环依赖
+                # Lazy import to avoid circular dependency
                 from pulsing.topic.broker import TopicBroker
 
                 broker = TopicBroker(topic_name, self.system)
@@ -196,35 +196,35 @@ class StorageManager(Actor):
         data = msg.to_json()
 
         if msg_type == "GetBucket":
-            # 请求获取 bucket 引用
+            # Request bucket reference
             topic = data.get("topic")
             bucket_id = data.get("bucket_id")
             batch_size = data.get("batch_size", 100)
-            storage_path = data.get("storage_path")  # 可选的自定义存储路径
-            backend = data.get("backend")  # 可选的后端名称
-            backend_options = data.get("backend_options")  # 可选的后端参数
+            storage_path = data.get("storage_path")  # Optional custom storage path
+            backend = data.get("backend")  # Optional backend name
+            backend_options = data.get("backend_options")  # Optional backend options
 
             if topic is None or bucket_id is None:
                 return Message.from_json(
                     "Error", {"error": "Missing 'topic' or 'bucket_id'"}
                 )
 
-            # 计算 owner
+            # Compute owner
             bucket_key = self._bucket_key(topic, bucket_id)
             members = await self._refresh_members()
             owner_node_id = _compute_owner(bucket_key, members)
             local_node_id = self.system.node_id.id
 
-            # 判断是否属于本节点
+            # Determine if belongs to this node
             if owner_node_id is None or owner_node_id == local_node_id:
-                # 本节点负责，创建/返回 bucket
+                # This node is responsible, create/return bucket
                 bucket_ref = await self._get_or_create_bucket(
                     topic, bucket_id, batch_size, storage_path, backend, backend_options
                 )
                 return Message.from_json(
                     "BucketReady",
                     {
-                        "_type": "BucketReady",  # 备用：跨节点时 msg_type 可能丢失
+                        "_type": "BucketReady",  # Fallback: msg_type may be lost across nodes
                         "topic": topic,
                         "bucket_id": bucket_id,
                         "actor_id": bucket_ref.actor_id.local_id,

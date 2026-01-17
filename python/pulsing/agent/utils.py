@@ -1,4 +1,4 @@
-"""Agent 开发工具函数"""
+"""Agent development utility functions"""
 
 from __future__ import annotations
 
@@ -8,24 +8,24 @@ from typing import Any
 
 def parse_json(content: str | None, fallback: Any = None) -> Any:
     """
-    从 LLM 输出中解析 JSON。
+    Parse JSON from LLM output.
 
-    支持：
-    - 纯 JSON 字符串
-    - ```json ... ``` 代码块包裹
-    - 解析失败时返回 fallback
+    Supports:
+    - Pure JSON strings
+    - ```json ... ``` code block wrapped
+    - Returns fallback on parse failure
 
     Example:
         from pulsing.agent import parse_json
 
-        # 纯 JSON
+        # Pure JSON
         data = parse_json('{"name": "test"}')
 
-        # 代码块包裹
+        # Code block wrapped
         data = parse_json('```json\\n{"name": "test"}\\n```')
 
-        # 解析失败
-        data = parse_json('invalid', fallback={})  # 返回 {}
+        # Parse failure
+        data = parse_json('invalid', fallback={})  # Returns {}
     """
     if content is None:
         return fallback
@@ -34,7 +34,7 @@ def parse_json(content: str | None, fallback: Any = None) -> Any:
     if not text:
         return fallback
 
-    # 处理 ```json ... ``` 包裹
+    # Handle ```json ... ``` wrapping
     if text.startswith("```"):
         parts = text.split("```")
         if len(parts) >= 2:
@@ -50,7 +50,7 @@ def parse_json(content: str | None, fallback: Any = None) -> Any:
 
 def extract_field(content: str | None, field: str, fallback: Any = None) -> Any:
     """
-    从 JSON 输出中提取指定字段。
+    Extract specified field from JSON output.
 
     Example:
         response = '{"score": 8, "reason": "good"}'

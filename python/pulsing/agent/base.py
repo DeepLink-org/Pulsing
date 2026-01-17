@@ -1,16 +1,16 @@
 """
-Agent 装饰器 - 带元信息的 @remote
+Agent decorator - @remote with metadata
 
-功能上等同于 @remote，但额外携带元信息：
-- role: 角色名称
-- goal: 目标描述
-- backstory: 背景故事
-- tags: 自定义标签
+Functionally equivalent to @remote, but with additional metadata:
+- role: Role name
+- goal: Goal description
+- backstory: Background story
+- tags: Custom tags
 
-这些元信息可用于：
-1. 运行时可视化（Agent 拓扑图）
-2. 调试和日志
-3. 自动生成文档
+This metadata can be used for:
+1. Runtime visualization (Agent topology graph)
+2. Debugging and logging
+3. Automatic documentation generation
 """
 
 from __future__ import annotations
@@ -22,13 +22,13 @@ from pulsing.actor import remote
 
 T = TypeVar("T")
 
-# 全局元信息注册表: actor_name -> AgentMeta
+# Global metadata registry: actor_name -> AgentMeta
 _agent_meta_registry: dict[str, "AgentMeta"] = {}
 
 
 @dataclass
 class AgentMeta:
-    """Agent 元信息"""
+    """Agent metadata"""
 
     role: str = ""
     goal: str = ""
@@ -54,12 +54,12 @@ def agent(
     **tags: Any,
 ) -> Callable[[type[T]], type[T]]:
     """
-    Agent 装饰器 - 等同于 @remote，但附加元信息
+    Agent decorator - equivalent to @remote, but with additional metadata
 
-    元信息通过 get_agent_meta(name) 获取。
+    Metadata can be retrieved via get_agent_meta(name).
 
     Example:
-        @agent(role="研究员", goal="深入分析")
+        @agent(role="Researcher", goal="Deep analysis")
         class Researcher:
             async def analyze(self, topic: str) -> str:
                 ...
@@ -67,31 +67,31 @@ def agent(
         async with runtime():
             r = await Researcher.spawn(name="researcher")
 
-            # 获取元信息
+            # Get metadata
             meta = get_agent_meta("researcher")
-            print(meta.role)  # "研究员"
+            print(meta.role)  # "Researcher"
     """
 
     def decorator(cls: type[T]) -> type[T]:
-        # 创建元信息
+        # Create metadata
         meta = AgentMeta(role=role, goal=goal, backstory=backstory, tags=tags)
 
-        # 存储到类上（供 spawn 时使用）
+        # Store on class (for use during spawn)
         cls._agent_meta_template = meta  # type: ignore
 
-        # 包装 spawn 方法来注册元信息
+        # Wrap spawn method to register metadata
         actor_cls = remote(cls)
         original_spawn = actor_cls.spawn
 
         async def spawn_with_meta(*args: Any, name: str | None = None, **kwargs: Any):
             proxy = await original_spawn(*args, name=name, **kwargs)
-            # 注册元信息
+            # Register metadata
             if name:
                 _agent_meta_registry[name] = meta
             return proxy
 
         actor_cls.spawn = spawn_with_meta
-        actor_cls.__agent_meta__ = meta  # 类级别也可访问
+        actor_cls.__agent_meta__ = meta  # Also accessible at class level
 
         return actor_cls
 
@@ -99,15 +99,15 @@ def agent(
 
 
 def get_agent_meta(name: str) -> AgentMeta | None:
-    """根据 Actor 名称获取元信息"""
+    """Get metadata by actor name"""
     return _agent_meta_registry.get(name)
 
 
 def list_agents() -> dict[str, AgentMeta]:
-    """列出所有已注册的 Agent 及其元信息"""
+    """List all registered agents and their metadata"""
     return _agent_meta_registry.copy()
 
 
 def clear_agent_registry() -> None:
-    """清除注册表（用于测试）"""
+    """Clear registry (for testing)"""
     _agent_meta_registry.clear()

@@ -778,7 +778,7 @@ impl Actor for PythonActorWrapper {
                         let py_actor_id = PyActorId { inner: actor_id };
                         let result = handler.call_method1(py, "on_start", (py_actor_id,))?;
 
-                        // 检查返回的是否是协程，如果是则等待它完成
+                        // Check if return value is a coroutine, if so wait for it to complete
                         let asyncio = py.import("asyncio")?;
                         let is_coro = asyncio
                             .call_method1("iscoroutine", (&result,))?
@@ -812,7 +812,7 @@ impl Actor for PythonActorWrapper {
                     if handler.getattr(py, "on_stop").is_ok() {
                         let result = handler.call_method0(py, "on_stop")?;
 
-                        // 检查返回的是否是协程，如果是则等待它完成
+                        // Check if return value is a coroutine, if so wait for it to complete
                         let asyncio = py.import("asyncio")?;
                         let is_coro = asyncio
                             .call_method1("iscoroutine", (&result,))?

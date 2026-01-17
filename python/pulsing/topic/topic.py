@@ -1,4 +1,4 @@
-"""Topic API - Pub/Sub 高级接口"""
+"""Topic API - Pub/Sub high-level interface"""
 
 from __future__ import annotations
 
@@ -21,17 +21,17 @@ DEFAULT_PUBLISH_TIMEOUT = 30.0
 
 
 class PublishMode(Enum):
-    """发布模式"""
+    """Publish mode"""
 
-    FIRE_AND_FORGET = "fire_and_forget"  # 发送后立即返回
-    WAIT_ALL_ACKS = "wait_all_acks"  # 等待所有订阅者响应
-    WAIT_ANY_ACK = "wait_any_ack"  # 等待任一订阅者响应
-    BEST_EFFORT = "best_effort"  # 尝试发送，记录失败
+    FIRE_AND_FORGET = "fire_and_forget"  # Return immediately after sending
+    WAIT_ALL_ACKS = "wait_all_acks"  # Wait for all subscribers to respond
+    WAIT_ANY_ACK = "wait_any_ack"  # Wait for any subscriber to respond
+    BEST_EFFORT = "best_effort"  # Try to send, record failures
 
 
 @dataclass
 class PublishResult:
-    """发布结果"""
+    """Publish result"""
 
     success: bool
     delivered: int
@@ -40,19 +40,19 @@ class PublishResult:
     failed_subscribers: list[str] | None = None
 
 
-# 回调类型
+# Callback type
 MessageCallback = Callable[[Any], Coroutine[Any, Any, Any] | Any]
 
 
 async def _get_broker(system: ActorSystem, topic: str) -> "ActorRef":
-    """获取 topic broker（复用 queue/manager 的基础设施）"""
+    """Get topic broker (reuses queue/manager infrastructure)"""
     from pulsing.queue.manager import get_topic_broker
 
     return await get_topic_broker(system, topic)
 
 
 class TopicWriter:
-    """Topic 写入句柄"""
+    """Topic write handle"""
 
     def __init__(self, system: ActorSystem, topic: str, writer_id: str | None = None):
         self._system = system
@@ -79,25 +79,25 @@ class TopicWriter:
         mode: PublishMode = PublishMode.FIRE_AND_FORGET,
         timeout: float | None = None,
     ) -> PublishResult:
-        """发布消息
+        """Publish message
 
         Args:
-            message: 要发布的消息（任意 Python 对象）
-            mode: 发布模式
-            timeout: 超时时间（秒）。None 表示使用默认超时。
-                     对于 WAIT_ANY_ACK 和 WAIT_ALL_ACKS 模式，超时后本地任务会被取消，
-                     但远端 handler 可能仍在执行（依赖 HTTP/2 RST_STREAM 传播取消信号）。
+            message: Message to publish (any Python object)
+            mode: Publish mode
+            timeout: Timeout in seconds. None means use default timeout.
+                     For WAIT_ANY_ACK and WAIT_ALL_ACKS modes, local task will be cancelled after timeout,
+                     but remote handler may still be executing (relies on HTTP/2 RST_STREAM to propagate cancellation).
 
         Returns:
-            PublishResult: 发布结果
+            PublishResult: Publish result
 
         Raises:
-            asyncio.TimeoutError: 超时
-            RuntimeError: 其他错误
+            asyncio.TimeoutError: Timeout
+            RuntimeError: Other errors
         """
         broker = await self._broker_ref()
 
-        # 确定超时值
+        # Determine timeout value
         effective_timeout = timeout if timeout is not None else DEFAULT_PUBLISH_TIMEOUT
 
         async def _do_publish():
@@ -127,14 +127,14 @@ class TopicWriter:
         )
 
     async def stats(self) -> dict[str, Any]:
-        """获取 topic 统计信息"""
+        """Get topic statistics"""
         broker = await self._broker_ref()
         response = await broker.ask(Message.from_json("GetStats", {}))
         return response.to_json()
 
 
 class _SubscriberActor(Actor):
-    """订阅者 Actor（内部使用）"""
+    """Subscriber Actor (internal use)"""
 
     def __init__(self, callbacks: list[MessageCallback]):
         self._callbacks = callbacks
@@ -146,7 +146,7 @@ class _SubscriberActor(Actor):
         pass
 
     async def receive(self, msg: Any) -> Any:
-        # 提取 payload
+        # Extract payload
         if isinstance(msg, dict):
             payload = msg.get("payload", msg)
         elif isinstance(msg, Message):
@@ -154,7 +154,7 @@ class _SubscriberActor(Actor):
         else:
             payload = msg
 
-        # 调用回调
+        # Call callbacks
         for callback in self._callbacks:
             try:
                 result = callback(payload)
@@ -167,7 +167,7 @@ class _SubscriberActor(Actor):
 
 
 class TopicReader:
-    """Topic 读取句柄
+    """Topic read handle
 
     Example:
         reader = await read_topic(system, "events")
@@ -200,7 +200,7 @@ class TopicReader:
         return self._started
 
     def on_message(self, callback: MessageCallback) -> MessageCallback:
-        """注册消息回调（装饰器风格）
+        """Register message callback (decorator style)
 
         Example:
             @reader.on_message
@@ -211,11 +211,11 @@ class TopicReader:
         return callback
 
     def add_callback(self, callback: MessageCallback) -> None:
-        """添加消息回调"""
+        """Add message callback"""
         self._callbacks.append(callback)
 
     def remove_callback(self, callback: MessageCallback) -> bool:
-        """移除消息回调"""
+        """Remove message callback"""
         try:
             self._callbacks.remove(callback)
             return True
@@ -223,21 +223,21 @@ class TopicReader:
             return False
 
     async def start(self) -> None:
-        """开始接收消息"""
+        """Start receiving messages"""
         if self._started:
             return
 
         if not self._callbacks:
             logger.warning(f"TopicReader[{self._reader_id}] has no callbacks")
 
-        # 创建订阅者 Actor
+        # Create subscriber Actor
         actor_name = f"_topic_sub_{self._topic}_{self._reader_id}"
         subscriber = _SubscriberActor(self._callbacks)
         self._subscriber_ref = await self._system.spawn(
             actor_name, subscriber, public=True
         )
 
-        # 向 broker 注册
+        # Register with broker
         broker = await _get_broker(self._system, self._topic)
         response = await broker.ask(
             Message.from_json(
@@ -257,11 +257,11 @@ class TopicReader:
         logger.debug(f"TopicReader[{self._reader_id}] started for topic: {self._topic}")
 
     async def stop(self) -> None:
-        """停止接收消息"""
+        """Stop receiving messages"""
         if not self._started:
             return
 
-        # 从 broker 取消订阅
+        # Unsubscribe from broker
         try:
             broker = await _get_broker(self._system, self._topic)
             await broker.ask(
@@ -270,7 +270,7 @@ class TopicReader:
         except Exception as e:
             logger.warning(f"Unsubscribe error: {e}")
 
-        # 停止订阅者 Actor
+        # Stop subscriber Actor
         if self._subscriber_ref:
             try:
                 actor_name = f"_topic_sub_{self._topic}_{self._reader_id}"
@@ -283,7 +283,7 @@ class TopicReader:
         logger.debug(f"TopicReader[{self._reader_id}] stopped")
 
     async def stats(self) -> dict[str, Any]:
-        """获取 topic 统计信息"""
+        """Get topic statistics"""
         broker = await _get_broker(self._system, self._topic)
         response = await broker.ask(Message.from_json("GetStats", {}))
         return response.to_json()
@@ -294,15 +294,15 @@ async def write_topic(
     topic: str,
     writer_id: str | None = None,
 ) -> TopicWriter:
-    """打开 topic 用于写入
+    """Open topic for writing
 
     Args:
-        system: Actor 系统
-        topic: Topic 名称
-        writer_id: 写入者 ID（可选）
+        system: Actor system
+        topic: Topic name
+        writer_id: Writer ID (optional)
 
     Returns:
-        TopicWriter: 写入句柄
+        TopicWriter: Write handle
 
     Example:
         writer = await write_topic(system, "events")
@@ -317,16 +317,16 @@ async def read_topic(
     reader_id: str | None = None,
     auto_start: bool = False,
 ) -> TopicReader:
-    """打开 topic 用于读取
+    """Open topic for reading
 
     Args:
-        system: Actor 系统
-        topic: Topic 名称
-        reader_id: 读取者 ID（可选）
-        auto_start: 是否自动开始接收
+        system: Actor system
+        topic: Topic name
+        reader_id: Reader ID (optional)
+        auto_start: Whether to automatically start receiving
 
     Returns:
-        TopicReader: 读取句柄
+        TopicReader: Read handle
 
     Example:
         reader = await read_topic(system, "events")
