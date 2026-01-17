@@ -112,8 +112,8 @@ class JudgeActor:
             try:
                 agent = await resolve(name)
                 await agent.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[Judge] 停止 agent '{name}' 时出错: {e}")
 
         await self._decide()
 
