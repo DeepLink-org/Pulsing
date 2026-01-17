@@ -1,16 +1,16 @@
 """
-Pulsing LangGraph Integration - 一行代码实现分布式 LangGraph
+Pulsing LangGraph Integration - One line of code to enable distributed LangGraph
 
 Usage:
     from langgraph.graph import StateGraph
     from pulsing.langgraph import with_pulsing
 
-    # 原有 LangGraph 代码
+    # Original LangGraph code
     graph = StateGraph(MyState)
     graph.add_node("llm", llm_fn)
     app = graph.compile()
 
-    # ✨ 一行代码实现分布式
+    # ✨ One line of code to enable distribution
     distributed_app = with_pulsing(
         app,
         node_mapping={"llm": "langgraph_node_llm"},

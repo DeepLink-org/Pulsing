@@ -1,19 +1,19 @@
 """
-Pulsing AutoGen Runtime - 统一的单机/分布式运行时
+Pulsing AutoGen Runtime - Unified Standalone/Distributed Runtime
 
 Usage:
     from pulsing.autogen import PulsingRuntime
 
-    # 单机模式
+    # Standalone mode
     runtime = PulsingRuntime()
 
-    # 分布式模式
+    # Distributed mode
     runtime = PulsingRuntime(
         addr="0.0.0.0:8000",
         seeds=["other-node:8000"]
     )
 
-    # 使用方式与 AutoGen 完全兼容
+    # Usage is fully compatible with AutoGen
     await MyAgent.register(runtime, "my_agent", lambda: MyAgent())
     runtime.start()
     await runtime.send_message(msg, recipient=AgentId("my_agent", "default"))

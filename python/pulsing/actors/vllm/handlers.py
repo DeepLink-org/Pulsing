@@ -1,15 +1,15 @@
-"""vLLM Worker Actor - 基于 vLLM V1 引擎的高性能推理 Worker
+"""vLLM Worker Actor - High-performance inference Worker based on vLLM V1 engine
 
-参考 Dynamo 实现，支持：
-1. Prefill/Decode 分离 (PD Disaggregation)
-2. 多模态输入处理（图片）
-3. KV Cache 管理和清理
-4. LoRA 动态加载/卸载
-5. OpenAI 兼容的文本输入输出模式
-6. 引擎监控和健康检查
+Referencing Dynamo implementation, supports:
+1. Prefill/Decode separation (PD Disaggregation)
+2. Multimodal input processing (images)
+3. KV Cache management and cleanup
+4. LoRA dynamic loading/unloading
+5. OpenAI-compatible text input/output mode
+6. Engine monitoring and health checks
 """
 
-# Worker 处理器：BaseWorkerHandler, PrefillWorkerHandler, DecodeWorkerHandler
+# Worker handlers: BaseWorkerHandler, PrefillWorkerHandler, DecodeWorkerHandler
 
 import asyncio
 import logging
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 class BaseWorkerHandler(ABC):
-    """Worker 处理器基类，提供通用功能"""
+    """Base Worker handler class, provides common functionality"""
 
     def __init__(
         self,
@@ -66,10 +66,10 @@ class BaseWorkerHandler(ABC):
         self.use_vllm_tokenizer = use_vllm_tokenizer
         self.image_loader = ImageLoader()
         self.temp_dirs: list[tempfile.TemporaryDirectory] = []
-        # LoRA 跟踪
+        # LoRA tracking
         self.lora_id_for_name: dict[str, int] = {}
         self.lora_name_to_path: dict[str, str] = {}
-        # 引擎监控 (统一管理回调和健康状态)
+        # Engine monitoring (unified management of callbacks and health status)
         self._on_engine_dead = on_engine_dead
         self.engine_monitor = VllmEngineMonitor(engine, on_engine_dead=on_engine_dead)
 
@@ -80,11 +80,11 @@ class BaseWorkerHandler(ABC):
     async def _extract_multimodal_data(
         self, request: dict[str, Any]
     ) -> dict[str, Any] | None:
-        """提取和解码多模态数据"""
+        """Extract and decode multimodal data"""
         if "multi_modal_data" not in request or request["multi_modal_data"] is None:
             return None
 
-        # 安全检查：如果未启用多模态则拒绝
+        # Safety check: reject if multimodal is not enabled
         if not self.enable_multimodal:
             raise ValueError(
                 "Received multimodal data but multimodal processing is not enabled"
@@ -93,7 +93,7 @@ class BaseWorkerHandler(ABC):
         mm_map = request["multi_modal_data"]
         vllm_mm_data = {}
 
-        # 处理图片
+        # Process images
         images = []
         for item in mm_map.get(IMAGE_URL_KEY, []):
             if isinstance(item, dict) and URL_VARIANT_KEY in item:
@@ -110,7 +110,7 @@ class BaseWorkerHandler(ABC):
             vllm_mm_data["image"] = images[0] if len(images) == 1 else images
             logger.debug(f"Extracted {len(images)} image(s) for multimodal processing")
 
-        # 处理视频（未来扩展）
+        # Process video (future extension)
         if VIDEO_URL_KEY in mm_map:
             logger.warning("Video multimodal data not yet supported")
 
@@ -118,7 +118,7 @@ class BaseWorkerHandler(ABC):
 
     @staticmethod
     def _build_completion_usage(request_output: RequestOutput) -> dict[str, Any]:
-        """构建使用统计信息"""
+        """Build usage statistics"""
         return {
             "prompt_tokens": (
                 len(request_output.prompt_token_ids)
@@ -143,7 +143,7 @@ class BaseWorkerHandler(ABC):
     def _extract_logprobs(
         output, num_output_tokens_so_far: int
     ) -> tuple[list[float] | None, list[list[dict]] | None]:
-        """提取 logprobs 信息"""
+        """Extract logprobs information"""
         if output.logprobs is None:
             return None, None
 
@@ -190,14 +190,14 @@ class BaseWorkerHandler(ABC):
         lora_request=None,
         data_parallel_rank: int | None = None,
     ):
-        """生成 tokens
+        """Generate tokens
 
         Args:
-            prompt: 输入 prompt (TokensPrompt 或 TextPrompt)
-            sampling_params: 采样参数
-            request_id: 请求 ID
-            lora_request: LoRA 请求 (可选)
-            data_parallel_rank: 数据并行 rank (可选，用于 DP 部署)
+            prompt: Input prompt (TokensPrompt or TextPrompt)
+            sampling_params: Sampling parameters
+            request_id: Request ID
+            lora_request: LoRA request (optional)
+            data_parallel_rank: Data parallel rank (optional, for DP deployment)
         """
         try:
             if lora_request:
@@ -235,7 +235,7 @@ class BaseWorkerHandler(ABC):
                 next_total_toks = len(output.token_ids)
                 out = {"token_ids": output.token_ids[num_output_tokens_so_far:]}
 
-                # 提取 logprobs
+                # Extract logprobs
                 log_probs, top_logprobs = self._extract_logprobs(
                     output, num_output_tokens_so_far
                 )
@@ -277,7 +277,7 @@ class BaseWorkerHandler(ABC):
             raise
 
     async def clear_kv_cache(self) -> dict[str, Any]:
-        """清理 KV Cache"""
+        """Clear KV Cache"""
         try:
             await self.engine_client.reset_prefix_cache()
             return {"status": "success", "message": "KV cache cleared"}
@@ -286,14 +286,14 @@ class BaseWorkerHandler(ABC):
             return {"status": "error", "message": str(e)}
 
     async def load_lora(self, lora_name: str, lora_path: str) -> dict[str, Any]:
-        """动态加载 LoRA 适配器
+        """Dynamically load LoRA adapter
 
         Args:
-            lora_name: LoRA 适配器名称
-            lora_path: LoRA 适配器路径（本地文件系统路径）
+            lora_name: LoRA adapter name
+            lora_path: LoRA adapter path (local filesystem path)
 
         Returns:
-            包含状态的字典
+            Dictionary containing status
         """
         try:
             if lora_name in self.lora_id_for_name:
@@ -302,17 +302,17 @@ class BaseWorkerHandler(ABC):
                     "message": f"LoRA adapter '{lora_name}' is already loaded",
                 }
 
-            # 生成确定性 ID
+            # Generate deterministic ID
             lora_id = lora_name_to_id(lora_name)
 
-            # 添加 LoRA 到引擎
+            # Add LoRA to engine
             await self.engine_client.add_lora(
                 LoRARequest(
                     lora_name=lora_name, lora_int_id=lora_id, lora_path=lora_path
                 )
             )
 
-            # 跟踪 LoRA
+            # Track LoRA
             self.lora_id_for_name[lora_name] = lora_id
             self.lora_name_to_path[lora_name] = lora_path
             logger.info(
@@ -330,13 +330,13 @@ class BaseWorkerHandler(ABC):
             return {"status": "error", "message": str(e)}
 
     async def unload_lora(self, lora_name: str) -> dict[str, Any]:
-        """卸载 LoRA 适配器
+        """Unload LoRA adapter
 
         Args:
-            lora_name: LoRA 适配器名称
+            lora_name: LoRA adapter name
 
         Returns:
-            包含状态的字典
+            Dictionary containing status
         """
         try:
             if lora_name not in self.lora_id_for_name:
@@ -350,7 +350,7 @@ class BaseWorkerHandler(ABC):
 
             await self.engine_client.remove_lora(lora_id)
 
-            # 从跟踪字典中移除
+            # Remove from tracking dictionary
             del self.lora_id_for_name[lora_name]
             if lora_name in self.lora_name_to_path:
                 del self.lora_name_to_path[lora_name]
@@ -369,10 +369,10 @@ class BaseWorkerHandler(ABC):
             return {"status": "error", "message": str(e)}
 
     async def list_loras(self) -> dict[str, Any]:
-        """列出所有已加载的 LoRA 适配器
+        """List all loaded LoRA adapters
 
         Returns:
-            包含 LoRA 列表的字典
+            Dictionary containing LoRA list
         """
         try:
             loras = dict(self.lora_id_for_name)
@@ -386,12 +386,12 @@ class BaseWorkerHandler(ABC):
             return {"status": "error", "message": str(e)}
 
     def add_temp_dir(self, temp_dir: tempfile.TemporaryDirectory) -> None:
-        """添加临时目录以便稍后清理"""
+        """Add temporary directory for later cleanup"""
         if temp_dir is not None:
             self.temp_dirs.append(temp_dir)
 
     def cleanup(self):
-        """清理资源"""
+        """Clean up resources"""
         for temp_dir in self.temp_dirs:
             try:
                 temp_dir.cleanup()
@@ -400,14 +400,14 @@ class BaseWorkerHandler(ABC):
 
 
 class PrefillWorkerHandler(BaseWorkerHandler):
-    """Prefill Worker 处理器 - 只执行 prefill 阶段"""
+    """Prefill Worker handler - only executes prefill phase"""
 
     async def generate(self, request: dict[str, Any]) -> AsyncGenerator[dict, None]:
-        """生成 prefill 结果"""
+        """Generate prefill results"""
         request_id = f"prefill-{uuid.uuid4().hex[:8]}"
         logger.debug(f"Prefill Request ID: {request_id}")
 
-        # 提取多模态数据
+        # Extract multimodal data
         multi_modal_data = await self._extract_multimodal_data(request)
 
         token_ids = request.get("token_ids", [])
@@ -415,12 +415,12 @@ class PrefillWorkerHandler(BaseWorkerHandler):
             prompt_token_ids=token_ids, multi_modal_data=multi_modal_data
         )
 
-        # 构建采样参数
+        # Build sampling parameters
         sampling_params = build_sampling_params(
             request, self.default_sampling_params, self.model_max_len
         )
 
-        # 配置 prefill 模式：只生成 1 个 token，开启远程解码
+        # Configure prefill mode: only generate 1 token, enable remote decode
         if sampling_params.extra_args is None:
             sampling_params.extra_args = {}
         sampling_params.extra_args["kv_transfer_params"] = {
@@ -429,7 +429,7 @@ class PrefillWorkerHandler(BaseWorkerHandler):
         sampling_params.max_tokens = 1
         sampling_params.min_tokens = 1
 
-        # LoRA 支持
+        # LoRA support
         lora_request = None
         model_name = request.get("model")
         if model_name and model_name in self.lora_id_for_name:
@@ -443,7 +443,7 @@ class PrefillWorkerHandler(BaseWorkerHandler):
                 f"Prefill request {request_id} will use LoRA adapter: {model_name} (ID: {lora_id})"
             )
 
-        # 获取 data_parallel_rank (参考 Dynamo handlers.py)
+        # Get data_parallel_rank (referencing Dynamo handlers.py)
         dp_rank = request.get("dp_rank", None)
 
         try:
@@ -488,29 +488,29 @@ class PrefillWorkerHandler(BaseWorkerHandler):
 
 
 class DecodeWorkerHandler(BaseWorkerHandler):
-    """Decode Worker 处理器 - 执行 decode 阶段或完整推理"""
+    """Decode Worker handler - executes decode phase or full inference"""
 
     async def generate(self, request: dict[str, Any]) -> AsyncGenerator[dict, None]:
-        """生成 decode 结果"""
+        """Generate decode results"""
         request_id = f"decode-{uuid.uuid4().hex[:8]}"
         logger.debug(
             f"Decode Request ID: {request_id}, request keys: {list(request.keys())}"
         )
 
-        # 自动检测输入类型
+        # Auto-detect input type
         has_token_ids = "token_ids" in request
         has_text_input = "prompt" in request or "messages" in request
 
         if self.use_vllm_tokenizer or (has_text_input and not has_token_ids):
-            # 文本输入输出模式
+            # Text input/output mode
             async for chunk in self._generate_text_mode(request, request_id):
                 yield chunk
         elif has_token_ids:
-            # Token 输入输出模式
+            # Token input/output mode
             async for chunk in self._generate_token_mode(request, request_id):
                 yield chunk
         else:
-            # 既没有 token_ids 也没有文本输入
+            # Neither token_ids nor text input
             raise ValueError(
                 "Request must contain either 'token_ids' or 'prompt'/'messages' field"
             )
@@ -518,11 +518,11 @@ class DecodeWorkerHandler(BaseWorkerHandler):
     async def _generate_token_mode(
         self, request: dict[str, Any], request_id: str
     ) -> AsyncGenerator[dict, None]:
-        """Token 输入输出模式生成"""
-        # 提取多模态数据
+        """Token input/output mode generation"""
+        # Extract multimodal data
         multi_modal_data = await self._extract_multimodal_data(request)
 
-        # 检查是否有 token_ids
+        # Check if token_ids exist
         if "token_ids" not in request:
             raise ValueError(
                 "Request must contain 'token_ids' field for token mode generation. "
@@ -533,12 +533,12 @@ class DecodeWorkerHandler(BaseWorkerHandler):
             prompt_token_ids=request["token_ids"], multi_modal_data=multi_modal_data
         )
 
-        # 构建采样参数
+        # Build sampling parameters
         sampling_params = build_sampling_params(
             request, self.default_sampling_params, self.model_max_len
         )
 
-        # 处理 prefill 结果（如果是 PD 分离模式）
+        # Handle prefill result (if in PD separation mode)
         prefill_result = request.get("prefill_result")
         if prefill_result and isinstance(prefill_result, dict):
             kv_params = prefill_result.get("disaggregated_params", {}).get(
@@ -556,7 +556,7 @@ class DecodeWorkerHandler(BaseWorkerHandler):
             prefill_result.get("prompt_tokens_details") if prefill_result else None
         )
 
-        # LoRA 支持
+        # LoRA support
         lora_request = None
         model_name = request.get("model")
         if model_name and model_name in self.lora_id_for_name:
@@ -570,7 +570,7 @@ class DecodeWorkerHandler(BaseWorkerHandler):
                 f"Decode request {request_id} will use LoRA adapter: {model_name} (ID: {lora_id})"
             )
 
-        # 获取 data_parallel_rank (参考 Dynamo handlers.py)
+        # Get data_parallel_rank (referencing Dynamo handlers.py)
         dp_rank = request.get("dp_rank", None)
 
         try:
@@ -593,17 +593,17 @@ class DecodeWorkerHandler(BaseWorkerHandler):
     async def _generate_text_mode(
         self, request: dict[str, Any], request_id: str
     ) -> AsyncGenerator[dict, None]:
-        """文本输入输出模式生成（OpenAI 兼容）"""
-        # 获取文本输入
+        """Text input/output mode generation (OpenAI compatible)"""
+        # Get text input
         prompt_text = None
 
-        # 尝试不同的输入格式
+        # Try different input formats
         if "prompt" in request:
             prompt_text = request["prompt"]
         elif "messages" in request:
             messages = request["messages"]
             if isinstance(messages, list) and len(messages) > 0:
-                # 如果是消息列表，取最后一条消息内容
+                # If message list, take last message content
                 last_message = messages[-1]
                 if isinstance(last_message, dict):
                     prompt_text = last_message.get("content", "")
@@ -619,11 +619,11 @@ class DecodeWorkerHandler(BaseWorkerHandler):
                 "Request must contain 'prompt', 'messages', or 'text' field for text mode generation"
             )
 
-        # 关键修复：在文本模式下，必须先使用 tokenizer 将文本转换为 token_ids
-        # 这是因为 vLLM 在应用 penalties 时需要 prompt_token_ids
-        # 参考 Dynamo 的 InputParamManager 实现
+        # Critical fix: In text mode, must first use tokenizer to convert text to token_ids
+        # This is because vLLM needs prompt_token_ids when applying penalties
+        # Referencing Dynamo's InputParamManager implementation
 
-        # 获取 tokenizer
+        # Get tokenizer
         tokenizer = getattr(self.engine_client, "tokenizer", None)
         if not tokenizer:
             raise ValueError(
@@ -631,7 +631,7 @@ class DecodeWorkerHandler(BaseWorkerHandler):
                 "This is necessary for applying sampling penalties."
             )
 
-        # 使用 tokenizer 将文本转换为 token_ids
+        # Use tokenizer to convert text to token_ids
         try:
             token_ids = tokenizer.encode(prompt_text)
             prompt = TokensPrompt(prompt_token_ids=token_ids)
@@ -639,12 +639,12 @@ class DecodeWorkerHandler(BaseWorkerHandler):
             logger.exception(f"Failed to tokenize prompt: {e}")
             raise ValueError(f"Failed to tokenize prompt: {e}") from e
 
-        # 构建采样参数
+        # Build sampling parameters
         sampling_params = build_sampling_params_openai(
             request, self.default_sampling_params
         )
 
-        # 获取 data_parallel_rank (参考 Dynamo handlers.py)
+        # Get data_parallel_rank (referencing Dynamo handlers.py)
         dp_rank = request.get("dp_rank", None)
 
         openai_request_id = request.get("id") or request.get("request_id", request_id)

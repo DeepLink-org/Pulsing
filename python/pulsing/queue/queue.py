@@ -1,4 +1,4 @@
-"""队列 API - 基于 topic/path 的高级接口"""
+"""Queue API - High-level interface based on topic/path"""
 
 from __future__ import annotations
 
@@ -19,22 +19,22 @@ logger = logging.getLogger(__name__)
 
 
 class Queue:
-    """分布式队列 - 高级 API
+    """Distributed Queue - High-level API
 
-    每个 bucket 对应一个独立的 BucketStorage Actor。
+    Each bucket corresponds to an independent BucketStorage Actor.
 
     Args:
-        system: Actor 系统
-        topic: 队列主题
-        bucket_column: 分桶列名
-        num_buckets: 桶数量
-        batch_size: 批处理大小
-        storage_path: 存储路径
-        backend: 存储后端
-            - "memory": 纯内存后端（默认）
-            - 持久化后端需安装 persisting 包
-            - 自定义类: 实现 StorageBackend 协议的类
-        backend_options: 后端额外参数
+        system: Actor system
+        topic: Queue topic
+        bucket_column: Bucketing column name
+        num_buckets: Number of buckets
+        batch_size: Batch size
+        storage_path: Storage path
+        backend: Storage backend
+            - "memory": Pure in-memory backend (default)
+            - Persistent backend requires installing persisting package
+            - Custom class: Class implementing StorageBackend protocol
+        backend_options: Additional backend parameters
     """
 
     def __init__(
@@ -57,31 +57,31 @@ class Queue:
         self.backend = backend
         self.backend_options = backend_options
 
-        # 每个 bucket 的 Actor 引用
+        # Actor references for each bucket
         self._bucket_refs: dict[int, ActorRef] = {}
         self._init_lock = asyncio.Lock()
 
-        # 保存事件循环引用（用于 sync 包装器）
+        # Save event loop reference (for sync wrapper)
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
             self._loop = None
 
     def _hash_partition(self, value: Any) -> int:
-        """根据值计算分桶 ID"""
+        """Calculate bucket ID based on value"""
         if value is None:
             value = ""
         hash_value = int(hashlib.md5(str(value).encode()).hexdigest(), 16)
         return hash_value % self.num_buckets
 
     async def _ensure_bucket(self, bucket_id: int) -> ActorRef:
-        """确保指定 bucket 的 Actor 已创建
+        """Ensure Actor for specified bucket is created
 
-        通过 StorageManager 获取 bucket 引用：
-        1. 向本地 StorageManager 发送 GetBucket 请求
-        2. StorageManager 使用一致性哈希判断 owner
-        3. 如果是本节点，创建并返回；否则返回重定向
-        4. 自动处理重定向，最终获取正确节点上的 bucket
+        Get bucket reference through StorageManager:
+        1. Send GetBucket request to local StorageManager
+        2. StorageManager uses consistent hashing to determine owner
+        3. If this node, create and return; otherwise return redirect
+        4. Automatically handle redirects to get bucket on correct node
         """
         if bucket_id in self._bucket_refs:
             return self._bucket_refs[bucket_id]
@@ -90,7 +90,7 @@ class Queue:
             if bucket_id in self._bucket_refs:
                 return self._bucket_refs[bucket_id]
 
-            # 通过 StorageManager 获取 bucket 引用
+            # Get bucket reference through StorageManager
             self._bucket_refs[bucket_id] = await get_bucket_ref(
                 self.system,
                 self.topic,
@@ -106,7 +106,7 @@ class Queue:
     async def put(
         self, record: dict[str, Any] | list[dict[str, Any]]
     ) -> dict[str, Any] | list[dict[str, Any]]:
-        """写入数据到队列"""
+        """Write data to queue"""
         if isinstance(record, dict):
             records = [record]
             single = True
@@ -140,11 +140,11 @@ class Queue:
         wait: bool = False,
         timeout: float | None = None,
     ) -> list[dict[str, Any]]:
-        """从队列读取数据（内存+持久化数据同时可见）"""
+        """Read data from queue (both in-memory and persistent data visible)"""
         if bucket_id is not None:
             return await self._get_from_bucket(bucket_id, limit, offset, wait, timeout)
 
-        # 从所有 bucket 读取
+        # Read from all buckets
         all_records = []
         for bid in range(self.num_buckets):
             if len(all_records) >= limit:
@@ -164,10 +164,10 @@ class Queue:
         wait: bool,
         timeout: float | None,
     ) -> list[dict[str, Any]]:
-        """从指定 bucket 读取数据"""
+        """Read data from specified bucket"""
         bucket_ref = await self._ensure_bucket(bucket_id)
 
-        # 使用流式读取
+        # Use streaming read
         response = await bucket_ref.ask(
             Message.from_json(
                 "GetStream",
@@ -179,7 +179,7 @@ class Queue:
             raise RuntimeError(f"Get failed: {response.to_json().get('error')}")
 
         if not response.is_stream:
-            # 回退到非流式
+            # Fallback to non-streaming
             response = await bucket_ref.ask(
                 Message.from_json("Get", {"limit": limit, "offset": offset})
             )
@@ -196,7 +196,7 @@ class Queue:
         return records
 
     async def flush(self) -> None:
-        """刷新所有 bucket 的缓冲区"""
+        """Flush all bucket buffers"""
         tasks = []
         for bucket_id in range(self.num_buckets):
             if bucket_id in self._bucket_refs:
@@ -207,7 +207,7 @@ class Queue:
             await asyncio.gather(*tasks)
 
     async def stats(self) -> dict[str, Any]:
-        """获取队列统计信息"""
+        """Get queue statistics"""
         bucket_stats = {}
         for bucket_id in range(self.num_buckets):
             if bucket_id in self._bucket_refs:
@@ -224,17 +224,17 @@ class Queue:
         }
 
     def get_bucket_id(self, partition_value: Any) -> int:
-        """根据分桶列的值计算 bucket ID"""
+        """Calculate bucket ID based on partition column value"""
         return self._hash_partition(partition_value)
 
     def sync(self) -> "SyncQueue":
-        """返回同步包装器
+        """Return synchronous wrapper
 
         Example:
             queue = Queue(system, topic="test")
             sync_queue = queue.sync()
-            sync_queue.put({"id": "1", "value": 100})  # 同步写入
-            records = sync_queue.get(limit=10)  # 同步读取
+            sync_queue.put({"id": "1", "value": 100})  # Synchronous write
+            records = sync_queue.get(limit=10)  # Synchronous read
         """
         from .sync_queue import SyncQueue
 
@@ -242,7 +242,7 @@ class Queue:
 
 
 class QueueWriter:
-    """队列写入句柄"""
+    """Queue write handle"""
 
     def __init__(self, queue: Queue):
         self.queue = queue
@@ -256,29 +256,29 @@ class QueueWriter:
         await self.queue.flush()
 
     def sync(self) -> "SyncQueueWriter":
-        """返回同步包装器"""
+        """Return synchronous wrapper"""
         from .sync_queue import SyncQueueWriter
 
         return SyncQueueWriter(self)
 
 
 class QueueReader:
-    """队列读取句柄
+    """Queue read handle
 
-    支持三种模式：
-    1. bucket_ids=None: 从所有 bucket 读取
-    2. bucket_ids=[0, 2]: 从指定的 bucket 列表读取
-    3. 通过 rank/world_size 自动分配 bucket（分布式消费）
+    Supports three modes:
+    1. bucket_ids=None: Read from all buckets
+    2. bucket_ids=[0, 2]: Read from specified bucket list
+    3. Auto-assign buckets via rank/world_size (distributed consumption)
     """
 
     def __init__(self, queue: Queue, bucket_ids: list[int] | None = None):
         self.queue = queue
-        self.bucket_ids = bucket_ids  # None 表示读取所有 bucket
-        # 每个 bucket 独立维护 offset
+        self.bucket_ids = bucket_ids  # None means read from all buckets
+        # Each bucket independently maintains offset
         self._offsets: dict[int, int] = {}
 
     def _get_bucket_ids(self) -> list[int]:
-        """获取要读取的 bucket 列表"""
+        """Get list of buckets to read from"""
         if self.bucket_ids is not None:
             return self.bucket_ids
         return list(range(self.queue.num_buckets))
@@ -289,7 +289,7 @@ class QueueReader:
         wait: bool = False,
         timeout: float | None = None,
     ) -> list[dict[str, Any]]:
-        """从分配的 bucket 中读取数据"""
+        """Read data from assigned buckets"""
         bucket_ids = self._get_bucket_ids()
         all_records = []
 
@@ -307,11 +307,11 @@ class QueueReader:
         return all_records[:limit]
 
     def reset(self) -> None:
-        """重置所有 bucket 的偏移量"""
+        """Reset offsets for all buckets"""
         self._offsets.clear()
 
     def set_offset(self, offset: int, bucket_id: int | None = None) -> None:
-        """设置偏移量"""
+        """Set offset"""
         if bucket_id is not None:
             self._offsets[bucket_id] = offset
         else:
@@ -319,7 +319,7 @@ class QueueReader:
                 self._offsets[bid] = offset
 
     def sync(self) -> "SyncQueueReader":
-        """返回同步包装器"""
+        """Return synchronous wrapper"""
         from .sync_queue import SyncQueueReader
 
         return SyncQueueReader(self)
@@ -335,32 +335,32 @@ async def write_queue(
     backend: str | type = "memory",
     backend_options: dict[str, Any] | None = None,
 ) -> QueueWriter:
-    """打开队列用于写入
+    """Open queue for writing
 
     Args:
-        system: Actor 系统
-        topic: 队列主题
-        bucket_column: 分桶列名
-        num_buckets: 桶数量
-        batch_size: 批处理大小
-        storage_path: 存储路径
-        backend: 存储后端
-            - "memory": 纯内存后端（默认）
-            - 持久化后端需安装 persisting 包
-            - 自定义类: 实现 StorageBackend 协议的类
-        backend_options: 后端额外参数
+        system: Actor system
+        topic: Queue topic
+        bucket_column: Bucketing column name
+        num_buckets: Number of buckets
+        batch_size: Batch size
+        storage_path: Storage path
+        backend: Storage backend
+            - "memory": Pure in-memory backend (default)
+            - Persistent backend requires installing persisting package
+            - Custom class: Class implementing StorageBackend protocol
+        backend_options: Additional backend parameters
 
     Example:
-        # 使用默认内存后端
+        # Use default in-memory backend
         writer = await write_queue(system, "my_queue")
 
-        # 使用 persisting 的 Lance 后端
+        # Use persisting's Lance backend
         from persisting.queue import LanceBackend
         from pulsing.queue import register_backend
         register_backend("lance", LanceBackend)
         writer = await write_queue(system, "my_queue", backend="lance")
     """
-    # 确保集群中所有节点都有 StorageManager
+    # Ensure all nodes in cluster have StorageManager
     from .manager import ensure_storage_managers
 
     await ensure_storage_managers(system)
@@ -379,9 +379,9 @@ async def write_queue(
 
 
 def _assign_buckets(num_buckets: int, rank: int, world_size: int) -> list[int]:
-    """根据 rank 和 world_size 分配 bucket
+    """Assign buckets based on rank and world_size
 
-    采用轮询分配策略，确保负载均衡：
+    Uses round-robin allocation strategy to ensure load balancing:
     - world_size=2, num_buckets=4: rank0 -> [0,2], rank1 -> [1,3]
     - world_size=3, num_buckets=4: rank0 -> [0,3], rank1 -> [1], rank2 -> [2]
     """
@@ -400,38 +400,38 @@ async def read_queue(
     backend: str | type = "memory",
     backend_options: dict[str, Any] | None = None,
 ) -> QueueReader:
-    """打开队列用于读取
+    """Open queue for reading
 
-    支持三种模式：
-    1. 默认：从所有 bucket 读取
-    2. bucket_id/bucket_ids：从指定的 bucket 读取
-    3. rank/world_size：分布式消费，自动分配 bucket
+    Supports three modes:
+    1. Default: Read from all buckets
+    2. bucket_id/bucket_ids: Read from specified buckets
+    3. rank/world_size: Distributed consumption, auto-assign buckets
 
     Args:
-        system: Actor 系统
-        topic: 队列主题
-        bucket_id: 单个 bucket ID（与 bucket_ids 互斥）
-        bucket_ids: bucket ID 列表（与 bucket_id 互斥）
-        rank: 当前消费者的 rank（0 到 world_size-1）
-        world_size: 消费者总数
-        num_buckets: bucket 数量（用于 rank/world_size 模式）
-        storage_path: 存储路径
-        backend: 存储后端（需与写入时使用的后端一致）
-        backend_options: 后端额外参数
+        system: Actor system
+        topic: Queue topic
+        bucket_id: Single bucket ID (mutually exclusive with bucket_ids)
+        bucket_ids: List of bucket IDs (mutually exclusive with bucket_id)
+        rank: Current consumer's rank (0 to world_size-1)
+        world_size: Total number of consumers
+        num_buckets: Number of buckets (for rank/world_size mode)
+        storage_path: Storage path
+        backend: Storage backend (must match backend used for writing)
+        backend_options: Additional backend parameters
 
     Example:
-        # 分布式消费：4 个 bucket，2 个消费者
+        # Distributed consumption: 4 buckets, 2 consumers
         reader0 = await read_queue(system, "q", rank=0, world_size=2)  # bucket 0, 2
         reader1 = await read_queue(system, "q", rank=1, world_size=2)  # bucket 1, 3
     """
-    # 确保集群中所有节点都有 StorageManager
+    # Ensure all nodes in cluster have StorageManager
     from .manager import ensure_storage_managers
 
     await ensure_storage_managers(system)
 
-    # 确定要读取的 bucket 列表
+    # Determine list of buckets to read from
     if rank is not None and world_size is not None:
-        # 分布式消费模式
+        # Distributed consumption mode
         assigned_buckets = _assign_buckets(num_buckets, rank, world_size)
         logger.info(
             f"Reader rank={rank}/{world_size} assigned buckets: {assigned_buckets}"
@@ -441,9 +441,9 @@ async def read_queue(
     elif bucket_ids is not None:
         assigned_buckets = bucket_ids
     else:
-        assigned_buckets = None  # 读取所有 bucket
+        assigned_buckets = None  # Read from all buckets
 
-    # 创建 Queue
+    # Create Queue
     queue = Queue(
         system=system,
         topic=topic,
@@ -455,7 +455,7 @@ async def read_queue(
         backend_options=backend_options,
     )
 
-    # 尝试解析已存在的 bucket Actor
+    # Try to resolve existing bucket Actors
     if assigned_buckets:
         for bid in assigned_buckets:
             actor_name = f"queue_{topic}_bucket_{bid}"

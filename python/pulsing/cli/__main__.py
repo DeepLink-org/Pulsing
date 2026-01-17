@@ -5,7 +5,7 @@ import hyperparameter as hp
 
 @hp.param("actor")
 def actor(
-    actor_type: str,  # 位置参数，支持: router, transformers, vllm, list
+    actor_type: str,  # Positional argument, supports: router, transformers, vllm, list
     namespace: str = "pulsing",
     addr: str | None = None,
     seeds: str | None = None,
@@ -18,9 +18,9 @@ def actor(
     http_host: str = "0.0.0.0",
     http_port: int = 8080,
     scheduler: str = "stream_load",
-    # macOS Metal/MLX 支持参数
-    mlx_device: str | None = None,  # 'gpu' 或 'cpu'，默认 'gpu'
-    metal_memory_fraction: float | None = None,  # 0.0-1.0，默认 0.8
+    # macOS Metal/MLX support parameters
+    mlx_device: str | None = None,  # 'gpu' or 'cpu', default 'gpu'
+    metal_memory_fraction: float | None = None,  # 0.0-1.0, default 0.8
     # Actor list parameters
     endpoint: str | None = None,  # Single actor system endpoint (list only)
     all_actors: bool = False,  # Show all actors including internal ones (list only)

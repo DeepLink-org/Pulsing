@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-大规模压测脚本 - 多进程版本
+Large-Scale Stress Test Script - Multi-Process Version
 
-使用方法:
+Usage:
     torchrun --nproc_per_node=10 benchmarks/large_scale_stress_test.py \
         --duration 300 --rate 100
 """
@@ -21,7 +21,7 @@ from pulsing.actor import Actor, StreamMessage, SystemConfig, create_actor_syste
 
 
 # ============================================================================
-# 统计
+# Statistics
 # ============================================================================
 
 
@@ -60,7 +60,7 @@ class Stats:
 
 
 # ============================================================================
-# Workers - 使用简化的消息格式
+# Workers - Using Simplified Message Format
 # ============================================================================
 
 
@@ -135,7 +135,7 @@ WORKERS = {
 
 
 # ============================================================================
-# 压测
+# Stress Test
 # ============================================================================
 
 
@@ -143,13 +143,13 @@ async def run_benchmark(worker_refs, stats_req, stats_stream, duration, rate):
     end_time = time.time() + duration
     interval = 1.0 / rate if rate > 0 else 0
 
-    # 分离本地和远程 workers
+    # Separate local and remote workers
     local = {k: v for k, v in worker_refs.items() if "_remote_" not in k}
     remote = {k: v for k, v in worker_refs.items() if "_remote_" in k}
 
     async def worker_loop():
         while time.time() < end_time:
-            # 70% 远程, 30% 本地
+            # 70% remote, 30% local
             use_remote = remote and (not local or random.random() < 0.7)
             refs = remote if use_remote else local
 
@@ -173,7 +173,7 @@ async def run_benchmark(worker_refs, stats_req, stats_stream, duration, rate):
 
     tasks = [asyncio.create_task(worker_loop()) for _ in range(max(1, int(rate) // 10))]
 
-    # 进度报告
+    # Progress reporting
     while time.time() < end_time:
         await asyncio.sleep(10)
         print(f"  Requests: {stats_req.total} (ok: {stats_req.success})")
@@ -235,14 +235,14 @@ async def main():
     parser.add_argument("--log-dir", type=str, default="benchmark_logs")
     args = parser.parse_args()
 
-    # torchrun 信息
+    # Get torchrun information
     rank = int(os.environ.get("RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", 1))
 
     os.makedirs(args.log_dir, exist_ok=True)
     log_file = f"{args.log_dir}/stress_test_rank_{rank}.log"
 
-    # 日志输出
+    # Log output
     class Tee:
         def __init__(self, path, orig):
             self.f = open(path, "w")
@@ -266,7 +266,7 @@ async def main():
     print(f"Duration: {args.duration}s, Rate: {args.rate}/s")
     print(f"{'=' * 50}\n")
 
-    # 配置系统
+    # Configure system
     port = (8000 if args.port == 0 else args.port) + rank
     config = SystemConfig.with_addr(f"0.0.0.0:{port}")
 
@@ -278,14 +278,14 @@ async def main():
     system = await create_actor_system(config)
     print(f"System started at {system.addr}")
 
-    # 等待集群稳定
+    # Wait for cluster to stabilize
     print(f"Waiting {args.stabilize_timeout}s for cluster...")
     await asyncio.sleep(args.stabilize_timeout)
 
     members = await system.members()
     print(f"Cluster members: {len(members)}")
 
-    # 创建本地 workers
+    # Create local workers
     worker_refs = {}
     for name, cls in WORKERS.items():
         ref = await system.spawn(f"{name}_{rank}", cls(), public=True)
@@ -294,7 +294,7 @@ async def main():
 
     await asyncio.sleep(args.stabilize_timeout)
 
-    # 解析远程 workers
+    # Resolve remote workers
     print("Resolving remote workers...")
     for other_rank in range(world_size):
         if other_rank == rank:
@@ -308,7 +308,7 @@ async def main():
 
     print(f"Total workers: {len(worker_refs)}")
 
-    # 运行压测
+    # Run stress test
     stats_req, stats_stream = Stats(), Stats()
     try:
         await run_benchmark(
@@ -317,7 +317,7 @@ async def main():
     except KeyboardInterrupt:
         print("\nInterrupted")
 
-    # 结果
+    # Results
     print(f"\n{'=' * 50}")
     print(f"Results - Process {rank}")
     print(f"{'=' * 50}")
@@ -327,7 +327,7 @@ async def main():
     with open(f"{args.log_dir}/stress_test_stats_rank_{rank}.json", "w") as f:
         json.dump(result, f, indent=2)
 
-    # 等待 3 秒让正在进行的流式任务完成
+    # Wait 3 seconds for ongoing stream tasks to complete
     print(f"[Process {rank}] Waiting 3s for streams to complete...")
     await asyncio.sleep(3)
 

@@ -1,15 +1,15 @@
-"""vLLM Worker Actor - 基于 vLLM V1 引擎的高性能推理 Worker
+"""vLLM Worker Actor - High-performance inference Worker based on vLLM V1 engine
 
-参考 Dynamo 实现，支持：
-1. Prefill/Decode 分离 (PD Disaggregation)
-2. 多模态输入处理（图片）
-3. KV Cache 管理和清理
-4. LoRA 动态加载/卸载
-5. OpenAI 兼容的文本输入输出模式
-6. 引擎监控和健康检查
+Referencing Dynamo implementation, supports:
+1. Prefill/Decode separation (PD Disaggregation)
+2. Multimodal input processing (images)
+3. KV Cache management and cleanup
+4. LoRA dynamic loading/unloading
+5. OpenAI-compatible text input/output mode
+6. Engine monitoring and health checks
 """
 
-# VllmWorker Actor - 主 Actor 类
+# VllmWorker Actor - Main Actor class
 
 import asyncio
 import logging
@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 
 
 class VllmWorker(Actor):
-    """vLLM 推理 Worker Actor
+    """vLLM inference Worker Actor
 
-    支持 vLLM V1 引擎，功能对齐 Dynamo：
-    1. 支持 PD 分离 (Prefill / Decode 角色)
-    2. 支持多模态输入 (Image)
-    3. 支持 KV Cache 跨节点传输参数
-    4. 支持 LoRA 动态加载/卸载
-    5. 支持 OpenAI 兼容的文本输入输出
+    Supports vLLM V1 engine, features aligned with Dynamo:
+    1. Supports PD separation (Prefill / Decode roles)
+    2. Supports multimodal input (Image)
+    3. Supports KV Cache cross-node transfer parameters
+    4. Supports LoRA dynamic loading/unloading
+    5. Supports OpenAI-compatible text input/output
     """
 
     def __init__(
@@ -56,16 +56,17 @@ class VllmWorker(Actor):
         max_new_tokens: int = 512,
         enable_multimodal: bool = False,
         use_vllm_tokenizer: bool = False,
-        # 分布式推理参数 (参考 Dynamo 实现)
-        tensor_parallel_size: int = 1,  # TP: 张量并行，切分模型到多个 GPU
-        pipeline_parallel_size: int = 1,  # PP: 流水线并行，分布模型层
-        data_parallel_size: int = 1,  # DP: 数据并行
-        data_parallel_rank: int | None = None,  # DP rank，用于多副本部署
-        enable_expert_parallel: bool = False,  # EP: MoE 模型专家并行
-        distributed_executor_backend: str | None = None,  # "mp" 或 "ray"
-        # macOS Metal/MLX 支持参数
-        mlx_device: str | None = None,  # 'gpu' 或 'cpu'，默认从环境变量读取
-        metal_memory_fraction: float | None = None,  # 0.0-1.0，默认 0.8
+        # Distributed inference parameters (referencing Dynamo implementation)
+        tensor_parallel_size: int = 1,  # TP: Tensor parallelism, split model across multiple GPUs
+        pipeline_parallel_size: int = 1,  # PP: Pipeline parallelism, distribute model layers
+        data_parallel_size: int = 1,  # DP: Data parallelism
+        data_parallel_rank: int | None = None,  # DP rank, for multi-replica deployment
+        enable_expert_parallel: bool = False,  # EP: MoE model expert parallelism
+        distributed_executor_backend: str | None = None,  # "mp" or "ray"
+        # macOS Metal/MLX support parameters
+        mlx_device: str
+        | None = None,  # 'gpu' or 'cpu', default read from environment variable
+        metal_memory_fraction: float | None = None,  # 0.0-1.0, default 0.8
         **kwargs,
     ):
         self.model = model
@@ -74,7 +75,7 @@ class VllmWorker(Actor):
         self.enable_multimodal = enable_multimodal
         self.use_vllm_tokenizer = use_vllm_tokenizer
 
-        # 分布式配置
+        # Distributed configuration
         self.tensor_parallel_size = tensor_parallel_size
         self.pipeline_parallel_size = pipeline_parallel_size
         self.data_parallel_size = data_parallel_size
@@ -82,10 +83,10 @@ class VllmWorker(Actor):
         self.enable_expert_parallel = enable_expert_parallel
         self._is_primary_rank = data_parallel_rank is None or data_parallel_rank == 0
 
-        # macOS Metal/MLX 环境
+        # macOS Metal/MLX environment
         _setup_macos_metal_env(mlx_device, metal_memory_fraction)
 
-        # 构建引擎参数
+        # Build engine arguments
         self.engine_args_dict = self._build_engine_args(
             engine_args=engine_args,
             model=model,
@@ -122,23 +123,23 @@ class VllmWorker(Actor):
         distributed_executor_backend: str | None,
         **kwargs,
     ) -> dict[str, Any]:
-        """构建 vLLM 引擎参数
+        """Build vLLM engine arguments
 
-        整合基础参数和分布式参数的处理逻辑。
+        Integrates basic parameters and distributed parameters processing logic.
         """
         args = engine_args.copy() if engine_args else {}
 
-        # 基础参数
+        # Basic parameters
         args.update(
             {
                 "model": model,
                 "gpu_memory_utilization": gpu_memory_utilization,
                 "trust_remote_code": trust_remote_code,
-                "generation_config": "vllm",  # 使用 vllm 默认配置，避免 HF 的 repetition_penalty
+                "generation_config": "vllm",  # Use vllm default config to avoid HF's repetition_penalty
             }
         )
 
-        # 分布式参数 (仅在非默认值时添加)
+        # Distributed parameters (only add when not default values)
         if tensor_parallel_size > 1:
             args["tensor_parallel_size"] = tensor_parallel_size
         if pipeline_parallel_size > 1:
@@ -150,13 +151,13 @@ class VllmWorker(Actor):
         if enable_expert_parallel:
             args["enable_expert_parallel"] = enable_expert_parallel
 
-        # 分布式执行后端 (TP=1 时默认用 mp 避免 GIL 问题)
+        # Distributed executor backend (default to mp when TP=1 to avoid GIL issues)
         if distributed_executor_backend:
             args["distributed_executor_backend"] = distributed_executor_backend
         elif tensor_parallel_size == 1:
             args["distributed_executor_backend"] = "mp"
 
-        # 过滤掉自定义参数，只保留 vLLM 支持的参数
+        # Filter out custom parameters, only keep vLLM-supported parameters
         excluded_keys = {
             "max_new_tokens",
             "enable_multimodal",
@@ -175,14 +176,14 @@ class VllmWorker(Actor):
         return args
 
     async def on_start(self, actor_id: ActorId) -> None:
-        """快速返回，在后台初始化引擎"""
+        """Return quickly, initialize engine in background"""
         self._actor_id = actor_id
         if not VLLM_AVAILABLE:
             logger.error("vLLM not installed or version incompatible.")
             self._is_ready = False
             return
 
-        # 在后台任务中初始化引擎
+        # Initialize engine in background task
         async def init_background():
             try:
                 logger.info(
@@ -212,7 +213,7 @@ class VllmWorker(Actor):
 
         logger.info(f"Initializing vLLM ({self.role}) for model: {self.model}")
 
-        # 检测平台并记录信息
+        # Detect platform and log information
         if _is_macos():
             mlx_device = os.environ.get("VLLM_MLX_DEVICE", "not set")
             metal_memory = os.environ.get("VLLM_METAL_MEMORY_FRACTION", "not set")
@@ -225,9 +226,9 @@ class VllmWorker(Actor):
         os.environ["VLLM_NO_USAGE_STATS"] = "1"
         os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
-        # 将整个初始化过程移到线程池中执行
+        # Move entire initialization process to thread pool
         def init_sync():
-            """同步初始化函数，在线程池中执行"""
+            """Synchronous initialization function, executed in thread pool"""
             args = AsyncEngineArgs(**self.engine_args_dict)
             usage_context = UsageContext.OPENAI_API_SERVER
             engine_config = args.create_engine_config(usage_context=usage_context)
@@ -242,14 +243,14 @@ class VllmWorker(Actor):
         logger.info("Starting vLLM engine initialization in thread pool...")
         self._engine = await loop.run_in_executor(None, init_sync)
 
-        # 创建对应的处理器
+        # Create corresponding handler
         model_max_len = getattr(
             getattr(self._engine.vllm_config, "model_config", None),
             "max_model_len",
             None,
         )
 
-        # 获取默认采样参数
+        # Get default sampling parameters
         default_sampling_params = {}
         try:
             default_sampling_params = (
@@ -259,8 +260,8 @@ class VllmWorker(Actor):
             )
             logger.debug(f"Default sampling params: {default_sampling_params}")
 
-            # 如果使用文本模式但检测到 penalties，需要确保 tokenizer 可用
-            # 否则清除这些 penalties 以避免 AssertionError
+            # If using text mode but penalties are detected, ensure tokenizer is available
+            # Otherwise clear these penalties to avoid AssertionError
             if self.use_vllm_tokenizer:
                 has_penalties = (
                     default_sampling_params.get("repetition_penalty", 1.0) != 1.0
@@ -296,7 +297,7 @@ class VllmWorker(Actor):
                 on_engine_dead=self._on_engine_dead,
             )
         else:
-            # aggregated 或 decode 角色都使用 DecodeWorkerHandler
+            # Both aggregated and decode roles use DecodeWorkerHandler
             self._handler = DecodeWorkerHandler(
                 engine=self._engine,
                 default_sampling_params=default_sampling_params,
@@ -306,7 +307,7 @@ class VllmWorker(Actor):
                 on_engine_dead=self._on_engine_dead,
             )
 
-        # 启动引擎健康监控 (参考 Dynamo engine_monitor.py)
+        # Start engine health monitoring (referencing Dynamo engine_monitor.py)
         self._handler.engine_monitor.start_monitoring(
             on_engine_dead=self._on_engine_dead
         )
@@ -314,7 +315,7 @@ class VllmWorker(Actor):
 
         self._is_ready = True
 
-        # 记录 DP rank 条件注册状态 (参考 Dynamo main.py)
+        # Log DP rank conditional registration status (referencing Dynamo main.py)
         if self.data_parallel_size > 1:
             if self._is_primary_rank:
                 logger.info(
@@ -329,30 +330,30 @@ class VllmWorker(Actor):
             logger.info(f"vLLM Worker {self.worker_id} ready")
 
     def _on_engine_dead(self) -> None:
-        """引擎死亡回调函数 (参考 Dynamo handlers.py)
+        """Engine dead callback function (referencing Dynamo handlers.py)
 
-        当 vLLM 引擎检测到 EngineDeadError 时调用此方法。
-        这通常意味着引擎已经崩溃，需要进行清理和可能的重启。
+        Called when vLLM engine detects EngineDeadError.
+        This usually means the engine has crashed and needs cleanup and possibly restart.
         """
         logger.error(f"Engine dead callback triggered for {self.worker_id}")
         self._engine_is_dead = True
         self._is_ready = False
 
-        # 注意：在 Actor 模式下，我们不直接调用 os._exit(1)
-        # 而是设置状态，让上层 Actor 系统处理
-        # 如果需要强制退出，可以在这里添加逻辑
+        # Note: In Actor mode, we don't directly call os._exit(1)
+        # Instead, set state and let upper-level Actor system handle it
+        # If forced exit is needed, add logic here
 
     @property
     def engine_is_dead(self) -> bool:
-        """返回引擎是否已死亡"""
+        """Return whether the engine is dead"""
         return self._engine_is_dead
 
     def on_stop(self) -> None:
-        # 停止引擎健康监控
+        # Stop engine health monitoring
         if self._handler and hasattr(self._handler, "engine_monitor"):
             self._handler.engine_monitor.stop_monitoring()
 
-        # 取消初始化任务
+        # Cancel initialization task
         if (
             hasattr(self, "_init_task")
             and self._init_task
@@ -360,7 +361,7 @@ class VllmWorker(Actor):
         ):
             self._init_task.cancel()
 
-        # 清理处理器资源
+        # Clean up handler resources
         if self._handler:
             self._handler.cleanup()
 
@@ -370,9 +371,9 @@ class VllmWorker(Actor):
 
     @property
     def is_primary_rank(self) -> bool:
-        """判断是否是主 rank (用于模型注册)
+        """Check if this is the primary rank (for model registration)
 
-        在 DP 部署中，只有 rank 0 需要注册模型到服务发现。
+        In DP deployment, only rank 0 needs to register model to service discovery.
         """
         return self._is_primary_rank
 
@@ -385,19 +386,19 @@ class VllmWorker(Actor):
             "ready": str(self._is_ready),
             "multimodal_enabled": str(self.enable_multimodal),
             "text_mode": str(self.use_vllm_tokenizer),
-            # 分布式配置
+            # Distributed configuration
             "tp_size": str(self.tensor_parallel_size),
             "pp_size": str(self.pipeline_parallel_size),
             "dp_size": str(self.data_parallel_size),
             "dp_rank": str(self.data_parallel_rank),
             "ep_enabled": str(self.enable_expert_parallel),
             "is_primary_rank": str(self._is_primary_rank),
-            # 健康状态
+            # Health status
             "engine_healthy": str(not self._engine_is_dead),
         }
 
         if self._is_ready and self._engine:
-            # 尝试获取 vLLM 引擎的运行时统计
+            # Try to get vLLM engine runtime statistics
             try:
                 config = self._engine.vllm_config
                 meta.update(
@@ -410,7 +411,7 @@ class VllmWorker(Actor):
                         "block_size": str(config.cache_config.block_size),
                     }
                 )
-                # 从 vllm_config 获取实际的并行配置
+                # Get actual parallel configuration from vllm_config
                 parallel_config = getattr(config, "parallel_config", None)
                 if parallel_config:
                     meta["actual_tp_size"] = str(
@@ -428,7 +429,7 @@ class VllmWorker(Actor):
         return meta
 
     async def receive(self, msg: Message) -> Message | StreamMessage:
-        # 如果引擎未就绪，等待初始化完成
+        # If engine not ready, wait for initialization to complete
         if not self._is_ready:
             if not VLLM_AVAILABLE:
                 error_msg = "vLLM not installed or version incompatible"
@@ -439,7 +440,7 @@ class VllmWorker(Actor):
                     return stream_msg
                 return Message.from_json("Error", {"error": error_msg})
 
-            # 等待引擎初始化完成
+            # Wait for engine initialization to complete
             max_wait = 60.0
             wait_interval = 0.5
             waited = 0.0
@@ -467,7 +468,7 @@ class VllmWorker(Actor):
             ):
                 return await self._handle_generate_stream(msg)
             elif msg.msg_type == "HealthCheck":
-                # 详细的健康检查
+                # Detailed health check
                 health_status = self._handler.engine_monitor.get_health_status()
                 health_status["role"] = self.role
                 health_status["worker_id"] = self.worker_id
@@ -476,7 +477,7 @@ class VllmWorker(Actor):
                 result = await self._handler.clear_kv_cache()
                 return Message.from_json("Ok", result)
             elif msg.msg_type == "LoadLoRA":
-                # LoRA 加载支持
+                # LoRA loading support
                 data = msg.to_json()
                 lora_name = data.get("lora_name")
                 lora_path = data.get("lora_path")
@@ -488,7 +489,7 @@ class VllmWorker(Actor):
                 result = await self._handler.load_lora(lora_name, lora_path)
                 return Message.from_json("Ok", result)
             elif msg.msg_type == "UnloadLoRA":
-                # LoRA 卸载支持
+                # LoRA unloading support
                 data = msg.to_json()
                 lora_name = data.get("lora_name")
                 if not lora_name:
@@ -498,7 +499,7 @@ class VllmWorker(Actor):
                 result = await self._handler.unload_lora(lora_name)
                 return Message.from_json("Ok", result)
             elif msg.msg_type == "ListLoRAs":
-                # LoRA 列表支持
+                # LoRA listing support
                 result = await self._handler.list_loras()
                 return Message.from_json("Ok", result)
             else:
@@ -525,8 +526,8 @@ class VllmWorker(Actor):
         data = msg.to_json()
 
         try:
-            # 使用处理器生成结果
-            # 累积完整的文本和信息
+            # Use handler to generate results
+            # Accumulate complete text and information
             accumulated_text = ""
             finish_reason = None
             result_count = 0
@@ -534,25 +535,25 @@ class VllmWorker(Actor):
             async for result in self._handler.generate(data):
                 result_count += 1
 
-                # 提取文本内容（支持不同的格式）
+                # Extract text content (support different formats)
                 if "choices" in result and len(result["choices"]) > 0:
                     choice = result["choices"][0]
 
-                    # 流式格式：从 delta.content 提取
+                    # Streaming format: extract from delta.content
                     if "delta" in choice and "content" in choice["delta"]:
                         accumulated_text += choice["delta"]["content"]
-                    # 非流式格式：从 message.content 提取
+                    # Non-streaming format: extract from message.content
                     elif "message" in choice and "content" in choice["message"]:
                         accumulated_text = choice["message"]["content"]
-                    # 或者直接从 text 提取
+                    # Or extract directly from text
                     elif "text" in choice:
                         accumulated_text = choice["text"]
 
-                    # 提取 finish_reason
+                    # Extract finish_reason
                     if "finish_reason" in choice and choice["finish_reason"]:
                         finish_reason = choice["finish_reason"]
 
-            # 返回完整的响应（OpenAI 格式）
+            # Return complete response (OpenAI format)
             if accumulated_text or result_count > 0:
                 response = {
                     "text": accumulated_text,
@@ -560,7 +561,7 @@ class VllmWorker(Actor):
                     "completion_tokens": (
                         len(accumulated_text.split()) if accumulated_text else 0
                     ),
-                    "prompt_tokens": 0,  # TODO: 计算实际的 prompt tokens
+                    "prompt_tokens": 0,  # TODO: Calculate actual prompt tokens
                 }
                 return Message.from_json("GenerateResponse", response)
             return Message.from_json("Error", {"error": "No output"})

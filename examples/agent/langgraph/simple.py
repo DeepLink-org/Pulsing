@@ -1,5 +1,5 @@
 """
-LangGraph + Pulsing 单机模式示例
+LangGraph + Pulsing Standalone Mode Example
 
 Usage: python simple.py
 """
@@ -16,7 +16,7 @@ class AgentState(TypedDict):
 
 
 def llm_node(state: AgentState) -> AgentState:
-    """模拟 LLM 调用"""
+    """Simulate LLM call"""
     messages = state.get("messages", [])
     last_msg = messages[-1] if messages else {}
     content = (
@@ -39,7 +39,7 @@ def llm_node(state: AgentState) -> AgentState:
 
 
 def tool_node(state: AgentState) -> AgentState:
-    """模拟工具调用"""
+    """Simulate tool call"""
     result = "Sunny, 25°C"
     print(f"[Tool] -> {result}")
     return {"messages": [{"role": "tool", "content": result}], "next_step": "llm"}
@@ -61,10 +61,10 @@ async def main():
     from pulsing.langgraph import with_pulsing
 
     print("=" * 50)
-    print("LangGraph + Pulsing 单机模式")
+    print("LangGraph + Pulsing Standalone Mode")
     print("=" * 50)
 
-    app = with_pulsing(build_graph())  # 单机模式，API 完全兼容
+    app = with_pulsing(build_graph())  # Standalone mode, API fully compatible
 
     print("\n--- Test 1: Hello ---")
     await app.ainvoke(

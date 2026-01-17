@@ -228,16 +228,16 @@ class StorageManager(Actor):
                         "topic": topic,
                         "bucket_id": bucket_id,
                         "actor_id": bucket_ref.actor_id.local_id,
-                        # 用十六进制字符串传输 node_id，避免 JSON 大整数精度丢失
+                        # Use hex string to transmit node_id, avoid JSON big integer precision loss
                         "node_id_hex": hex(local_node_id),
                     },
                 )
             else:
-                # 不属于本节点，返回重定向
-                # 找到 owner 节点的地址
+                # Not owned by this node, return redirect
+                # Find owner node address
                 owner_addr = None
                 for m in members:
-                    # node_id 可能是字符串，统一转为 int 比较
+                    # node_id might be string, convert to int for comparison
                     m_node_id = m.get("node_id")
                     if m_node_id is not None and int(m_node_id) == owner_node_id:
                         owner_addr = m.get("addr")
@@ -246,29 +246,29 @@ class StorageManager(Actor):
                 return Message.from_json(
                     "Redirect",
                     {
-                        "_type": "Redirect",  # 备用：跨节点时 msg_type 可能丢失
+                        "_type": "Redirect",  # Fallback: msg_type may be lost across nodes
                         "topic": topic,
                         "bucket_id": bucket_id,
-                        # 用十六进制字符串传输 node_id，避免 JSON 大整数精度丢失
+                        # Use hex string to transmit node_id, avoid JSON big integer precision loss
                         "owner_node_id_hex": hex(owner_node_id),
                         "owner_addr": owner_addr,
                     },
                 )
 
         elif msg_type == "GetTopic":
-            # 请求获取 topic broker 引用
+            # Request topic broker reference
             topic_name = data.get("topic")
             if not topic_name:
                 return Message.from_json("Error", {"error": "Missing 'topic'"})
 
-            # 计算 owner
+            # Compute owner
             topic_key = self._topic_key(topic_name)
             members = await self._refresh_members()
             owner_node_id = _compute_owner(topic_key, members)
             local_node_id = self.system.node_id.id
 
             if owner_node_id is None or owner_node_id == local_node_id:
-                # 本节点负责，创建/返回 topic broker
+                # This node is responsible, create/return topic broker
                 broker_ref = await self._get_or_create_topic_broker(topic_name)
                 return Message.from_json(
                     "TopicReady",
@@ -280,7 +280,7 @@ class StorageManager(Actor):
                     },
                 )
             else:
-                # 不属于本节点，返回重定向
+                # Not owned by this node, return redirect
                 owner_addr = None
                 for m in members:
                     m_node_id = m.get("node_id")
@@ -299,7 +299,7 @@ class StorageManager(Actor):
                 )
 
         elif msg_type == "ListBuckets":
-            # 列出本节点管理的所有 bucket
+            # List all buckets managed by this node
             buckets = [
                 {"topic": topic, "bucket_id": bid}
                 for (topic, bid) in self._buckets.keys()
@@ -307,11 +307,11 @@ class StorageManager(Actor):
             return Message.from_json("BucketList", {"buckets": buckets})
 
         elif msg_type == "ListTopics":
-            # 列出本节点管理的所有 topic
+            # List all topics managed by this node
             return Message.from_json("TopicList", {"topics": list(self._topics.keys())})
 
         elif msg_type == "GetStats":
-            # 获取统计信息
+            # Get statistics
             return Message.from_json(
                 "Stats",
                 {
@@ -331,22 +331,22 @@ class StorageManager(Actor):
             )
 
 
-# 用于防止并发创建 StorageManager 的锁
+# Lock to prevent concurrent creation of StorageManager
 _manager_lock = asyncio.Lock()
 
 
 async def get_storage_manager(system: ActorSystem) -> ActorRef:
-    """获取本节点的 StorageManager，如果不存在则创建"""
+    """Get StorageManager for this node, create if not exists"""
     local_node_id = system.node_id.id
 
-    # 尝试解析本地节点的 StorageManager
+    # Try to resolve local node's StorageManager
     try:
         return await system.resolve_named(STORAGE_MANAGER_NAME, node_id=local_node_id)
     except Exception:
         pass
 
     async with _manager_lock:
-        # 再次检查本地节点
+        # Check local node again
         try:
             return await system.resolve_named(
                 STORAGE_MANAGER_NAME, node_id=local_node_id
@@ -354,7 +354,7 @@ async def get_storage_manager(system: ActorSystem) -> ActorRef:
         except Exception:
             pass
 
-        # 创建新的 StorageManager
+        # Create new StorageManager
         try:
             manager = StorageManager(system)
             return await system.spawn(STORAGE_MANAGER_NAME, manager, public=True)
@@ -367,11 +367,11 @@ async def get_storage_manager(system: ActorSystem) -> ActorRef:
 
 
 async def ensure_storage_managers(system: ActorSystem) -> None:
-    """确保本地节点有 StorageManager
+    """Ensure local node has StorageManager
 
-    每个节点需要有自己的 StorageManager 来处理 bucket 请求。
-    此函数确保本地节点创建了 StorageManager。
-    远程节点的 StorageManager 会在它们调用 write_queue 或 read_queue 时自动创建。
+    Each node needs its own StorageManager to handle bucket requests.
+    This function ensures the local node has created StorageManager.
+    Remote nodes' StorageManagers will be automatically created when they call write_queue or read_queue.
     """
     await get_storage_manager(system)
     logger.debug(f"Local StorageManager ensured on node {system.node_id.id}")
@@ -387,23 +387,23 @@ async def get_bucket_ref(
     backend_options: dict | None = None,
     max_redirects: int = 3,
 ) -> ActorRef:
-    """获取指定 bucket 的 ActorRef
+    """Get ActorRef for specified bucket
 
-    自动处理重定向，确保最终获取到正确节点上的 bucket。
+    Automatically handles redirects to ensure getting the bucket on the correct node.
 
     Args:
-        system: Actor 系统
-        topic: 队列主题
-        bucket_id: bucket ID
-        batch_size: 批处理大小
-        storage_path: 自定义存储路径（可选）
-        backend: 存储后端名称或类（可选）
-        backend_options: 后端额外参数（可选）
-        max_redirects: 最大重定向次数
+        system: Actor system
+        topic: Queue topic
+        bucket_id: Bucket ID
+        batch_size: Batch size
+        storage_path: Custom storage path (optional)
+        backend: Storage backend name or class (optional)
+        backend_options: Additional backend options (optional)
+        max_redirects: Maximum redirect count
     """
     from pulsing.actor import ActorId, NodeId
 
-    # 先从本地 StorageManager 请求
+    # Request from local StorageManager first
     manager = await get_storage_manager(system)
 
     for redirect_count in range(max_redirects + 1):
@@ -415,7 +415,7 @@ async def get_bucket_ref(
         if storage_path:
             msg_data["storage_path"] = storage_path
         if backend:
-            # 如果是类，传递类名（跨节点时无法序列化类）
+            # If it's a class, pass class name (classes cannot be serialized across nodes)
             msg_data["backend"] = (
                 backend if isinstance(backend, str) else backend.__name__
             )
@@ -425,21 +425,21 @@ async def get_bucket_ref(
         response = await manager.ask(Message.from_json("GetBucket", msg_data))
 
         resp_data = response.to_json()
-        # 跨节点时 msg_type 可能丢失，使用 _type 字段作为备用
+        # msg_type may be lost across nodes, use _type field as fallback
         msg_type = response.msg_type or resp_data.get("_type", "")
 
         if msg_type == "BucketReady":
-            # 成功获取 bucket
+            # Successfully got bucket
             actor_id = resp_data["actor_id"]
-            # node_id 用十六进制字符串传输，转为 int
+            # node_id transmitted as hex string, convert to int
             node_id = int(resp_data["node_id_hex"], 16)
 
             bucket_actor_id = ActorId(actor_id, NodeId(node_id))
             return await system.actor_ref(bucket_actor_id)
 
         elif msg_type == "Redirect":
-            # 需要重定向到其他节点
-            # owner_node_id 用十六进制字符串传输，转为 int
+            # Need to redirect to other node
+            # owner_node_id transmitted as hex string, convert to int
             hex_str = resp_data.get("owner_node_id_hex")
             owner_node_id = int(hex_str, 16)
             owner_addr = resp_data.get("owner_addr")
@@ -451,13 +451,13 @@ async def get_bucket_ref(
             if redirect_count >= max_redirects:
                 raise RuntimeError(f"Too many redirects for bucket {topic}:{bucket_id}")
 
-            # 检查是否重定向到自己（避免无限循环）
+            # Check if redirecting to self (avoid infinite loop)
             if owner_node_id == system.node_id.id:
                 raise RuntimeError(
                     f"Redirect loop detected for bucket {topic}:{bucket_id}"
                 )
 
-            # 获取 owner 节点的 StorageManager（带重试，等待远程节点初始化）
+            # Get owner node's StorageManager (with retry, wait for remote node initialization)
             max_resolve_retries = 10
             for resolve_retry in range(max_resolve_retries):
                 try:
@@ -492,14 +492,14 @@ async def get_topic_broker(
     topic: str,
     max_redirects: int = 3,
 ) -> ActorRef:
-    """获取指定 topic 的 broker ActorRef
+    """Get broker ActorRef for specified topic
 
-    自动处理重定向，确保最终获取到正确节点上的 broker。
+    Automatically handles redirects to ensure getting the broker on the correct node.
 
     Args:
-        system: Actor 系统
-        topic: Topic 名称
-        max_redirects: 最大重定向次数
+        system: Actor system
+        topic: Topic name
+        max_redirects: Maximum redirect count
     """
     from pulsing.actor import ActorId, NodeId
 
@@ -528,7 +528,7 @@ async def get_topic_broker(
             if owner_node_id == system.node_id.id:
                 raise RuntimeError(f"Redirect loop for topic: {topic}")
 
-            # 获取 owner 节点的 StorageManager
+            # Get owner node's StorageManager
             for retry in range(10):
                 try:
                     manager = await system.resolve_named(

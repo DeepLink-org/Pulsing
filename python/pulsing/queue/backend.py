@@ -1,20 +1,20 @@
-"""存储后端协议 - 可插拔的存储实现
+"""Storage Backend Protocol - Pluggable Storage Implementation
 
-定义 StorageBackend 协议，允许不同的存储实现：
-- MemoryBackend: 纯内存（内置默认）
-- 第三方实现: 如 persisting 提供的 LanceBackend、PersistingBackend
+Defines StorageBackend protocol, allowing different storage implementations:
+- MemoryBackend: Pure in-memory (built-in default)
+- Third-party implementations: e.g., LanceBackend, PersistingBackend provided by persisting
 
-使用方式：
-    # 使用内置后端
+Usage:
+    # Use built-in backend
     writer = await write_queue(system, "topic", backend="memory")
 
-    # 使用 persisting 提供的持久化后端
+    # Use persistent backend provided by persisting
     from persisting.queue import LanceBackend
     from pulsing.queue import register_backend
     register_backend("lance", LanceBackend)
     writer = await write_queue(system, "topic", backend="lance")
 
-    # 或者直接传类
+    # Or pass class directly
     writer = await write_queue(system, "topic", backend=LanceBackend)
 """
 
@@ -30,24 +30,24 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class StorageBackend(Protocol):
-    """存储后端协议
+    """Storage Backend Protocol
 
-    所有存储后端必须实现此协议。可以通过继承或鸭子类型实现。
+    All storage backends must implement this protocol. Can be implemented via inheritance or duck typing.
     """
 
     @abstractmethod
     async def put(self, record: dict[str, Any]) -> None:
-        """写入单条记录"""
+        """Write a single record"""
         ...
 
     @abstractmethod
     async def put_batch(self, records: list[dict[str, Any]]) -> None:
-        """批量写入记录"""
+        """Write records in batch"""
         ...
 
     @abstractmethod
     async def get(self, limit: int, offset: int) -> list[dict[str, Any]]:
-        """读取记录"""
+        """Read records"""
         ...
 
     @abstractmethod
@@ -58,36 +58,36 @@ class StorageBackend(Protocol):
         wait: bool = False,
         timeout: float | None = None,
     ) -> AsyncIterator[list[dict[str, Any]]]:
-        """流式读取记录"""
+        """Stream read records"""
         ...
 
     @abstractmethod
     async def flush(self) -> None:
-        """刷新缓冲区到持久化存储"""
+        """Flush buffer to persistent storage"""
         ...
 
     @abstractmethod
     async def stats(self) -> dict[str, Any]:
-        """获取统计信息"""
+        """Get statistics"""
         ...
 
     @abstractmethod
     def total_count(self) -> int:
-        """总记录数"""
+        """Total record count"""
         ...
 
 
 class MemoryBackend:
-    """纯内存后端 - 内置默认实现
+    """Pure In-Memory Backend - Built-in Default Implementation
 
-    特点：
-    - 无持久化，数据仅存在于内存
-    - 支持阻塞等待新数据
-    - 轻量级，适合测试和临时数据
+    Features:
+    - No persistence, data exists only in memory
+    - Supports blocking wait for new data
+    - Lightweight, suitable for testing and temporary data
 
-    如需持久化能力，请使用 persisting 包提供的后端：
-    - persisting.queue.LanceBackend: Lance 持久化
-    - persisting.queue.PersistingBackend: 增强版（WAL、监控等）
+    For persistence capabilities, use backends provided by the persisting package:
+    - persisting.queue.LanceBackend: Lance persistence
+    - persisting.queue.PersistingBackend: Enhanced version (WAL, monitoring, etc.)
     """
 
     def __init__(self, bucket_id: int, **kwargs):
@@ -151,7 +151,7 @@ class MemoryBackend:
                 break
 
     async def flush(self) -> None:
-        pass  # 纯内存，无需 flush
+        pass  # Pure in-memory, no flush needed
 
     async def stats(self) -> dict[str, Any]:
         return {
@@ -167,20 +167,20 @@ class MemoryBackend:
 
 
 # ============================================================
-# 后端注册表
+# Backend Registry
 # ============================================================
 
-# 内置后端映射（仅 memory）
+# Built-in backend mapping (only memory)
 _BUILTIN_BACKENDS: dict[str, type] = {
     "memory": MemoryBackend,
 }
 
-# 第三方后端注册（如 persisting 提供的 lance）
+# Third-party backend registration (e.g., lance provided by persisting)
 _REGISTERED_BACKENDS: dict[str, type] = {}
 
 
 def register_backend(name: str, backend_class: type) -> None:
-    """注册自定义后端
+    """Register a custom backend
 
     Example:
         from persisting.queue import LanceBackend
@@ -195,13 +195,13 @@ def register_backend(name: str, backend_class: type) -> None:
 
 
 def get_backend_class(backend: str | type) -> type:
-    """获取后端类
+    """Get backend class
 
     Args:
-        backend: 后端名称（str）或后端类（type）
+        backend: Backend name (str) or backend class (type)
 
     Returns:
-        后端类
+        Backend class
     """
     if isinstance(backend, type):
         return backend
@@ -220,5 +220,5 @@ def get_backend_class(backend: str | type) -> type:
 
 
 def list_backends() -> list[str]:
-    """列出所有可用的后端"""
+    """List all available backends"""
     return list(_BUILTIN_BACKENDS.keys()) + list(_REGISTERED_BACKENDS.keys())

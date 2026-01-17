@@ -1,25 +1,25 @@
 """
-LangGraph 并行多智能体示例（每个 Agent 独立节点）
+LangGraph Parallel Multi-Agent Example (Each Agent is an Independent Node)
 
-架构：
+Architecture:
   dispatch ──┬── idea_agent (Send) ──┐
              ├── idea_agent (Send) ──┼── collect → critic → [refine loop] → judge
              └── idea_agent (Send) ──┘
 
-特性：
-- 每个 Idea Agent 是独立的 LangGraph 节点（可被 Pulsing 分布式调度）
-- 使用 Send API 实现真正的 fan-out/fan-in 并行
-- 支持多轮评议改进
+Features:
+- Each Idea Agent is an independent LangGraph node (can be distributed by Pulsing)
+- Uses Send API for true fan-out/fan-in parallelism
+- Supports multi-round review and improvement
 
-环境变量配置：
+Environment Variables:
   export OPENAI_API_KEY="sk-xxx"
-  export OPENAI_BASE_URL="https://api.openai.com/v1"   # 可选
-  export LLM_MODEL="gpt-4o-mini"                        # 可选
+  export OPENAI_BASE_URL="https://api.openai.com/v1"   # Optional
+  export LLM_MODEL="gpt-4o-mini"                        # Optional
 
 Usage:
-  python parallel_ideas.py --mock                                    # 模拟模式
-  python parallel_ideas.py --question "如何提升 API 吞吐？"           # 单轮
-  python parallel_ideas.py --question "xxx" --max-rounds 3           # 多轮迭代
+  python parallel_ideas.py --mock                                    # Mock mode
+  python parallel_ideas.py --question "How to improve API throughput?"  # Single round
+  python parallel_ideas.py --question "xxx" --max-rounds 3           # Multi-round iteration
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from langgraph.types import Send
 
 
 # ============================================================================
-# LLM 客户端
+# LLM Client
 # ============================================================================
 
 _llm_client = None
@@ -51,11 +51,13 @@ def _get_llm():
     try:
         from langchain_openai import ChatOpenAI
     except ImportError:
-        raise ImportError("请先安装 langchain-openai：pip install langchain-openai")
+        raise ImportError(
+            "Please install langchain-openai first: pip install langchain-openai"
+        )
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("未设置 OPENAI_API_KEY，请设置或使用 --mock 模式")
+        raise ValueError("OPENAI_API_KEY is not set, please set it or use --mock mode")
 
     base_url = os.getenv("OPENAI_BASE_URL")
     model = os.getenv("LLM_MODEL", "gpt-4o-mini")
@@ -67,12 +69,12 @@ def _get_llm():
         temperature=0.7,
         max_tokens=1024,
     )
-    print(f"[LLM] model={model}, base_url={base_url or '(默认)'}")
+    print(f"[LLM] model={model}, base_url={base_url or '(default)'}")
     return _llm_client
 
 
 # ============================================================================
-# State 定义
+# State Definition
 # ============================================================================
 
 
@@ -82,7 +84,7 @@ class AgentState(TypedDict, total=False):
     max_rounds: int
     current_round: int
     mock: bool
-    # 使用 Annotated + operator.add 实现自动合并（fan-in）
+    # Use Annotated + operator.add for automatic merging (fan-in)
     ideas: Annotated[list[dict[str, Any]], operator.add]
     critiques: list[dict[str, Any]]
     history: list[dict[str, Any]]
@@ -91,13 +93,13 @@ class AgentState(TypedDict, total=False):
 
 
 class IdeaAgentInput(TypedDict):
-    """单个 Idea Agent 的输入"""
+    """Input for a single Idea Agent"""
 
     question: str
     persona: str
     persona_idx: int
     mock: bool
-    # 用于 refine 模式
+    # For refine mode
     previous_idea: dict[str, Any] | None
     critique: dict[str, Any] | None
     is_refine: bool
@@ -126,16 +128,16 @@ class Critique:
 # ============================================================================
 
 PERSONAS = [
-    "性能工程师",
-    "产品经理",
-    "系统架构师",
-    "安全专家",
-    "可靠性/运维",
-    "研究员",
-    "数据工程师",
-    "成本控制",
-    "用户体验",
-    "测试工程师",
+    "Performance Engineer",
+    "Product Manager",
+    "System Architect",
+    "Security Expert",
+    "Reliability/Ops",
+    "Researcher",
+    "Data Engineer",
+    "Cost Controller",
+    "User Experience",
+    "Test Engineer",
 ]
 
 
@@ -153,58 +155,58 @@ def _get_personas(n: int) -> list[str]:
 # Prompts
 # ============================================================================
 
-IDEA_PROMPT = """你是一位资深的{persona}。
-用户问题：{question}
+IDEA_PROMPT = """You are a senior {persona}.
+User question: {question}
 
-请从你的专业视角，给出一个解决方案。要求：
-1. 方案标题（一句话概括）
-2. 方案详细描述（2-3句话）
-3. 建议的实验/验证步骤（1-3 个）
-4. 潜在风险（1-2 个）
+Please provide a solution from your professional perspective. Requirements:
+1. Solution title (one sentence summary)
+2. Detailed description (2-3 sentences)
+3. Suggested experiments/validation steps (1-3 items)
+4. Potential risks (1-2 items)
 
-请严格按以下 JSON 格式输出（不要加 markdown 代码块）：
+Please output strictly in the following JSON format (do not add markdown code blocks):
 {{"title": "...", "proposal": "...", "experiments": ["...", "..."], "risks": ["...", "..."]}}
 """
 
-REFINE_PROMPT = """你是一位资深的{persona}。
-用户问题：{question}
+REFINE_PROMPT = """You are a senior {persona}.
+User question: {question}
 
-你之前的方案：
+Your previous solution:
 {previous_idea}
 
-评审专家给出的反馈：
-- 问题：{issues}
-- 改进建议：{improvements}
+Feedback from review experts:
+- Issues: {issues}
+- Improvement suggestions: {improvements}
 
-请根据评审反馈，改进你的方案。
+Please improve your solution based on the review feedback.
 
-请严格按以下 JSON 格式输出（不要加 markdown 代码块）：
+Please output strictly in the following JSON format (do not add markdown code blocks):
 {{"title": "...", "proposal": "...", "experiments": ["...", "..."], "risks": ["...", "..."]}}
 """
 
-CRITIC_PROMPT = """你是一位严格的技术评审专家。
-请对以下方案进行评审：
-1. 找出问题（1-3 个）
-2. 给出改进建议（1-3 个）
-3. 打分（0-10）
+CRITIC_PROMPT = """You are a strict technical review expert.
+Please review the following solutions:
+1. Identify issues (1-3 items)
+2. Provide improvement suggestions (1-3 items)
+3. Score (0-10)
 
-方案列表：
+Solution list:
 {ideas_json}
 
-请严格按以下 JSON 格式输出：
-[{{"idea_agent": "方案作者", "issues": ["问题1"], "improvements": ["改进1"], "score": 8}}, ...]
+Please output strictly in JSON format:
+[{{"idea_agent": "solution author", "issues": ["issue1"], "improvements": ["improvement1"], "score": 8}}, ...]
 """
 
-JUDGE_PROMPT = """你是一位资深的技术决策者。
-经过 {n_rounds} 轮评审改进后，请选出最优方案。
+JUDGE_PROMPT = """You are a senior technical decision maker.
+After {n_rounds} rounds of review and improvement, please select the best solution.
 
-方案列表：
+Solution list:
 {ideas_json}
 
-评审意见：
+Review comments:
 {critiques_json}
 
-请输出 JSON：
+Please output JSON:
 {{"selected_agent": "...", "reason": "...", "final_recommendation": "..."}}
 """
 
@@ -229,24 +231,24 @@ def _parse_json(content: str, fallback: Any = None) -> Any:
 
 
 # ============================================================================
-# Dispatch Node：决定并行分发到哪些 Idea Agent
+# Dispatch Node: Decides which Idea Agents to dispatch in parallel
 # ============================================================================
 
 
 def dispatch(state: AgentState) -> list[Send]:
-    """Fan-out：为每个 persona 创建一个并行任务"""
+    """Fan-out: Create a parallel task for each persona"""
     question = state.get("question", "")
     n_ideas = max(3, min(10, int(state.get("n_ideas", 5))))
     mock = state.get("mock", False)
 
     personas = _get_personas(n_ideas)
-    print(f"\n[Dispatch] 分发 {n_ideas} 个 Idea Agent 并行执行...")
+    print(f"\n[Dispatch] Dispatching {n_ideas} Idea Agents to execute in parallel...")
 
     sends = []
     for idx, persona in enumerate(personas):
         sends.append(
             Send(
-                "idea_agent",  # 目标节点
+                "idea_agent",  # Target node
                 IdeaAgentInput(
                     question=question,
                     persona=persona,
@@ -262,16 +264,16 @@ def dispatch(state: AgentState) -> list[Send]:
 
 
 # ============================================================================
-# Idea Agent Node：每个 Agent 独立执行
+# Idea Agent Node: Each Agent executes independently
 # ============================================================================
 
 
 async def idea_agent(input: IdeaAgentInput) -> dict[str, Any]:
     """
-    单个 Idea Agent 节点（可被 Pulsing 分布式调度）
+    Single Idea Agent node (can be distributed by Pulsing)
 
-    这是一个独立的节点，接收 IdeaAgentInput，返回单个 idea。
-    LangGraph 会自动将多个 idea_agent 的结果通过 operator.add 合并到 state.ideas
+    This is an independent node that receives IdeaAgentInput and returns a single idea.
+    LangGraph will automatically merge results from multiple idea_agent nodes into state.ideas via operator.add
     """
     question = input["question"]
     persona = input["persona"]
@@ -282,45 +284,57 @@ async def idea_agent(input: IdeaAgentInput) -> dict[str, Any]:
     critique = input.get("critique")
 
     if is_refine and previous_idea:
-        # Refine 模式
+        # Refine mode
         idea = await _refine_idea(persona, question, previous_idea, critique, mock)
         print(f"  - [Refine] [{persona}] v{idea.version}: {idea.title}")
     else:
-        # 初始生成模式
+        # Initial generation mode
         idea = await _generate_idea(persona, question, idx, mock)
         print(f"  - [Generate] [{persona}] {idea.title}")
 
-    # 返回的 ideas 是一个列表，会被 operator.add 合并
+    # Returned ideas is a list, will be merged by operator.add
     return {"ideas": [asdict(idea)]}
 
 
 async def _generate_idea(persona: str, question: str, idx: int, mock: bool) -> Idea:
-    """生成初始方案"""
+    """Generate initial solution"""
     if mock:
         await asyncio.sleep(0.02 * (idx % 3))
         templates = {
-            "性能": (
-                "并行化与缓存优化",
-                ["压测定位瓶颈", "缓存命中率测试"],
-                ["缓存一致性"],
+            "Performance": (
+                "Parallelization and cache optimization",
+                ["Load testing to locate bottlenecks", "Cache hit rate testing"],
+                ["Cache consistency"],
             ),
-            "安全": ("安全边界与治理", ["威胁建模", "mTLS 验证"], ["延迟增加"]),
-            "可靠性": (
-                "韧性方案（熔断/限流）",
-                ["故障注入测试", "重试策略验证"],
-                ["重试风暴"],
+            "Security": (
+                "Security boundaries and governance",
+                ["Threat modeling", "mTLS verification"],
+                ["Increased latency"],
             ),
-            "产品": ("流式与渐进式体验", ["TTFB 优化测试", "A/B 测试"], ["复杂度增加"]),
-            "成本": ("成本驱动架构", ["成本曲线分析", "按需扩缩容"], ["质量下降"]),
+            "Reliability": (
+                "Resilience solution (circuit breaker/rate limiting)",
+                ["Fault injection testing", "Retry strategy verification"],
+                ["Retry storms"],
+            ),
+            "Product": (
+                "Streaming and progressive experience",
+                ["TTFB optimization testing", "A/B testing"],
+                ["Increased complexity"],
+            ),
+            "Cost": (
+                "Cost-driven architecture",
+                ["Cost curve analysis", "On-demand scaling"],
+                ["Quality degradation"],
+            ),
         }
         for key, (title, experiments, risks) in templates.items():
             if key in persona:
                 break
         else:
             title, experiments, risks = (
-                "结构化拆解",
-                ["并行验证", "小规模实验"],
-                ["拆解不当"],
+                "Structured decomposition",
+                ["Parallel validation", "Small-scale experiments"],
+                ["Improper decomposition"],
             )
         return Idea(
             agent=persona,
@@ -336,7 +350,7 @@ async def _generate_idea(persona: str, question: str, idx: int, mock: bool) -> I
         data = _parse_json(response.content, {})
         return Idea(
             agent=persona,
-            title=data.get("title", f"{persona}的方案"),
+            title=data.get("title", f"{persona}'s solution"),
             proposal=data.get("proposal", ""),
             experiments=data.get("experiments", []),
             risks=data.get("risks", []),
@@ -346,18 +360,18 @@ async def _generate_idea(persona: str, question: str, idx: int, mock: bool) -> I
 async def _refine_idea(
     persona: str, question: str, previous: dict, critique: dict | None, mock: bool
 ) -> Idea:
-    """根据评审反馈改进方案"""
+    """Improve solution based on review feedback"""
     version = previous.get("version", 1) + 1
 
     if mock:
         await asyncio.sleep(0.02)
         new_experiments = list(previous.get("experiments", []))
         if critique and critique.get("improvements"):
-            new_experiments.append(f"新增: {critique['improvements'][0][:20]}...")
+            new_experiments.append(f"New: {critique['improvements'][0][:20]}...")
         return Idea(
             agent=persona,
-            title=previous.get("title", "") + " (改进版)",
-            proposal=previous.get("proposal", "") + "\n[已根据反馈改进]",
+            title=previous.get("title", "") + " (Improved)",
+            proposal=previous.get("proposal", "") + "\n[Improved based on feedback]",
             experiments=new_experiments,
             risks=previous.get("risks", [])[:1],
             version=version,
@@ -386,35 +400,35 @@ async def _refine_idea(
 
 
 # ============================================================================
-# Init Node：初始化状态
+# Init Node: Initialize state
 # ============================================================================
 
 
 def init_state(state: AgentState) -> dict[str, Any]:
-    """初始化轮数和历史"""
+    """Initialize rounds and history"""
     max_rounds = state.get("max_rounds", 1)
-    print(f"\n[Init] 最大迭代轮数: {max_rounds}")
+    print(f"\n[Init] Maximum iteration rounds: {max_rounds}")
     return {
         "current_round": 1,
         "max_rounds": max_rounds,
-        "ideas": [],  # 清空，让 fan-in 重新收集
+        "ideas": [],  # Clear, let fan-in re-collect
         "history": [],
         "review": {"rounds": []},
     }
 
 
 # ============================================================================
-# Collect Node：收集并行结果
+# Collect Node: Collect parallel results
 # ============================================================================
 
 
 def collect_ideas(state: AgentState) -> dict[str, Any]:
-    """Fan-in：收集所有 Idea Agent 的结果"""
+    """Fan-in: Collect results from all Idea Agents"""
     ideas = state.get("ideas", [])
     current_round = state.get("current_round", 1)
 
     print(f"\n{'='*60}")
-    print(f"[Collect] Round {current_round} - 收集到 {len(ideas)} 个方案")
+    print(f"[Collect] Round {current_round} - Collected {len(ideas)} solutions")
     print(f"{'='*60}")
 
     for i, idea in enumerate(ideas, 1):
@@ -425,18 +439,20 @@ def collect_ideas(state: AgentState) -> dict[str, Any]:
         experiments = idea.get("experiments", [])
         risks = idea.get("risks", [])
 
-        print(f"\n┌─ 方案 {i}: [{agent}] {'v' + str(version) if version > 1 else ''}")
-        print(f"│  标题: {title}")
-        print(f"│  描述: {proposal[:100]}{'...' if len(proposal) > 100 else ''}")
-        print("│  实验计划:")
+        print(
+            f"\n┌─ Solution {i}: [{agent}] {'v' + str(version) if version > 1 else ''}"
+        )
+        print(f"│  Title: {title}")
+        print(f"│  Description: {proposal[:100]}{'...' if len(proposal) > 100 else ''}")
+        print("│  Experiments:")
         for j, exp in enumerate(experiments, 1):
             print(f"│    {j}. {exp}")
-        print("│  风险:")
+        print("│  Risks:")
         for j, risk in enumerate(risks, 1):
             print(f"│    {j}. {risk}")
         print(f"└{'─'*50}")
 
-    # 记录历史
+    # Record history
     history = list(state.get("history", []))
     history.append({"round": current_round, "phase": "collect", "n_ideas": len(ideas)})
 
@@ -453,24 +469,24 @@ async def critic(state: AgentState) -> dict[str, Any]:
     mock = state.get("mock", False)
     current_round = state.get("current_round", 1)
 
-    print(f"\n[Critic] 评审 {len(ideas)} 个方案...")
+    print(f"\n[Critic] Reviewing {len(ideas)} solutions...")
 
     if mock:
         critiques = []
         for idea in ideas:
             issues, improvements = [], []
             if len(idea.get("experiments", [])) < 2:
-                issues.append("实验不够充分")
-                improvements.append("增加更多验证实验")
+                issues.append("Insufficient experiments")
+                improvements.append("Add more validation experiments")
             if len(idea.get("risks", [])) < 1:
-                issues.append("风险考虑不足")
-                improvements.append("补充风险分析")
+                issues.append("Insufficient risk consideration")
+                improvements.append("Supplement risk analysis")
             score = 6 + len(idea.get("experiments", [])) - len(issues)
             critiques.append(
                 Critique(
                     idea_agent=idea.get("agent", "unknown"),
-                    issues=issues or ["总体可行"],
-                    improvements=improvements or ["细化执行计划"],
+                    issues=issues or ["Generally feasible"],
+                    improvements=improvements or ["Refine execution plan"],
                     score=max(1, min(10, score)),
                 )
             )
@@ -486,8 +502,8 @@ async def critic(state: AgentState) -> dict[str, Any]:
             critiques.append(
                 Critique(
                     idea_agent=c.get("idea_agent", idea.get("agent", "unknown")),
-                    issues=c.get("issues", ["需要更多细节"]),
-                    improvements=c.get("improvements", ["补充实验计划"]),
+                    issues=c.get("issues", ["Need more details"]),
+                    improvements=c.get("improvements", ["Supplement experiment plan"]),
                     score=c.get("score", 5),
                 )
             )
@@ -496,7 +512,7 @@ async def critic(state: AgentState) -> dict[str, Any]:
     avg_score = sum(c.score for c in critiques) / len(critiques) if critiques else 0
 
     print(f"\n{'='*60}")
-    print(f"[Critic] Round {current_round} - 评审意见")
+    print(f"[Critic] Round {current_round} - Review Comments")
     print(f"{'='*60}")
 
     for i, c in enumerate(critique_dicts, 1):
@@ -505,18 +521,18 @@ async def critic(state: AgentState) -> dict[str, Any]:
         issues = c.get("issues", [])
         improvements = c.get("improvements", [])
 
-        print(f"\n┌─ 评审 {i}: [{agent}] 评分: {score}/10")
-        print("│  问题:")
+        print(f"\n┌─ Review {i}: [{agent}] Score: {score}/10")
+        print("│  Issues:")
         for j, issue in enumerate(issues, 1):
             print(f"│    {j}. {issue}")
-        print("│  改进建议:")
+        print("│  Improvements:")
         for j, imp in enumerate(improvements, 1):
             print(f"│    {j}. {imp}")
         print(f"└{'─'*50}")
 
-    print(f"\n>>> 平均分: {avg_score:.1f}/10")
+    print(f"\n>>> Average Score: {avg_score:.1f}/10")
 
-    # 更新 review
+    # Update review
     review = dict(state.get("review", {}))
     rounds = list(review.get("rounds", []))
     rounds.append({"round": current_round, "avg_score": avg_score})
@@ -538,24 +554,24 @@ def should_continue(state: AgentState) -> Literal["dispatch_refine", "judge"]:
     if critiques:
         avg_score = sum(c.get("score", 0) for c in critiques) / len(critiques)
         if avg_score >= 9.0:
-            print(f"  -> 平均分 {avg_score:.1f} >= 9.0，提前结束")
+            print(f"  -> Average score {avg_score:.1f} >= 9.0, early termination")
             return "judge"
 
     if current_round < max_rounds:
-        print(f"  -> 继续迭代（{current_round}/{max_rounds}）")
+        print(f"  -> Continue iteration ({current_round}/{max_rounds})")
         return "dispatch_refine"
     else:
-        print("  -> 达到最大轮数，进入评判")
+        print("  -> Reached maximum rounds, proceed to judgment")
         return "judge"
 
 
 # ============================================================================
-# Dispatch Refine：分发改进任务
+# Dispatch Refine: Dispatch improvement tasks
 # ============================================================================
 
 
 def dispatch_refine(state: AgentState) -> list[Send]:
-    """Fan-out：为每个 idea 创建改进任务"""
+    """Fan-out: Create improvement task for each idea"""
     question = state.get("question", "")
     ideas = state.get("ideas", [])
     critiques = state.get("critiques", [])
@@ -563,10 +579,10 @@ def dispatch_refine(state: AgentState) -> list[Send]:
     current_round = state.get("current_round", 1)
 
     print(
-        f"\n[Dispatch Refine] 分发 {len(ideas)} 个改进任务（Round {current_round + 1}）..."
+        f"\n[Dispatch Refine] Dispatching {len(ideas)} improvement tasks (Round {current_round + 1})..."
     )
 
-    # 匹配 critique
+    # Match critique
     critique_map = {c.get("idea_agent"): c for c in critiques}
 
     sends = []
@@ -590,10 +606,10 @@ def dispatch_refine(state: AgentState) -> list[Send]:
 
 
 def increment_round(state: AgentState) -> dict[str, Any]:
-    """增加轮数，清空 ideas 以便重新收集"""
+    """Increment round, clear ideas for re-collection"""
     return {
         "current_round": state.get("current_round", 1) + 1,
-        "ideas": [],  # 清空，让新的 fan-in 收集改进后的 ideas
+        "ideas": [],  # Clear, let new fan-in collect improved ideas
     }
 
 
@@ -609,7 +625,9 @@ async def judge(state: AgentState) -> dict[str, Any]:
     mock = state.get("mock", False)
     current_round = state.get("current_round", 1)
 
-    print(f"\n[Judge] 经过 {current_round} 轮迭代，选择最优方案...")
+    print(
+        f"\n[Judge] After {current_round} rounds of iteration, selecting the best solution..."
+    )
 
     if mock:
         critique_map = {c.get("idea_agent"): c.get("score", 0) for c in critiques}
@@ -622,15 +640,15 @@ async def judge(state: AgentState) -> dict[str, Any]:
         best_score = critique_map.get(best_agent, 0) if best else 0
 
         final_lines = [
-            f"问题：{question}",
+            f"Question: {question}",
             "",
-            f"经过 {current_round} 轮评议，推荐方案（来自 {best_agent}，评分 {best_score}/10）：",
+            f"After {current_round} rounds of review, recommended solution (from {best_agent}, score {best_score}/10):",
             "",
-            f"标题：{best.get('title', '')}",
+            f"Title: {best.get('title', '')}",
             "",
             best.get("proposal", "") if best else "",
             "",
-            "实验计划：",
+            "Experiment Plan:",
         ]
         if best:
             for i, exp in enumerate(best.get("experiments", []), 1):
@@ -653,9 +671,9 @@ async def judge(state: AgentState) -> dict[str, Any]:
         )
         reason = data.get("reason", "")
         recommendation = data.get("final_recommendation", "")
-        final_answer = f"问题：{question}\n\n经过 {current_round} 轮评议\n推荐方案（来自 {best_agent}）\n理由：{reason}\n\n{recommendation}"
+        final_answer = f"Question: {question}\n\nAfter {current_round} rounds of review\nRecommended solution (from {best_agent})\nReason: {reason}\n\n{recommendation}"
 
-    print(f"  -> 选中：{best_agent}")
+    print(f"  -> Selected: {best_agent}")
 
     review = dict(state.get("review", {}))
     review["selected_agent"] = best_agent
@@ -672,21 +690,21 @@ async def judge(state: AgentState) -> dict[str, Any]:
 def build_graph():
     graph = StateGraph(AgentState)
 
-    # 节点
+    # Nodes
     graph.add_node("init", init_state)
-    graph.add_node("idea_agent", idea_agent)  # 每个并行任务都会调用这个节点
+    graph.add_node("idea_agent", idea_agent)  # Each parallel task will call this node
     graph.add_node("collect", collect_ideas)
     graph.add_node("critic", critic)
     graph.add_node("increment_round", increment_round)
     graph.add_node("judge", judge)
 
-    # 入口
+    # Entry point
     graph.set_entry_point("init")
 
     # init -> dispatch (fan-out)
     graph.add_conditional_edges("init", dispatch)
 
-    # idea_agent -> collect (fan-in，自动等待所有并行任务完成)
+    # idea_agent -> collect (fan-in, automatically waits for all parallel tasks to complete)
     graph.add_edge("idea_agent", "collect")
 
     # collect -> critic
@@ -718,18 +736,20 @@ def build_graph():
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="LangGraph 并行多智能体（每个 Agent 独立节点）"
+        description="LangGraph Parallel Multi-Agent (Each Agent is an Independent Node)"
     )
     p.add_argument(
         "--question",
-        default="如何实现一个可并行实验的多智能体工作流？",
-        help="用户问题",
+        default="How to implement a multi-agent workflow that supports parallel experiments?",
+        help="User question",
     )
-    p.add_argument("--n-ideas", type=int, default=5, help="并行 idea 数量（3-10）")
-    p.add_argument("--max-rounds", type=int, default=1, help="最大迭代轮数")
-    p.add_argument("--show-review", action="store_true", help="输出评审记录")
-    p.add_argument("--mock", action="store_true", help="模拟模式")
-    p.add_argument("--model", default=None, help="覆盖 LLM_MODEL")
+    p.add_argument(
+        "--n-ideas", type=int, default=5, help="Number of parallel ideas (3-10)"
+    )
+    p.add_argument("--max-rounds", type=int, default=1, help="Maximum iteration rounds")
+    p.add_argument("--show-review", action="store_true", help="Output review records")
+    p.add_argument("--mock", action="store_true", help="Mock mode")
+    p.add_argument("--model", default=None, help="Override LLM_MODEL")
     return p.parse_args()
 
 
@@ -749,12 +769,12 @@ async def main():
         app = with_pulsing(app)
 
     print("=" * 60)
-    print("LangGraph 并行多智能体（每个 Agent 独立节点）")
+    print("LangGraph Parallel Multi-Agent (Each Agent is an Independent Node)")
     print("=" * 60)
-    print(f"问题：{args.question}")
-    print(f"并行 Idea Agent 数量：{args.n_ideas}")
-    print(f"最大迭代轮数：{args.max_rounds}")
-    print(f"模式：{'模拟' if args.mock else '真实 LLM'}")
+    print(f"Question: {args.question}")
+    print(f"Number of Parallel Idea Agents: {args.n_ideas}")
+    print(f"Maximum Iteration Rounds: {args.max_rounds}")
+    print(f"Mode: {'Mock' if args.mock else 'Real LLM'}")
 
     result = await app.ainvoke(
         {
@@ -775,9 +795,9 @@ async def main():
         print("REVIEW")
         print("=" * 60)
         review = result.get("review", {})
-        print(f"总轮数：{review.get('total_rounds', 1)}")
-        print(f"选中：{review.get('selected_agent', 'unknown')}")
-        print("各轮评分：")
+        print(f"Total Rounds: {review.get('total_rounds', 1)}")
+        print(f"Selected: {review.get('selected_agent', 'unknown')}")
+        print("Round Scores:")
         for r in review.get("rounds", []):
             print(f"  Round {r.get('round')}: {r.get('avg_score', 0):.1f}/10")
 

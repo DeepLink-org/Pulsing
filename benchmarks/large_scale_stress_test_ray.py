@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-大规模压测脚本 - Ray版本
-等价于 large_scale_stress_test.py，用于性能对比
+Large-Scale Stress Test Script - Ray Version
+Equivalent to large_scale_stress_test.py, for performance comparison
 
-使用方法:
+Usage:
     torchrun --nproc_per_node=10 benchmarks/large_scale_stress_test_ray.py \
         --duration 300 \
         --rate 100
@@ -27,13 +27,13 @@ except ImportError:
 
 
 # ============================================================================
-# 压测统计
+# Stress Test Statistics
 # ============================================================================
 
 
 @dataclass
 class StressTestStats:
-    """压测统计信息"""
+    """Stress test statistics"""
 
     total_requests: int = 0
     total_streams: int = 0
@@ -49,7 +49,7 @@ class StressTestStats:
     health_warnings: list[str] = field(default_factory=list)
 
     def add_health_warning(self, warning: str):
-        """添加健康警告"""
+        """Add health warning"""
         self.health_warnings.append(f"{time.time()}: {warning}")
 
     def add_request(self, success: bool, latency_ms: float, error: str | None = None):
@@ -75,7 +75,7 @@ class StressTestStats:
                 self.errors[error] += 1
 
     def get_summary(self) -> dict:
-        """获取统计摘要"""
+        """Get statistics summary"""
         avg_latency = (
             self.total_latency_ms / self.successful_requests
             if self.successful_requests > 0
@@ -126,44 +126,44 @@ class StressTestStats:
                 "p99_latency_ms": percentile(stream_latencies_sorted, 99),
             },
             "errors": dict(self.errors),
-            "health_warnings": self.health_warnings[-10:],  # 只保留最后10个警告
+            "health_warnings": self.health_warnings[-10:],  # Keep only last 10 warnings
         }
 
 
 # ============================================================================
-# 5种不同的Worker Actor (Ray版本)
+# 5 Different Worker Actors (Ray Version)
 # ============================================================================
 
 
 @ray.remote
 class EchoWorker:
-    """Echo Worker - 简单回显"""
+    """Echo Worker - Simple echo"""
 
     async def echo(self, text: str) -> dict:
-        """异步方法，与Pulsing版本等价"""
+        """Async method, equivalent to Pulsing version"""
         return {"echo": text}
 
 
 @ray.remote
 class ComputeWorker:
-    """Compute Worker - 计算密集型"""
+    """Compute Worker - Compute intensive"""
 
     async def compute(self, n: int) -> dict:
-        """异步方法，与Pulsing版本等价"""
-        # 模拟计算
+        """Async method, equivalent to Pulsing version"""
+        # Simulate computation
         result = sum(i * i for i in range(n))
         return {"result": result}
 
 
 @ray.remote
 class StreamWorker:
-    """Stream Worker - 流式响应"""
+    """Stream Worker - Streamed response"""
 
     async def generate_stream(self, count: int, delay: float) -> list[dict]:
-        """生成流式数据（使用异步，与Pulsing版本等价）
+        """Generate streamed data (using async, equivalent to Pulsing version)
 
-        注意：Ray支持async def，可以使用asyncio.sleep实现真正的异步延迟。
-        这比time.sleep更高效，因为不会阻塞线程。
+        Note: Ray supports async def, can use asyncio.sleep for true async delays.
+        This is more efficient than time.sleep as it doesn't block threads.
         """
         result = []
         for i in range(count):
@@ -174,21 +174,21 @@ class StreamWorker:
                     "timestamp": time.time(),
                 }
             )
-            # 使用asyncio.sleep，与Pulsing版本完全等价
+            # Use asyncio.sleep, fully equivalent to Pulsing version
             await asyncio.sleep(delay)
         return result
 
 
 @ray.remote
 class BatchWorker:
-    """Batch Worker - 批量处理"""
+    """Batch Worker - Batch processing"""
 
     def __init__(self):
         self.batch = []
         self.batch_size = 10
 
     async def batch_add(self, item: int) -> dict:
-        """异步方法，与Pulsing版本等价"""
+        """Async method, equivalent to Pulsing version"""
         self.batch.append(item)
 
         if len(self.batch) >= self.batch_size:
@@ -200,25 +200,25 @@ class BatchWorker:
 
 @ray.remote
 class StatefulWorker:
-    """Stateful Worker - 有状态处理"""
+    """Stateful Worker - Stateful processing"""
 
     def __init__(self):
         self.state = {}
         self.counter = 0
 
     async def set_state(self, key: str, value: int) -> dict:
-        """异步方法，与Pulsing版本等价"""
+        """Async method, equivalent to Pulsing version"""
         self.state[key] = value
         self.counter += 1
         return {"counter": self.counter}
 
     async def get_state(self, key: str) -> dict:
-        """异步方法，与Pulsing版本等价"""
+        """Async method, equivalent to Pulsing version"""
         value = self.state.get(key)
         return {"key": key, "value": value}
 
 
-# Worker类型映射
+# Worker type mapping
 WORKER_TYPES = {
     "echo": EchoWorker,
     "compute": ComputeWorker,
@@ -229,12 +229,12 @@ WORKER_TYPES = {
 
 
 # ============================================================================
-# 压测客户端
+# Stress Test Client
 # ============================================================================
 
 
 class StressTestClient:
-    """压测客户端"""
+    """Stress test client"""
 
     def __init__(
         self,
@@ -246,7 +246,7 @@ class StressTestClient:
     ):
         self.worker_refs = worker_refs
         self.stats = stats
-        self.rate = rate  # 每秒请求数
+        self.rate = rate  # Requests per second
         self.interval = 1.0 / rate if rate > 0 else 0.0
         self.running = True
         self.expected_nodes = expected_nodes
@@ -257,12 +257,12 @@ class StressTestClient:
             "batch",
             "stateful",
         ]
-        self.health_check_interval = 30.0  # 每30秒检查一次健康状态
-        self.remote_requests = 0  # 远程请求计数
-        self.local_requests = 0  # 本地请求计数
+        self.health_check_interval = 30.0  # Check health every 30 seconds
+        self.remote_requests = 0  # Remote request count
+        self.local_requests = 0  # Local request count
 
     def _extract_base_worker_type(self, worker_type: str) -> str:
-        """从worker_type中提取基础类型"""
+        """Extract base type from worker_type"""
         if "_remote_" in worker_type:
             return worker_type.split("_remote_")[0]
 
@@ -282,7 +282,7 @@ class StressTestClient:
         return worker_type
 
     async def send_single_request(self, worker_type: str) -> bool:
-        """发送单个请求（异步，与Pulsing版本等价）"""
+        """Send a single request (async, equivalent to Pulsing version)"""
         if worker_type not in self.worker_refs:
             return False
 
@@ -295,8 +295,8 @@ class StressTestClient:
             if base_type not in ["echo", "compute", "batch", "stateful"]:
                 return False
 
-            # 生成请求参数
-            # Ray的remote()返回ObjectRef，对于async方法，可以直接await ObjectRef
+            # Generate request parameters
+            # Ray's remote() returns ObjectRef, for async methods, can directly await ObjectRef
             if base_type == "echo":
                 payload = {"text": f"echo_{random.randint(1, 1000)}"}
                 result = await worker_ref.echo.remote(payload["text"])
@@ -334,7 +334,7 @@ class StressTestClient:
             return False
 
     async def send_stream_request(self, worker_type: str) -> bool:
-        """发送流式请求（异步，与Pulsing版本等价）"""
+        """Send a stream request (async, equivalent to Pulsing version)"""
         base_type = self._extract_base_worker_type(worker_type)
         if base_type != "stream":
             return False
@@ -360,8 +360,8 @@ class StressTestClient:
             count = random.randint(5, 20)
             delay = random.uniform(0.01, 0.05)
 
-            # Ray的流式处理：使用异步方法，与Pulsing版本等价
-            # Ray的remote()返回ObjectRef，可以直接await获取结果
+            # Ray's stream processing: use async methods, equivalent to Pulsing version
+            # Ray's remote() returns ObjectRef, can directly await to get result
             stream_items = await worker_ref.generate_stream.remote(count, delay)
 
             chunk_count = 0
@@ -379,21 +379,21 @@ class StressTestClient:
             return False
 
     async def check_cluster_health(self) -> tuple[bool, str]:
-        """检查集群健康状态"""
+        """Check cluster health status"""
         try:
-            # Ray集群信息
+            # Ray cluster information
             cluster_resources = ray.cluster_resources()
             _available_resources = ray.available_resources()  # noqa: F841
 
-            # 检查节点数量（通过资源信息推断）
+            # Check node count (inferred from resource information)
             num_nodes = cluster_resources.get("node:__internal__:__head_node__", 0)
             if num_nodes == 0:
-                # 尝试其他方式获取节点数
+                # Try other ways to get node count
                 num_nodes = len(
                     [k for k in cluster_resources.keys() if k.startswith("node:")]
                 )
 
-            # 简化健康检查：检查worker是否可用
+            # Simplified health check: check if workers are available
             missing_workers = []
             for worker_type in self.expected_worker_types:
                 if worker_type not in self.worker_refs:
@@ -408,7 +408,7 @@ class StressTestClient:
             return False, f"Health check error: {e}"
 
     async def run_stress_test(self, duration: float):
-        """运行压测"""
+        """Run stress test"""
         end_time = time.time() + duration
         last_health_check = time.time()
         report_interval = 10.0
@@ -418,7 +418,7 @@ class StressTestClient:
             f"[StressTest] Expected: {self.expected_nodes} nodes, {len(self.expected_worker_types)} worker types per node"
         )
 
-        # 初始健康检查
+        # Initial health check
         is_healthy, health_msg = await self.check_cluster_health()
         if not is_healthy:
             print(f"[StressTest] ⚠️  WARNING: Initial health check failed: {health_msg}")
@@ -426,7 +426,7 @@ class StressTestClient:
             print(f"[StressTest] ✓ Initial health check passed: {health_msg}")
 
         async def worker_loop():
-            """工作循环（异步版本，与Pulsing版本等价）"""
+            """Worker loop (async version, equivalent to Pulsing version)"""
             local_worker_types = ["echo", "compute", "stream", "batch", "stateful"]
             local_workers = [wt for wt in local_worker_types if wt in self.worker_refs]
             remote_workers = [wt for wt in self.worker_refs.keys() if "_remote_" in wt]
@@ -438,7 +438,7 @@ class StressTestClient:
             use_remote_probability = 0.7
 
             while self.running and time.time() < end_time:
-                # 选择worker
+                # Select worker
                 if remote_workers and (
                     not local_workers or random.random() < use_remote_probability
                 ):
@@ -451,7 +451,7 @@ class StressTestClient:
                     worker_type = random.choice(remote_workers)
                     self.remote_requests += 1
 
-                # 随机选择single或stream
+                # Randomly choose single or stream
                 if random.random() < 0.7:
                     await self.send_single_request(worker_type)
                 else:
@@ -461,15 +461,15 @@ class StressTestClient:
                     else:
                         await self.send_single_request(worker_type)
 
-                # 控制速率（使用asyncio.sleep，与Pulsing版本等价）
+                # Control rate (use asyncio.sleep, equivalent to Pulsing version)
                 if self.interval > 0:
                     await asyncio.sleep(self.interval)
 
-        # 启动多个并发worker（使用asyncio协程，与Pulsing版本等价）
+        # Start multiple concurrent workers (use asyncio coroutines, equivalent to Pulsing version)
         num_workers = max(1, int(self.rate / 10))
         tasks = [asyncio.create_task(worker_loop()) for _ in range(num_workers)]
 
-        # 定期报告和健康检查
+        # Periodic reporting and health checks
         async def report_loop():
             nonlocal last_health_check
             while self.running and time.time() < end_time:
@@ -510,7 +510,7 @@ class StressTestClient:
 
         report_task = asyncio.create_task(report_loop())
 
-        # 等待所有任务完成（使用asyncio，与Pulsing版本等价）
+        # Wait for all tasks to complete (use asyncio, equivalent to Pulsing version)
         await asyncio.gather(*tasks, report_task)
 
         self.running = False
@@ -518,70 +518,72 @@ class StressTestClient:
 
 
 # ============================================================================
-# 主函数
+# Main Function
 # ============================================================================
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="大规模压测脚本 - Ray版本")
+    parser = argparse.ArgumentParser(
+        description="Large-Scale Stress Test Script - Ray Version"
+    )
     parser.add_argument(
         "--duration",
         type=float,
         default=300.0,
-        help="压测持续时间（秒）",
+        help="Stress test duration (seconds)",
     )
     parser.add_argument(
         "--rate",
         type=float,
         default=100.0,
-        help="每秒请求数（0表示无限制）",
+        help="Requests per second (0 means unlimited)",
     )
     parser.add_argument(
         "--address",
         type=str,
         default=None,
-        help="Ray集群地址（如: ray://head-node:10001）",
+        help="Ray cluster address (e.g., ray://head-node:10001)",
     )
     parser.add_argument(
         "--local-rank",
         type=int,
         default=0,
-        help="本地rank（torchrun自动设置）",
+        help="Local rank (set automatically by torchrun)",
     )
     parser.add_argument(
         "--world-size",
         type=int,
         default=1,
-        help="总进程数（torchrun自动设置）",
+        help="Total number of processes (set automatically by torchrun)",
     )
     parser.add_argument(
         "--stabilize-timeout",
         type=float,
         default=10.0,
-        help="集群稳定等待时间（秒），默认10秒",
+        help="Cluster stabilization wait time (seconds), default 10",
     )
     parser.add_argument(
         "--log-dir",
         type=str,
         default="benchmark_logs",
-        help="日志文件目录，默认benchmark_logs",
+        help="Log file directory, default benchmark_logs",
     )
 
     args = parser.parse_args()
 
-    # 从环境变量获取torchrun信息
+    # Get torchrun information from environment variables
     local_rank = int(os.environ.get("LOCAL_RANK", args.local_rank))
     world_size = int(os.environ.get("WORLD_SIZE", args.world_size))
     rank = int(os.environ.get("RANK", local_rank))
 
-    # 设置日志文件
+    # Setup log file
     log_dir = args.log_dir
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, f"stress_test_ray_rank_{rank}.log")
 
-    # 创建文件日志处理器
+    # Create file log handler
     class TeeOutput:
-        """同时输出到控制台和文件"""
+        """Output to both console and file"""
 
         def __init__(self, file_path, original_stdout):
             self.file = open(file_path, "w", encoding="utf-8")
@@ -610,23 +612,23 @@ async def main():
                 pass
 
         def fileno(self):
-            """返回文件描述符（Ray需要）"""
+            """Return file descriptor (required by Ray)"""
             return self.original_stdout.fileno()
 
         def isatty(self):
-            """检查是否是终端"""
+            """Check if it's a terminal"""
             return self.original_stdout.isatty()
 
         def readable(self):
-            """检查是否可读"""
+            """Check if readable"""
             return False
 
         def writable(self):
-            """检查是否可写"""
+            """Check if writable"""
             return True
 
         def seekable(self):
-            """检查是否可seek"""
+            """Check if seekable"""
             return False
 
         def close(self):
@@ -648,30 +650,30 @@ async def main():
     print(f"Log file: {log_file}")
     print(f"{'=' * 60}\n")
 
-    # 初始化Ray
-    # ⚠️ 重要：Ray在torchrun多进程环境下，每个进程都是独立的
-    # 每个进程都会创建自己的Ray实例，导致资源消耗巨大
-    # 解决方案：严格限制每个进程的资源使用
+    # Initialize Ray
+    # ⚠️ Important: Ray in torchrun multi-process environment, each process is independent
+    # Each process creates its own Ray instance, causing huge resource consumption
+    # Solution: Strictly limit resource usage per process
     if not ray.is_initialized():
         if args.address:
-            # 连接到指定的Ray集群（推荐方式）
+            # Connect to specified Ray cluster (recommended approach)
             ray.init(address=args.address, ignore_reinit_error=True)
             print(f"[Process {rank}] Connected to Ray cluster at {args.address}")
         else:
-            # 本地模式：每个进程创建独立的Ray实例，但严格限制资源
-            # 关键：限制CPU、内存、禁用不必要的功能
-            # 每个进程最多使用1个CPU核心，避免资源耗尽
+            # Local mode: each process creates independent Ray instance, but strictly limit resources
+            # Key: limit CPU, memory, disable unnecessary features
+            # Each process uses at most 1 CPU core to avoid resource exhaustion
             num_cpus = 1
-            # 限制对象存储内存为100MB（非常保守）
+            # Limit object store memory to 100MB (very conservative)
             object_store_memory = 100_000_000
 
             ray.init(
                 num_cpus=num_cpus,
-                num_gpus=0,  # 不使用GPU
+                num_gpus=0,  # Don't use GPU
                 object_store_memory=object_store_memory,
                 ignore_reinit_error=True,
-                include_dashboard=False,  # 禁用dashboard，减少资源消耗
-                _temp_dir=f"/tmp/ray_rank_{rank}",  # 每个进程独立的临时目录
+                include_dashboard=False,  # Disable dashboard to reduce resource consumption
+                _temp_dir=f"/tmp/ray_rank_{rank}",  # Independent temp directory per process
             )
             print(
                 f"[Process {rank}] Ray initialized: {num_cpus} CPU, "
@@ -681,14 +683,14 @@ async def main():
     print(f"[Process {rank}] Ray initialized")
     print(f"[Process {rank}] Ray cluster resources: {ray.cluster_resources()}")
 
-    # 等待集群稳定
+    # Wait for cluster to stabilize
     stabilize_timeout = args.stabilize_timeout
     print(
         f"[Process {rank}] Waiting for cluster to stabilize ({stabilize_timeout}s)..."
     )
     await asyncio.sleep(stabilize_timeout)
 
-    # 创建5种worker（每个进程都创建）
+    # Create 5 types of workers (each process creates them)
     worker_refs = {}
     worker_names = ["echo", "compute", "stream", "batch", "stateful"]
 
@@ -702,13 +704,13 @@ async def main():
         except Exception as e:
             print(f"  ✗ Failed to spawn {worker_name} worker: {e}")
 
-    # 等待所有进程启动worker
+    # Wait for all processes to start workers
     print(
         f"[Process {rank}] Waiting for all workers to register ({stabilize_timeout}s)..."
     )
     await asyncio.sleep(stabilize_timeout)
 
-    # 尝试解析其他进程的worker（用于跨进程通信）
+    # Try to resolve workers from other processes (for cross-process communication)
     print(f"\n[Process {rank}] Resolving remote workers...")
     resolved_count = 0
     for other_rank in range(world_size):
@@ -717,7 +719,7 @@ async def main():
 
         for worker_name in worker_names:
             try:
-                # Ray通过名称获取actor
+                # Ray gets actor by name
                 remote_ref = ray.get_actor(f"{worker_name}_{other_rank}")
                 worker_refs[f"{worker_name}_remote_{other_rank}"] = remote_ref
                 resolved_count += 1
@@ -736,7 +738,7 @@ async def main():
             f"  ⚠️  Warning: Only resolved {resolved_count}/{total_expected} remote workers"
         )
 
-    # 创建压测客户端
+    # Create stress test client
     stats = StressTestStats()
     client = StressTestClient(
         worker_refs,
@@ -746,7 +748,7 @@ async def main():
         expected_worker_types=["echo", "compute", "stream", "batch", "stateful"],
     )
 
-    # 运行压测
+    # Run stress test
     try:
         await client.run_stress_test(args.duration)
     except KeyboardInterrupt:
@@ -759,14 +761,14 @@ async def main():
         traceback.print_exc()
         raise
 
-    # 打印最终统计
+    # Print final statistics
     print(f"\n{'=' * 60}")
     print(f"Final Statistics - Process {rank} (Ray Version)")
     print(f"{'=' * 60}")
     summary = stats.get_summary()
     print(json.dumps(summary, indent=2))
 
-    # 保存统计到文件
+    # Save statistics to file
     stats_dir = args.log_dir
     os.makedirs(stats_dir, exist_ok=True)
     stats_file = os.path.join(stats_dir, f"stress_test_stats_ray_rank_{rank}.json")
@@ -774,11 +776,11 @@ async def main():
         json.dump(summary, f, indent=2)
     print(f"\n[Process {rank}] Statistics saved to {stats_file}")
 
-    # 关闭Ray（可选，因为其他进程可能还在使用）
+    # Shutdown Ray (optional, as other processes may still be using it)
     # ray.shutdown()
     print(f"[Process {rank}] Shutdown complete")
 
-    # 恢复stdout/stderr并关闭日志文件
+    # Restore stdout/stderr and close log file
     if hasattr(sys.stdout, "close"):
         try:
             sys.stdout.close()

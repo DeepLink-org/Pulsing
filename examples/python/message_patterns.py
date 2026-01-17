@@ -66,7 +66,7 @@ async def main():
     print("\n--- Streaming ---")
     response = await actor.ask("stream")
     async for chunk in response.stream_reader():
-        print(chunk["token"], end="", flush=True)  # 直接是 Python dict
+        print(chunk["token"], end="", flush=True)  # Directly a Python dict
     print()
 
     # Pattern 3: JSON Message (backward compatible)

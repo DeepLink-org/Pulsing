@@ -1,16 +1,16 @@
-"""Topic - 轻量级 Pub/Sub 模块
+"""Topic - Lightweight Pub/Sub Module
 
-复用 queue/manager 的 StorageManager 进行一致性哈希和重定向，
-确保每个 topic 在集群中只有一个 broker。
+Reuses queue/manager's StorageManager for consistent hashing and redirection,
+ensuring only one broker per topic in the cluster.
 
 Usage:
     from pulsing.topic import write_topic, read_topic
 
-    # 发布消息
+    # Publish message
     writer = await write_topic(system, "events")
     await writer.publish({"type": "user_login"})
 
-    # 订阅消息
+    # Subscribe to messages
     reader = await read_topic(system, "events")
 
     @reader.on_message

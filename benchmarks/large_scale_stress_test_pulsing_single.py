@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Pulsing 压测脚本 - 单进程版本
+Pulsing Stress Test Script - Single Process Version
 
-使用方法:
+Usage:
     python benchmarks/large_scale_stress_test_pulsing_single.py \
         --duration 300 --rate 100 --num-workers 50
 """
@@ -20,7 +20,7 @@ from pulsing.actor import Actor, StreamMessage, SystemConfig, create_actor_syste
 
 
 # ============================================================================
-# 统计
+# Statistics
 # ============================================================================
 
 
@@ -59,7 +59,7 @@ class Stats:
 
 
 # ============================================================================
-# Workers - 使用简化的消息格式
+# Workers - Using Simplified Message Format
 # ============================================================================
 
 
@@ -134,7 +134,7 @@ WORKERS = {
 
 
 # ============================================================================
-# 压测
+# Stress Test
 # ============================================================================
 
 
@@ -154,7 +154,7 @@ async def run_benchmark(workers, stats_req, stats_stream, duration, rate):
 
     tasks = [asyncio.create_task(worker_loop()) for _ in range(max(1, int(rate) // 10))]
 
-    # 进度报告
+    # Progress reporting
     while time.time() < end_time:
         await asyncio.sleep(10)
         print(f"  Requests: {stats_req.total} (ok: {stats_req.success})")
@@ -238,7 +238,7 @@ async def main():
     system = await create_actor_system(SystemConfig.with_addr(f"0.0.0.0:{args.port}"))
     print(f"System started at {system.addr}")
 
-    # 创建 workers
+    # Create workers
     workers = {}
     for name, cls in WORKERS.items():
         workers[name] = []
@@ -249,14 +249,14 @@ async def main():
 
     await asyncio.sleep(1)
 
-    # 运行压测
+    # Run stress test
     stats_req, stats_stream = Stats(), Stats()
     try:
         await run_benchmark(workers, stats_req, stats_stream, args.duration, args.rate)
     except KeyboardInterrupt:
         print("\nInterrupted")
 
-    # 结果
+    # Results
     print(f"\n{'=' * 50}")
     print("Results")
     print(f"{'=' * 50}")
@@ -266,7 +266,7 @@ async def main():
     with open(f"{args.log_dir}/stress_test_pulsing_single.json", "w") as f:
         json.dump(result, f, indent=2)
 
-    # 等待 3 秒让正在进行的流式任务完成
+    # Wait 3 seconds for ongoing stream tasks to complete
     print("Waiting 3s for streams to complete...")
     await asyncio.sleep(3)
 

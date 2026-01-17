@@ -1,10 +1,10 @@
 """
-PulsingRuntime - 基于 Pulsing 的 AutoGen 兼容运行时
+PulsingRuntime - AutoGen Compatible Runtime Based on Pulsing
 
-特点:
-- 单机/分布式统一 API
-- 无需中央协调器，Gossip 自动发现
-- 内置负载均衡和故障转移
+Features:
+- Unified API for standalone/distributed modes
+- No central coordinator, Gossip auto-discovery
+- Built-in load balancing and failover
 """
 
 from __future__ import annotations
@@ -44,22 +44,22 @@ T = TypeVar("T")
 
 
 class PulsingRuntime:
-    """基于 Pulsing 的 AutoGen 兼容运行时
+    """AutoGen Compatible Runtime Based on Pulsing
 
-    特点:
-    - 单机/分布式统一 API
-    - 无需中央协调器
-    - Gossip 自动发现
-    - 内置负载均衡和故障转移
+    Features:
+    - Unified API for standalone/distributed modes
+    - No central coordinator
+    - Gossip auto-discovery
+    - Built-in load balancing and failover
 
     Usage:
-        # 单机模式
+        # Standalone mode
         runtime = PulsingRuntime()
 
-        # 分布式模式 - 第一个节点
+        # Distributed mode - first node
         runtime = PulsingRuntime(addr="0.0.0.0:8000")
 
-        # 分布式模式 - 加入集群
+        # Distributed mode - join cluster
         runtime = PulsingRuntime(
             addr="0.0.0.0:8000",
             seeds=["first-node:8000"]
@@ -74,8 +74,8 @@ class PulsingRuntime:
     ) -> None:
         """
         Args:
-            addr: 本节点监听地址，None 表示单机模式
-            seeds: 种子节点地址列表，用于加入集群
+            addr: Local node listening address, None means standalone mode
+            seeds: List of seed node addresses for joining cluster
         """
         self._addr = addr
         self._seeds = seeds or []
@@ -83,15 +83,15 @@ class PulsingRuntime:
         # Pulsing ActorSystem
         self._system: ActorSystem | None = None
 
-        # Agent 管理
+        # Agent management
         self._agent_factories: Dict[str, Callable[[], Any | Awaitable[Any]]] = {}
         self._instantiated_agents: Dict[str, Any] = {}  # agent_key -> Agent instance
         self._agent_refs: Dict[str, ActorRef] = {}  # agent_key -> ActorRef
 
-        # 订阅管理: topic_key -> set of agent_types
+        # Subscription management: topic_key -> set of agent_types
         self._subscriptions: DefaultDict[str, Set[str]] = defaultdict(set)
 
-        # 运行状态
+        # Running state
         self._running = False
         self._run_task: Task | None = None
         self._pending_requests: Dict[str, Future[Any]] = {}
@@ -99,22 +99,22 @@ class PulsingRuntime:
 
     @property
     def is_distributed(self) -> bool:
-        """是否为分布式模式"""
+        """Whether in distributed mode"""
         return self._addr is not None
 
     async def start(self) -> None:
-        """启动运行时"""
+        """Start runtime"""
         if self._running:
             raise RuntimeError("Runtime is already running")
 
-        # 创建 Pulsing ActorSystem
+        # Create Pulsing ActorSystem
         if self._addr:
-            # 分布式模式
+            # Distributed mode
             config = SystemConfig.with_addr(self._addr)
             if self._seeds:
                 config = config.with_seeds(self._seeds)
         else:
-            # 单机模式
+            # Standalone mode
             config = SystemConfig.standalone()
 
         self._system = await create_actor_system(config)
@@ -126,21 +126,21 @@ class PulsingRuntime:
             logger.info(f"Listening on {self._addr}, seeds: {self._seeds}")
 
     async def stop(self) -> None:
-        """停止运行时"""
+        """Stop runtime"""
         if not self._running:
             raise RuntimeError("Runtime is not running")
 
         self._running = False
 
-        # 等待所有后台任务完成
+        # Wait for all background tasks to complete
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
 
         logger.info("PulsingRuntime stopped")
 
     async def stop_when_idle(self) -> None:
-        """空闲时停止运行时"""
-        # 等待所有待处理请求完成
+        """Stop runtime when idle"""
+        # Wait for all pending requests to complete
         while self._pending_requests:
             await asyncio.sleep(0.1)
         await self.stop()
@@ -148,7 +148,7 @@ class PulsingRuntime:
     async def stop_when_signal(
         self, signals: Sequence[signal.Signals] = (signal.SIGTERM, signal.SIGINT)
     ) -> None:
-        """收到信号时停止"""
+        """Stop when signal is received"""
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
 
@@ -163,7 +163,7 @@ class PulsingRuntime:
         await self.stop()
 
     # ========================================================================
-    # AutoGen AgentRuntime 协议实现
+    # AutoGen AgentRuntime Protocol Implementation
     # ========================================================================
 
     async def send_message(
@@ -175,24 +175,24 @@ class PulsingRuntime:
         cancellation_token: Any | None = None,
         message_id: str | None = None,
     ) -> Any:
-        """发送消息到指定 Agent (RPC 模式)"""
+        """Send message to specified Agent (RPC mode)"""
         if not self._running:
             raise RuntimeError("Runtime is not running")
 
-        # 解析 recipient
+        # Parse recipient
         agent_type = recipient.type if hasattr(recipient, "type") else str(recipient)
         agent_key = recipient.key if hasattr(recipient, "key") else "default"
         full_key = f"{agent_type}/{agent_key}"
 
-        # 确保 Agent 已创建
+        # Ensure Agent is created
         await self._ensure_agent(agent_type, agent_key)
 
-        # 获取 ActorRef
+        # Get ActorRef
         actor_ref = self._agent_refs.get(full_key)
         if actor_ref is None:
             raise LookupError(f"Agent '{full_key}' not found")
 
-        # 构造消息
+        # Construct message
         msg_id = message_id or str(uuid.uuid4())
         envelope = {
             "__autogen_msg__": True,
@@ -208,52 +208,52 @@ class PulsingRuntime:
             "message_id": msg_id,
         }
 
-        # 发送并等待响应
+        # Send and wait for response
         response = await actor_ref.ask(envelope)
 
-        # 处理响应
+        # Process response
         response = self._deserialize_response(response)
 
-        # 如果是我们的 AutoGen 响应格式
+        # If it's our AutoGen response format
         if isinstance(response, dict) and "__autogen_response__" in response:
             if "__error__" in response:
                 raise RuntimeError(response["__error__"])
             return response.get("result")
 
-        # 直接返回
+        # Direct return
         return response
 
     def _deserialize_response(self, response: Any) -> Any:
-        """反序列化响应"""
+        """Deserialize response"""
         import pickle
 
-        # 1. 如果是 Pulsing Message 对象
+        # 1. If it's a Pulsing Message object
         if hasattr(response, "msg_type") and hasattr(response, "payload"):
             msg_type = response.msg_type
             payload = response.payload
 
-            # 如果 msg_type 为空，说明是 pickled Python 对象
+            # If msg_type is empty, it's a pickled Python object
             if not msg_type and isinstance(payload, bytes):
                 try:
                     return pickle.loads(payload)
                 except Exception:
                     pass
 
-            # 如果有 msg_type，尝试 to_json
+            # If msg_type exists, try to_json
             if hasattr(response, "to_json"):
                 try:
                     return response.to_json()
                 except Exception:
                     pass
 
-        # 2. 如果是 bytes，尝试 unpickle
+        # 2. If it's bytes, try unpickle
         if isinstance(response, bytes):
             try:
                 return pickle.loads(response)
             except Exception:
                 pass
 
-        # 3. 直接返回
+        # 3. Direct return
         return response
 
     async def publish_message(
@@ -265,19 +265,19 @@ class PulsingRuntime:
         cancellation_token: Any | None = None,
         message_id: str | None = None,
     ) -> None:
-        """发布消息到 Topic (Pub/Sub 模式)"""
+        """Publish message to Topic (Pub/Sub mode)"""
         if not self._running:
             raise RuntimeError("Runtime is not running")
 
-        # 解析 topic
+        # Parse topic
         topic_type = topic_id.type if hasattr(topic_id, "type") else str(topic_id)
         topic_source = topic_id.source if hasattr(topic_id, "source") else "default"
         topic_key = f"{topic_type}/{topic_source}"
 
-        # 获取订阅者
+        # Get subscribers
         subscriber_types = self._subscriptions.get(topic_key, set())
 
-        # 构造消息
+        # Construct message
         msg_id = message_id or str(uuid.uuid4())
         envelope = {
             "__autogen_msg__": True,
@@ -296,24 +296,24 @@ class PulsingRuntime:
             "message_id": msg_id,
         }
 
-        # 发送给所有订阅者
+        # Send to all subscribers
         tasks = []
         sender_key = f"{sender.type}/{sender.key}" if sender else None
 
         for agent_type in subscriber_types:
-            agent_key = "default"  # 默认 key
+            agent_key = "default"  # Default key
             full_key = f"{agent_type}/{agent_key}"
 
-            # 不发给自己
+            # Don't send to self
             if full_key == sender_key:
                 continue
 
-            # 确保 Agent 已创建
+            # Ensure Agent is created
             await self._ensure_agent(agent_type, agent_key)
 
             actor_ref = self._agent_refs.get(full_key)
             if actor_ref:
-                # 使用 tell (不等待响应)
+                # Use tell (don't wait for response)
                 task = asyncio.create_task(actor_ref.ask(envelope))
                 tasks.append(task)
 
@@ -326,15 +326,15 @@ class PulsingRuntime:
         agent_factory: Callable[[], T | Awaitable[T]],
         *,
         expected_class: type[T] | None = None,
-        eager: bool = True,  # 立即创建 Agent 实例
+        eager: bool = True,  # Immediately create Agent instance
     ) -> Any:  # AgentType
-        """注册 Agent 工厂
+        """Register Agent factory
 
         Args:
-            type: Agent 类型名称
-            agent_factory: 创建 Agent 的工厂函数
-            expected_class: 预期的 Agent 类型 (用于验证)
-            eager: 是否立即创建 Agent 实例 (分布式模式需要 True)
+            type: Agent type name
+            agent_factory: Factory function to create Agent
+            expected_class: Expected Agent type (for validation)
+            eager: Whether to immediately create Agent instance (True required for distributed mode)
         """
         agent_type = type.type if hasattr(type, "type") else str(type)
 
@@ -344,11 +344,11 @@ class PulsingRuntime:
         self._agent_factories[agent_type] = agent_factory
         logger.debug(f"Registered agent factory: {agent_type}")
 
-        # 立即创建实例（分布式模式下必须，否则其他节点无法发现）
+        # Immediately create instance (required in distributed mode, otherwise other nodes cannot discover)
         if eager and self._running:
             await self._ensure_agent(agent_type, "default")
 
-        # 返回 AgentType (兼容 AutoGen)
+        # Return AgentType (compatible with AutoGen)
         try:
             from autogen_core import AgentType as AutoGenAgentType
 
@@ -361,7 +361,7 @@ class PulsingRuntime:
         agent_instance: Any,  # Agent
         agent_id: Any,  # AgentId
     ) -> Any:  # AgentId
-        """注册 Agent 实例"""
+        """Register Agent instance"""
         agent_type = agent_id.type if hasattr(agent_id, "type") else str(agent_id)
         agent_key = agent_id.key if hasattr(agent_id, "key") else "default"
         full_key = f"{agent_type}/{agent_key}"
@@ -369,11 +369,11 @@ class PulsingRuntime:
         if full_key in self._instantiated_agents:
             raise ValueError(f"Agent '{full_key}' already exists")
 
-        # 绑定运行时
+        # Bind runtime
         if hasattr(agent_instance, "bind_id_and_runtime"):
             await agent_instance.bind_id_and_runtime(id=agent_id, runtime=self)
 
-        # 创建包装器并 spawn
+        # Create wrapper and spawn
         wrapper = AutoGenAgentWrapper(agent_instance, self)
 
         actor_ref = await self._system.spawn(full_key, wrapper, public=True)
@@ -385,8 +385,8 @@ class PulsingRuntime:
         return agent_id
 
     async def add_subscription(self, subscription: Any) -> None:
-        """添加订阅"""
-        # 解析订阅
+        """Add subscription"""
+        # Parse subscription
         if hasattr(subscription, "topic_type"):
             topic_type = subscription.topic_type
         elif hasattr(subscription, "id"):
@@ -399,15 +399,15 @@ class PulsingRuntime:
         else:
             agent_type = str(subscription)
 
-        # 使用 "default" 作为默认 source
+        # Use "default" as default source
         topic_key = f"{topic_type}:default"
         self._subscriptions[topic_key].add(agent_type)
 
         logger.debug(f"Added subscription: {agent_type} -> {topic_key}")
 
     async def remove_subscription(self, id: str) -> None:
-        """移除订阅"""
-        # 简化实现：遍历查找
+        """Remove subscription"""
+        # Simplified implementation: iterate to find
         for topic_key, agent_types in self._subscriptions.items():
             agent_types.discard(id)
 
@@ -419,9 +419,9 @@ class PulsingRuntime:
         *,
         lazy: bool = True,
     ) -> Any:  # AgentId
-        """获取 Agent ID"""
+        """Get Agent ID"""
         if hasattr(id_or_type, "type") and hasattr(id_or_type, "key"):
-            # 已经是 AgentId
+            # Already an AgentId
             return id_or_type
 
         agent_type = id_or_type.type if hasattr(id_or_type, "type") else str(id_or_type)
@@ -441,7 +441,7 @@ class PulsingRuntime:
         id: Any,  # AgentId
         type: Type[T] = object,  # type: ignore
     ) -> T:
-        """获取底层 Agent 实例"""
+        """Get underlying Agent instance"""
         agent_type = id.type if hasattr(id, "type") else str(id)
         agent_key = id.key if hasattr(id, "key") else "default"
         full_key = f"{agent_type}/{agent_key}"
@@ -459,14 +459,14 @@ class PulsingRuntime:
         return cast(T, instance)
 
     async def agent_metadata(self, agent: Any) -> Any:
-        """获取 Agent 元数据"""
+        """Get Agent metadata"""
         instance = await self.try_get_underlying_agent_instance(agent)
         if hasattr(instance, "metadata"):
             return instance.metadata
         return {}
 
     async def save_state(self) -> Mapping[str, Any]:
-        """保存运行时状态"""
+        """Save runtime state"""
         state = {}
         for key, agent in self._instantiated_agents.items():
             if hasattr(agent, "save_state"):
@@ -474,7 +474,7 @@ class PulsingRuntime:
         return state
 
     async def load_state(self, state: Mapping[str, Any]) -> None:
-        """加载运行时状态"""
+        """Load runtime state"""
         for key, agent_state in state.items():
             if key in self._instantiated_agents:
                 agent = self._instantiated_agents[key]
@@ -482,35 +482,35 @@ class PulsingRuntime:
                     await agent.load_state(agent_state)
 
     async def agent_save_state(self, agent: Any) -> Mapping[str, Any]:
-        """保存单个 Agent 状态"""
+        """Save single Agent state"""
         instance = await self.try_get_underlying_agent_instance(agent)
         if hasattr(instance, "save_state"):
             return await instance.save_state()
         return {}
 
     async def agent_load_state(self, agent: Any, state: Mapping[str, Any]) -> None:
-        """加载单个 Agent 状态"""
+        """Load single Agent state"""
         instance = await self.try_get_underlying_agent_instance(agent)
         if hasattr(instance, "load_state"):
             await instance.load_state(state)
 
     def add_message_serializer(self, serializer: Any) -> None:
-        """添加消息序列化器 (Pulsing 使用 pickle，此方法为兼容性保留)"""
+        """Add message serializer (Pulsing uses pickle, this method is kept for compatibility)"""
         pass
 
     # ========================================================================
-    # 内部方法
+    # Internal Methods
     # ========================================================================
 
     async def _ensure_agent(self, agent_type: str, agent_key: str = "default") -> None:
-        """确保 Agent 可用 (本地或远程)"""
+        """Ensure Agent is available (local or remote)"""
         full_key = f"{agent_type}/{agent_key}"
 
-        # 1. 检查是否已有本地引用
+        # 1. Check if local reference already exists
         if full_key in self._agent_refs:
             return
 
-        # 2. 尝试在集群中查找远程 Agent
+        # 2. Try to find remote Agent in cluster
         if self.is_distributed:
             try:
                 actor_ref = await self._system.resolve_named(full_key)
@@ -521,17 +521,17 @@ class PulsingRuntime:
             except Exception as e:
                 logger.debug(f"Agent '{full_key}' not found in cluster: {e}")
 
-        # 3. 如果本地有工厂，则创建本地实例
+        # 3. If local factory exists, create local instance
         if agent_type not in self._agent_factories:
             raise LookupError(f"Agent type '{agent_type}' not registered")
 
-        # 调用工厂创建 Agent
+        # Call factory to create Agent
         factory = self._agent_factories[agent_type]
         agent = factory()
         if inspect.isawaitable(agent):
             agent = await agent
 
-        # 创建 AgentId
+        # Create AgentId
         try:
             from autogen_core import AgentId as AutoGenAgentId
 
@@ -539,11 +539,11 @@ class PulsingRuntime:
         except ImportError:
             agent_id = full_key
 
-        # 绑定运行时
+        # Bind runtime
         if hasattr(agent, "bind_id_and_runtime"):
             await agent.bind_id_and_runtime(id=agent_id, runtime=self)
 
-        # 创建包装器并 spawn
+        # Create wrapper and spawn
         wrapper = AutoGenAgentWrapper(agent, self)
 
         actor_ref = await self._system.spawn(full_key, wrapper, public=True)
@@ -554,5 +554,5 @@ class PulsingRuntime:
         logger.debug(f"Created local agent: {full_key}")
 
 
-# 导入包装器
+# Import wrapper
 from .agent_wrapper import AutoGenAgentWrapper

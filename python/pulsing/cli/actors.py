@@ -25,7 +25,7 @@ def start_router(
     from ..actors.router import start_router as start_router_service
     from ..actors.router import stop_router
 
-    # 选择调度器类
+    # Select scheduler class
     scheduler_map = {
         "round_robin": RoundRobinScheduler,
         "random": RandomScheduler,
@@ -44,7 +44,7 @@ def start_router(
     print(f"  Scheduler: {scheduler_type}")
 
     async def run():
-        # 创建 ActorSystem
+        # Create ActorSystem
         if addr:
             config = SystemConfig.with_addr(addr)
         else:
@@ -56,7 +56,7 @@ def start_router(
         system = await create_actor_system(config)
         print(f"[Router] ActorSystem started at {system.addr}")
 
-        # 启动 Router HTTP 服务器
+        # Start Router HTTP server
         runner = await start_router_service(
             system,
             http_host=http_host,
@@ -66,7 +66,7 @@ def start_router(
             scheduler_type=scheduler_type,
         )
 
-        # 运行直到收到信号
+        # Run until signal received
         try:
             await run_until_signal(system, "router")
         finally:
@@ -143,7 +143,7 @@ def start_vllm(
     print(f"Starting vLLM Worker (model={model}, namespace={namespace}, role={role})")
     print(f"  Max tokens: {max_new_tokens}")
 
-    # 显示 macOS Metal 配置
+    # Display macOS Metal configuration
     import platform
 
     if platform.system() == "Darwin":

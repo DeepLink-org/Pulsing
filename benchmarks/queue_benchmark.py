@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-分布式内存队列压测脚本 - 多进程版本
+Distributed In-Memory Queue Benchmark Script - Multi-Process Version
 
-使用 torchrun 启动多个进程，每个进程同时作为生产者和消费者。
-使用 rank/world_size 进行分布式消费，测试跨节点队列性能。
+Uses torchrun to start multiple processes, each process acts as both producer and consumer.
+Uses rank/world_size for distributed consumption, testing cross-node queue performance.
 
-使用方法:
+Usage:
     torchrun --nproc_per_node=10 benchmarks/queue_benchmark.py \
         --duration 30 \
         --num-buckets 16
 
-参数:
-    --duration: 压测时长（秒），默认30
-    --num-buckets: 队列分桶数，默认16
-    --batch-size: 写入批处理大小，默认100
-    --record-size: 记录数据大小（字节），默认100
-    --rate-limit: 每进程每秒写入数（None=无限制）
+Arguments:
+    --duration: Benchmark duration (seconds), default 30
+    --num-buckets: Number of queue buckets, default 16
+    --batch-size: Write batch size, default 100
+    --record-size: Record data size (bytes), default 100
+    --rate-limit: Writes per second per process (None=unlimited)
 """
 
 import argparse
@@ -34,13 +34,13 @@ from pulsing.queue import read_queue, write_queue
 
 
 # ============================================================================
-# 压测统计
+# Benchmark Statistics
 # ============================================================================
 
 
 @dataclass
 class QueueBenchmarkStats:
-    """队列压测统计"""
+    """Queue benchmark statistics"""
 
     total_writes: int = 0
     total_reads: int = 0
@@ -159,12 +159,12 @@ class QueueBenchmarkStats:
 
 
 # ============================================================================
-# 数据生成
+# Data Generation
 # ============================================================================
 
 
 def generate_record(record_size: int = 100) -> dict:
-    """生成测试记录"""
+    """Generate test record"""
     return {
         "id": f"user_{random.randint(0, 10000)}",
         "timestamp": time.time(),
@@ -174,12 +174,12 @@ def generate_record(record_size: int = 100) -> dict:
 
 
 def estimate_record_size(record: dict) -> int:
-    """估算记录大小"""
+    """Estimate record size"""
     return len(json.dumps(record))
 
 
 # ============================================================================
-# 生产者
+# Producer
 # ============================================================================
 
 
@@ -190,7 +190,7 @@ async def producer_loop(
     record_size: int,
     rate_limit: float | None,
 ):
-    """生产者循环"""
+    """Producer loop"""
     interval = 1.0 / rate_limit if rate_limit else 0
 
     while time.time() < end_time:
@@ -211,7 +211,7 @@ async def producer_loop(
 
 
 # ============================================================================
-# 消费者
+# Consumer
 # ============================================================================
 
 
@@ -221,7 +221,7 @@ async def consumer_loop(
     end_time: float,
     read_batch_size: int,
 ):
-    """消费者循环"""
+    """Consumer loop"""
     while time.time() < end_time:
         start = time.time()
 
@@ -239,51 +239,63 @@ async def consumer_loop(
 
 
 # ============================================================================
-# 主函数
+# Main Function
 # ============================================================================
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="分布式内存队列压测（多进程）")
-    parser.add_argument("--duration", type=float, default=30.0, help="压测时长（秒）")
-    parser.add_argument("--num-buckets", type=int, default=16, help="队列分桶数")
-    parser.add_argument("--batch-size", type=int, default=100, help="写入批处理大小")
-    parser.add_argument(
-        "--read-batch-size", type=int, default=100, help="读取批处理大小"
+    parser = argparse.ArgumentParser(
+        description="Distributed In-Memory Queue Benchmark (Multi-Process)"
     )
     parser.add_argument(
-        "--record-size", type=int, default=100, help="记录数据大小（字节）"
+        "--duration", type=float, default=30.0, help="Benchmark duration (seconds)"
     )
     parser.add_argument(
-        "--rate-limit", type=float, default=None, help="每进程每秒写入数"
+        "--num-buckets", type=int, default=16, help="Number of queue buckets"
     )
-    parser.add_argument("--port", type=int, default=0, help="基础端口（0=自动）")
+    parser.add_argument("--batch-size", type=int, default=100, help="Write batch size")
     parser.add_argument(
-        "--seed-nodes", type=str, nargs="+", default=[], help="Seed节点"
-    )
-    parser.add_argument(
-        "--storage-path", type=str, default="./queue_benchmark_data", help="存储路径"
+        "--read-batch-size", type=int, default=100, help="Read batch size"
     )
     parser.add_argument(
-        "--log-dir", type=str, default="benchmark_logs", help="日志目录"
+        "--record-size", type=int, default=100, help="Record data size (bytes)"
     )
     parser.add_argument(
-        "--stabilize-timeout", type=float, default=5.0, help="集群稳定等待时间"
+        "--rate-limit", type=float, default=None, help="Writes per second per process"
+    )
+    parser.add_argument("--port", type=int, default=0, help="Base port (0=auto)")
+    parser.add_argument(
+        "--seed-nodes", type=str, nargs="+", default=[], help="Seed nodes"
+    )
+    parser.add_argument(
+        "--storage-path",
+        type=str,
+        default="./queue_benchmark_data",
+        help="Storage path",
+    )
+    parser.add_argument(
+        "--log-dir", type=str, default="benchmark_logs", help="Log directory"
+    )
+    parser.add_argument(
+        "--stabilize-timeout",
+        type=float,
+        default=5.0,
+        help="Cluster stabilization wait time",
     )
 
     args = parser.parse_args()
 
-    # 从环境变量获取 torchrun 信息
+    # Get torchrun information from environment variables
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", 1))
     rank = int(os.environ.get("RANK", local_rank))
 
-    # 创建日志目录
+    # Create log directory
     log_dir = args.log_dir
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(args.storage_path, exist_ok=True)
 
-    # 日志文件
+    # Log file
     log_file = os.path.join(log_dir, f"queue_benchmark_rank_{rank}.log")
 
     class TeeOutput:
@@ -334,7 +346,7 @@ async def main():
     print(f"Log file: {log_file}")
     print(f"{'=' * 60}\n")
 
-    # 配置系统
+    # Configure system
     if args.port == 0:
         base_port = 9000
         port = base_port + rank
@@ -343,24 +355,24 @@ async def main():
 
     config = SystemConfig.with_addr(f"0.0.0.0:{port}")
 
-    # 添加 seed 节点
+    # Add seed nodes
     if args.seed_nodes:
         config = config.with_seeds(args.seed_nodes)
     elif rank > 0:
         prev_port = 9000 + (rank - 1)
         config = config.with_seeds([f"127.0.0.1:{prev_port}"])
 
-    # 创建系统
+    # Create system
     system = await create_actor_system(config)
     print(f"[Process {rank}] ActorSystem started at {system.addr}")
 
-    # 等待集群稳定
+    # Wait for cluster to stabilize
     print(
         f"[Process {rank}] Waiting for cluster to stabilize ({args.stabilize_timeout}s)..."
     )
     await asyncio.sleep(args.stabilize_timeout)
 
-    # 获取集群成员
+    # Get cluster members
     members = await system.members()
     print(f"[Process {rank}] Cluster members: {len(members)}")
     for member in members:
@@ -371,7 +383,7 @@ async def main():
     topic = "benchmark_queue"
     stats = QueueBenchmarkStats()
 
-    # 创建 writer（每个进程都可以写入）
+    # Create writer (each process can write)
     writer = await write_queue(
         system,
         topic=topic,
@@ -382,7 +394,7 @@ async def main():
     )
     print(f"[Process {rank}] Writer created")
 
-    # 创建 reader（使用 rank/world_size 分布式消费）
+    # Create reader (use rank/world_size for distributed consumption)
     reader = await read_queue(
         system,
         topic=topic,
@@ -394,10 +406,10 @@ async def main():
     assigned_buckets = [i for i in range(args.num_buckets) if i % world_size == rank]
     print(f"[Process {rank}] Reader created, assigned buckets: {assigned_buckets}")
 
-    # 等待所有进程准备好
+    # Wait for all processes to be ready
     await asyncio.sleep(2.0)
 
-    # 启动生产者和消费者
+    # Start producer and consumer
     print(f"\n[Process {rank}] Starting benchmark...")
     start_time = time.time()
     end_time = start_time + args.duration
@@ -409,7 +421,7 @@ async def main():
         consumer_loop(reader, stats, end_time, args.read_batch_size)
     )
 
-    # 进度报告
+    # Progress reporting
     report_interval = 10.0
 
     async def report_progress():
@@ -433,7 +445,7 @@ async def main():
 
     report_task = asyncio.create_task(report_progress())
 
-    # 等待完成
+    # Wait for completion
     try:
         await asyncio.gather(producer_task, consumer_task)
     except KeyboardInterrupt:
@@ -445,13 +457,13 @@ async def main():
     except asyncio.CancelledError:
         pass
 
-    # 最终 flush
+    # Final flush
     try:
         await writer.flush()
     except Exception:
         pass
 
-    # 最终统计
+    # Final statistics
     actual_duration = time.time() - start_time
     summary = stats.get_summary(actual_duration)
 
@@ -460,7 +472,7 @@ async def main():
     print(f"{'=' * 60}")
     print(json.dumps(summary, indent=2))
 
-    # 保存结果
+    # Save results
     result_file = os.path.join(log_dir, f"queue_benchmark_rank_{rank}.json")
     with open(result_file, "w") as f:
         json.dump(
@@ -482,11 +494,11 @@ async def main():
         )
     print(f"\n[Process {rank}] Results saved to {result_file}")
 
-    # 清理
+    # Cleanup
     await system.shutdown()
     print(f"[Process {rank}] Benchmark complete")
 
-    # 恢复 stdout/stderr
+    # Restore stdout/stderr
     if hasattr(sys.stdout, "close"):
         try:
             sys.stdout.close()

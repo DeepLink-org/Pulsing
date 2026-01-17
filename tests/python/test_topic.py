@@ -774,7 +774,7 @@ async def test_list_topics(actor_system):
 
 
 # ============================================================================
-# Timeout Tests (P0-4 修复验证)
+# Timeout Tests (P0-4 Fix Verification)
 # ============================================================================
 
 
@@ -797,7 +797,7 @@ async def test_publish_with_timeout_success(actor_system):
     result = await writer.publish(
         {"data": "test"},
         mode=PublishMode.WAIT_ALL_ACKS,
-        timeout=5.0,  # 5 秒超时，足够处理
+        timeout=5.0,  # 5 second timeout, sufficient for processing
     )
 
     assert result.success
@@ -816,12 +816,12 @@ async def test_publish_with_timeout_fire_and_forget(actor_system):
     result = await writer.publish(
         {"data": "test"},
         mode=PublishMode.FIRE_AND_FORGET,
-        timeout=0.1,  # 短超时
+        timeout=0.1,  # Short timeout
     )
     elapsed = time.time() - start
 
     assert result.success
-    # fire_and_forget 应该很快返回
+    # fire_and_forget should return quickly
     assert elapsed < 0.5
 
 
@@ -830,7 +830,7 @@ async def test_publish_wait_any_ack_with_timeout(actor_system):
     """Test wait_any_ack with timeout - fast subscriber responds first."""
     writer = await write_topic(actor_system, "wait_any_timeout_topic")
 
-    # 创建两个订阅者
+    # Create two subscribers
     reader1 = await read_topic(actor_system, "wait_any_timeout_topic", reader_id="fast")
     reader2 = await read_topic(actor_system, "wait_any_timeout_topic", reader_id="slow")
 
@@ -839,12 +839,12 @@ async def test_publish_wait_any_ack_with_timeout(actor_system):
 
     @reader1.on_message
     async def handle_fast(msg):
-        # Fast handler - 立即响应
+        # Fast handler - responds immediately
         received_fast.append(msg)
 
     @reader2.on_message
     async def handle_slow(msg):
-        # Slow handler - 延迟响应
+        # Slow handler - delayed response
         await asyncio.sleep(0.2)
         received_slow.append(msg)
 
@@ -852,7 +852,7 @@ async def test_publish_wait_any_ack_with_timeout(actor_system):
     await reader2.start()
     await asyncio.sleep(0.05)
 
-    # wait_any_ack 应该在 fast handler 响应后立即返回
+    # wait_any_ack should return immediately after fast handler responds
     start = time.time()
     result = await writer.publish(
         {"data": "test"},
@@ -863,7 +863,7 @@ async def test_publish_wait_any_ack_with_timeout(actor_system):
 
     assert result.success
     assert result.delivered == 1
-    # 应该很快返回（fast handler 响应）
+    # Should return quickly (fast handler responds)
     assert elapsed < 0.5
 
     await reader1.stop()
@@ -875,7 +875,7 @@ async def test_publish_timeout_error(actor_system):
     """Test that publish raises TimeoutError when timeout expires."""
     from pulsing.actor import Actor, ActorId
 
-    # 创建一个故意慢的订阅者
+    # Create an intentionally slow subscriber
     class SlowSubscriber(Actor):
         def on_start(self, actor_id: ActorId) -> None:
             pass
@@ -884,18 +884,18 @@ async def test_publish_timeout_error(actor_system):
             pass
 
         async def receive(self, msg):
-            # 故意延迟超过超时时间
+            # Intentionally delay beyond timeout
             await asyncio.sleep(5.0)
             return {"ack": True}
 
     writer = await write_topic(actor_system, "timeout_error_topic")
 
-    # 手动创建慢订阅者
+    # Manually create slow subscriber
     slow_actor = SlowSubscriber()
     actor_name = "_topic_sub_timeout_error_topic_slow_sub"
     await actor_system.spawn(actor_name, slow_actor, public=True)
 
-    # 向 broker 注册
+    # Register with broker
     from pulsing.queue.manager import get_topic_broker
     from pulsing.actor import Message
 
@@ -916,7 +916,7 @@ async def test_publish_timeout_error(actor_system):
         await writer.publish(
             {"data": "test"},
             mode=PublishMode.WAIT_ALL_ACKS,
-            timeout=0.1,  # 100ms 超时，订阅者需要 5s
+            timeout=0.1,  # 100ms timeout, subscriber needs 5s
         )
 
 
@@ -938,7 +938,7 @@ async def test_ask_with_timeout_success(actor_system):
     echo = EchoActor()
     ref = await actor_system.spawn("echo_timeout_test", echo)
 
-    # ask_with_timeout 成功场景
+    # ask_with_timeout success scenario
     result = await ask_with_timeout(ref, {"hello": "world"}, timeout=5.0)
     assert result["echo"]["hello"] == "world"
 
@@ -956,13 +956,13 @@ async def test_ask_with_timeout_error(actor_system):
             pass
 
         async def receive(self, msg):
-            await asyncio.sleep(5.0)  # 故意慢
+            await asyncio.sleep(5.0)  # Intentionally slow
             return {"done": True}
 
     slow = SlowActor()
     ref = await actor_system.spawn("slow_timeout_test", slow)
 
-    # ask_with_timeout 超时场景
+    # ask_with_timeout timeout scenario
     with pytest.raises(asyncio.TimeoutError):
         await ask_with_timeout(ref, {"hello": "world"}, timeout=0.1)
 
@@ -988,10 +988,10 @@ async def test_tell_with_timeout_success(actor_system):
     collector = CollectorActor()
     ref = await actor_system.spawn("collector_timeout_test", collector)
 
-    # tell_with_timeout 成功场景（fire-and-forget 不等待响应）
+    # tell_with_timeout success scenario (fire-and-forget doesn't wait for response)
     await tell_with_timeout(ref, {"hello": "world"}, timeout=5.0)
 
-    # 等待消息处理
+    # Wait for message processing
     await asyncio.sleep(0.1)
     assert len(received) == 1
 
@@ -1001,7 +1001,7 @@ async def test_default_publish_timeout():
     """Test that DEFAULT_PUBLISH_TIMEOUT is reasonable."""
     from pulsing.topic.topic import DEFAULT_PUBLISH_TIMEOUT
 
-    # 默认超时应该是合理的值（30 秒）
+    # Default timeout should be a reasonable value (30 seconds)
     assert DEFAULT_PUBLISH_TIMEOUT == 30.0
 
 
@@ -1010,12 +1010,12 @@ async def test_default_ask_timeout():
     """Test that DEFAULT_ASK_TIMEOUT is reasonable."""
     from pulsing.actor import DEFAULT_ASK_TIMEOUT
 
-    # 默认超时应该是合理的值（30 秒）
+    # Default timeout should be a reasonable value (30 seconds)
     assert DEFAULT_ASK_TIMEOUT == 30.0
 
 
 # ============================================================================
-# Subscriber Lifecycle Tests (P0-3 修复验证)
+# Subscriber Lifecycle Tests (P0-3 Fix Verification)
 # ============================================================================
 
 
@@ -1023,18 +1023,18 @@ async def test_default_ask_timeout():
 async def test_subscriber_failure_threshold_eviction(actor_system):
     """Test that subscribers are evicted after consecutive failures.
 
-    验证 P0-3 修复：连续失败 3 次后自动清退订阅者。
+    Verify P0-3 fix: Subscribers are automatically evicted after 3 consecutive failures.
     """
     from pulsing.actor import Actor, ActorId, Message
     from pulsing.queue.manager import get_topic_broker
     from pulsing.topic.broker import MAX_CONSECUTIVE_FAILURES
 
-    # 验证配置常量
+    # Verify configuration constants
     assert MAX_CONSECUTIVE_FAILURES == 3
 
     writer = await write_topic(actor_system, "eviction_test_topic")
 
-    # 创建一个会失败的订阅者（模拟 actor 已停止）
+    # Create a failing subscriber (simulate stopped actor)
     class FailingSubscriber(Actor):
         def on_start(self, actor_id: ActorId) -> None:
             pass
@@ -1049,7 +1049,7 @@ async def test_subscriber_failure_threshold_eviction(actor_system):
     actor_name = "_topic_sub_eviction_test_topic_failing"
     await actor_system.spawn(actor_name, failing_actor, public=True)
 
-    # 向 broker 注册失败订阅者
+    # Register failing subscriber with broker
     broker = await get_topic_broker(actor_system, "eviction_test_topic")
     await broker.ask(
         Message.from_json(
@@ -1062,20 +1062,20 @@ async def test_subscriber_failure_threshold_eviction(actor_system):
         )
     )
 
-    # 获取初始统计
+    # Get initial statistics
     stats1 = await writer.stats()
     initial_count = stats1.get("subscriber_count", 0)
     assert initial_count >= 1, "Should have at least one subscriber"
 
-    # 发送消息触发失败（使用 best_effort 模式避免阻塞）
+    # Send messages to trigger failures (use best_effort mode to avoid blocking)
     for i in range(MAX_CONSECUTIVE_FAILURES + 1):
         await writer.publish({"trigger": i}, mode=PublishMode.BEST_EFFORT, timeout=2.0)
         await asyncio.sleep(0.05)
 
-    # 等待清退生效
+    # Wait for eviction to take effect
     await asyncio.sleep(0.2)
 
-    # 验证订阅者已被清退
+    # Verify subscriber has been evicted
     stats2 = await writer.stats()
     final_count = stats2.get("subscriber_count", 0)
     assert final_count < initial_count, (
@@ -1088,11 +1088,11 @@ async def test_subscriber_failure_threshold_eviction(actor_system):
 async def test_subscriber_ttl_config():
     """Test that TTL configuration constants are set correctly.
 
-    验证 P0-3 修复：TTL re-resolve 配置。
+    Verify P0-3 fix: TTL re-resolve configuration.
     """
     from pulsing.topic.broker import REF_TTL_SECONDS, MAX_CONSECUTIVE_FAILURES
 
-    # 验证配置合理
+    # Verify configuration is reasonable
     assert REF_TTL_SECONDS == 60.0, "TTL should be 60 seconds"
     assert MAX_CONSECUTIVE_FAILURES == 3, "Failure threshold should be 3"
 
@@ -1101,7 +1101,7 @@ async def test_subscriber_ttl_config():
 async def test_healthy_subscriber_not_evicted(actor_system):
     """Test that healthy subscribers are NOT evicted.
 
-    验证健康的订阅者不会被误清退。
+    Verify that healthy subscribers are not mistakenly evicted.
     """
     writer = await write_topic(actor_system, "healthy_sub_topic")
     reader = await read_topic(actor_system, "healthy_sub_topic")
@@ -1115,14 +1115,14 @@ async def test_healthy_subscriber_not_evicted(actor_system):
     await reader.start()
     await asyncio.sleep(0.05)
 
-    # 发送多条消息
+    # Send multiple messages
     for i in range(10):
         await writer.publish({"seq": i}, mode=PublishMode.WAIT_ALL_ACKS, timeout=5.0)
 
-    # 验证所有消息都被接收
+    # Verify all messages were received
     assert len(received) == 10
 
-    # 验证订阅者仍然存在
+    # Verify subscriber still exists
     stats = await writer.stats()
     assert stats.get("subscriber_count", 0) >= 1
 
@@ -1130,7 +1130,7 @@ async def test_healthy_subscriber_not_evicted(actor_system):
 
 
 # ============================================================================
-# Mailbox Configuration Tests (P1-1 修复验证)
+# Mailbox Configuration Tests (P1-1 Fix Verification)
 # ============================================================================
 
 
@@ -1138,18 +1138,18 @@ async def test_healthy_subscriber_not_evicted(actor_system):
 async def test_default_mailbox_capacity_config():
     """Test that default mailbox capacity is configurable.
 
-    验证 P1-1 修复：SystemConfig 的默认 mailbox capacity。
+    Verify P1-1 fix: SystemConfig's default mailbox capacity.
     """
-    # Python 侧通过 Rust 绑定使用，验证默认值存在
+    # Python side uses through Rust bindings, verify default value exists
     from pulsing.actor import SystemConfig
 
     config = SystemConfig.standalone()
-    # 验证 config 可以正常创建
+    # Verify config can be created normally
     assert config is not None
 
 
 # ============================================================================
-# Load Balance Strategy Tests (P1-2 修复验证)
+# Load Balance Strategy Tests (P1-2 Fix Verification)
 # ============================================================================
 
 
@@ -1157,7 +1157,7 @@ async def test_default_mailbox_capacity_config():
 async def test_resolve_named_returns_actor(actor_system):
     """Test that resolve_named returns a valid ActorRef.
 
-    验证 P1-2 修复：resolve_named 基本功能。
+    Verify P1-2 fix: resolve_named basic functionality.
     """
     from pulsing.actor import Actor, ActorId
 
@@ -1188,8 +1188,8 @@ async def test_resolve_named_returns_actor(actor_system):
 async def test_resolve_named_multiple_calls(actor_system):
     """Test that multiple resolve_named calls work correctly.
 
-    验证 P1-2 修复：多次 resolve 应该返回有效的 ActorRef。
-    注意：在单节点环境下无法验证 RoundRobin，但可以验证基本功能。
+    Verify P1-2 fix: Multiple resolves should return valid ActorRefs.
+    Note: RoundRobin cannot be verified in single-node environment, but basic functionality can be verified.
     """
     from pulsing.actor import Actor, ActorId
 

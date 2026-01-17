@@ -1,9 +1,9 @@
-"""同步队列包装器 - 通过 .sync() 方法获取
+"""Synchronous queue wrapper - obtained via .sync() method
 
-在异步队列上调用 .sync() 获取同步包装器。
+Call .sync() on async queue to get synchronous wrapper.
 
-注意：同步包装器设计用于非异步代码中。不要在 async 函数内部使用，
-因为它会阻塞事件循环。
+Note: Synchronous wrapper is designed for non-async code. Do not use inside async functions,
+as it will block the event loop.
 """
 
 import asyncio
@@ -14,14 +14,14 @@ if TYPE_CHECKING:
 
 
 class SyncQueue:
-    """同步队列包装器"""
+    """Synchronous queue wrapper"""
 
     def __init__(self, queue: "Queue"):
         self._queue = queue
         self._loop = queue._loop
 
     def _run(self, coro):
-        """同步运行协程"""
+        """Run coroutine synchronously"""
         if self._loop is None or not self._loop.is_running():
             raise RuntimeError(
                 "Event loop not running. Sync wrapper requires a running event loop."
@@ -49,7 +49,7 @@ class SyncQueue:
 
 
 class SyncQueueWriter:
-    """同步写入器包装器"""
+    """Synchronous writer wrapper"""
 
     def __init__(self, writer: "QueueWriter"):
         self._writer = writer
@@ -70,7 +70,7 @@ class SyncQueueWriter:
 
 
 class SyncQueueReader:
-    """同步读取器包装器"""
+    """Synchronous reader wrapper"""
 
     def __init__(self, reader: "QueueReader"):
         self._reader = reader

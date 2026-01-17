@@ -1,13 +1,13 @@
 """
-LangGraph + Pulsing 分布式模式示例
+LangGraph + Pulsing Distributed Mode Example
 
 Usage:
-    ./run_distributed.sh                          # 一键启动
+    ./run_distributed.sh                          # One-click startup
 
-    # 或手动启动:
-    python distributed.py worker llm 8001         # 终端 1
-    python distributed.py worker tool 8002 8001   # 终端 2
-    python distributed.py run                     # 终端 3
+    # Or start manually:
+    python distributed.py worker llm 8001         # Terminal 1
+    python distributed.py worker tool 8002 8001   # Terminal 2
+    python distributed.py run                     # Terminal 3
 """
 
 import asyncio
@@ -23,7 +23,7 @@ class AgentState(TypedDict):
 
 
 def llm_node(state: AgentState) -> AgentState:
-    """LLM 节点 - 部署在 GPU 服务器"""
+    """LLM node - deployed on GPU server"""
     messages = state.get("messages", [])
     last_msg = messages[-1] if messages else {}
     content = (
@@ -46,7 +46,7 @@ def llm_node(state: AgentState) -> AgentState:
 
 
 def tool_node(state: AgentState) -> AgentState:
-    """Tool 节点 - 部署在 CPU 服务器"""
+    """Tool node - deployed on CPU server"""
     result = "Sunny, 25°C"
     print(f"[Tool Worker] -> {result}")
     return {"messages": [{"role": "tool", "content": result}], "next_step": "llm"}
@@ -65,14 +65,14 @@ def build_graph():
 
 
 async def run_distributed():
-    """分布式主程序"""
+    """Distributed main program"""
     from pulsing.langgraph import with_pulsing
 
     print("=" * 50)
-    print("LangGraph + Pulsing 分布式模式")
+    print("LangGraph + Pulsing Distributed Mode")
     print("=" * 50)
 
-    # ✨ 一行代码实现分布式
+    # ✨ One line of code to enable distribution
     app = with_pulsing(
         build_graph(),
         node_mapping={
@@ -82,7 +82,7 @@ async def run_distributed():
         seeds=["127.0.0.1:8001", "127.0.0.1:8002"],
     )
 
-    print("\n等待连接...")
+    print("\nWaiting for connections...")
     await asyncio.sleep(2)
 
     print("\n--- Weather Query ---")
@@ -99,7 +99,7 @@ async def run_distributed():
 
 
 async def run_worker(node_name: str, port: int, seed_port: int | None = None):
-    """启动 Worker"""
+    """Start Worker"""
     from pulsing.langgraph import start_worker
 
     nodes = {"llm": llm_node, "tool": tool_node}

@@ -1,7 +1,7 @@
 """
-AutoGen 兼容性示例 - 单机模式
+AutoGen Compatibility Example - Standalone Mode
 
-演示 PulsingRuntime 如何直接替代 AutoGen SingleThreadedAgentRuntime
+Demonstrates how PulsingRuntime can directly replace AutoGen SingleThreadedAgentRuntime
 
 Usage:
     pip install autogen-core
@@ -21,7 +21,7 @@ from autogen_core import (
 from pulsing.autogen import PulsingRuntime
 
 
-# 定义消息类型
+# Define message types
 @dataclass
 class Ping:
     content: str
@@ -33,7 +33,7 @@ class Pong:
     count: int
 
 
-# 使用 AutoGen 原生 Agent 定义
+# Use AutoGen native Agent definition
 class PingPongAgent(RoutedAgent):
     def __init__(self) -> None:
         super().__init__("PingPong Agent")
@@ -47,22 +47,22 @@ class PingPongAgent(RoutedAgent):
 
 
 async def main_with_pulsing():
-    """使用 PulsingRuntime"""
+    """Use PulsingRuntime"""
     print("=" * 50)
     print("Running with PulsingRuntime (standalone mode)")
     print("=" * 50)
 
-    # 创建运行时 - 单机模式
+    # Create runtime - standalone mode
     runtime = PulsingRuntime()
     await runtime.start()
 
-    # 注册 Agent
+    # Register Agent
     await runtime.register_factory(
         "ping_pong",
         lambda: PingPongAgent(),
     )
 
-    # 发送消息
+    # Send messages
     for i in range(3):
         response = await runtime.send_message(
             Ping(content=f"Hello {i}"),
@@ -75,7 +75,7 @@ async def main_with_pulsing():
 
 
 async def main_with_autogen():
-    """使用 AutoGen SingleThreadedAgentRuntime (对照组)"""
+    """Use AutoGen SingleThreadedAgentRuntime (control group)"""
     print("=" * 50)
     print("Running with AutoGen SingleThreadedAgentRuntime")
     print("=" * 50)
@@ -102,10 +102,10 @@ async def main_with_autogen():
 
 
 async def main():
-    # 先用 Pulsing
+    # First use Pulsing
     await main_with_pulsing()
 
-    # 再用 AutoGen 对照
+    # Then use AutoGen for comparison
     await main_with_autogen()
 
 

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Ray 兼容层示例（迁移用）
+Ray Compatibility Layer Example (for Migration)
 
-展示如何使用 pulsing.compat.ray 从 Ray 迁移到 Pulsing。
-迁移只需修改一行 import！
+Demonstrates how to use pulsing.compat.ray to migrate from Ray to Pulsing.
+Migration only requires changing one import line!
 
-用法: python examples/python/ray_compat_example.py
+Usage: python examples/python/ray_compat_example.py
 """
 
 # ============================================
-# 从 Ray 迁移：只需改这一行！
+# Migrate from Ray: Just change this line!
 # ============================================
 # Before: import ray
 # After:
@@ -18,7 +18,7 @@ from pulsing.compat import ray
 
 @ray.remote
 class Counter:
-    """分布式计数器 (Ray 风格)"""
+    """Distributed counter (Ray style)"""
 
     def __init__(self, init_value: int = 0):
         self.value = init_value
@@ -33,7 +33,7 @@ class Counter:
 
 @ray.remote
 class Calculator:
-    """分布式计算器 (Ray 风格)"""
+    """Distributed calculator (Ray style)"""
 
     def add(self, a: int, b: int) -> int:
         return a + b
@@ -44,21 +44,21 @@ class Calculator:
 
 def main():
     print("=" * 60)
-    print("Ray 兼容层示例 (from pulsing.compat import ray)")
+    print("Ray Compatibility Layer Example (from pulsing.compat import ray)")
     print("=" * 60)
 
-    # 初始化 (Ray 风格)
+    # Initialize (Ray style)
     ray.init()
-    print("✓ Pulsing (Ray compat) 已初始化")
+    print("✓ Pulsing (Ray compat) initialized")
 
     # --- Counter ---
     print("\n--- Counter ---")
     counter = Counter.remote(init_value=10)
 
-    # Ray 风格调用
-    print(f"初始值: {ray.get(counter.get.remote())}")
+    # Ray style calls
+    print(f"Initial value: {ray.get(counter.get.remote())}")
     print(f"increment(5): {ray.get(counter.increment.remote(5))}")
-    print(f"最终值: {ray.get(counter.get.remote())}")
+    print(f"Final value: {ray.get(counter.get.remote())}")
 
     # --- Calculator ---
     print("\n--- Calculator ---")
@@ -67,24 +67,24 @@ def main():
     print(f"add(10, 20): {ray.get(calc.add.remote(10, 20))}")
     print(f"multiply(5, 6): {ray.get(calc.multiply.remote(5, 6))}")
 
-    # --- 批量获取 ---
-    print("\n--- 批量获取 ---")
+    # --- Batch get ---
+    print("\n--- Batch Get ---")
     refs = [
         calc.add.remote(1, 2),
         calc.add.remote(3, 4),
         calc.multiply.remote(5, 6),
     ]
     results = ray.get(refs)
-    print(f"批量结果: {results}")
+    print(f"Batch results: {results}")
 
     # --- Object Store ---
     print("\n--- put/get ---")
     ref = ray.put({"message": "Hello from pulsing.compat.ray!"})
-    print(f"结果: {ray.get(ref)}")
+    print(f"Result: {ray.get(ref)}")
 
-    # 关闭 (Ray 风格)
+    # Shutdown (Ray style)
     ray.shutdown()
-    print("\n✓ 完成!")
+    print("\n✓ Done!")
 
 
 if __name__ == "__main__":
@@ -92,10 +92,10 @@ if __name__ == "__main__":
 
 
 # =============================================================================
-# 迁移指南
+# Migration Guide
 # =============================================================================
 #
-# Step 1: 修改 import
+# Step 1: Change import
 # -------------------
 # Before:
 #     import ray
@@ -103,7 +103,7 @@ if __name__ == "__main__":
 # After:
 #     from pulsing.compat import ray
 #
-# Step 2: 其余代码完全不变！
+# Step 2: Rest of the code remains unchanged!
 # -------------------------
 # ray.init()
 # @ray.remote
@@ -113,7 +113,7 @@ if __name__ == "__main__":
 # ray.shutdown()
 #
 # =============================================================================
-# 下一步：迁移到原生 API（可选，性能更好）
+# Next Step: Migrate to Native API (Optional, Better Performance)
 # =============================================================================
 #
 # from pulsing.actor import init, shutdown, remote
@@ -125,7 +125,7 @@ if __name__ == "__main__":
 #     ...
 #
 # counter = await Counter.spawn()
-# result = await counter.incr()  # 无需 .remote() + get()！
+# result = await counter.incr()  # No need for .remote() + get()!
 #
 # await shutdown()
 #

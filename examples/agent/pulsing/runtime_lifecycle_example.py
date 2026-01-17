@@ -1,7 +1,7 @@
 """
-Runtime 生命周期管理 - 最佳实践示例
+Runtime Lifecycle Management - Best Practices Example
 
-演示如何正确处理反复创建销毁 runtime 的场景。
+Demonstrates how to properly handle scenarios of repeatedly creating and destroying runtime.
 """
 
 import asyncio
@@ -9,7 +9,7 @@ import asyncio
 from pulsing.agent import agent, cleanup, runtime
 
 
-@agent(role="计数器", goal="累加数字")
+@agent(role="Counter", goal="Accumulate numbers")
 class Counter:
     def __init__(self, initial: int = 0):
         self.value = initial
@@ -23,51 +23,51 @@ class Counter:
 
 
 async def example_simple():
-    """示例 1: 简单场景（无需清理）"""
-    print("\n=== 示例 1: 简单场景 ===")
+    """Example 1: Simple scenario (no cleanup needed)"""
+    print("\n=== Example 1: Simple Scenario ===")
     async with runtime():
         counter = await Counter.spawn(name="counter", initial=0)
         for _ in range(5):
             value = await counter.increment()
-            print(f"当前值: {value}")
+            print(f"Current value: {value}")
 
 
 async def example_repeated_with_cleanup():
-    """示例 2: 反复创建销毁（推荐模式）"""
-    print("\n=== 示例 2: 反复创建销毁（带清理）===")
+    """Example 2: Repeated create/destroy (recommended pattern)"""
+    print("\n=== Example 2: Repeated Create/Destroy (with cleanup) ===")
 
     for i in range(3):
         try:
             async with runtime():
                 counter = await Counter.spawn(name=f"counter_{i}", initial=i * 10)
                 value = await counter.increment()
-                print(f"任务 {i}: 结果 = {value}")
+                print(f"Task {i}: result = {value}")
         finally:
-            cleanup()  # ⭐ 确保每次清理
-            print(f"任务 {i}: 已清理")
+            cleanup()  # ⭐ Ensure cleanup each time
+            print(f"Task {i}: cleaned up")
 
 
 async def example_batch_processing():
-    """示例 3: 批处理（共享 runtime）"""
-    print("\n=== 示例 3: 批处理（共享 runtime）===")
+    """Example 3: Batch processing (shared runtime)"""
+    print("\n=== Example 3: Batch Processing (shared runtime) ===")
     try:
         async with runtime():
-            # 创建多个 counter
+            # Create multiple counters
             counters = []
             for i in range(5):
                 counter = await Counter.spawn(name=f"counter_{i}", initial=i)
                 counters.append(counter)
 
-            # 并发处理
+            # Concurrent processing
             results = await asyncio.gather(*[c.increment() for c in counters])
-            print(f"结果: {results}")
+            print(f"Results: {results}")
     finally:
         cleanup()
 
 
 async def example_error_handling():
-    """示例 4: 异常处理"""
-    print("\n=== 示例 4: 异常处理 ===")
+    """Example 4: Error handling"""
+    print("\n=== Example 4: Error Handling ===")
 
     for i in range(2):
         try:
@@ -76,23 +76,23 @@ async def example_error_handling():
                 await counter.increment()
 
                 if i == 0:
-                    # 模拟异常
-                    raise ValueError("模拟错误")
+                    # Simulate error
+                    raise ValueError("Simulated error")
 
-                print(f"任务 {i} 成功")
+                print(f"Task {i} succeeded")
         except ValueError as e:
-            print(f"任务 {i} 失败: {e}")
+            print(f"Task {i} failed: {e}")
         finally:
-            cleanup()  # ⭐ 即使有异常也要清理
-            print(f"任务 {i} 已清理")
+            cleanup()  # ⭐ Clean up even on error
+            print(f"Task {i} cleaned up")
 
 
 async def example_helper_pattern():
-    """示例 5: 使用辅助函数封装"""
-    print("\n=== 示例 5: 辅助函数模式 ===")
+    """Example 5: Using helper function pattern"""
+    print("\n=== Example 5: Helper Function Pattern ===")
 
     async def run_counter_task(task_id: int, increments: int) -> int:
-        """封装的任务函数（自动清理）"""
+        """Encapsulated task function (auto cleanup)"""
         try:
             async with runtime():
                 counter = await Counter.spawn(name=f"task_{task_id}", initial=0)
@@ -102,37 +102,37 @@ async def example_helper_pattern():
         finally:
             cleanup()
 
-    # 运行多个任务
+    # Run multiple tasks
     tasks = [run_counter_task(i, i + 1) for i in range(3)]
     results = []
     for task in tasks:
         result = await task
         results.append(result)
-        print(f"任务完成，结果: {result}")
+        print(f"Task completed, result: {result}")
 
-    print(f"所有结果: {results}")
+    print(f"All results: {results}")
 
 
 async def main():
-    """运行所有示例"""
-    print("Runtime 生命周期管理 - 最佳实践\n")
+    """Run all examples"""
+    print("Runtime Lifecycle Management - Best Practices\n")
 
-    # 示例 1: 简单场景
+    # Example 1: Simple scenario
     await example_simple()
 
-    # 示例 2: 反复创建销毁（推荐）
+    # Example 2: Repeated create/destroy (recommended)
     await example_repeated_with_cleanup()
 
-    # 示例 3: 批处理
+    # Example 3: Batch processing
     await example_batch_processing()
 
-    # 示例 4: 异常处理
+    # Example 4: Error handling
     await example_error_handling()
 
-    # 示例 5: 辅助函数模式
+    # Example 5: Helper function pattern
     await example_helper_pattern()
 
-    print("\n✅ 所有示例完成！")
+    print("\n✅ All examples completed!")
 
 
 if __name__ == "__main__":

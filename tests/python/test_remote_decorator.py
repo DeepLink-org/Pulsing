@@ -206,7 +206,7 @@ async def test_async_generator_streaming():
     try:
         service = await StreamingService.spawn()
 
-        # Collect streamed values - 直接 async for，不需要 await
+        # Collect streamed values - directly use async for, no await needed
         collected = []
         async for item in service.generate_numbers(5):
             collected.append(item)

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-@remote 装饰器示例 (原生异步 API)
+@remote Decorator Example (Native Async API)
 
-展示 pulsing.actor 的简洁 API：
-- await init() 初始化
-- @remote 装饰器
-- await Counter.spawn() 创建 actor
-- await counter.method() 调用方法
+Demonstrates pulsing.actor's concise API:
+- await init() for initialization
+- @remote decorator
+- await Counter.spawn() to create actor
+- await counter.method() to call methods
 
-用法: python examples/python/remote_actor_example.py
+Usage: python examples/python/remote_actor_example.py
 """
 
 import asyncio
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @remote
 class Counter:
-    """分布式计数器"""
+    """Distributed counter"""
 
     def __init__(self, init_value: int = 0):
         self.value = init_value
@@ -41,7 +41,7 @@ class Counter:
 
 @remote
 class KeyValueStore:
-    """分布式键值存储"""
+    """Distributed key-value store"""
 
     def __init__(self):
         self.store: dict = {}
@@ -58,7 +58,7 @@ class KeyValueStore:
 
 @remote
 class AsyncWorker:
-    """支持异步方法"""
+    """Supports async methods"""
 
     def __init__(self, worker_id: str):
         self.worker_id = worker_id
@@ -75,21 +75,21 @@ class AsyncWorker:
 
 async def main():
     print("=" * 60)
-    print("@remote 装饰器示例 (原生异步 API)")
+    print("@remote Decorator Example (Native Async API)")
     print("=" * 60)
 
-    # 简洁的初始化
+    # Simple initialization
     await init()
 
     # --- Counter ---
     print("\n--- Counter ---")
     counter = await Counter.spawn(init_value=10)
 
-    # 直接 await，无需 .remote() + get()
-    print(f"初始值: {await counter.get()}")
+    # Direct await, no need for .remote() + get()
+    print(f"Initial value: {await counter.get()}")
     print(f"increment(5): {await counter.increment(5)}")
     print(f"decrement(3): {await counter.decrement(3)}")
-    print(f"最终值: {await counter.get()}")
+    print(f"Final value: {await counter.get()}")
 
     # --- KeyValueStore ---
     print("\n--- KeyValueStore ---")
@@ -107,13 +107,13 @@ async def main():
     worker = await AsyncWorker.spawn(worker_id="worker-001")
 
     result = await worker.process("hello")
-    print(f"处理结果: {result}")
+    print(f"Process result: {result}")
 
     status = await worker.status()
-    print(f"状态: {status}")
+    print(f"Status: {status}")
 
-    # --- 并行调用 ---
-    print("\n--- 并行调用 ---")
+    # --- Parallel calls ---
+    print("\n--- Parallel Calls ---")
     workers = [await AsyncWorker.spawn(worker_id=f"worker-{i}") for i in range(3)]
 
     tasks = [w.process(f"task-{i}") for i, w in enumerate(workers)]
@@ -122,9 +122,9 @@ async def main():
     for r in results:
         print(f"  {r['worker']}: {r['input']} -> {r['output']}")
 
-    print("\n✓ 完成!")
+    print("\n✓ Done!")
 
-    # 关闭
+    # Shutdown
     await shutdown()
 
 

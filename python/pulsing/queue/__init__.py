@@ -1,20 +1,20 @@
-"""分布式内存队列 - 基于 Pulsing Actor 架构
+"""Distributed In-Memory Queue - Based on Pulsing Actor Architecture
 
-架构特点：
-- 每个节点有一个 StorageManager Actor，负责管理本节点的所有 bucket
-- StorageManager 使用一致性哈希确定 bucket 的 owner 节点
-- 保证整个集群中每个 bucket 只有一个 Actor
-- 支持可插拔的存储后端
+Architecture Features:
+- Each node has a StorageManager Actor that manages all buckets on this node
+- StorageManager uses consistent hashing to determine the owner node for each bucket
+- Ensures only one Actor per bucket across the entire cluster
+- Supports pluggable storage backends
 
-存储后端：
-- "memory": 纯内存后端（内置默认）
-- 持久化后端需要安装 persisting 包
+Storage Backends:
+- "memory": Pure in-memory backend (built-in default)
+- Persistent backends require installing the persisting package
 
 Example:
-    # 使用默认内存后端
+    # Use default in-memory backend
     writer = await write_queue(system, "my_queue")
 
-    # 使用 persisting 提供的 Lance 持久化后端
+    # Use Lance persistent backend provided by persisting
     from persisting.queue import LanceBackend
     from pulsing.queue import register_backend
     register_backend("lance", LanceBackend)
@@ -39,23 +39,23 @@ from .storage import BucketStorage
 from .sync_queue import SyncQueue, SyncQueueReader, SyncQueueWriter
 
 __all__ = [
-    # 异步 API
+    # Async API
     "Queue",
     "QueueWriter",
     "QueueReader",
     "write_queue",
     "read_queue",
-    # 同步包装器（通过 .sync() 获取）
+    # Sync wrapper (obtained via .sync())
     "SyncQueue",
     "SyncQueueWriter",
     "SyncQueueReader",
-    # 底层组件
+    # Low-level components
     "StorageManager",
     "BucketStorage",
     "get_storage_manager",
     "get_bucket_ref",
     "get_topic_broker",
-    # 后端相关
+    # Backend related
     "StorageBackend",
     "MemoryBackend",
     "register_backend",

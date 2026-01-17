@@ -1,5 +1,5 @@
 """
-PulsingGraphWrapper - 一行代码让 LangGraph 获得分布式能力
+PulsingGraphWrapper - One line of code to give LangGraph distributed capabilities
 """
 
 from __future__ import annotations
@@ -22,13 +22,13 @@ def with_pulsing(
     seeds: list[str] | None = None,
 ) -> "PulsingGraphWrapper":
     """
-    包装 LangGraph CompiledGraph，使其支持分布式执行
+    Wraps LangGraph CompiledGraph to enable distributed execution
 
     Args:
-        compiled_graph: LangGraph 编译后的图 (graph.compile() 的返回值)
-        node_mapping: 节点到远程 Actor 的映射
-        addr: 本节点地址 (可选)
-        seeds: 种子节点地址列表
+        compiled_graph: LangGraph compiled graph (return value of graph.compile())
+        node_mapping: Mapping from nodes to remote Actors
+        addr: Local node address (optional)
+        seeds: List of seed node addresses
 
     Example:
         distributed_app = with_pulsing(
@@ -47,7 +47,7 @@ def with_pulsing(
 
 
 class PulsingGraphWrapper:
-    """LangGraph CompiledGraph 的分布式包装器"""
+    """Distributed wrapper for LangGraph CompiledGraph"""
 
     def __init__(
         self,
@@ -65,7 +65,7 @@ class PulsingGraphWrapper:
         self._connected = False
 
     async def _ensure_connected(self):
-        """确保已连接到 Pulsing 集群"""
+        """Ensure connection to Pulsing cluster"""
         if self._connected:
             return
 
@@ -88,7 +88,7 @@ class PulsingGraphWrapper:
         config: Optional[dict] = None,
         **kwargs,
     ) -> dict:
-        """异步执行图 (API 兼容 LangGraph)"""
+        """Execute graph asynchronously (API compatible with LangGraph)"""
         await self._ensure_connected()
 
         if not self._node_mapping:
@@ -102,7 +102,7 @@ class PulsingGraphWrapper:
         config: Optional[dict] = None,
         **kwargs,
     ) -> dict:
-        """同步执行图"""
+        """Execute graph synchronously"""
         return asyncio.run(self.ainvoke(input, config, **kwargs))
 
     async def astream(
@@ -111,7 +111,7 @@ class PulsingGraphWrapper:
         config: Optional[dict] = None,
         **kwargs,
     ) -> AsyncIterator[dict]:
-        """流式执行图"""
+        """Execute graph in streaming mode"""
         await self._ensure_connected()
 
         if not self._node_mapping:
@@ -122,12 +122,12 @@ class PulsingGraphWrapper:
             yield result
 
     async def _distributed_execute(self, input: dict, config: Optional[dict]) -> dict:
-        """分布式执行 - 通过 Pulsing 远程调用节点"""
+        """Distributed execution - remote node calls via Pulsing"""
         state = input.copy()
         max_steps = 25
         step = 0
 
-        # 获取入口点
+        # Get entry point
         current_node = (
             getattr(self._graph, "_first_node", None)
             or getattr(self._graph, "entry_point", None)
@@ -155,18 +155,18 @@ class PulsingGraphWrapper:
                         f"Node '{current_node}' failed: {result.get('error')}"
                     )
 
-            # 根据状态决定下一个节点
+            # Determine next node based on state
             next_step = state.get("next_step", "end")
             current_node = next_step if next_step in self._node_mapping else "__end__"
 
         return state
 
     def __getattr__(self, name: str) -> Any:
-        """代理未定义的属性到原始图"""
+        """Proxy undefined attributes to original graph"""
         return getattr(self._graph, name)
 
     async def close(self):
-        """关闭连接"""
+        """Close connection"""
         if self._system:
             await self._system.shutdown()
             self._connected = False

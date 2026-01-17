@@ -1,16 +1,16 @@
-"""Worker 调度器 - 负载均衡策略
+"""Worker scheduler - Load balancing strategies
 
-支持以下调度策略:
-- RandomScheduler: 随机选择 (Python实现)
-- RoundRobinScheduler: 轮询选择 (Python实现)
-- LeastConnectionScheduler: 最少连接 (Python实现)
-- RustRandomScheduler: 随机选择 (Rust实现，高性能)
-- RustRoundRobinScheduler: 轮询选择 (Rust实现)
-- RustPowerOfTwoScheduler: Power-of-Two Choices (Rust实现)
-- RustConsistentHashScheduler: 一致性哈希 (Rust实现，支持会话亲和性)
-- RustCacheAwareScheduler: 缓存感知路由 (Rust实现，支持Radix Tree前缀匹配)
+Supports the following scheduling strategies:
+- RandomScheduler: Random selection (Python implementation)
+- RoundRobinScheduler: Round-robin selection (Python implementation)
+- LeastConnectionScheduler: Least connections (Python implementation)
+- RustRandomScheduler: Random selection (Rust implementation, high performance)
+- RustRoundRobinScheduler: Round-robin selection (Rust implementation)
+- RustPowerOfTwoScheduler: Power-of-Two Choices (Rust implementation)
+- RustConsistentHashScheduler: Consistent hashing (Rust implementation, supports session affinity)
+- RustCacheAwareScheduler: Cache-aware routing (Rust implementation, supports Radix Tree prefix matching)
 
-负载感知调度推荐使用 load_stream 模块中的 StreamLoadScheduler
+For load-aware scheduling, recommend using StreamLoadScheduler from load_stream module
 """
 
 import asyncio
@@ -43,7 +43,7 @@ except ImportError:
 
 
 class Scheduler(ABC):
-    """调度器基类"""
+    """Scheduler base class"""
 
     def __init__(self, actor_system, worker_name: str = "worker"):
         self._system = actor_system
@@ -65,7 +65,7 @@ class Scheduler(ABC):
 
     async def _resolve_worker(self, node_id: str | None = None):
         try:
-            # node_id 在 MemberInfo 中被序列化为字符串，需要转回 int 以匹配 resolve_named
+            # node_id is serialized as string in MemberInfo, need to convert back to int to match resolve_named
             nid_int = int(node_id) if node_id else None
             return await self._system.resolve_named(self._worker_name, node_id=nid_int)
         except Exception:
@@ -77,22 +77,22 @@ class Scheduler(ABC):
         request_text: str | None = None,
         headers: dict[str, str] | None = None,
     ):
-        """选择一个 worker，返回 ActorRef 或 None
+        """Select a worker, returns ActorRef or None
 
         Args:
-            request_text: 请求文本 (用于缓存感知和一致性哈希路由)
-            headers: HTTP 请求头 (用于一致性哈希路由)
+            request_text: Request text (for cache-aware and consistent hash routing)
+            headers: HTTP request headers (for consistent hash routing)
         """
         pass
 
 
 # ============================================================================
-# Python 实现的调度器
+# Python-implemented schedulers
 # ============================================================================
 
 
 class RoundRobinScheduler(Scheduler):
-    """轮询调度器 (Python实现)"""
+    """Round-robin scheduler (Python implementation)"""
 
     def __init__(self, actor_system, worker_name: str = "worker"):
         super().__init__(actor_system, worker_name)
@@ -115,7 +115,7 @@ class RoundRobinScheduler(Scheduler):
 
 
 class RandomScheduler(Scheduler):
-    """随机调度器 (Python实现)"""
+    """Random scheduler (Python implementation)"""
 
     async def select_worker(
         self,
@@ -133,7 +133,7 @@ class RandomScheduler(Scheduler):
 
 
 class LeastConnectionScheduler(Scheduler):
-    """最少连接调度器 (Python实现)"""
+    """Least connections scheduler (Python implementation)"""
 
     def __init__(self, actor_system, worker_name: str = "worker"):
         super().__init__(actor_system, worker_name)
@@ -159,19 +159,19 @@ class LeastConnectionScheduler(Scheduler):
 
 
 # ============================================================================
-# Rust 实现的调度器 (高性能)
+# Rust-implemented schedulers (high performance)
 # ============================================================================
 
 
 class RustSchedulerBase(Scheduler):
-    """Rust 调度器基类"""
+    """Rust scheduler base class"""
 
     def __init__(self, actor_system, worker_name: str = "worker"):
         super().__init__(actor_system, worker_name)
         self._worker_info_cache: dict[str, WorkerInfo] = {}
 
     def _get_worker_info(self, worker_data: dict) -> WorkerInfo:
-        """获取或创建 WorkerInfo 对象"""
+        """Get or create WorkerInfo object"""
         node_id = worker_data.get("node_id", "")
 
         if node_id not in self._worker_info_cache:
@@ -188,17 +188,17 @@ class RustSchedulerBase(Scheduler):
         return worker_info
 
     def _workers_to_info_list(self, workers: list) -> list:
-        """将 worker 数据转换为 WorkerInfo 列表"""
+        """Convert worker data to WorkerInfo list"""
         return [self._get_worker_info(w) for w in workers]
 
     @abstractmethod
     def _get_policy(self):
-        """获取 Rust 策略对象"""
+        """Get Rust policy object"""
         pass
 
 
 class RustRandomScheduler(RustSchedulerBase):
-    """随机调度器 (Rust实现，高性能)"""
+    """Random scheduler (Rust implementation, high performance)"""
 
     def __init__(self, actor_system, worker_name: str = "worker"):
         if not RUST_POLICIES_AVAILABLE:
@@ -229,7 +229,7 @@ class RustRandomScheduler(RustSchedulerBase):
 
 
 class RustRoundRobinScheduler(RustSchedulerBase):
-    """轮询调度器 (Rust实现)"""
+    """Round-robin scheduler (Rust implementation)"""
 
     def __init__(self, actor_system, worker_name: str = "worker"):
         if not RUST_POLICIES_AVAILABLE:
@@ -259,15 +259,15 @@ class RustRoundRobinScheduler(RustSchedulerBase):
         return await self._resolve_worker(node_id=selected_worker.get("node_id"))
 
     def reset(self):
-        """重置轮询计数器"""
+        """Reset round-robin counter"""
         self._policy.reset()
 
 
 class RustPowerOfTwoScheduler(RustSchedulerBase):
-    """Power-of-Two Choices 调度器 (Rust实现)
+    """Power-of-Two Choices scheduler (Rust implementation)
 
-    随机选择两个 worker，然后选择负载较低的那个。
-    在大规模集群中能够提供接近最优的负载均衡。
+    Randomly selects two workers, then chooses the one with lower load.
+    Provides near-optimal load balancing in large-scale clusters.
     """
 
     def __init__(self, actor_system, worker_name: str = "worker"):
@@ -298,21 +298,21 @@ class RustPowerOfTwoScheduler(RustSchedulerBase):
         return await self._resolve_worker(node_id=selected_worker.get("node_id"))
 
     def update_loads(self, loads: dict[str, int]):
-        """更新缓存的负载信息
+        """Update cached load information
 
         Args:
-            loads: worker URL 到负载值的映射
+            loads: Mapping from worker URL to load value
         """
         self._policy.update_loads(loads)
 
 
 class RustConsistentHashScheduler(RustSchedulerBase):
-    """一致性哈希调度器 (Rust实现)
+    """Consistent hash scheduler (Rust implementation)
 
-    基于会话ID或用户ID进行路由，确保同一用户的请求始终路由到同一 worker。
-    支持从 HTTP 头部或请求体中提取路由键。
+    Routes based on session ID or user ID, ensuring requests from the same user are always routed to the same worker.
+    Supports extracting routing key from HTTP headers or request body.
 
-    HTTP 头部优先级 (按顺序检查):
+    HTTP header priority (checked in order):
     - x-session-id
     - x-user-id
     - x-tenant-id
@@ -320,7 +320,7 @@ class RustConsistentHashScheduler(RustSchedulerBase):
     - x-correlation-id
     - x-trace-id
 
-    请求体字段优先级:
+    Request body field priority:
     - session_params.session_id
     - user
     - session_id
@@ -355,25 +355,25 @@ class RustConsistentHashScheduler(RustSchedulerBase):
         return await self._resolve_worker(node_id=selected_worker.get("node_id"))
 
     def reset(self):
-        """重置哈希环"""
+        """Reset hash ring"""
         self._policy.reset()
 
 
 class RustCacheAwareScheduler(RustSchedulerBase):
-    """缓存感知调度器 (Rust实现)
+    """Cache-aware scheduler (Rust implementation)
 
-    结合缓存亲和性和负载均衡两种策略:
-    1. 当系统负载均衡时，使用缓存感知路由 (基于 Radix Tree 前缀匹配)
-    2. 当系统负载不均衡时，切换到最短队列路由
+    Combines cache affinity and load balancing strategies:
+    1. When system load is balanced, use cache-aware routing (based on Radix Tree prefix matching)
+    2. When system load is unbalanced, switch to shortest queue routing
 
-    特别适合 LLM 推理场景，可以提高 KV Cache 命中率。
+    Particularly suitable for LLM inference scenarios, can improve KV Cache hit rate.
 
     Args:
-        cache_threshold: 前缀匹配阈值 (0.0-1.0)，超过此阈值时使用缓存亲和性路由
-        balance_abs_threshold: 负载不均衡的绝对阈值
-        balance_rel_threshold: 负载不均衡的相对阈值
-        eviction_interval_secs: 缓存驱逐间隔 (秒)
-        max_tree_size: Radix Tree 最大节点数
+        cache_threshold: Prefix match threshold (0.0-1.0), use cache affinity routing when exceeded
+        balance_abs_threshold: Absolute threshold for load imbalance
+        balance_rel_threshold: Relative threshold for load imbalance
+        eviction_interval_secs: Cache eviction interval (seconds)
+        max_tree_size: Maximum number of Radix Tree nodes
     """
 
     def __init__(
@@ -413,7 +413,7 @@ class RustCacheAwareScheduler(RustSchedulerBase):
 
         worker_infos = self._workers_to_info_list(workers)
 
-        # 初始化 workers (如果是第一次调用)
+        # Initialize workers (if first call)
         self._policy.init_workers(worker_infos)
 
         selected_idx = self._policy.select_worker(worker_infos, request_text)
@@ -425,58 +425,58 @@ class RustCacheAwareScheduler(RustSchedulerBase):
         return await self._resolve_worker(node_id=selected_worker.get("node_id"))
 
     def add_worker(self, url: str, model_id: str = "default"):
-        """添加 worker 到缓存树"""
+        """Add worker to cache tree"""
         self._policy.add_worker(url, model_id)
 
     def remove_worker(self, url: str):
-        """从缓存树移除 worker"""
+        """Remove worker from cache tree"""
         self._policy.remove_worker(url)
 
     def evict_cache(self, max_size: int):
-        """手动触发缓存驱逐"""
+        """Manually trigger cache eviction"""
         self._policy.evict_cache(max_size)
 
 
 # ============================================================================
-# 工厂函数
+# Factory function
 # ============================================================================
 
 
 def get_scheduler(
     policy_name: str, actor_system, worker_name: str = "worker", **kwargs
 ) -> Scheduler:
-    """获取调度器实例
+    """Get scheduler instance
 
     Args:
-        policy_name: 策略名称，支持:
-            - "random": 随机 (Rust实现)
-            - "round_robin": 轮询 (Rust实现)
-            - "power_of_two": Power-of-Two Choices (Rust实现)
-            - "consistent_hash": 一致性哈希 (Rust实现)
-            - "cache_aware": 缓存感知 (Rust实现)
-            - "py_random": 随机 (Python实现)
-            - "py_round_robin": 轮询 (Python实现)
-            - "least_connection": 最少连接 (Python实现)
-        actor_system: Actor 系统实例
-        worker_name: Worker actor 名称
-        **kwargs: 策略特定参数 (如 cache_threshold 等)
+        policy_name: Policy name, supports:
+            - "random": Random (Rust implementation)
+            - "round_robin": Round robin (Rust implementation)
+            - "power_of_two": Power-of-Two Choices (Rust implementation)
+            - "consistent_hash": Consistent hash (Rust implementation)
+            - "cache_aware": Cache-aware (Rust implementation)
+            - "py_random": Random (Python implementation)
+            - "py_round_robin": Round robin (Python implementation)
+            - "least_connection": Least connections (Python implementation)
+        actor_system: Actor system instance
+        worker_name: Worker actor name
+        **kwargs: Policy-specific parameters (e.g., cache_threshold, etc.)
 
     Returns:
-        Scheduler 实例
+        Scheduler instance
 
     Note:
-        负载感知调度推荐使用 load_stream 模块中的 StreamLoadScheduler
+        For load-aware scheduling, recommend using StreamLoadScheduler from load_stream module
 
     Examples:
-        # 使用缓存感知调度
+        # Use cache-aware scheduler
         scheduler = get_scheduler("cache_aware", actor_system, "worker",
                                   cache_threshold=0.5)
 
-        # 使用轮询调度
+        # Use round-robin scheduler
         scheduler = get_scheduler("round_robin", actor_system, "worker")
     """
     policy_map = {
-        # Rust 实现 (推荐)
+        # Rust implementation (recommended)
         "random": RustRandomScheduler if RUST_POLICIES_AVAILABLE else RandomScheduler,
         "round_robin": (
             RustRoundRobinScheduler if RUST_POLICIES_AVAILABLE else RoundRobinScheduler
@@ -484,7 +484,7 @@ def get_scheduler(
         "power_of_two": RustPowerOfTwoScheduler,
         "consistent_hash": RustConsistentHashScheduler,
         "cache_aware": RustCacheAwareScheduler,
-        # Python 实现
+        # Python implementation
         "py_random": RandomScheduler,
         "py_round_robin": RoundRobinScheduler,
         "least_connection": LeastConnectionScheduler,
@@ -496,29 +496,29 @@ def get_scheduler(
             f"Unknown policy: {policy_name}. Available: {list(policy_map.keys())}"
         )
 
-    # 支持 kwargs 的策略
+    # Policies that support kwargs
     if policy_name == "cache_aware":
         return scheduler_class(actor_system, worker_name, **kwargs)
     else:
         return scheduler_class(actor_system, worker_name)
 
 
-# 导出
+# Exports
 __all__ = [
-    # 基类
+    # Base class
     "Scheduler",
-    # Python 调度器
+    # Python schedulers
     "RandomScheduler",
     "RoundRobinScheduler",
     "LeastConnectionScheduler",
-    # Rust 调度器
+    # Rust schedulers
     "RustRandomScheduler",
     "RustRoundRobinScheduler",
     "RustPowerOfTwoScheduler",
     "RustConsistentHashScheduler",
     "RustCacheAwareScheduler",
-    # 工厂
+    # Factory
     "get_scheduler",
-    # 常量
+    # Constants
     "RUST_POLICIES_AVAILABLE",
 ]

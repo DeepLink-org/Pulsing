@@ -1,4 +1,4 @@
-"""Router - OpenAI 兼容 HTTP API 路由器"""
+"""Router - OpenAI-compatible HTTP API router"""
 
 import json
 import time
@@ -51,7 +51,7 @@ class CompletionRequest:
 
 
 class _OpenAIHandler:
-    """OpenAI 兼容 HTTP 请求处理器"""
+    """OpenAI-compatible HTTP request handler"""
 
     def __init__(self, actor_system: ActorSystem, model_name: str, scheduler):
         self._actor_system = actor_system
@@ -68,10 +68,10 @@ class _OpenAIHandler:
         )
 
     async def health_check(self, request: web.Request) -> web.Response:
-        # 兼容不同类型的 scheduler
+        # Compatible with different types of schedulers
         if hasattr(self._scheduler, "get_worker_count"):
             count = self._scheduler.get_worker_count()
-            # 如果是协程则 await
+            # If coroutine then await
             if hasattr(count, "__await__"):
                 total_workers = await count
             else:
@@ -82,7 +82,7 @@ class _OpenAIHandler:
         if hasattr(self._scheduler, "get_healthy_worker_count"):
             healthy_workers = await self._scheduler.get_healthy_worker_count()
         elif hasattr(self._scheduler, "get_all_loads"):
-            # StreamLoadScheduler: 使用 get_all_loads 计算健康数
+            # StreamLoadScheduler: use get_all_loads to calculate healthy count
             healthy_workers = len(self._scheduler.get_all_loads())
         else:
             healthy_workers = total_workers
@@ -252,9 +252,9 @@ class _OpenAIHandler:
             )
             stream_message = await worker_ref.ask(req_msg)
 
-            # 检查返回的是否是流式消息
+            # Check if returned message is a stream message
             if not stream_message.is_stream:
-                # 如果不是流式消息，可能是错误消息
+                # If not stream message, might be error message
                 error_data = stream_message.to_json()
                 error_msg = error_data.get("error", "Unknown error")
                 await stream_response.write(
@@ -270,9 +270,9 @@ class _OpenAIHandler:
                     finish_reason = chunk.get("finish_reason")
                     text = chunk.get("text", "")
 
-                    # 检查是否结束
+                    # Check if finished
                     if finish_reason:
-                        # 发送最后的 chunk（如果有文本）
+                        # Send final chunk (if has text)
                         if text:
                             data = {
                                 "id": request_id,
@@ -292,7 +292,7 @@ class _OpenAIHandler:
                             )
                         break
 
-                    # 只发送非空文本
+                    # Only send non-empty text
                     if text:
                         data = {
                             "id": request_id,
@@ -339,27 +339,27 @@ async def start_router(
     worker_name: str = "worker",
     scheduler_type: str = "stream_load",
     scheduler=None,
-    scheduler_class=None,  # 向后兼容
+    scheduler_class=None,  # Backward compatibility
 ) -> web.AppRunner:
-    """启动 Router HTTP 服务器，返回 AppRunner
+    """Start Router HTTP server, returns AppRunner
 
     Args:
-        system: ActorSystem 实例
-        http_host: HTTP 监听地址
-        http_port: HTTP 监听端口
-        model_name: 模型名称
-        worker_name: Worker actor 名称
-        scheduler_type: 调度器类型，支持:
-            - "stream_load": 流式负载感知 (默认，推荐)
-            - "random": 随机
-            - "round_robin": 轮询
+        system: ActorSystem instance
+        http_host: HTTP listen address
+        http_port: HTTP listen port
+        model_name: Model name
+        worker_name: Worker actor name
+        scheduler_type: Scheduler type, supports:
+            - "stream_load": Stream load-aware (default, recommended)
+            - "random": Random
+            - "round_robin": Round robin
             - "power_of_two": Power-of-Two Choices
-            - "cache_aware": 缓存感知
-        scheduler: 自定义 scheduler 实例 (优先使用)
-        scheduler_class: [已废弃] 使用 scheduler 参数代替
+            - "cache_aware": Cache-aware
+        scheduler: Custom scheduler instance (takes priority)
+        scheduler_class: [Deprecated] Use scheduler parameter instead
 
     Returns:
-        AppRunner 实例
+        AppRunner instance
     """
     from .load_stream import StreamLoadScheduler
     from .scheduler import (
@@ -370,11 +370,11 @@ async def start_router(
         RustPowerOfTwoScheduler,
     )
 
-    # 向后兼容: scheduler_class -> scheduler
+    # Backward compatibility: scheduler_class -> scheduler
     if scheduler_class is not None and scheduler is None:
         scheduler = scheduler_class(system, worker_name)
 
-    # 创建 scheduler
+    # Create scheduler
     if scheduler is None:
         scheduler_map = {
             "stream_load": StreamLoadScheduler,
@@ -382,7 +382,7 @@ async def start_router(
             "round_robin": RoundRobinScheduler,
         }
 
-        # Rust 高性能调度器 (需要编译)
+        # Rust high-performance schedulers (requires compilation)
         if RUST_POLICIES_AVAILABLE:
             scheduler_map["power_of_two"] = RustPowerOfTwoScheduler
             scheduler_map["cache_aware"] = RustCacheAwareScheduler
@@ -390,7 +390,7 @@ async def start_router(
         scheduler_class = scheduler_map.get(scheduler_type, StreamLoadScheduler)
         scheduler = scheduler_class(system, worker_name)
 
-    # 启动 scheduler (如果有 start 方法)
+    # Start scheduler (if has start method)
     if hasattr(scheduler, "start"):
         await scheduler.start()
 
@@ -403,7 +403,7 @@ async def start_router(
     app.router.add_post("/v1/chat/completions", handler.chat_completions)
     app.router.add_post("/v1/completions", handler.completions)
 
-    # 保存 scheduler 引用用于清理
+    # Save scheduler reference for cleanup
     app["scheduler"] = scheduler
 
     runner = web.AppRunner(app)
@@ -417,9 +417,9 @@ async def start_router(
 
 
 async def stop_router(runner: web.AppRunner):
-    """停止 Router HTTP 服务器"""
+    """Stop Router HTTP server"""
     if runner:
-        # 停止 scheduler (如果有 stop 方法)
+        # Stop scheduler (if has stop method)
         app = runner.app
         scheduler = app.get("scheduler")
         if scheduler and hasattr(scheduler, "stop"):

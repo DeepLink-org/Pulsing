@@ -1,15 +1,15 @@
-"""vLLM Worker Actor - 基于 vLLM V1 引擎的高性能推理 Worker
+"""vLLM Worker Actor - High-Performance Inference Worker Based on vLLM V1 Engine
 
-参考 Dynamo 实现，支持：
-1. Prefill/Decode 分离 (PD Disaggregation)
-2. 多模态输入处理（图片）
-3. KV Cache 管理和清理
-4. LoRA 动态加载/卸载
-5. OpenAI 兼容的文本输入输出模式
-6. 引擎监控和健康检查
+Referencing Dynamo implementation, supports:
+1. Prefill/Decode separation (PD Disaggregation)
+2. Multimodal input processing (images)
+3. KV Cache management and cleanup
+4. LoRA dynamic loading/unloading
+5. OpenAI-compatible text input/output mode
+6. Engine monitoring and health checks
 """
 
-# VllmWorker Actor - 主 Actor 类
+# VllmWorker Actor - Main Actor Class
 
 import asyncio
 import logging
@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 
 
 class VllmWorker(Actor):
-    """vLLM 推理 Worker Actor
+    """vLLM Inference Worker Actor
 
-    支持 vLLM V1 引擎，功能对齐 Dynamo：
-    1. 支持 PD 分离 (Prefill / Decode 角色)
-    2. 支持多模态输入 (Image)
-    3. 支持 KV Cache 跨节点传输参数
-    4. 支持 LoRA 动态加载/卸载
-    5. 支持 OpenAI 兼容的文本输入输出
+    Supports vLLM V1 engine, features aligned with Dynamo:
+    1. Supports PD separation (Prefill / Decode roles)
+    2. Supports multimodal input (Image)
+    3. Supports KV Cache cross-node transmission parameters
+    4. Supports LoRA dynamic loading/unloading
+    5. Supports OpenAI-compatible text input/output
     """
 
     def __init__(
@@ -56,9 +56,10 @@ class VllmWorker(Actor):
         max_new_tokens: int = 512,
         enable_multimodal: bool = False,
         use_vllm_tokenizer: bool = False,
-        # macOS Metal/MLX 支持参数
-        mlx_device: str | None = None,  # 'gpu' 或 'cpu'，默认从环境变量读取
-        metal_memory_fraction: float | None = None,  # 0.0-1.0，默认 0.8
+        # macOS Metal/MLX support parameters
+        mlx_device: str
+        | None = None,  # 'gpu' or 'cpu', default read from environment variable
+        metal_memory_fraction: float | None = None,  # 0.0-1.0, default 0.8
         **kwargs,
     ):
         self.model = model
@@ -67,7 +68,7 @@ class VllmWorker(Actor):
         self.enable_multimodal = enable_multimodal
         self.use_vllm_tokenizer = use_vllm_tokenizer
 
-        # 在 macOS 上设置 Metal/MLX 环境变量
+        # Set Metal/MLX environment variables on macOS
         _setup_macos_metal_env(mlx_device, metal_memory_fraction)
 
         self.engine_args_dict = engine_args or {}
@@ -76,9 +77,9 @@ class VllmWorker(Actor):
                 "model": model,
                 "gpu_memory_utilization": gpu_memory_utilization,
                 "trust_remote_code": trust_remote_code,
-                # 关键修复：使用 vllm 的生成配置而不是从 HuggingFace 加载
-                # 这可以避免默认的 repetition_penalty=1.1 导致 AssertionError
-                # 参考警告信息：Default sampling parameters have been overridden by the model's Hugging Face generation config
+                # Critical fix: use vllm's generation config instead of loading from HuggingFace
+                # This avoids AssertionError caused by default repetition_penalty=1.1
+                # Reference warning: Default sampling parameters have been overridden by the model's Hugging Face generation config
                 "generation_config": "vllm",
             }
         )
@@ -97,14 +98,14 @@ class VllmWorker(Actor):
         self._init_task: asyncio.Task | None = None
 
     async def on_start(self, actor_id: ActorId) -> None:
-        """快速返回，在后台初始化引擎"""
+        """Return quickly, initialize engine in background"""
         self._actor_id = actor_id
         if not VLLM_AVAILABLE:
             logger.error("vLLM not installed or version incompatible.")
             self._is_ready = False
             return
 
-        # 在后台任务中初始化引擎
+        # Initialize engine in background task
         async def init_background():
             try:
                 logger.info(
@@ -134,7 +135,7 @@ class VllmWorker(Actor):
 
         logger.info(f"Initializing vLLM ({self.role}) for model: {self.model}")
 
-        # 检测平台并记录信息
+        # Detect platform and log information
         if _is_macos():
             mlx_device = os.environ.get("VLLM_MLX_DEVICE", "not set")
             metal_memory = os.environ.get("VLLM_METAL_MEMORY_FRACTION", "not set")
@@ -147,9 +148,9 @@ class VllmWorker(Actor):
         os.environ["VLLM_NO_USAGE_STATS"] = "1"
         os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
-        # 将整个初始化过程移到线程池中执行
+        # Move entire initialization process to thread pool
         def init_sync():
-            """同步初始化函数，在线程池中执行"""
+            """Synchronous initialization function, executed in thread pool"""
             args = AsyncEngineArgs(**self.engine_args_dict)
             usage_context = UsageContext.OPENAI_API_SERVER
             engine_config = args.create_engine_config(usage_context=usage_context)
@@ -164,14 +165,14 @@ class VllmWorker(Actor):
         logger.info("Starting vLLM engine initialization in thread pool...")
         self._engine = await loop.run_in_executor(None, init_sync)
 
-        # 创建对应的处理器
+        # Create corresponding handler
         model_max_len = getattr(
             getattr(self._engine.vllm_config, "model_config", None),
             "max_model_len",
             None,
         )
 
-        # 获取默认采样参数
+        # Get default sampling parameters
         default_sampling_params = {}
         try:
             default_sampling_params = (
@@ -181,8 +182,8 @@ class VllmWorker(Actor):
             )
             logger.debug(f"Default sampling params: {default_sampling_params}")
 
-            # 如果使用文本模式但检测到 penalties，需要确保 tokenizer 可用
-            # 否则清除这些 penalties 以避免 AssertionError
+            # If using text mode but penalties detected, ensure tokenizer is available
+            # Otherwise clear these penalties to avoid AssertionError
             if self.use_vllm_tokenizer:
                 has_penalties = (
                     default_sampling_params.get("repetition_penalty", 1.0) != 1.0
@@ -217,7 +218,7 @@ class VllmWorker(Actor):
                 use_vllm_tokenizer=self.use_vllm_tokenizer,
             )
         else:
-            # aggregated 或 decode 角色都使用 DecodeWorkerHandler
+            # Both aggregated and decode roles use DecodeWorkerHandler
             self._handler = DecodeWorkerHandler(
                 engine=self._engine,
                 default_sampling_params=default_sampling_params,
@@ -230,7 +231,7 @@ class VllmWorker(Actor):
         logger.info(f"vLLM Worker {self.worker_id} ready")
 
     def on_stop(self) -> None:
-        # 取消初始化任务
+        # Cancel initialization task
         if (
             hasattr(self, "_init_task")
             and self._init_task
@@ -238,7 +239,7 @@ class VllmWorker(Actor):
         ):
             self._init_task.cancel()
 
-        # 清理处理器资源
+        # Clean up handler resources
         if self._handler:
             self._handler.cleanup()
 
@@ -258,7 +259,7 @@ class VllmWorker(Actor):
         }
 
         if self._is_ready and self._engine:
-            # 尝试获取 vLLM 引擎的运行时统计
+            # Try to get vLLM engine runtime statistics
             try:
                 config = self._engine.vllm_config
                 meta.update(
@@ -277,7 +278,7 @@ class VllmWorker(Actor):
         return meta
 
     async def receive(self, msg: Message) -> Message | StreamMessage:
-        # 如果引擎未就绪，等待初始化完成
+        # If engine is not ready, wait for initialization to complete
         if not self._is_ready:
             if not VLLM_AVAILABLE:
                 error_msg = "vLLM not installed or version incompatible"
@@ -288,7 +289,7 @@ class VllmWorker(Actor):
                     return stream_msg
                 return Message.from_json("Error", {"error": error_msg})
 
-            # 等待引擎初始化完成
+            # Wait for engine initialization to complete
             max_wait = 60.0
             wait_interval = 0.5
             waited = 0.0
@@ -316,7 +317,7 @@ class VllmWorker(Actor):
             ):
                 return await self._handle_generate_stream(msg)
             elif msg.msg_type == "HealthCheck":
-                # 详细的健康检查
+                # Detailed health check
                 health_status = self._handler.engine_monitor.get_health_status()
                 health_status["role"] = self.role
                 health_status["worker_id"] = self.worker_id
@@ -325,7 +326,7 @@ class VllmWorker(Actor):
                 result = await self._handler.clear_kv_cache()
                 return Message.from_json("Ok", result)
             elif msg.msg_type == "LoadLoRA":
-                # LoRA 加载支持
+                # LoRA loading support
                 data = msg.to_json()
                 lora_name = data.get("lora_name")
                 lora_path = data.get("lora_path")
@@ -337,7 +338,7 @@ class VllmWorker(Actor):
                 result = await self._handler.load_lora(lora_name, lora_path)
                 return Message.from_json("Ok", result)
             elif msg.msg_type == "UnloadLoRA":
-                # LoRA 卸载支持
+                # LoRA unloading support
                 data = msg.to_json()
                 lora_name = data.get("lora_name")
                 if not lora_name:
@@ -347,7 +348,7 @@ class VllmWorker(Actor):
                 result = await self._handler.unload_lora(lora_name)
                 return Message.from_json("Ok", result)
             elif msg.msg_type == "ListLoRAs":
-                # LoRA 列表支持
+                # LoRA list support
                 result = await self._handler.list_loras()
                 return Message.from_json("Ok", result)
             else:
@@ -374,8 +375,8 @@ class VllmWorker(Actor):
         data = msg.to_json()
 
         try:
-            # 使用处理器生成结果
-            # 累积完整的文本和信息
+            # Use handler to generate results
+            # Accumulate complete text and information
             accumulated_text = ""
             finish_reason = None
             result_count = 0
@@ -383,25 +384,25 @@ class VllmWorker(Actor):
             async for result in self._handler.generate(data):
                 result_count += 1
 
-                # 提取文本内容（支持不同的格式）
+                # Extract text content (supports different formats)
                 if "choices" in result and len(result["choices"]) > 0:
                     choice = result["choices"][0]
 
-                    # 流式格式：从 delta.content 提取
+                    # Streaming format: extract from delta.content
                     if "delta" in choice and "content" in choice["delta"]:
                         accumulated_text += choice["delta"]["content"]
-                    # 非流式格式：从 message.content 提取
+                    # Non-streaming format: extract from message.content
                     elif "message" in choice and "content" in choice["message"]:
                         accumulated_text = choice["message"]["content"]
-                    # 或者直接从 text 提取
+                    # Or extract directly from text
                     elif "text" in choice:
                         accumulated_text = choice["text"]
 
-                    # 提取 finish_reason
+                    # Extract finish_reason
                     if "finish_reason" in choice and choice["finish_reason"]:
                         finish_reason = choice["finish_reason"]
 
-            # 返回完整的响应（OpenAI 格式）
+            # Return complete response (OpenAI format)
             if accumulated_text or result_count > 0:
                 response = {
                     "text": accumulated_text,
@@ -409,7 +410,7 @@ class VllmWorker(Actor):
                     "completion_tokens": (
                         len(accumulated_text.split()) if accumulated_text else 0
                     ),
-                    "prompt_tokens": 0,  # TODO: 计算实际的 prompt tokens
+                    "prompt_tokens": 0,  # TODO: Calculate actual prompt tokens
                 }
                 return Message.from_json("GenerateResponse", response)
             return Message.from_json("Error", {"error": "No output"})

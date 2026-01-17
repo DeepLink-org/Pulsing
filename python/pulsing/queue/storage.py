@@ -1,4 +1,4 @@
-"""Bucket 存储 Actor - 使用可插拔后端"""
+"""Bucket Storage Actor - Using Pluggable Backend"""
 
 import asyncio
 import logging
@@ -12,19 +12,19 @@ logger = logging.getLogger(__name__)
 
 
 class BucketStorage(Actor):
-    """单个 Bucket 的存储 Actor
+    """Storage Actor for a Single Bucket
 
-    使用可插拔的 StorageBackend 实现数据存储。
+    Uses pluggable StorageBackend for data storage.
 
     Args:
-        bucket_id: 桶 ID
-        storage_path: 存储路径
-        batch_size: 批处理大小
-        backend: 后端名称或后端类
-            - "memory": 纯内存后端
-            - "lance": Lance 持久化后端（默认）
-            - 自定义类: 实现 StorageBackend 协议的类
-        backend_options: 传递给后端的额外参数
+        bucket_id: Bucket ID
+        storage_path: Storage path
+        batch_size: Batch size
+        backend: Backend name or backend class
+            - "memory": Pure in-memory backend
+            - "lance": Lance persistent backend (default)
+            - Custom class: Class implementing StorageBackend protocol
+        backend_options: Additional parameters passed to backend
     """
 
     def __init__(
@@ -41,11 +41,11 @@ class BucketStorage(Actor):
         self._backend_type = backend
         self._backend_options = backend_options or {}
 
-        # 后端实例（在 on_start 中初始化）
+        # Backend instance (initialized in on_start)
         self._backend: StorageBackend | None = None
 
     def on_start(self, actor_id: ActorId) -> None:
-        # 创建后端实例
+        # Create backend instance
         backend_class = get_backend_class(self._backend_type)
         self._backend = backend_class(
             bucket_id=self.bucket_id,

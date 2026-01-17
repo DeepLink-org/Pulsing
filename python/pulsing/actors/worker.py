@@ -1,4 +1,4 @@
-"""Transformers Worker Actor - LLM 推理 Worker"""
+"""Transformers Worker Actor - LLM Inference Worker"""
 
 import asyncio
 import time
@@ -10,7 +10,7 @@ from pulsing.actor import Actor, ActorId, Message, StreamMessage
 
 @dataclass
 class GenerationConfig:
-    """生成配置"""
+    """Generation configuration"""
 
     max_new_tokens: int = 512
     temperature: float = 1.0
@@ -19,9 +19,9 @@ class GenerationConfig:
 
 
 class TransformersWorker(Actor):
-    """Transformers LLM 推理 Worker，支持同步和流式生成
+    """Transformers LLM Inference Worker, supports synchronous and streaming generation
 
-    支持流式负载订阅 (SubscribeLoad)，Router 可以订阅并实时接收负载更新。
+    Supports streaming load subscription (SubscribeLoad), Router can subscribe and receive load updates in real-time.
     """
 
     def __init__(
@@ -45,11 +45,11 @@ class TransformersWorker(Actor):
         self._tokenizer = None
         self._is_loaded = False
 
-        # 负载跟踪
+        # Load tracking
         self._current_load = 0
         self._request_count = 0
 
-        # 负载订阅者 (流式推送)
+        # Load subscribers (streaming push)
         self._load_subscribers: list = []
 
     async def on_start(self, actor_id: ActorId) -> None:
@@ -62,7 +62,7 @@ class TransformersWorker(Actor):
     def on_stop(self) -> None:
         self._model = None
         self._tokenizer = None
-        # 关闭所有订阅流
+        # Close all subscription streams
         for writer in self._load_subscribers:
             try:
                 writer.close()
@@ -71,7 +71,7 @@ class TransformersWorker(Actor):
         self._load_subscribers.clear()
 
     def metadata(self) -> dict[str, str]:
-        """返回 worker 元数据"""
+        """Returns worker metadata"""
         return {
             "type": "worker",
             "model": self.model_name,
@@ -92,7 +92,7 @@ class TransformersWorker(Actor):
         return self._current_load / max(1, self.capacity)
 
     def _get_load_snapshot(self) -> dict:
-        """获取负载快照"""
+        """Get load snapshot"""
         return {
             "worker_id": self.worker_id,
             "node_id": self._node_id or self.worker_id,
@@ -103,7 +103,7 @@ class TransformersWorker(Actor):
         }
 
     async def _push_load_update(self):
-        """向所有订阅者推送负载更新"""
+        """Push load update to all subscribers"""
         if not self._load_subscribers:
             return
 
@@ -116,7 +116,7 @@ class TransformersWorker(Actor):
             except Exception:
                 dead_writers.append(writer)
 
-        # 清理断开的连接
+        # Clean up disconnected connections
         for w in dead_writers:
             self._load_subscribers.remove(w)
 
@@ -128,7 +128,7 @@ class TransformersWorker(Actor):
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
         except ImportError as e:
-            raise ImportError("需要安装 transformers 和 torch") from e
+            raise ImportError("Please install transformers and torch") from e
 
         print(f"[Worker] Loading {self.model_name}...")
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
@@ -173,7 +173,7 @@ class TransformersWorker(Actor):
             return Message.from_json("Error", {"error": str(e)})
 
     def _handle_subscribe_load(self) -> StreamMessage:
-        """处理负载订阅请求，返回持续推送负载的流"""
+        """Handle load subscription request, returns a stream that continuously pushes load updates"""
         stream_msg, writer = StreamMessage.create("LoadStream")
         self._load_subscribers.append(writer)
 
@@ -181,10 +181,10 @@ class TransformersWorker(Actor):
 
         async def produce():
             try:
-                # 立即发送当前状态
+                # Immediately send current state
                 await writer.write(worker._get_load_snapshot())
 
-                # 定期推送 (每秒)
+                # Periodic push (every second)
                 while True:
                     await asyncio.sleep(1.0)
                     await writer.write(worker._get_load_snapshot())
@@ -206,7 +206,7 @@ class TransformersWorker(Actor):
         prompt = data.get("prompt", "")
         max_new_tokens = data.get("max_new_tokens", self.gen_config.max_new_tokens)
 
-        # 开始请求 - 增加负载
+        # Start request - increase load
         self._current_load += 1
         self._request_count += 1
         asyncio.create_task(self._push_load_update())
@@ -244,7 +244,7 @@ class TransformersWorker(Actor):
                 },
             )
         finally:
-            # 请求完成 - 减少负载
+            # Request completed - decrease load
             self._current_load -= 1
             asyncio.create_task(self._push_load_update())
 
@@ -258,14 +258,14 @@ class TransformersWorker(Actor):
         prompt = data.get("prompt", "")
         max_new_tokens = data.get("max_new_tokens", self.gen_config.max_new_tokens)
 
-        # 开始请求 - 增加负载
+        # Start request - increase load
         self._current_load += 1
         self._request_count += 1
         asyncio.create_task(self._push_load_update())
 
         stream_msg, writer = StreamMessage.create("GenerateStream")
 
-        # 保存引用用于在 produce 中减少负载
+        # Save reference for decreasing load in produce
         worker = self
 
         async def produce():
@@ -318,7 +318,7 @@ class TransformersWorker(Actor):
                 except Exception:
                     pass
             finally:
-                # 请求完成 - 减少负载
+                # Request completed - decrease load
                 worker._current_load -= 1
                 asyncio.create_task(worker._push_load_update())
                 writer.close()

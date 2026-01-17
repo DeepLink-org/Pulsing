@@ -1,12 +1,12 @@
 """
-AutoGen 分布式示例 - 基于 PulsingRuntime
+AutoGen Distributed Example - Based on PulsingRuntime
 
-演示多进程 Agent 协作：Writer 写作 -> Editor 审核 -> Manager 协调
+Demonstrates multi-process Agent collaboration: Writer writes -> Editor reviews -> Manager coordinates
 
 Usage:
-    ./run_distributed.sh           # torchrun 一键启动
-    ./run_distributed.sh --manual  # 手动模式
-    python distributed.py          # 单机模式
+    ./run_distributed.sh           # torchrun one-click startup
+    ./run_distributed.sh --manual  # Manual mode
+    python distributed.py          # Standalone mode
 """
 
 import asyncio
@@ -18,7 +18,7 @@ from autogen_core import AgentId
 
 
 # ============================================================================
-# 消息类型
+# Message Types
 # ============================================================================
 
 
@@ -34,12 +34,12 @@ class ChatMessage:
 
 
 # ============================================================================
-# Agent 定义
+# Agent Definitions
 # ============================================================================
 
 
 class WriterAgent:
-    """Writer - 负责内容创作"""
+    """Writer - Responsible for content creation"""
 
     def __init__(self):
         self.id = None
@@ -57,7 +57,7 @@ class WriterAgent:
 
 
 class EditorAgent:
-    """Editor - 负责内容审核"""
+    """Editor - Responsible for content review"""
 
     def __init__(self):
         self.id = None
@@ -77,7 +77,7 @@ class EditorAgent:
 
 
 # ============================================================================
-# 分布式配置
+# Distributed Configuration
 # ============================================================================
 
 ROLE_MAP = {
@@ -90,7 +90,7 @@ PULSING_BASE_PORT = 19000
 
 
 def get_distributed_config():
-    """从环境变量获取分布式配置 (兼容 torchrun)"""
+    """Get distributed configuration from environment variables (compatible with torchrun)"""
     rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", -1)))
     world_size = int(os.environ.get("WORLD_SIZE", -1))
     master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
@@ -99,7 +99,7 @@ def get_distributed_config():
 
 
 def get_pulsing_config(rank: int, master_addr: str, pulsing_base_port: int):
-    """根据 rank 生成 Pulsing 配置"""
+    """Generate Pulsing configuration based on rank"""
     my_port = pulsing_base_port + rank
     my_addr = f"0.0.0.0:{my_port}"
     seeds = [] if rank == 0 else [f"{master_addr}:{pulsing_base_port}"]
@@ -107,14 +107,14 @@ def get_pulsing_config(rank: int, master_addr: str, pulsing_base_port: int):
 
 
 # ============================================================================
-# 运行函数
+# Run Functions
 # ============================================================================
 
 
 async def run_with_rank(
     rank: int, world_size: int, master_addr: str, pulsing_base_port: int
 ):
-    """根据 rank 运行对应角色"""
+    """Run corresponding role based on rank"""
     from pulsing.autogen import PulsingRuntime
 
     my_addr, seeds = get_pulsing_config(rank, master_addr, pulsing_base_port)
@@ -128,7 +128,7 @@ async def run_with_rank(
     if agent_class:
         await runtime.register_factory(role_name, lambda cls=agent_class: cls())
 
-    await asyncio.sleep(2)  # 等待集群稳定
+    await asyncio.sleep(2)  # Wait for cluster to stabilize
 
     if rank == world_size - 1:
         await run_manager_logic(runtime)
@@ -142,7 +142,7 @@ async def run_with_rank(
 
 
 async def run_manager_logic(runtime):
-    """Manager 业务逻辑"""
+    """Manager business logic"""
     print("\n" + "=" * 50)
     print("Manager: Starting conversation")
     print("=" * 50)
@@ -150,14 +150,14 @@ async def run_manager_logic(runtime):
     writer_id = AgentId("writer", "default")
     editor_id = AgentId("editor", "default")
 
-    # Writer 写作
+    # Writer writes
     print("\n[1] Asking Writer...")
     response = await runtime.send_message(
         RequestToSpeak(topic="AI"), recipient=writer_id
     )
     print(f"    Response: {response}")
 
-    # Editor 审核
+    # Editor reviews
     print("\n[2] Asking Editor...")
     response = await runtime.send_message(
         RequestToSpeak(topic="review"), recipient=editor_id
@@ -170,7 +170,7 @@ async def run_manager_logic(runtime):
 
 
 async def run_standalone():
-    """单机模式"""
+    """Standalone mode"""
     from pulsing.autogen import PulsingRuntime
 
     print("Running in standalone mode")
@@ -185,7 +185,7 @@ async def run_standalone():
 
 
 # ============================================================================
-# 手动模式 (多终端启动)
+# Manual Mode (Multi-terminal Startup)
 # ============================================================================
 
 
@@ -220,19 +220,19 @@ async def run_manager():
 
 
 # ============================================================================
-# 入口
+# Entry Point
 # ============================================================================
 
 
 def main():
     rank, world_size, master_addr, pulsing_base_port = get_distributed_config()
 
-    # torchrun 模式
+    # torchrun mode
     if rank >= 0 and world_size > 0:
         asyncio.run(run_with_rank(rank, world_size, master_addr, pulsing_base_port))
         return
 
-    # 命令行模式
+    # Command line mode
     role = sys.argv[1].lower() if len(sys.argv) > 1 else "standalone"
 
     handlers = {

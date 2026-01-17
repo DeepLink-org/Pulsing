@@ -1,8 +1,8 @@
-"""采样参数构建函数
+"""Sampling parameter construction functions
 
-提供两种模式的采样参数构建：
-- build_sampling_params: Token 模式
-- build_sampling_params_openai: OpenAI 兼容的文本模式
+Provides two modes of sampling parameter construction:
+- build_sampling_params: Token mode
+- build_sampling_params_openai: OpenAI-compatible text mode
 """
 
 import logging
@@ -32,36 +32,36 @@ def build_sampling_params(
     default_sampling_params: dict[str, Any],
     model_max_len: int | None = None,
 ) -> SamplingParams:
-    """从请求构建 SamplingParams
+    """Build SamplingParams from request
 
     Args:
-        request: 请求字典
-        default_sampling_params: 默认采样参数
-        model_max_len: 模型最大长度
+        request: Request dictionary
+        default_sampling_params: Default sampling parameters
+        model_max_len: Model maximum length
 
     Returns:
-        配置好的 SamplingParams
+        Configured SamplingParams
     """
     sampling_params = SamplingParams(**default_sampling_params)
 
-    # 应用采样选项
+    # Apply sampling options
     sampling_options = request.get("sampling_options", {})
     for key, value in sampling_options.items():
         if value is not None and hasattr(sampling_params, key):
             setattr(sampling_params, key, value)
 
-    # 应用停止条件
+    # Apply stop conditions
     stop_conditions = request.get("stop_conditions", {})
     for key, value in stop_conditions.items():
         if value is not None and hasattr(sampling_params, key):
             setattr(sampling_params, key, value)
 
-    # 处理 max_tokens
+    # Handle max_tokens
     provided_max_tokens = stop_conditions.get("max_tokens")
     token_ids = request.get("token_ids", [])
     input_length = len(token_ids)
     if model_max_len is not None and provided_max_tokens is None:
-        # 确保默认至少生成 1 个 token
+        # Ensure default generates at least 1 token
         dynamic_default = max(1, model_max_len - input_length)
         sampling_params.max_tokens = dynamic_default
 
@@ -72,19 +72,19 @@ def build_sampling_params_openai(
     request: dict[str, Any],
     default_sampling_params: dict[str, Any],
 ) -> SamplingParams:
-    """从 OpenAI 兼容请求构建 SamplingParams
+    """Build SamplingParams from OpenAI-compatible request
 
     Args:
-        request: OpenAI 风格的请求字典
-        default_sampling_params: 默认采样参数
+        request: OpenAI-style request dictionary
+        default_sampling_params: Default sampling parameters
 
     Returns:
-        配置好的 SamplingParams
+        Configured SamplingParams
     """
     sampling_params = SamplingParams(**default_sampling_params)
     sampling_params.detokenize = True
 
-    # 映射 OpenAI 参数到 SamplingParams
+    # Map OpenAI parameters to SamplingParams
     openai_mapping = {
         "temperature": "temperature",
         "top_p": "top_p",
@@ -103,20 +103,20 @@ def build_sampling_params_openai(
             if hasattr(sampling_params, param_key):
                 setattr(sampling_params, param_key, request[req_key])
 
-    # 处理 max_tokens（同时支持 max_tokens 和 max_new_tokens）
+    # Handle max_tokens (supports both max_tokens and max_new_tokens)
     max_tokens_value = request.get("max_tokens") or request.get("max_new_tokens")
     if max_tokens_value is not None:
         sampling_params.max_tokens = max_tokens_value
 
-    # 处理停止序列
+    # Handle stop sequences
     if "stop" in request and request["stop"] is not None:
         sampling_params.stop = request["stop"]
 
-    # 处理 ignore_eos
+    # Handle ignore_eos
     if "ignore_eos" in request and request["ignore_eos"] is not None:
         sampling_params.ignore_eos = request["ignore_eos"]
 
-    # 处理 min_tokens
+    # Handle min_tokens
     if "min_tokens" in request and request["min_tokens"] is not None:
         sampling_params.min_tokens = request["min_tokens"]
 

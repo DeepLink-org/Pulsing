@@ -1,8 +1,8 @@
-"""基于流式请求的负载信息订阅
+"""Load information subscription based on streaming requests
 
-架构:
-    Router 发起 SubscribeLoad 请求 → Worker 返回 StreamMessage
-    Worker 在流中持续推送负载更新 → Router 异步读取
+Architecture:
+    Router sends SubscribeLoad request → Worker returns StreamMessage
+    Worker continuously pushes load updates in stream → Router reads asynchronously
 
     ┌─────────┐                      ┌─────────┐
     │ Router  │ ─── SubscribeLoad ─► │ Worker  │
@@ -13,8 +13,8 @@
     │         │      {load: 3}       │         │
     └─────────┘                      └─────────┘
 
-使用:
-    # Router 端
+Usage:
+    # Router side
     scheduler = StreamLoadScheduler(actor_system, "worker")
     await scheduler.start()
     worker_ref = await scheduler.select_worker()
@@ -30,7 +30,7 @@ from pulsing.actor import ActorRef, Message
 
 @dataclass
 class LoadSnapshot:
-    """负载快照"""
+    """Load snapshot"""
 
     worker_id: str
     node_id: str
@@ -56,9 +56,9 @@ class LoadSnapshot:
 
 
 class LoadStreamConsumer:
-    """Router 端: 负载流消费者
+    """Router side: Load stream consumer
 
-    订阅多个 Worker 的负载流，汇总维护负载快照。
+    Subscribes to load streams from multiple Workers, aggregates and maintains load snapshots.
     """
 
     def __init__(self, stale_timeout: float = 10.0):
@@ -70,7 +70,7 @@ class LoadStreamConsumer:
         self._on_disconnect: Callable[[str], None] | None = None
 
     async def subscribe(self, worker_ref: ActorRef, worker_id: str = None):
-        """订阅 Worker 的负载流"""
+        """Subscribe to Worker's load stream"""
         wid = worker_id or str(worker_ref.actor_id)
         await self.unsubscribe(wid)
 
@@ -146,11 +146,11 @@ class LoadStreamConsumer:
 
 
 class StreamLoadScheduler:
-    """基于流式订阅的负载感知调度器
+    """Load-aware scheduler based on stream subscription
 
-    - 自动发现新 Worker 并订阅
-    - 检测 Worker 下线并清理
-    - 选择负载最低的 Worker
+    - Automatically discovers new Workers and subscribes
+    - Detects Worker offline and cleans up
+    - Selects Worker with lowest load
     """
 
     def __init__(
@@ -176,7 +176,7 @@ class StreamLoadScheduler:
         self._on_worker_removed: Callable[[str], None] | None = None
 
     async def start(self):
-        """启动调度器"""
+        """Start scheduler"""
         self._running = True
         self._consumer.on_disconnect(self._handle_worker_disconnect)
         await self._discover_and_subscribe()
@@ -193,7 +193,7 @@ class StreamLoadScheduler:
                 pass
 
     async def stop(self):
-        """停止调度器"""
+        """Stop scheduler"""
         self._running = False
         if self._discover_task:
             self._discover_task.cancel()
@@ -206,17 +206,17 @@ class StreamLoadScheduler:
         self._worker_refs.clear()
 
     async def _discover_and_subscribe(self):
-        """发现并订阅 Worker"""
+        """Discover and subscribe to Workers"""
         try:
-            # 使用 get_named_instances 替代未绑定的 lookup_named_actor
+            # Use get_named_instances instead of unbound lookup_named_actor
             workers = await self._system.get_named_instances(self._worker_name)
             current = {w.get("node_id") for w in workers if w.get("node_id")}
 
             async with self._lock:
-                # 新 Worker
+                # New Workers
                 for node_id in current - self._subscribed_workers:
                     await self._subscribe_worker(node_id)
-                # 下线 Worker
+                # Offline Workers
                 for node_id in self._subscribed_workers - current:
                     await self._unsubscribe_worker(node_id)
         except Exception as e:
@@ -227,8 +227,8 @@ class StreamLoadScheduler:
         if node_id in self._subscribed_workers:
             return
         try:
-            # 使用 resolve_named 替代未绑定的 get_actor_ref
-            # node_id 需要从字符串转为 int
+            # Use resolve_named instead of unbound get_actor_ref
+            # node_id needs to be converted from string to int
             nid_int = int(node_id)
             worker_ref = await self._system.resolve_named(
                 self._worker_name, node_id=nid_int
@@ -268,7 +268,7 @@ class StreamLoadScheduler:
         request_text: str = None,
         headers: dict[str, str] = None,
     ) -> ActorRef | None:
-        """选择负载最低的 Worker"""
+        """Select Worker with lowest load"""
         worker_id = self._consumer.get_lowest_load_worker()
         if worker_id and worker_id in self._worker_refs:
             return self._worker_refs[worker_id]

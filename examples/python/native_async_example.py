@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Pulsing 原生异步 API 示例（推荐）
+Pulsing Native Async API Example (Recommended)
 
-展示 pulsing.actor 的简洁异步 API。
+Demonstrates pulsing.actor's concise async API.
 
-用法: python examples/python/native_async_example.py
+Usage: python examples/python/native_async_example.py
 """
 
 import asyncio
 
-# Pulsing 原生 API
+# Pulsing native API
 from pulsing.actor import init, shutdown, remote
 
 
 @remote
 class Counter:
-    """分布式计数器"""
+    """Distributed counter"""
 
     def __init__(self, init_value: int = 0):
         self.value = init_value
@@ -30,7 +30,7 @@ class Counter:
 
 @remote
 class Calculator:
-    """分布式计算器"""
+    """Distributed calculator"""
 
     def add(self, a: int, b: int) -> int:
         return a + b
@@ -41,14 +41,14 @@ class Calculator:
 
 @remote
 class AsyncWorker:
-    """异步 Worker"""
+    """Async Worker"""
 
     def __init__(self, worker_id: str):
         self.worker_id = worker_id
         self.count = 0
 
     async def process(self, data: str) -> dict:
-        await asyncio.sleep(0.01)  # 模拟处理
+        await asyncio.sleep(0.01)  # Simulate processing
         self.count += 1
         return {
             "worker": self.worker_id,
@@ -60,21 +60,21 @@ class AsyncWorker:
 
 async def main():
     print("=" * 60)
-    print("Pulsing 原生异步 API 示例")
+    print("Pulsing Native Async API Example")
     print("=" * 60)
 
-    # 初始化（简洁！）
+    # Initialize (simple!)
     await init()
-    print("✓ Pulsing 已初始化")
+    print("✓ Pulsing initialized")
 
     # --- Counter ---
     print("\n--- Counter ---")
     counter = await Counter.spawn(init_value=10)
 
-    # 直接 await，无需 .remote() + get()
-    print(f"初始值: {await counter.get()}")
+    # Direct await, no need for .remote() + get()
+    print(f"Initial value: {await counter.get()}")
     print(f"increment(5): {await counter.increment(5)}")
-    print(f"最终值: {await counter.get()}")
+    print(f"Final value: {await counter.get()}")
 
     # --- Calculator ---
     print("\n--- Calculator ---")
@@ -83,24 +83,24 @@ async def main():
     print(f"add(10, 20): {await calc.add(10, 20)}")
     print(f"multiply(5, 6): {await calc.multiply(5, 6)}")
 
-    # --- 并行调用 ---
-    print("\n--- 并行调用 ---")
+    # --- Parallel calls ---
+    print("\n--- Parallel Calls ---")
     results = await asyncio.gather(
         calc.add(1, 2),
         calc.add(3, 4),
         calc.multiply(5, 6),
     )
-    print(f"并行结果: {results}")
+    print(f"Parallel results: {results}")
 
     # --- AsyncWorker ---
-    print("\n--- 异步 Worker ---")
+    print("\n--- Async Worker ---")
     worker = await AsyncWorker.spawn(worker_id="worker-001")
     result = await worker.process("hello pulsing")
-    print(f"处理结果: {result}")
+    print(f"Process result: {result}")
 
-    # --- 关闭 ---
+    # --- Shutdown ---
     await shutdown()
-    print("\n✓ 完成!")
+    print("\n✓ Done!")
 
 
 if __name__ == "__main__":
@@ -108,20 +108,20 @@ if __name__ == "__main__":
 
 
 # =============================================================================
-# API 对比
+# API Comparison
 # =============================================================================
 #
-# | 操作           | Pulsing 原生 (async)        | Ray 兼容层 (sync)           |
+# | Operation      | Pulsing Native (async)      | Ray Compat Layer (sync)     |
 # |----------------|-----------------------------|-----------------------------|
-# | 初始化         | await init()                | ray.init()                  |
-# | 装饰器         | @remote                     | @ray.remote                 |
-# | 创建 actor     | await Counter.spawn()       | Counter.remote()            |
-# | 调用方法       | await counter.incr()        | counter.incr.remote()       |
-# | 获取结果       | 直接返回                    | ray.get(ref)                |
-# | 关闭           | await shutdown()            | ray.shutdown()              |
+# | Initialize     | await init()                | ray.init()                  |
+# | Decorator      | @remote                     | @ray.remote                 |
+# | Create actor   | await Counter.spawn()       | Counter.remote()            |
+# | Call method    | await counter.incr()        | counter.incr.remote()       |
+# | Get result     | Direct return               | ray.get(ref)                |
+# | Shutdown       | await shutdown()            | ray.shutdown()              |
 #
-# 推荐使用原生 API：
-# - 更 Pythonic（标准 async/await）
-# - 无需 .remote() + get() 样板代码
-# - 更好的性能（无同步包装开销）
+# Recommended to use native API:
+# - More Pythonic (standard async/await)
+# - No .remote() + get() boilerplate
+# - Better performance (no sync wrapper overhead)
 #

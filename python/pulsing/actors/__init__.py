@@ -1,13 +1,13 @@
-"""Pulsing Actors - 分布式 LLM 推理组件"""
+"""Pulsing Actors - Distributed LLM inference components"""
 
 # Worker
 # Router
-# 流式负载订阅
+# Stream load subscription
 from .load_stream import LoadSnapshot, LoadStreamConsumer, StreamLoadScheduler
 from .router import start_router, stop_router
 
 # Scheduler
-from .scheduler import (  # 基类; Python 调度器; Rust 高性能调度器; 工厂函数
+from .scheduler import (  # Base class; Python schedulers; Rust high-performance schedulers; Factory function
     RUST_POLICIES_AVAILABLE,
     LeastConnectionScheduler,
     RandomScheduler,
@@ -23,7 +23,7 @@ from .scheduler import (  # 基类; Python 调度器; Rust 高性能调度器; �
 from .vllm import VllmWorker
 from .worker import GenerationConfig, TransformersWorker
 
-# 向后兼容别名
+# Backward compatibility alias
 TransformersWorkerActor = TransformersWorker
 
 
@@ -34,22 +34,22 @@ __all__ = [
     "GenerationConfig",
     "start_router",
     "stop_router",
-    # Scheduler 基类和 Python 实现
+    # Scheduler base class and Python implementations
     "Scheduler",
     "RoundRobinScheduler",
     "RandomScheduler",
     "LeastConnectionScheduler",
-    # Rust 高性能调度器
+    # Rust high-performance schedulers
     "RustRandomScheduler",
     "RustRoundRobinScheduler",
     "RustPowerOfTwoScheduler",
     "RustConsistentHashScheduler",
     "RustCacheAwareScheduler",
-    # 流式负载订阅 (推荐用于负载感知调度)
+    # Stream load subscription (recommended for load-aware scheduling)
     "LoadSnapshot",
     "LoadStreamConsumer",
     "StreamLoadScheduler",
-    # 工厂函数
+    # Factory function
     "get_scheduler",
     "RUST_POLICIES_AVAILABLE",
     # Compatibility aliases
