@@ -22,7 +22,7 @@ import random
 from collections import Counter
 
 from pulsing.actor import remote, resolve
-from pulsing.agent import agent, runtime, llm, parse_json, get_agent_meta, list_agents
+from pulsing.agent import agent, runtime, llm, parse_json, list_agents
 
 # ============================================================================
 # MBTI 人格配置
