@@ -92,6 +92,7 @@ class AgentState(TypedDict, total=False):
 
 class IdeaAgentInput(TypedDict):
     """单个 Idea Agent 的输入"""
+
     question: str
     persona: str
     persona_idx: int
@@ -141,7 +142,11 @@ PERSONAS = [
 def _get_personas(n: int) -> list[str]:
     if n <= len(PERSONAS):
         return PERSONAS[:n]
-    return [PERSONAS[i % len(PERSONAS)] + (f"#{i // len(PERSONAS) + 1}" if i >= len(PERSONAS) else "") for i in range(n)]
+    return [
+        PERSONAS[i % len(PERSONAS)]
+        + (f"#{i // len(PERSONAS) + 1}" if i >= len(PERSONAS) else "")
+        for i in range(n)
+    ]
 
 
 # ============================================================================
@@ -264,7 +269,7 @@ def dispatch(state: AgentState) -> list[Send]:
 async def idea_agent(input: IdeaAgentInput) -> dict[str, Any]:
     """
     单个 Idea Agent 节点（可被 Pulsing 分布式调度）
-    
+
     这是一个独立的节点，接收 IdeaAgentInput，返回单个 idea。
     LangGraph 会自动将多个 idea_agent 的结果通过 operator.add 合并到 state.ideas
     """
@@ -294,9 +299,17 @@ async def _generate_idea(persona: str, question: str, idx: int, mock: bool) -> I
     if mock:
         await asyncio.sleep(0.02 * (idx % 3))
         templates = {
-            "性能": ("并行化与缓存优化", ["压测定位瓶颈", "缓存命中率测试"], ["缓存一致性"]),
+            "性能": (
+                "并行化与缓存优化",
+                ["压测定位瓶颈", "缓存命中率测试"],
+                ["缓存一致性"],
+            ),
             "安全": ("安全边界与治理", ["威胁建模", "mTLS 验证"], ["延迟增加"]),
-            "可靠性": ("韧性方案（熔断/限流）", ["故障注入测试", "重试策略验证"], ["重试风暴"]),
+            "可靠性": (
+                "韧性方案（熔断/限流）",
+                ["故障注入测试", "重试策略验证"],
+                ["重试风暴"],
+            ),
             "产品": ("流式与渐进式体验", ["TTFB 优化测试", "A/B 测试"], ["复杂度增加"]),
             "成本": ("成本驱动架构", ["成本曲线分析", "按需扩缩容"], ["质量下降"]),
         }
@@ -304,8 +317,18 @@ async def _generate_idea(persona: str, question: str, idx: int, mock: bool) -> I
             if key in persona:
                 break
         else:
-            title, experiments, risks = "结构化拆解", ["并行验证", "小规模实验"], ["拆解不当"]
-        return Idea(agent=persona, title=title, proposal=f"[{persona}] {title}", experiments=experiments, risks=risks)
+            title, experiments, risks = (
+                "结构化拆解",
+                ["并行验证", "小规模实验"],
+                ["拆解不当"],
+            )
+        return Idea(
+            agent=persona,
+            title=title,
+            proposal=f"[{persona}] {title}",
+            experiments=experiments,
+            risks=risks,
+        )
     else:
         llm = _get_llm()
         prompt = IDEA_PROMPT.format(persona=persona, question=question)
@@ -320,7 +343,9 @@ async def _generate_idea(persona: str, question: str, idx: int, mock: bool) -> I
         )
 
 
-async def _refine_idea(persona: str, question: str, previous: dict, critique: dict | None, mock: bool) -> Idea:
+async def _refine_idea(
+    persona: str, question: str, previous: dict, critique: dict | None, mock: bool
+) -> Idea:
     """根据评审反馈改进方案"""
     version = previous.get("version", 1) + 1
 
@@ -344,7 +369,9 @@ async def _refine_idea(persona: str, question: str, previous: dict, critique: di
             question=question,
             previous_idea=json.dumps(previous, ensure_ascii=False),
             issues=", ".join(critique.get("issues", [])) if critique else "",
-            improvements=", ".join(critique.get("improvements", [])) if critique else "",
+            improvements=", ".join(critique.get("improvements", []))
+            if critique
+            else "",
         )
         response = await llm.ainvoke(prompt)
         data = _parse_json(response.content, {})
@@ -401,10 +428,10 @@ def collect_ideas(state: AgentState) -> dict[str, Any]:
         print(f"\n┌─ 方案 {i}: [{agent}] {'v' + str(version) if version > 1 else ''}")
         print(f"│  标题: {title}")
         print(f"│  描述: {proposal[:100]}{'...' if len(proposal) > 100 else ''}")
-        print(f"│  实验计划:")
+        print("│  实验计划:")
         for j, exp in enumerate(experiments, 1):
             print(f"│    {j}. {exp}")
-        print(f"│  风险:")
+        print("│  风险:")
         for j, risk in enumerate(risks, 1):
             print(f"│    {j}. {risk}")
         print(f"└{'─'*50}")
@@ -439,12 +466,14 @@ async def critic(state: AgentState) -> dict[str, Any]:
                 issues.append("风险考虑不足")
                 improvements.append("补充风险分析")
             score = 6 + len(idea.get("experiments", [])) - len(issues)
-            critiques.append(Critique(
-                idea_agent=idea.get("agent", "unknown"),
-                issues=issues or ["总体可行"],
-                improvements=improvements or ["细化执行计划"],
-                score=max(1, min(10, score)),
-            ))
+            critiques.append(
+                Critique(
+                    idea_agent=idea.get("agent", "unknown"),
+                    issues=issues or ["总体可行"],
+                    improvements=improvements or ["细化执行计划"],
+                    score=max(1, min(10, score)),
+                )
+            )
     else:
         llm = _get_llm()
         ideas_json = json.dumps(ideas, ensure_ascii=False, indent=2)
@@ -454,12 +483,14 @@ async def critic(state: AgentState) -> dict[str, Any]:
         critiques = []
         for i, idea in enumerate(ideas):
             c = critique_data[i] if i < len(critique_data) else {}
-            critiques.append(Critique(
-                idea_agent=c.get("idea_agent", idea.get("agent", "unknown")),
-                issues=c.get("issues", ["需要更多细节"]),
-                improvements=c.get("improvements", ["补充实验计划"]),
-                score=c.get("score", 5),
-            ))
+            critiques.append(
+                Critique(
+                    idea_agent=c.get("idea_agent", idea.get("agent", "unknown")),
+                    issues=c.get("issues", ["需要更多细节"]),
+                    improvements=c.get("improvements", ["补充实验计划"]),
+                    score=c.get("score", 5),
+                )
+            )
 
     critique_dicts = [asdict(c) for c in critiques]
     avg_score = sum(c.score for c in critiques) / len(critiques) if critiques else 0
@@ -475,10 +506,10 @@ async def critic(state: AgentState) -> dict[str, Any]:
         improvements = c.get("improvements", [])
 
         print(f"\n┌─ 评审 {i}: [{agent}] 评分: {score}/10")
-        print(f"│  问题:")
+        print("│  问题:")
         for j, issue in enumerate(issues, 1):
             print(f"│    {j}. {issue}")
-        print(f"│  改进建议:")
+        print("│  改进建议:")
         for j, imp in enumerate(improvements, 1):
             print(f"│    {j}. {imp}")
         print(f"└{'─'*50}")
@@ -514,7 +545,7 @@ def should_continue(state: AgentState) -> Literal["dispatch_refine", "judge"]:
         print(f"  -> 继续迭代（{current_round}/{max_rounds}）")
         return "dispatch_refine"
     else:
-        print(f"  -> 达到最大轮数，进入评判")
+        print("  -> 达到最大轮数，进入评判")
         return "judge"
 
 
@@ -531,7 +562,9 @@ def dispatch_refine(state: AgentState) -> list[Send]:
     mock = state.get("mock", False)
     current_round = state.get("current_round", 1)
 
-    print(f"\n[Dispatch Refine] 分发 {len(ideas)} 个改进任务（Round {current_round + 1}）...")
+    print(
+        f"\n[Dispatch Refine] 分发 {len(ideas)} 个改进任务（Round {current_round + 1}）..."
+    )
 
     # 匹配 critique
     critique_map = {c.get("idea_agent"): c for c in critiques}
@@ -580,7 +613,11 @@ async def judge(state: AgentState) -> dict[str, Any]:
 
     if mock:
         critique_map = {c.get("idea_agent"): c.get("score", 0) for c in critiques}
-        best = max(ideas, key=lambda x: critique_map.get(x.get("agent"), 0)) if ideas else None
+        best = (
+            max(ideas, key=lambda x: critique_map.get(x.get("agent"), 0))
+            if ideas
+            else None
+        )
         best_agent = best.get("agent") if best else "unknown"
         best_score = critique_map.get(best_agent, 0) if best else 0
 
@@ -603,11 +640,17 @@ async def judge(state: AgentState) -> dict[str, Any]:
         llm = _get_llm()
         ideas_json = json.dumps(ideas, ensure_ascii=False, indent=2)
         critiques_json = json.dumps(critiques, ensure_ascii=False, indent=2)
-        response = await llm.ainvoke(JUDGE_PROMPT.format(
-            n_rounds=current_round, ideas_json=ideas_json, critiques_json=critiques_json
-        ))
+        response = await llm.ainvoke(
+            JUDGE_PROMPT.format(
+                n_rounds=current_round,
+                ideas_json=ideas_json,
+                critiques_json=critiques_json,
+            )
+        )
         data = _parse_json(response.content, {})
-        best_agent = data.get("selected_agent", ideas[0].get("agent") if ideas else "unknown")
+        best_agent = data.get(
+            "selected_agent", ideas[0].get("agent") if ideas else "unknown"
+        )
         reason = data.get("reason", "")
         recommendation = data.get("final_recommendation", "")
         final_answer = f"问题：{question}\n\n经过 {current_round} 轮评议\n推荐方案（来自 {best_agent}）\n理由：{reason}\n\n{recommendation}"
@@ -650,10 +693,14 @@ def build_graph():
     graph.add_edge("collect", "critic")
 
     # critic -> should_continue
-    graph.add_conditional_edges("critic", should_continue, {
-        "dispatch_refine": "increment_round",
-        "judge": "judge",
-    })
+    graph.add_conditional_edges(
+        "critic",
+        should_continue,
+        {
+            "dispatch_refine": "increment_round",
+            "judge": "judge",
+        },
+    )
 
     # increment_round -> dispatch_refine (fan-out)
     graph.add_conditional_edges("increment_round", dispatch_refine)
@@ -670,8 +717,14 @@ def build_graph():
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="LangGraph 并行多智能体（每个 Agent 独立节点）")
-    p.add_argument("--question", default="如何实现一个可并行实验的多智能体工作流？", help="用户问题")
+    p = argparse.ArgumentParser(
+        description="LangGraph 并行多智能体（每个 Agent 独立节点）"
+    )
+    p.add_argument(
+        "--question",
+        default="如何实现一个可并行实验的多智能体工作流？",
+        help="用户问题",
+    )
     p.add_argument("--n-ideas", type=int, default=5, help="并行 idea 数量（3-10）")
     p.add_argument("--max-rounds", type=int, default=1, help="最大迭代轮数")
     p.add_argument("--show-review", action="store_true", help="输出评审记录")
@@ -703,12 +756,14 @@ async def main():
     print(f"最大迭代轮数：{args.max_rounds}")
     print(f"模式：{'模拟' if args.mock else '真实 LLM'}")
 
-    result = await app.ainvoke({
-        "question": args.question,
-        "n_ideas": args.n_ideas,
-        "max_rounds": args.max_rounds,
-        "mock": args.mock,
-    })
+    result = await app.ainvoke(
+        {
+            "question": args.question,
+            "n_ideas": args.n_ideas,
+            "max_rounds": args.max_rounds,
+            "mock": args.mock,
+        }
+    )
 
     print("\n" + "=" * 60)
     print("FINAL ANSWER")

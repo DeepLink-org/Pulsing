@@ -210,7 +210,9 @@ class _AsyncMethodCall:
             print(chunk)
     """
 
-    def __init__(self, actor_ref: ActorRef, method_name: str, args: tuple, kwargs: dict):
+    def __init__(
+        self, actor_ref: ActorRef, method_name: str, args: tuple, kwargs: dict
+    ):
         self._ref = actor_ref
         self._method = method_name
         self._args = args
@@ -565,7 +567,9 @@ class ActorClass:
                 continue
             self._methods.append(name)
             # 检测是否是 async 方法（包括 async 函数和异步生成器）
-            if inspect.iscoroutinefunction(method) or inspect.isasyncgenfunction(method):
+            if inspect.iscoroutinefunction(method) or inspect.isasyncgenfunction(
+                method
+            ):
                 self._async_methods.add(name)
 
         # Register class

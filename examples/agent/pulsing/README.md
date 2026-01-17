@@ -22,7 +22,7 @@ class Researcher:
 async with runtime():
     actor = await MyActor.spawn(name="actor")
     result = await actor.work()
-    
+
     # 通过名称获取其他 Actor
     peer = await resolve("actor")
 ```

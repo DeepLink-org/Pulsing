@@ -29,22 +29,102 @@ from pulsing.agent import agent, runtime, llm, parse_json, get_agent_meta, list_
 # ============================================================================
 
 MBTI_TYPES = {
-    "INTJ": {"name": "建筑师", "traits": "战略思维、独立、追求效率", "persuade_rate": 0.1, "population": 2.1},
-    "INTP": {"name": "逻辑学家", "traits": "分析型、创新、追求真理", "persuade_rate": 0.15, "population": 3.3},
-    "ENTJ": {"name": "指挥官", "traits": "果断、领导力、高效执行", "persuade_rate": 0.1, "population": 1.8},
-    "ENTP": {"name": "辩论家", "traits": "善辩、创新、挑战传统", "persuade_rate": 0.2, "population": 3.2},
-    "INFJ": {"name": "提倡者", "traits": "理想主义、洞察力、关注意义", "persuade_rate": 0.25, "population": 1.5},
-    "INFP": {"name": "调停者", "traits": "理想主义、同理心、追求和谐", "persuade_rate": 0.3, "population": 4.4},
-    "ENFJ": {"name": "主人公", "traits": "魅力、同理心、善于激励", "persuade_rate": 0.35, "population": 2.5},
-    "ENFP": {"name": "竞选者", "traits": "热情、创造力、善于沟通", "persuade_rate": 0.3, "population": 8.1},
-    "ISTJ": {"name": "物流师", "traits": "务实、可靠、注重细节", "persuade_rate": 0.1, "population": 11.6},
-    "ISFJ": {"name": "守卫者", "traits": "关怀、尽责、注重传统", "persuade_rate": 0.2, "population": 13.8},
-    "ESTJ": {"name": "总经理", "traits": "组织能力强、务实、果断", "persuade_rate": 0.1, "population": 8.7},
-    "ESFJ": {"name": "执政官", "traits": "关怀、合作、注重和谐", "persuade_rate": 0.25, "population": 12.3},
-    "ISTP": {"name": "鉴赏家", "traits": "冷静、分析、动手能力强", "persuade_rate": 0.15, "population": 5.4},
-    "ISFP": {"name": "探险家", "traits": "灵活、敏感、追求美感", "persuade_rate": 0.25, "population": 8.8},
-    "ESTP": {"name": "企业家", "traits": "行动派、灵活、善于应变", "persuade_rate": 0.2, "population": 4.3},
-    "ESFP": {"name": "表演者", "traits": "活力、乐观、善于社交", "persuade_rate": 0.25, "population": 8.5},
+    "INTJ": {
+        "name": "建筑师",
+        "traits": "战略思维、独立、追求效率",
+        "persuade_rate": 0.1,
+        "population": 2.1,
+    },
+    "INTP": {
+        "name": "逻辑学家",
+        "traits": "分析型、创新、追求真理",
+        "persuade_rate": 0.15,
+        "population": 3.3,
+    },
+    "ENTJ": {
+        "name": "指挥官",
+        "traits": "果断、领导力、高效执行",
+        "persuade_rate": 0.1,
+        "population": 1.8,
+    },
+    "ENTP": {
+        "name": "辩论家",
+        "traits": "善辩、创新、挑战传统",
+        "persuade_rate": 0.2,
+        "population": 3.2,
+    },
+    "INFJ": {
+        "name": "提倡者",
+        "traits": "理想主义、洞察力、关注意义",
+        "persuade_rate": 0.25,
+        "population": 1.5,
+    },
+    "INFP": {
+        "name": "调停者",
+        "traits": "理想主义、同理心、追求和谐",
+        "persuade_rate": 0.3,
+        "population": 4.4,
+    },
+    "ENFJ": {
+        "name": "主人公",
+        "traits": "魅力、同理心、善于激励",
+        "persuade_rate": 0.35,
+        "population": 2.5,
+    },
+    "ENFP": {
+        "name": "竞选者",
+        "traits": "热情、创造力、善于沟通",
+        "persuade_rate": 0.3,
+        "population": 8.1,
+    },
+    "ISTJ": {
+        "name": "物流师",
+        "traits": "务实、可靠、注重细节",
+        "persuade_rate": 0.1,
+        "population": 11.6,
+    },
+    "ISFJ": {
+        "name": "守卫者",
+        "traits": "关怀、尽责、注重传统",
+        "persuade_rate": 0.2,
+        "population": 13.8,
+    },
+    "ESTJ": {
+        "name": "总经理",
+        "traits": "组织能力强、务实、果断",
+        "persuade_rate": 0.1,
+        "population": 8.7,
+    },
+    "ESFJ": {
+        "name": "执政官",
+        "traits": "关怀、合作、注重和谐",
+        "persuade_rate": 0.25,
+        "population": 12.3,
+    },
+    "ISTP": {
+        "name": "鉴赏家",
+        "traits": "冷静、分析、动手能力强",
+        "persuade_rate": 0.15,
+        "population": 5.4,
+    },
+    "ISFP": {
+        "name": "探险家",
+        "traits": "灵活、敏感、追求美感",
+        "persuade_rate": 0.25,
+        "population": 8.8,
+    },
+    "ESTP": {
+        "name": "企业家",
+        "traits": "行动派、灵活、善于应变",
+        "persuade_rate": 0.2,
+        "population": 4.3,
+    },
+    "ESFP": {
+        "name": "表演者",
+        "traits": "活力、乐观、善于社交",
+        "persuade_rate": 0.25,
+        "population": 8.5,
+    },
 }
 
 PERSUASION_MESSAGES = {
@@ -77,6 +157,7 @@ def sample_mbti_group(size: int) -> list[str]:
 # Moderator - 使用 @remote（普通 Actor，无元信息）
 # ============================================================================
 
+
 @remote
 class ModeratorActor:
     """主持人 Actor：协调整个讨论流程（使用 @remote）"""
@@ -95,8 +176,12 @@ class ModeratorActor:
         self.agents.append({"name": name, "mbti": mbti})
         return {"status": "registered"}
 
-    async def submit_opinion(self, name: str, mbti: str, stance: str, argument: str) -> dict:
-        self.opinions.append({"name": name, "mbti": mbti, "stance": stance, "argument": argument})
+    async def submit_opinion(
+        self, name: str, mbti: str, stance: str, argument: str
+    ) -> dict:
+        self.opinions.append(
+            {"name": name, "mbti": mbti, "stance": stance, "argument": argument}
+        )
         print(f"  [{mbti}] 📝 {stance}")
         print(f"       └─ {argument}")
         return {"received": True}
@@ -123,14 +208,22 @@ class ModeratorActor:
             print(f"{'='*60}")
 
             for agent_info in self.agents:
-                my_opinion = next((o for o in self.opinions if o["name"] == agent_info["name"]), None)
+                my_opinion = next(
+                    (o for o in self.opinions if o["name"] == agent_info["name"]), None
+                )
                 if not my_opinion:
                     continue
 
-                opponents = [o for o in self.opinions
-                           if o["stance"] != my_opinion["stance"] and o["name"] != agent_info["name"]]
+                opponents = [
+                    o
+                    for o in self.opinions
+                    if o["stance"] != my_opinion["stance"]
+                    and o["name"] != agent_info["name"]
+                ]
                 if not opponents:
-                    opponents = [o for o in self.opinions if o["name"] != agent_info["name"]]
+                    opponents = [
+                        o for o in self.opinions if o["name"] != agent_info["name"]
+                    ]
                 if not opponents:
                     continue
 
@@ -141,11 +234,13 @@ class ModeratorActor:
                 if result.get("success"):
                     self.debates.append(result)
                     icon = "✅" if result["changed"] else "❌"
-                    print(f"  [{result['from']}] 💬 → [{result['to']}]: {result['message'][:40]}...")
+                    print(
+                        f"  [{result['from']}] 💬 → [{result['to']}]: {result['message'][:40]}..."
+                    )
                     print(f"       └─ {icon} [{result['to']}]: {result['reply']}")
 
         print(f"\n{'='*60}")
-        print(f"最终投票")
+        print("最终投票")
         print(f"{'='*60}")
 
         for agent_info in self.agents:
@@ -156,7 +251,7 @@ class ModeratorActor:
 
     def _summarize(self) -> dict:
         print(f"\n{'='*60}")
-        print(f"投票结果")
+        print("投票结果")
         print(f"{'='*60}")
 
         total = sum(len(v) for v in self.votes.values())
@@ -183,6 +278,7 @@ class ModeratorActor:
 # MBTI Agent - 使用 @agent（附带元信息，可用于可视化）
 # ============================================================================
 
+
 @agent(
     role="MBTI 参与者",
     goal="基于人格特点参与讨论",
@@ -191,7 +287,9 @@ class ModeratorActor:
 class MBTIAgent:
     """MBTI Agent：自主参与讨论的 Actor（使用 @agent，附带元信息）"""
 
-    def __init__(self, agent_name: str, mbti: str, topic: str, moderator: str, mock: bool):
+    def __init__(
+        self, agent_name: str, mbti: str, topic: str, moderator: str, mock: bool
+    ):
         self.name = agent_name
         self.mbti = mbti
         self.info = MBTI_TYPES[mbti]
@@ -221,7 +319,11 @@ class MBTIAgent:
             self.argument = args.get(stance, "需要讨论")
         else:
             client = await llm(temperature=0.8)
-            ctx = "\n".join([f"- {o['mbti']}: {o['stance']}" for o in others[-5:]]) if others else "暂无"
+            ctx = (
+                "\n".join([f"- {o['mbti']}: {o['stance']}" for o in others[-5:]])
+                if others
+                else "暂无"
+            )
             prompt = f"""你是 {self.mbti} ({self.info['name']})，性格特点：{self.info['traits']}。
 议题：{self.topic}
 其他人观点：
@@ -246,7 +348,9 @@ class MBTIAgent:
             target_rate = MBTI_TYPES[target_mbti]["persuade_rate"]
             changed = random.random() < target_rate
             if changed:
-                reply = random.choice(["有道理，我同意", "你说服我了", "好的，我改变想法"])
+                reply = random.choice(
+                    ["有道理，我同意", "你说服我了", "好的，我改变想法"]
+                )
             else:
                 reply = random.choice(["我不同意", "论据不足", "我坚持立场"])
         else:
@@ -285,8 +389,14 @@ class MBTIAgent:
 # 主流程
 # ============================================================================
 
-async def run(topic: str, group_size: int = 6, rounds: int = 2,
-              debate_time: float = 5.0, mock: bool = False):
+
+async def run(
+    topic: str,
+    group_size: int = 6,
+    rounds: int = 2,
+    debate_time: float = 5.0,
+    mock: bool = False,
+):
     print("=" * 60)
     print("MBTI 人格类型讨论与投票")
     print("=" * 60)
@@ -297,27 +407,34 @@ async def run(topic: str, group_size: int = 6, rounds: int = 2,
     async with runtime():
         mbti_group = sample_mbti_group(group_size)
         dist = Counter(mbti_group)
-        print(f"\n小组:")
+        print("\n小组:")
         for mbti, count in sorted(dist.items(), key=lambda x: -x[1]):
             print(f"  {mbti} ({MBTI_TYPES[mbti]['name']}): {count}人")
 
         # 创建主持人（@remote）
         moderator = await ModeratorActor.spawn(
-            topic=topic, rounds=rounds, debate_time=debate_time, mock=mock,
-            name="moderator"
+            topic=topic,
+            rounds=rounds,
+            debate_time=debate_time,
+            mock=mock,
+            name="moderator",
         )
 
         # 创建参与者（@agent，附带元信息）
         for i, mbti in enumerate(mbti_group):
             agent_name = f"agent_{i}_{mbti}"
             await MBTIAgent.spawn(
-                agent_name=agent_name, mbti=mbti, topic=topic,
-                moderator="moderator", mock=mock, name=agent_name
+                agent_name=agent_name,
+                mbti=mbti,
+                topic=topic,
+                moderator="moderator",
+                mock=mock,
+                name=agent_name,
             )
             await moderator.register_agent(agent_name, mbti)
 
         # 展示 @agent 的元信息功能
-        print(f"\n已注册的 Agent（通过元信息）:")
+        print("\n已注册的 Agent（通过元信息）:")
         for name, meta in list_agents().items():
             print(f"  {name}: {meta.role}")
 
@@ -335,5 +452,12 @@ if __name__ == "__main__":
     parser.add_argument("--mock", action="store_true")
     args = parser.parse_args()
 
-    asyncio.run(run(topic=args.topic, group_size=args.group_size,
-                    rounds=args.rounds, debate_time=args.debate_time, mock=args.mock))
+    asyncio.run(
+        run(
+            topic=args.topic,
+            group_size=args.group_size,
+            rounds=args.rounds,
+            debate_time=args.debate_time,
+            mock=args.mock,
+        )
+    )

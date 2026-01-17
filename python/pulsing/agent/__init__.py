@@ -47,9 +47,35 @@ from .llm import llm, reset_llm
 # 工具函数
 from .utils import parse_json, extract_field
 
+
+def cleanup():
+    """
+    清理所有 agent 相关的全局状态。
+
+    包括：
+    - Agent 元信息注册表
+    - LLM 单例
+
+    推荐在反复创建销毁 runtime 时调用，避免内存泄漏。
+
+    Example:
+        from pulsing.agent import runtime, cleanup
+
+        try:
+            async with runtime():
+                agent = await MyAgent.spawn(name="agent")
+                await agent.work()
+        finally:
+            cleanup()  # 清理所有全局状态
+    """
+    clear_agent_registry()
+    reset_llm()
+
+
 __all__ = [
     # 运行时
     "runtime",
+    "cleanup",
     # Agent
     "agent",
     "AgentMeta",

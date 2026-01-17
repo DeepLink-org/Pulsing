@@ -3,7 +3,7 @@ Agent 装饰器 - 带元信息的 @remote
 
 功能上等同于 @remote，但额外携带元信息：
 - role: 角色名称
-- goal: 目标描述  
+- goal: 目标描述
 - backstory: 背景故事
 - tags: 自定义标签
 
@@ -66,7 +66,7 @@ def agent(
 
         async with runtime():
             r = await Researcher.spawn(name="researcher")
-            
+
             # 获取元信息
             meta = get_agent_meta("researcher")
             print(meta.role)  # "研究员"
