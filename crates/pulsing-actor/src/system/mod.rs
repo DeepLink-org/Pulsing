@@ -18,7 +18,9 @@ use crate::actor::{
     Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorResolver, ActorSystemRef,
     IntoActorPath, Mailbox, NodeId, StopReason,
 };
-use crate::cluster::{GossipCluster, MemberInfo, MemberStatus, NamedActorInfo};
+use crate::cluster::{
+    GossipBackend, HeadNodeBackend, MemberInfo, MemberStatus, NamedActorInfo, NamingBackend,
+};
 use crate::policies::{LoadBalancingPolicy, RoundRobinPolicy, Worker};
 use crate::system_actor::{
     BoxedActorFactory, SystemActor, SystemRef, SYSTEM_ACTOR_LOCAL_NAME, SYSTEM_ACTOR_PATH,
@@ -145,8 +147,8 @@ pub struct ActorSystem {
     /// Named actor path to local actor name mapping (path_string -> actor_name)
     named_actor_paths: Arc<DashMap<String, String>>,
 
-    /// Gossip cluster (for discovery)
-    cluster: Arc<RwLock<Option<Arc<GossipCluster>>>>,
+    /// Naming backend (for discovery)
+    cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
 
     /// HTTP/2 transport
     transport: Arc<Http2Transport>,
@@ -185,7 +187,8 @@ impl ActorSystem {
         let node_id = NodeId::generate();
         let local_actors: Arc<DashMap<String, LocalActorHandle>> = Arc::new(DashMap::new());
         let named_actor_paths: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
-        let cluster_holder: Arc<RwLock<Option<Arc<GossipCluster>>>> = Arc::new(RwLock::new(None));
+        let cluster_holder: Arc<RwLock<Option<Arc<dyn NamingBackend>>>> =
+            Arc::new(RwLock::new(None));
         let lifecycle = Arc::new(ActorLifecycle::new());
 
         // Create message handler (needs cluster reference for gossip)
@@ -196,6 +199,9 @@ impl ActorSystem {
             cluster_holder.clone(),
         );
 
+        // Clone http2_config before moving it to transport
+        let http2_config_for_backend = config.http2_config.clone();
+
         // Create HTTP/2 transport
         let (transport, actual_addr) = Http2Transport::new(
             config.addr,
@@ -205,26 +211,44 @@ impl ActorSystem {
         )
         .await?;
 
-        // Create gossip cluster
-        let cluster = GossipCluster::new(
-            node_id,
-            actual_addr,
-            transport.clone(),
-            config.gossip_config,
-        );
+        // Create naming backend based on configuration
+        let backend: Arc<dyn NamingBackend> = if config.head_addr.is_some() || config.is_head_node {
+            // Head node mode: create HeadNodeBackend
+            let head_config = config.head_node_config.unwrap_or_default();
+            let backend = HeadNodeBackend::with_config(
+                node_id,
+                actual_addr,
+                config.is_head_node,
+                config.head_addr,
+                http2_config_for_backend,
+                head_config,
+            );
+            Arc::new(backend)
+        } else {
+            // Gossip mode: create GossipBackend
+            let backend = GossipBackend::new(
+                node_id,
+                actual_addr,
+                transport.clone(),
+                config.gossip_config,
+            );
+            Arc::new(backend)
+        };
 
-        let cluster = Arc::new(cluster);
         {
             let mut holder = cluster_holder.write().await;
-            *holder = Some(cluster.clone());
+            *holder = Some(backend.clone());
         }
 
-        // Start cluster gossip
-        cluster.start(cancel_token.clone());
+        // Start backend
+        backend.start(cancel_token.clone());
 
-        // Join cluster if seed nodes provided
-        if !config.seed_nodes.is_empty() {
-            cluster.join(config.seed_nodes).await?;
+        // Join cluster if seed nodes provided (only for gossip mode)
+        if !config.seed_nodes.is_empty() && config.head_addr.is_none() && !config.is_head_node {
+            backend.join(config.seed_nodes).await?;
+        } else if config.head_addr.is_some() || config.is_head_node {
+            // For head node mode, join is handled internally
+            backend.join(Vec::new()).await?;
         }
 
         let system = Arc::new(Self {

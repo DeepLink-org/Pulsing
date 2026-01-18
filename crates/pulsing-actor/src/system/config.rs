@@ -1,7 +1,7 @@
 //! Configuration types for the Actor System
 
 use crate::actor::{NodeId, DEFAULT_MAILBOX_SIZE};
-use crate::cluster::GossipConfig;
+use crate::cluster::{GossipConfig, HeadNodeConfig};
 use crate::policies::LoadBalancingPolicy;
 use crate::supervision::SupervisionSpec;
 use crate::transport::Http2Config;
@@ -26,6 +26,15 @@ pub struct SystemConfig {
 
     /// Default mailbox capacity for all actors
     pub default_mailbox_capacity: usize,
+
+    /// Head node mode: if true, this node acts as head node
+    pub is_head_node: bool,
+
+    /// Head node address: if Some, this node is a worker connecting to the head
+    pub head_addr: Option<SocketAddr>,
+
+    /// Head node configuration (only used when head node mode is enabled)
+    pub head_node_config: Option<HeadNodeConfig>,
 }
 
 /// Default bind address for standalone mode (any interface, OS-assigned port)
@@ -40,6 +49,9 @@ impl Default for SystemConfig {
             gossip_config: GossipConfig::default(),
             http2_config: Http2Config::default(),
             default_mailbox_capacity: DEFAULT_MAILBOX_SIZE,
+            is_head_node: false,
+            head_addr: None,
+            head_node_config: None,
         }
     }
 }
@@ -85,6 +97,26 @@ impl SystemConfig {
     pub fn is_tls_enabled(&self) -> bool {
         self.http2_config.is_tls_enabled()
     }
+
+    /// Enable head node mode
+    pub fn with_head_node(mut self) -> Self {
+        self.is_head_node = true;
+        self.head_addr = None; // Clear head_addr if set
+        self
+    }
+
+    /// Set head node address (makes this a worker node)
+    pub fn with_head_addr(mut self, addr: SocketAddr) -> Self {
+        self.head_addr = Some(addr);
+        self.is_head_node = false; // Clear is_head_node if set
+        self
+    }
+
+    /// Set head node configuration
+    pub fn with_head_node_config(mut self, config: HeadNodeConfig) -> Self {
+        self.head_node_config = Some(config);
+        self
+    }
 }
 
 // ============================================================================
@@ -125,6 +157,12 @@ pub struct ActorSystemBuilder {
     gossip_config: Option<GossipConfig>,
     /// HTTP/2 configuration
     http2_config: Option<Http2Config>,
+    /// Head node mode
+    is_head_node: bool,
+    /// Head node address (if set, makes this a worker)
+    head_addr: Option<Result<SocketAddr, String>>,
+    /// Head node configuration
+    head_node_config: Option<HeadNodeConfig>,
 }
 
 impl ActorSystemBuilder {
@@ -175,6 +213,29 @@ impl ActorSystemBuilder {
         self
     }
 
+    /// Enable head node mode
+    pub fn head_node(mut self) -> Self {
+        self.is_head_node = true;
+        self.head_addr = None; // Clear head_addr if set
+        self
+    }
+
+    /// Set head node address (makes this a worker node)
+    ///
+    /// Accepts `&str`, `String`, or `SocketAddr`.
+    /// Address parsing errors are deferred to `build()`.
+    pub fn head_addr(mut self, addr: impl Into<AddrInput>) -> Self {
+        self.head_addr = Some(addr.into().0);
+        self.is_head_node = false; // Clear is_head_node if set
+        self
+    }
+
+    /// Set head node configuration
+    pub fn head_node_config(mut self, config: HeadNodeConfig) -> Self {
+        self.head_node_config = Some(config);
+        self
+    }
+
     /// Build the ActorSystem
     ///
     /// Returns an error if any address parsing failed.
@@ -203,12 +264,24 @@ impl ActorSystemBuilder {
             }
         }
 
+        // Parse head node address if specified
+        let head_addr = match self.head_addr {
+            Some(Ok(addr)) => Some(addr),
+            Some(Err(invalid)) => {
+                return Err(anyhow::anyhow!("Invalid head node address: {}", invalid));
+            }
+            None => None,
+        };
+
         let config = SystemConfig {
             addr,
             seed_nodes,
             gossip_config: self.gossip_config.unwrap_or_default(),
             http2_config: self.http2_config.unwrap_or_default(),
             default_mailbox_capacity: self.mailbox_capacity.unwrap_or(DEFAULT_MAILBOX_SIZE),
+            is_head_node: self.is_head_node,
+            head_addr,
+            head_node_config: self.head_node_config,
         };
 
         crate::system::ActorSystem::new(config).await

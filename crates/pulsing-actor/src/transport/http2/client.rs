@@ -180,8 +180,9 @@ impl Http2Client {
             let body = response.collect().await?.to_bytes();
             let error_msg = String::from_utf8_lossy(&body);
             return Err(anyhow::anyhow!(
-                "Tell failed with status {}: {}",
+                "Tell failed with status {} to {}: {}",
                 status,
+                addr,
                 error_msg
             ));
         }

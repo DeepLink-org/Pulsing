@@ -128,6 +128,10 @@ impl Http2ServerHandler for TestHandler {
 
         serde_json::json!(actors)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 // ============================================================================
@@ -1047,6 +1051,10 @@ impl Http2ServerHandler for StreamingHandler {
     ) -> anyhow::Result<Option<Vec<u8>>> {
         Ok(None)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[tokio::test]
@@ -1232,6 +1240,10 @@ mod tracing_tests {
             _peer_addr: std::net::SocketAddr,
         ) -> anyhow::Result<Option<Vec<u8>>> {
             Ok(None)
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
         }
     }
 

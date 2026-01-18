@@ -97,6 +97,19 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
         let _ = include_internal;
         serde_json::json!([])
     }
+
+    /// Get as Any for downcasting
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Handle head node API requests (optional, returns None if not supported)
+    async fn handle_head_api(
+        &self,
+        _path: &str,
+        _method: &str,
+        _body: Vec<u8>,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
 }
 
 /// HTTP/2 Server
@@ -321,6 +334,43 @@ impl Http2Server {
             let actors = handler.actors_list(include_internal).await;
             let body = serde_json::to_vec(&actors).unwrap_or_default();
             return Ok(json_response(StatusCode::OK, body));
+        }
+
+        // Head node API endpoints
+        if path.starts_with("/cluster/head/") {
+            let body_bytes = match req.collect().await {
+                Ok(collected) => collected.to_bytes().to_vec(),
+                Err(e) => {
+                    return Ok(error_response(
+                        StatusCode::BAD_REQUEST,
+                        format!("Failed to read body: {}", e).into_bytes(),
+                    ));
+                }
+            };
+
+            let method_str = method.as_str();
+            let path_str = path.as_str();
+            match handler
+                .handle_head_api(path_str, method_str, body_bytes)
+                .await
+            {
+                Ok(Some(response_body)) => {
+                    return Ok(json_response(StatusCode::OK, response_body));
+                }
+                Ok(None) => {
+                    return Ok(error_response(
+                        StatusCode::NOT_IMPLEMENTED,
+                        b"Head node API not supported by this handler".to_vec(),
+                    ));
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path, method = %method, error = %e, "Head API error");
+                    return Ok(error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("{}", e).into_bytes(),
+                    ));
+                }
+            }
         }
 
         // Only POST for actor messages
@@ -690,6 +740,10 @@ mod tests {
             _peer_addr: SocketAddr,
         ) -> anyhow::Result<Option<Vec<u8>>> {
             Ok(None)
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
         }
     }
 

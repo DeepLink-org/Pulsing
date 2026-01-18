@@ -1,11 +1,14 @@
 //! HTTP/2 message handler for the actor system
 
 use super::handle::LocalActorHandle;
-use crate::actor::{Envelope, Message, NodeId};
-use crate::cluster::{GossipCluster, GossipMessage};
+use crate::actor::{ActorId, ActorPath, Envelope, Message, NodeId};
+use crate::cluster::backends::{RegisterActorRequest, UnregisterActorRequest};
+use crate::cluster::{GossipBackend, GossipMessage, HeadNodeBackend, NamingBackend};
 use crate::metrics::{metrics, SystemMetrics as PrometheusMetrics};
 use crate::transport::Http2ServerHandler;
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -16,7 +19,7 @@ pub(crate) struct SystemMessageHandler {
     node_id: NodeId,
     local_actors: Arc<DashMap<String, LocalActorHandle>>,
     named_actor_paths: Arc<DashMap<String, String>>,
-    cluster: Arc<RwLock<Option<Arc<GossipCluster>>>>,
+    cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
 }
 
 impl SystemMessageHandler {
@@ -24,7 +27,7 @@ impl SystemMessageHandler {
         node_id: NodeId,
         local_actors: Arc<DashMap<String, LocalActorHandle>>,
         named_actor_paths: Arc<DashMap<String, String>>,
-        cluster: Arc<RwLock<Option<Arc<GossipCluster>>>>,
+        cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
     ) -> Self {
         Self {
             node_id,
@@ -159,12 +162,18 @@ impl Http2ServerHandler for SystemMessageHandler {
         peer_addr: SocketAddr,
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let cluster_guard = self.cluster.read().await;
-        if let Some(cluster) = cluster_guard.as_ref() {
-            let msg: GossipMessage = bincode::deserialize(&payload)?;
-            let response = cluster.handle_gossip(msg, peer_addr).await?;
-            if let Some(resp) = response {
-                Ok(Some(bincode::serialize(&resp)?))
+        if let Some(backend) = cluster_guard.as_ref() {
+            // Try to downcast to GossipBackend to access handle_gossip
+            if let Some(gossip_backend) = backend.as_any().downcast_ref::<GossipBackend>() {
+                let msg: GossipMessage = bincode::deserialize(&payload)?;
+                let response = gossip_backend.inner().handle_gossip(msg, peer_addr).await?;
+                if let Some(resp) = response {
+                    Ok(Some(bincode::serialize(&resp)?))
+                } else {
+                    Ok(None)
+                }
             } else {
+                // Not a gossip backend, can't handle gossip messages
                 Ok(None)
             }
         } else {
@@ -344,4 +353,137 @@ impl Http2ServerHandler for SystemMessageHandler {
 
         serde_json::json!(actors)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    async fn handle_head_api(
+        &self,
+        path: &str,
+        method: &str,
+        body: Vec<u8>,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        // Call the implementation method
+        SystemMessageHandler::handle_head_api_impl(self, path, method, body).await
+    }
+}
+
+impl SystemMessageHandler {
+    // ========================================================================
+    // Head Node API Handlers
+    // ========================================================================
+
+    /// Handle head node API requests (implementation)
+    async fn handle_head_api_impl(
+        &self,
+        path: &str,
+        method: &str,
+        body: Vec<u8>,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let cluster_guard = self.cluster.read().await;
+        let backend = cluster_guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Cluster backend not available"))?;
+
+        // Try to downcast to HeadNodeBackend
+        let head_backend = match backend.as_any().downcast_ref::<HeadNodeBackend>() {
+            Some(b) if b.is_head() => b,
+            _ => return Ok(None),
+        };
+
+        match (method, path) {
+            ("POST", "/cluster/head/register") => {
+                let req: RegisterNodeRequest = bincode::deserialize(&body)?;
+                head_backend
+                    .handle_register_node(req.node_id, req.addr)
+                    .await?;
+                Ok(Some(Vec::new()))
+            }
+            ("POST", "/cluster/head/heartbeat") => {
+                let req: HeartbeatRequest = bincode::deserialize(&body)?;
+                head_backend.handle_heartbeat(&req.node_id).await?;
+                Ok(Some(Vec::new())) // Return empty body for success
+            }
+            ("POST", "/cluster/head/named_actor/register") => {
+                let req: RegisterNamedActorRequest = bincode::deserialize(&body)?;
+                head_backend
+                    .handle_register_named_actor(req.path, req.node_id, req.actor_id, req.metadata)
+                    .await?;
+                Ok(Some(Vec::new())) // Return empty body for success
+            }
+            ("POST", "/cluster/head/named_actor/unregister") => {
+                let req: UnregisterNamedActorRequest = bincode::deserialize(&body)?;
+                head_backend
+                    .handle_unregister_named_actor(&req.path, &req.node_id)
+                    .await?;
+                Ok(Some(Vec::new())) // Return empty body for success
+            }
+            ("GET", "/cluster/head/members") | ("POST", "/cluster/head/members") => {
+                // Support both GET and POST (POST is used by Http2Client)
+                let members = head_backend.all_members().await;
+                let body = bincode::serialize(&members)?;
+                Ok(Some(body))
+            }
+            ("GET", "/cluster/head/named_actors") | ("POST", "/cluster/head/named_actors") => {
+                // Support both GET and POST (POST is used by Http2Client)
+                let named_actors = head_backend.all_named_actors().await;
+                let body = bincode::serialize(&named_actors)?;
+                Ok(Some(body))
+            }
+            ("GET", "/cluster/head/sync") | ("POST", "/cluster/head/sync") => {
+                let sync = head_backend.handle_sync().await?;
+                let body = bincode::serialize(&sync)?;
+                Ok(Some(body))
+            }
+            ("POST", "/cluster/head/actor/register") => {
+                let req: RegisterActorRequest = bincode::deserialize(&body)?;
+                head_backend
+                    .handle_register_actor(req.actor_id, req.node_id)
+                    .await?;
+                Ok(Some(Vec::new()))
+            }
+            ("POST", "/cluster/head/actor/unregister") => {
+                let req: UnregisterActorRequest = bincode::deserialize(&body)?;
+                head_backend
+                    .handle_unregister_actor(&req.actor_id, &req.node_id)
+                    .await?;
+                Ok(Some(Vec::new()))
+            }
+            _ => Err(anyhow::anyhow!(
+                "Unknown head API endpoint: {} {}",
+                method,
+                path
+            )),
+        }
+    }
+}
+
+// ============================================================================
+// Head Node API Request Types
+// ============================================================================
+
+#[derive(Serialize, Deserialize)]
+struct RegisterNodeRequest {
+    node_id: NodeId,
+    addr: SocketAddr,
+}
+
+#[derive(Serialize, Deserialize)]
+struct HeartbeatRequest {
+    node_id: NodeId,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RegisterNamedActorRequest {
+    path: ActorPath,
+    node_id: NodeId,
+    actor_id: Option<ActorId>,
+    metadata: HashMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct UnregisterNamedActorRequest {
+    path: ActorPath,
+    node_id: NodeId,
 }

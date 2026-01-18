@@ -6,7 +6,7 @@
 //! - Cluster broadcast for named actor failures
 
 use crate::actor::{ActorId, ActorPath, Envelope, Message, StopReason};
-use crate::cluster::GossipCluster;
+use crate::cluster::NamingBackend;
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -93,7 +93,7 @@ impl ActorLifecycle {
         named_path: Option<ActorPath>,
         reason: StopReason,
         named_actor_paths: &DashMap<String, String>,
-        cluster: &RwLock<Option<Arc<GossipCluster>>>,
+        cluster: &RwLock<Option<Arc<dyn NamingBackend>>>,
         get_sender: F,
     ) where
         F: Fn(&str) -> Option<mpsc::Sender<Envelope>>,
@@ -146,7 +146,7 @@ impl ActorLifecycle {
         named_path: Option<&ActorPath>,
         reason: &StopReason,
         named_actor_paths: &DashMap<String, String>,
-        cluster: &RwLock<Option<Arc<GossipCluster>>>,
+        cluster: &RwLock<Option<Arc<dyn NamingBackend>>>,
     ) {
         if let Some(path) = named_path {
             // Remove from routing table
