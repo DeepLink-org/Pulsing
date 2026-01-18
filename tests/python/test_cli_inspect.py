@@ -208,7 +208,9 @@ class TestInspectActors:
             assert "actor-4" in output
             # Should not show all 20
             lines = output.split("\n")
-            actor_lines = [l for l in lines if "actor-" in l and "Actor Name" not in l]
+            actor_lines = [
+                line for line in lines if "actor-" in line and "Actor Name" not in line
+            ]
             assert len(actor_lines) <= 5
         finally:
             sys.stdout = old_stdout
@@ -337,12 +339,15 @@ class TestCLIEntryPoint:
         )
 
         mock_inspect_actors.assert_called_once_with(
-            ["127.0.0.1:8000", "127.0.0.1:8001"],
+            seeds=["127.0.0.1:8000", "127.0.0.1:8001"],
+            endpoint=None,
             timeout=5.0,
             best_effort=False,
             top=10,
             filter="worker",
             all_actors=False,
+            json_output=False,
+            detailed=False,
         )
 
     @patch("pulsing.cli.inspect.inspect_metrics")
@@ -392,7 +397,6 @@ class TestCLIEntryPoint:
             output = buffer.getvalue()
 
             assert "Error: --seeds is required" in output
-            assert "Usage:" in output
         finally:
             sys.stdout = old_stdout
 

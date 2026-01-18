@@ -5,65 +5,52 @@ import hyperparameter as hp
 
 @hp.param("actor")
 def actor(
-    actor_type: str,  # Positional argument, supports: router, transformers, vllm
-    namespace: str = "pulsing",
+    actor_type: str,  # Positional argument: full class path (e.g., 'pulsing.actors.worker.TransformersWorker')
     addr: str | None = None,
     seeds: str | None = None,
-    model: str | None = None,
-    model_name: str = "pulsing-model",
-    device: str = "cuda",
-    max_new_tokens: int = 512,
-    role: str = "aggregated",
-    preload_model: bool = False,
-    http_host: str = "0.0.0.0",
-    http_port: int = 8080,
-    scheduler: str = "stream_load",
-    # macOS Metal/MLX support parameters
-    mlx_device: str | None = None,  # 'gpu' or 'cpu', default 'gpu'
-    metal_memory_fraction: float | None = None,  # 0.0-1.0, default 0.8
+    name: str = "worker",  # Actor name (default: "worker")
+    **kwargs,  # Additional arguments for Actor constructor
 ):
     r"""
     Start an Actor-based service.
 
     This command starts actors based on the Pulsing Actor System.
-    Supported actor types:
-    - router: Load balancing router (with OpenAI-compatible HTTP API)
-    - transformers: Transformers-based inference worker
-    - vllm: vLLM-based high-performance inference worker
+
+    Actor type must be a full class path:
+    - Format: 'module.path.ClassName'
+    - Example: 'pulsing.actors.router.RouterActor'
+    - Example: 'pulsing.actors.worker.TransformersWorker'
+    - Example: 'pulsing.actors.vllm.VllmWorker'
+    - Example: 'my_module.my_actor.MyCustomActor'
+
+    Pass constructor parameters directly as command-line arguments.
+    The CLI will automatically match parameters to the Actor's constructor signature.
 
     Note: To list actors, use 'pulsing inspect actors' instead.
 
     Args:
-        actor_type: Actor type (positional argument). Options: 'router', 'transformers', 'vllm'
-        namespace: Service namespace. Default: 'pulsing'
+        actor_type: Full class path (positional argument), e.g., 'pulsing.actors.worker.TransformersWorker'
         addr: Actor System bind address (e.g., '0.0.0.0:8000')
         seeds: Comma-separated list of seed nodes (e.g., '192.168.1.1:8000,192.168.1.2:8000')
-        model: Model path (required for 'transformers' and 'vllm' type)
-        model_name: Model name for OpenAI API. Default: 'pulsing-model'
-        device: Device for inference ('cuda', 'cpu', 'mps'). Default: 'cuda'
-        max_new_tokens: Max tokens to generate. Default: 512
-        role: Worker role for vLLM ('aggregated', 'prefill', 'decode'). Default: 'aggregated'
-        scheduler: Scheduler algorithm for router. Options: 'round_robin', 'random', 'least_connection', 'stream_load'. Default: 'stream_load'
-        preload_model: Preload model on startup. Default: False
-        http_host: HTTP server host (for router). Default: '0.0.0.0'
-        http_port: HTTP server port (for router). Default: 8080
-        mlx_device: MLX device type for macOS ('gpu' or 'cpu'). Default: 'gpu'
-        metal_memory_fraction: Metal memory fraction for macOS (0.0-1.0). Default: 0.8
+        name: Actor name. Default: 'worker'. Use different names to run multiple workers in the same cluster.
+        **kwargs: Additional arguments matching the Actor's constructor parameters.
+            Pass parameters directly as command-line arguments, e.g., --model_name gpt2 --device cpu
 
     Examples:
-        # Start a router with OpenAI-compatible API on port 8080
-        pulsing actor router --http_port 8080 --model_name my-llm
+        # Start a Transformers worker
+        pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2 --device cpu --name my-worker
 
         # Start a vLLM worker
-        pulsing actor vllm --model Qwen/Qwen2 --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
+        pulsing actor pulsing.actors.vllm.VllmWorker --model Qwen/Qwen2 --role aggregated --max_new_tokens 512 --name vllm-worker
 
-        # Start a transformers worker
-        pulsing actor transformers --model gpt2 --addr 0.0.0.0:8001 --seeds 192.168.1.100:8000
+        # Start a Router with OpenAI-compatible API
+        pulsing actor pulsing.actors.router.RouterActor --http_host 0.0.0.0 --http_port 8080 --model_name my-llm --worker_name worker
 
-        # Start worker on CPU
-        pulsing actor transformers --model gpt2 --device cpu
+        # Start multiple workers with different names
+        pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2 --name worker-1 --seeds 127.0.0.1:8000
+        pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2 --name worker-2 --seeds 127.0.0.1:8000
     """
-    from .actors import start_router, start_transformers, start_vllm
+    from .actors import start_generic_actor
 
     # Check for deprecated 'list' subcommand
     if actor_type == "list":
@@ -73,44 +60,27 @@ def actor(
         print("  pulsing inspect actors --seeds 127.0.0.1:8000")
         return
 
+    # Check if actor_type is a valid class path (must contain dots)
+    if "." not in actor_type:
+        raise ValueError(
+            f"Error: Actor type must be a full class path (e.g., 'pulsing.actors.worker.TransformersWorker').\n"
+            f"Received: '{actor_type}'\n"
+            f"Example: pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2"
+        )
+
     # Parse seeds
     seed_list = []
     if seeds:
         seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
 
-    if actor_type == "router":
-        start_router(
-            namespace, addr, seed_list, http_host, http_port, model_name, scheduler
-        )
-    elif actor_type == "transformers":
-        if not model:
-            raise ValueError("--model is required for 'transformers' actor type")
-        start_transformers(
-            model=model,
-            namespace=namespace,
-            addr=addr,
-            seeds=seed_list,
-            device=device,
-            max_new_tokens=max_new_tokens,
-            preload_model=preload_model,
-        )
-    elif actor_type == "vllm":
-        if not model:
-            raise ValueError("--model is required for 'vllm' actor type")
-        start_vllm(
-            model=model,
-            namespace=namespace,
-            addr=addr,
-            seeds=seed_list,
-            max_new_tokens=max_new_tokens,
-            role=role,
-            mlx_device=mlx_device,
-            metal_memory_fraction=metal_memory_fraction,
-        )
-    else:
-        raise ValueError(
-            f"Unknown actor type: {actor_type}. Supported types: router, transformers, vllm"
-        )
+    # Start generic Actor class
+    start_generic_actor(
+        actor_type=actor_type,
+        addr=addr,
+        seeds=seed_list,
+        name=name,
+        extra_kwargs=kwargs,  # All additional CLI arguments
+    )
 
 
 @hp.param("inspect")

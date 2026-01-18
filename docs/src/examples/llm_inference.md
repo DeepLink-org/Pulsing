@@ -19,7 +19,12 @@ This guide shows how to run a **router + worker** LLM service with Pulsing, and 
 The router needs an **actor system address** so workers can join the same cluster:
 
 ```bash
-pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+pulsing actor pulsing.actors.router.RouterActor \
+  --addr 0.0.0.0:8000 \
+  --http_host 0.0.0.0 \
+  --http_port 8080 \
+  --model_name my-llm \
+  --worker_name worker
 ```
 
 ## 2) Start workers
@@ -29,13 +34,22 @@ You can run **one or more** workers. Each worker should join the router node via
 ### Option A: Transformers worker (Terminal B)
 
 ```bash
-pulsing actor transformers --model gpt2 --device cpu --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
+pulsing actor pulsing.actors.worker.TransformersWorker \
+  --model_name gpt2 \
+  --device cpu \
+  --addr 0.0.0.0:8001 \
+  --seeds 127.0.0.1:8000 \
+  --name worker
 ```
 
 ### Option B: vLLM worker (Terminal C)
 
 ```bash
-pulsing actor vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+pulsing actor pulsing.actors.vllm.VllmWorker \
+  --model Qwen/Qwen2.5-0.5B \
+  --addr 0.0.0.0:8002 \
+  --seeds 127.0.0.1:8000 \
+  --name worker
 ```
 
 ## 3) Verify cluster + workers
@@ -43,7 +57,7 @@ pulsing actor vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0
 ### List actors (observer mode)
 
 ```bash
-pulsing actor list --endpoint 127.0.0.1:8000
+pulsing inspect actors --endpoint 127.0.0.1:8000
 ```
 
 ### Inspect cluster

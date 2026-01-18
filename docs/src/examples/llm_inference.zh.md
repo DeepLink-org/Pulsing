@@ -19,7 +19,12 @@
 Router 需要指定 **actor system 地址**，以便其它进程启动的 workers 加入同一集群：
 
 ```bash
-pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+pulsing actor pulsing.actors.router.RouterActor \
+  --addr 0.0.0.0:8000 \
+  --http_host 0.0.0.0 \
+  --http_port 8080 \
+  --model_name my-llm \
+  --worker_name worker
 ```
 
 ## 2）启动 Worker
@@ -29,13 +34,22 @@ pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
 ### 方案 A：Transformers Worker（终端 B）
 
 ```bash
-pulsing actor transformers --model gpt2 --device cpu --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
+pulsing actor pulsing.actors.worker.TransformersWorker \
+  --model_name gpt2 \
+  --device cpu \
+  --addr 0.0.0.0:8001 \
+  --seeds 127.0.0.1:8000 \
+  --name worker
 ```
 
 ### 方案 B：vLLM Worker（终端 C）
 
 ```bash
-pulsing actor vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+pulsing actor pulsing.actors.vllm.VllmWorker \
+  --model Qwen/Qwen2.5-0.5B \
+  --addr 0.0.0.0:8002 \
+  --seeds 127.0.0.1:8000 \
+  --name worker
 ```
 
 ## 3）验证集群与 worker
@@ -43,7 +57,7 @@ pulsing actor vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0
 ### 列出 actors（观察者模式）
 
 ```bash
-pulsing actor list --endpoint 127.0.0.1:8000
+pulsing inspect actors --endpoint 127.0.0.1:8000
 ```
 
 ### 巡检集群

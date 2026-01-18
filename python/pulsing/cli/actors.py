@@ -2,176 +2,137 @@
 
 import uvloop
 
+from .actor_loader import load_actor_class
 
-def start_router(
-    namespace: str,
+
+def start_generic_actor(
+    actor_type: str,
     addr: str | None,
     seeds: list[str],
-    http_host: str,
-    http_port: int,
-    model_name: str,
-    scheduler_type: str,
+    name: str = "worker",
+    extra_kwargs: dict | None = None,
 ):
-    """Start Router with OpenAI-compatible API"""
-    from pulsing.actor import SystemConfig, create_actor_system
-    from pulsing.actor.helpers import run_until_signal
-
-    from ..actors import (
-        LeastConnectionScheduler,
-        RandomScheduler,
-        RoundRobinScheduler,
-        StreamLoadScheduler,
-    )
-    from ..actors.router import start_router as start_router_service
-    from ..actors.router import stop_router
-
-    # Select scheduler class
-    scheduler_map = {
-        "round_robin": RoundRobinScheduler,
-        "random": RandomScheduler,
-        "least_connection": LeastConnectionScheduler,
-        "stream_load": StreamLoadScheduler,
-    }
-    scheduler_class = scheduler_map.get(scheduler_type)
-    if not scheduler_class:
-        raise ValueError(
-            f"Unknown scheduler: {scheduler_type}. Options: {list(scheduler_map.keys())}"
-        )
-
-    print(f"Starting Router (namespace={namespace}, model={model_name})")
-    print(f"  Actor System addr: {addr or 'auto'}")
-    print(f"  HTTP API: http://{http_host}:{http_port}")
-    print(f"  Scheduler: {scheduler_type}")
-
-    async def run():
-        # Create ActorSystem
-        if addr:
-            config = SystemConfig.with_addr(addr)
-        else:
-            config = SystemConfig.standalone()
-
-        if seeds:
-            config = config.with_seeds(seeds)
-
-        system = await create_actor_system(config)
-        print(f"[Router] ActorSystem started at {system.addr}")
-
-        # Start Router HTTP server
-        runner = await start_router_service(
-            system,
-            http_host=http_host,
-            http_port=http_port,
-            model_name=model_name,
-            worker_name="worker",
-            scheduler_type=scheduler_type,
-        )
-
-        # Run until signal received
-        try:
-            await run_until_signal(system, "router")
-        finally:
-            await stop_router(runner)
-
-    uvloop.run(run())
-
-
-def start_transformers(
-    model: str,
-    namespace: str,
-    addr: str | None,
-    seeds: list[str],
-    device: str,
-    max_new_tokens: int,
-    preload_model: bool,
-):
-    """Start Transformers Worker"""
-    from pulsing.actor.helpers import spawn_and_run
-
-    from ..actors import GenerationConfig, TransformersWorker
-
-    print(f"Starting Transformers Worker (model={model}, namespace={namespace})")
-    print(f"  Device: {device}")
-    print(f"  Max tokens: {max_new_tokens}")
-    print(f"  Preload: {preload_model}")
-
-    async def run():
-        gen_config = GenerationConfig(max_new_tokens=max_new_tokens)
-        worker = TransformersWorker(
-            model_name=model,
-            device=device,
-            gen_config=gen_config,
-            preload=preload_model,
-        )
-
-        await spawn_and_run(
-            worker,
-            name="worker",
-            addr=addr,
-            seeds=seeds if seeds else None,
-            public=True,
-        )
-
-    uvloop.run(run())
-
-
-def start_vllm(
-    model: str,
-    namespace: str,
-    addr: str | None,
-    seeds: list[str],
-    max_new_tokens: int,
-    role: str = "aggregated",
-    mlx_device: str | None = None,
-    metal_memory_fraction: float | None = None,
-):
-    """Start vLLM Worker
+    """Start a generic Actor class by full module path
 
     Args:
-        model: Model path or name
-        namespace: Service namespace
+        actor_type: Full class path, e.g., 'pulsing.actors.worker.TransformersWorker'
         addr: Actor System bind address
-        seeds: List of seed nodes
-        max_new_tokens: Maximum tokens to generate
-        role: Worker role ('aggregated', 'prefill', 'decode')
-        mlx_device: MLX device type for macOS ('gpu' or 'cpu')
-        metal_memory_fraction: Metal memory fraction for macOS (0.0-1.0)
+        seeds: List of seed node addresses
+        name: Actor name
+        extra_kwargs: Additional CLI arguments to pass to Actor constructor
     """
+    import inspect
     from pulsing.actor.helpers import spawn_and_run
 
-    from ..actors.vllm import VllmWorker
+    print(f"Loading Actor class: {actor_type}")
 
-    print(f"Starting vLLM Worker (model={model}, namespace={namespace}, role={role})")
-    print(f"  Max tokens: {max_new_tokens}")
+    # Load Actor class
+    try:
+        actor_class = load_actor_class(actor_type)
+    except (ImportError, ValueError, AttributeError) as e:
+        print(f"Error: {e}")
+        return
 
-    # Display macOS Metal configuration
-    import platform
+    print(f"  Class: {actor_class.__name__}")
+    print(f"  Module: {actor_class.__module__}")
 
-    if platform.system() == "Darwin":
-        mlx_info = mlx_device or "gpu (default)"
-        if metal_memory_fraction is not None:
-            try:
-                memory_value = float(metal_memory_fraction)
-                memory_info = f"{memory_value:.2f}"
-            except (ValueError, TypeError):
-                memory_info = str(metal_memory_fraction)
-        else:
-            memory_info = "0.8 (default)"
-        print(
-            f"  macOS Metal support: MLX device={mlx_info}, memory fraction={memory_info}"
-        )
+    # Get Actor constructor signature
+    try:
+        actor_sig = inspect.signature(actor_class.__init__)
+    except Exception as e:
+        print(f"Error: Cannot inspect Actor constructor: {e}")
+        return
+
+    # Parameters that should NOT be passed to Actor constructor
+    cli_only_params = {
+        "actor_type",
+        "addr",
+        "seeds",
+        "name",
+        "self",
+    }
+
+    # Get Actor constructor parameter names
+    actor_params = set(actor_sig.parameters.keys()) - {"self"}
+
+    # Extract Actor constructor parameters from extra_kwargs
+    constructor_kwargs = {}
+
+    # Filter extra_kwargs to only include Actor constructor parameters
+    if extra_kwargs:
+        for param_name, value in extra_kwargs.items():
+            # Convert kebab-case to snake_case for matching
+            snake_case_name = param_name.replace("-", "_")
+
+            # Check if this parameter matches Actor constructor
+            if (
+                snake_case_name in actor_params
+                and snake_case_name not in cli_only_params
+            ):
+                # Get type hint if available for conversion
+                param = actor_sig.parameters.get(snake_case_name)
+                if param and param.annotation != inspect.Parameter.empty:
+                    try:
+                        # Type conversion based on annotation
+                        annotation = param.annotation
+                        if annotation is bool and isinstance(value, str):
+                            value = value.lower() in ("true", "1", "yes", "on")
+                        elif annotation is int and isinstance(value, str):
+                            value = int(value)
+                        elif annotation is float and isinstance(value, str):
+                            value = float(value)
+                    except (ValueError, TypeError):
+                        pass  # Keep original value if conversion fails
+
+                constructor_kwargs[snake_case_name] = value
+
+    # Show constructor parameters
+    if constructor_kwargs:
+        print("  Constructor parameters:")
+        for key, value in constructor_kwargs.items():
+            # Truncate long values for display
+            value_str = str(value)
+            if len(value_str) > 50:
+                value_str = value_str[:47] + "..."
+            print(f"    {key}: {value_str}")
+    else:
+        print("  No constructor parameters provided (using defaults)")
+
+    print(f"  Actor name: {name}")
+    if seeds:
+        print(f"  Seeds: {', '.join(seeds)}")
+    if addr:
+        print(f"  Address: {addr}")
 
     async def run():
-        worker = VllmWorker(
-            model=model,
-            role=role,
-            max_new_tokens=max_new_tokens,
-            mlx_device=mlx_device,
-            metal_memory_fraction=metal_memory_fraction,
-        )
+        try:
+            # Instantiate Actor
+            actor_instance = actor_class(**constructor_kwargs)
+        except TypeError as e:
+            print(f"\nError: Failed to instantiate {actor_class.__name__}")
+            print(f"  {e}")
+            print("\nHint: Check the constructor signature and provided parameters.")
+            required_params = [
+                name
+                for name, param in actor_sig.parameters.items()
+                if name != "self" and param.default == inspect.Parameter.empty
+            ]
+            if required_params:
+                print(f"  Required parameters: {', '.join(required_params)}")
+            print(f"  All constructor parameters: {', '.join(actor_params)}")
+            print(f"  Provided parameters: {', '.join(constructor_kwargs.keys())}")
+            return
+        except Exception as e:
+            print(f"\nError: Failed to create Actor instance: {e}")
+            import traceback
 
+            traceback.print_exc()
+            return
+
+        # Spawn and run
         await spawn_and_run(
-            worker,
-            name="worker",
+            actor_instance,
+            name=name,
             addr=addr,
             seeds=seeds if seeds else None,
             public=True,
