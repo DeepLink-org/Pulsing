@@ -2,8 +2,9 @@
 
 import asyncio
 import pytest
-from pulsing.actor import init, remote, get_system
-from pulsing.cli.actor_list import list_actors_impl
+import json
+from pulsing.actor import init, remote, get_system, list_actors
+from pulsing.cli.inspect import _print_actors_table
 import io
 import sys
 
@@ -37,7 +38,10 @@ async def test_actor_list_basic():
 
     try:
         # List user actors only
-        await list_actors_impl(all_actors=False, output_format="table")
+        actors_data = await list_actors(system)
+        # Filter internal actors
+        actors_data = [a for a in actors_data if not a.get("name", "").startswith("_")]
+        _print_actors_table(actors_data)
         output = buffer.getvalue()
 
         # Check output contains actor names
@@ -71,7 +75,8 @@ async def test_actor_list_all():
 
     try:
         # List all actors
-        await list_actors_impl(all_actors=True, output_format="table")
+        actors_data = await list_actors(system)
+        _print_actors_table(actors_data)
         output = buffer.getvalue()
 
         # Check output contains user actor
@@ -97,12 +102,13 @@ async def test_actor_list_json():
     sys.stdout = buffer = io.StringIO()
 
     try:
-        await list_actors_impl(all_actors=False, output_format="json")
+        actors_data = await list_actors(system)
+        # Filter internal actors
+        actors_data = [a for a in actors_data if not a.get("name", "").startswith("_")]
+        print(json.dumps(actors_data, indent=2))
         output = buffer.getvalue()
 
         # Should be valid JSON
-        import json
-
         data = json.loads(output)
 
         # Check structure

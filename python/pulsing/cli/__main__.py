@@ -5,7 +5,7 @@ import hyperparameter as hp
 
 @hp.param("actor")
 def actor(
-    actor_type: str,  # Positional argument, supports: router, transformers, vllm, list
+    actor_type: str,  # Positional argument, supports: router, transformers, vllm
     namespace: str = "pulsing",
     addr: str | None = None,
     seeds: str | None = None,
@@ -21,23 +21,20 @@ def actor(
     # macOS Metal/MLX support parameters
     mlx_device: str | None = None,  # 'gpu' or 'cpu', default 'gpu'
     metal_memory_fraction: float | None = None,  # 0.0-1.0, default 0.8
-    # Actor list parameters
-    endpoint: str | None = None,  # Single actor system endpoint (list only)
-    all_actors: bool = False,  # Show all actors including internal ones (list only)
-    json: bool = False,  # Output as JSON (list only)
 ):
     r"""
-    Start an Actor-based service or list actors.
+    Start an Actor-based service.
 
-    This command starts actors based on the Pulsing Actor System or lists existing actors.
+    This command starts actors based on the Pulsing Actor System.
     Supported actor types:
     - router: Load balancing router (with OpenAI-compatible HTTP API)
     - transformers: Transformers-based inference worker
     - vllm: vLLM-based high-performance inference worker
-    - list: List actors in the current system
+
+    Note: To list actors, use 'pulsing inspect actors' instead.
 
     Args:
-        actor_type: Actor type (positional argument). Options: 'router', 'transformers', 'vllm', 'list'
+        actor_type: Actor type (positional argument). Options: 'router', 'transformers', 'vllm'
         namespace: Service namespace. Default: 'pulsing'
         addr: Actor System bind address (e.g., '0.0.0.0:8000')
         seeds: Comma-separated list of seed nodes (e.g., '192.168.1.1:8000,192.168.1.2:8000')
@@ -52,9 +49,6 @@ def actor(
         http_port: HTTP server port (for router). Default: 8080
         mlx_device: MLX device type for macOS ('gpu' or 'cpu'). Default: 'gpu'
         metal_memory_fraction: Metal memory fraction for macOS (0.0-1.0). Default: 0.8
-        endpoint: (list only) Single actor system endpoint (e.g., '127.0.0.1:8000')
-        all_actors: (list only) Show all actors including internal system actors
-        json: (list only) Output in JSON format
 
     Examples:
         # Start a router with OpenAI-compatible API on port 8080
@@ -68,31 +62,15 @@ def actor(
 
         # Start worker on CPU
         pulsing actor transformers --model gpt2 --device cpu
-
-        # List actors from single endpoint
-        pulsing actor list --endpoint 127.0.0.1:8000
-
-        # List actors from cluster
-        pulsing actor list --seeds 127.0.0.1:8000,127.0.0.1:8001
-
-        # List all actors including internal ones
-        pulsing actor list --endpoint 127.0.0.1:8000 --all_actors True
-
-        # Output as JSON
-        pulsing actor list --endpoint 127.0.0.1:8000 --json True
     """
     from .actors import start_router, start_transformers, start_vllm
 
-    # Handle 'list' subcommand
+    # Check for deprecated 'list' subcommand
     if actor_type == "list":
-        from .actor_list import list_actors_command
-
-        list_actors_command(
-            endpoint=endpoint,
-            seeds=seeds,
-            all_actors=all_actors,
-            json_output=json,
-        )
+        print("Error: 'pulsing actor list' has been removed.")
+        print("Use 'pulsing inspect actors' instead:")
+        print("  pulsing inspect actors --endpoint 127.0.0.1:8000")
+        print("  pulsing inspect actors --seeds 127.0.0.1:8000")
         return
 
     # Parse seeds
@@ -131,27 +109,109 @@ def actor(
         )
     else:
         raise ValueError(
-            f"Unknown actor type: {actor_type}. Supported types: router, transformers, vllm, list"
+            f"Unknown actor type: {actor_type}. Supported types: router, transformers, vllm"
         )
 
 
 @hp.param("inspect")
-def inspect(seeds: str | None = None):
+def inspect(
+    subcommand: str,  # Positional argument: cluster, actors, metrics, watch
+    seeds: str | None = None,
+    # Common options
+    timeout: float = 10.0,
+    best_effort: bool = False,
+    # cluster subcommand options (no specific options yet)
+    # actors subcommand options
+    top: int | None = None,
+    filter: str | None = None,
+    all_actors: bool = False,
+    endpoint: str | None = None,  # Single node endpoint (alternative to seeds)
+    json: bool = False,  # JSON output format
+    detailed: bool = False,  # Show detailed info (class, module) per node
+    # metrics subcommand options
+    raw: bool = True,
+    # watch subcommand options
+    interval: float = 1.0,
+    kind: str = "all",  # cluster, actors, metrics, all
+    max_rounds: int | None = None,
+):
     """
-    Inspect the actor system state.
+    Inspect the actor system state (observer mode via HTTP API).
+
+    This command uses lightweight HTTP observer mode - does NOT join the gossip cluster.
 
     Args:
-        seeds: Comma-separated list of seed nodes to join the cluster.
+        subcommand: Subcommand to run. Options: 'cluster', 'actors', 'metrics', 'watch' (required)
+        seeds: Comma-separated list of seed nodes (required)
+        timeout: Request timeout in seconds (default: 10.0)
+        best_effort: Continue even if some nodes fail (default: False)
+        top: (actors only) Show top N actors by instance count
+        filter: (actors only) Filter actor names by substring
+        all_actors: (actors only) Include internal/system actors
+        raw: (metrics only) Output raw metrics (default: True). If False, show summary only
+        interval: (watch only) Refresh interval in seconds (default: 1.0)
+        kind: (watch only) What to watch: 'cluster', 'actors', 'metrics', 'all' (default: 'all')
+        max_rounds: (watch only) Maximum number of refresh rounds (None = infinite)
 
     Examples:
-        pulsing inspect --seeds 127.0.0.1:8000
+        # Inspect cluster members
+        pulsing inspect cluster --seeds 127.0.0.1:8000
+
+        # Inspect actors distribution
+        pulsing inspect actors --seeds 127.0.0.1:8000 --top 10
+
+        # Inspect metrics
+        pulsing inspect metrics --seeds 127.0.0.1:8000 --raw False
+
+        # Watch cluster changes
+        pulsing inspect watch --seeds 127.0.0.1:8000 --interval 2.0 --kind cluster
     """
-    from .inspect import inspect_system
+    from .inspect import (
+        inspect_actors,
+        inspect_cluster,
+        inspect_metrics,
+        inspect_watch,
+    )
 
     seed_list = []
     if seeds:
         seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
-    inspect_system(seed_list)
+
+    if subcommand == "cluster":
+        if not seed_list:
+            print("Error: --seeds is required for 'inspect cluster' command")
+            return
+        inspect_cluster(seed_list, timeout=timeout, best_effort=best_effort)
+    elif subcommand == "actors":
+        if endpoint and seed_list:
+            print("Error: Cannot specify both --endpoint and --seeds.")
+            print("Use --endpoint for single node, --seeds for cluster.")
+            return
+        inspect_actors(
+            seeds=seed_list if not endpoint else None,
+            endpoint=endpoint,
+            timeout=timeout,
+            best_effort=best_effort,
+            top=top,
+            filter=filter,
+            all_actors=all_actors,
+            json_output=json,
+            detailed=detailed,
+        )
+    elif subcommand == "metrics":
+        inspect_metrics(seed_list, timeout=timeout, best_effort=best_effort, raw=raw)
+    elif subcommand == "watch":
+        inspect_watch(
+            seed_list,
+            timeout=timeout,
+            best_effort=best_effort,
+            interval=interval,
+            kind=kind,
+            max_rounds=max_rounds,
+        )
+    else:
+        print(f"Error: Unknown subcommand '{subcommand}'")
+        print("Supported subcommands: cluster, actors, metrics, watch")
 
 
 @hp.param("bench")

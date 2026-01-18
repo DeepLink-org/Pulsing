@@ -71,6 +71,42 @@ python examples/python/ping_pong.py
 python examples/python/cluster.py --port 8000
 ```
 
+### ⭐⭐ CLI 工具 (`inspect/`)
+
+| 示例 | 说明 |
+|------|------|
+| `demo.sh` | 完整演示脚本（推荐） |
+| `start_demo.sh` | 仅启动服务脚本 |
+| `demo_service.py` | 多节点演示服务 |
+| `README.md` | Inspect CLI 使用指南 |
+
+**一键运行完整演示：**
+
+```bash
+./examples/inspect/demo.sh
+```
+
+这个脚本会自动：
+- 启动 3 个节点
+- 运行所有 inspect 子命令
+- 展示各种用法和输出
+- 按 Ctrl+C 自动清理
+
+**或手动启动服务：**
+
+```bash
+# 启动服务（3个终端）
+python examples/inspect/demo_service.py --port 8000
+python examples/inspect/demo_service.py --port 8001 --seed 127.0.0.1:8000
+python examples/inspect/demo_service.py --port 8002 --seed 127.0.0.1:8000
+
+# 使用 inspect 查看集群状态
+pulsing inspect cluster --seeds 127.0.0.1:8000
+pulsing inspect actors --seeds 127.0.0.1:8000
+pulsing inspect metrics --seeds 127.0.0.1:8000
+pulsing inspect watch --seeds 127.0.0.1:8000
+```
+
 ### ⭐⭐⭐ Rust 示例 (`rust/`)
 
 | 示例 | 说明 |
@@ -95,6 +131,7 @@ cargo run --example behavior_fsm -p pulsing-actor
 | AI 辩论/讨论 | `agent/pulsing/mbti_discussion.py` |
 | 并行任务竞争 | `agent/pulsing/parallel_ideas_async.py` |
 | 集群部署 | `python/cluster.py` |
+| 学习 CLI 工具 | `inspect/demo_service.py` |
 | 接入 AutoGen | `agent/autogen/` |
 | 接入 LangGraph | `agent/langgraph/` |
 | 学习 Rust API | `rust/behavior_*.rs` |

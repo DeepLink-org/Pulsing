@@ -38,4 +38,4 @@ Submodules:
 - pulsing.compat.ray: Ray-compatible sync API (for migration)
 """
 
-__version__ = "0.7.0"
+__version__ = "0.1.0"
