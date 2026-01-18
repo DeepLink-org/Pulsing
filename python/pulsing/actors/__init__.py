@@ -4,7 +4,7 @@
 # Router
 # Stream load subscription
 from .load_stream import LoadSnapshot, LoadStreamConsumer, StreamLoadScheduler
-from .router import start_router, stop_router
+from .router import Router, start_router, stop_router
 
 # Scheduler
 from .scheduler import (  # Base class; Python schedulers; Rust high-performance schedulers; Factory function
@@ -29,6 +29,7 @@ TransformersWorkerActor = TransformersWorker
 
 __all__ = [
     # Core API
+    "Router",
     "TransformersWorker",
     "VllmWorker",
     "GenerationConfig",

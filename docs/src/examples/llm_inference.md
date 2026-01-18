@@ -19,7 +19,7 @@ This guide shows how to run a **router + worker** LLM service with Pulsing, and 
 The router needs an **actor system address** so workers can join the same cluster:
 
 ```bash
-pulsing actor pulsing.actors.router.RouterActor \
+pulsing actor pulsing.actors.Router \
   --addr 0.0.0.0:8000 \
   --http_host 0.0.0.0 \
   --http_port 8080 \
@@ -63,7 +63,7 @@ pulsing inspect actors --endpoint 127.0.0.1:8000
 ### Inspect cluster
 
 ```bash
-pulsing inspect --seeds 127.0.0.1:8000
+pulsing inspect cluster --seeds 127.0.0.1:8000
 ```
 
 ## 4) Call the OpenAI-compatible API

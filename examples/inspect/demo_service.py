@@ -50,29 +50,29 @@ class WorkerActor(Actor):
         return Message.empty()
 
 
-class RouterActor(Actor):
-    """A router actor that distributes tasks to workers"""
+class DispatcherActor(Actor):
+    """A dispatcher actor that distributes tasks to workers (for demo purposes)"""
 
     def __init__(self):
         self.workers = []
-        self.tasks_routed = 0
+        self.tasks_dispatched = 0
 
     def on_start(self, actor_id: ActorId):
-        print("[Router] Started")
+        print("[Dispatcher] Started")
 
     def receive(self, msg: Message) -> Message:
         if msg.msg_type == "RouteTask":
-            self.tasks_routed += 1
+            self.tasks_dispatched += 1
             task = msg.to_json().get("task", "")
             # Simulate routing logic
             worker_id = f"worker-{random.randint(1, 3)}"
             return Message.from_json(
-                "Routed",
-                {"task": task, "worker": worker_id, "routed": self.tasks_routed},
+                "Dispatched",
+                {"task": task, "worker": worker_id, "dispatched": self.tasks_dispatched},
             )
         elif msg.msg_type == "GetStats":
             return Message.from_json(
-                "Stats", {"router": True, "tasks_routed": self.tasks_routed}
+                "Stats", {"dispatcher": True, "tasks_dispatched": self.tasks_dispatched}
             )
         return Message.empty()
 
@@ -120,10 +120,10 @@ async def run_node(port: int, seed: str | None):
 
     # Create different actors based on node role
     if seed is None:
-        # Node 1: Create router and some workers
+        # Node 1: Create dispatcher and some workers
         print("Creating actors on node 1...")
-        await system.spawn("router", RouterActor(), public=True)
-        print("  ✓ actors/router")
+        await system.spawn("dispatcher", DispatcherActor(), public=True)
+        print("  ✓ actors/dispatcher")
 
         for i in range(1, 3):
             worker_name = f"worker-{i}"

@@ -1,5 +1,6 @@
 """Router - OpenAI-compatible HTTP API router"""
 
+import asyncio
 import json
 import time
 import uuid
@@ -7,7 +8,7 @@ from dataclasses import dataclass
 
 from aiohttp import web
 
-from pulsing.actor import ActorSystem, Message
+from pulsing.actor import Actor, ActorId, ActorSystem, Message, get_system
 
 
 @dataclass
@@ -427,3 +428,119 @@ async def stop_router(runner: web.AppRunner):
 
         await runner.cleanup()
         print("[Router] HTTP server stopped")
+
+
+class Router(Actor):
+    """Router Actor - OpenAI-compatible HTTP API router as an Actor
+
+    This actor wraps the start_router/stop_router functions to provide
+    a CLI-compatible entry point via `pulsing actor pulsing.actors.Router`.
+
+    Args:
+        http_host: HTTP listen address (default: "0.0.0.0")
+        http_port: HTTP listen port (default: 8080)
+        model_name: Model name for API responses (default: "pulsing-model")
+        worker_name: Worker actor name to route requests to (default: "worker")
+        scheduler_type: Scheduler type, supports:
+            - "stream_load": Stream load-aware (default, recommended)
+            - "random": Random
+            - "round_robin": Round robin
+            - "power_of_two": Power-of-Two Choices
+            - "cache_aware": Cache-aware
+
+    Example:
+        # Start via CLI
+        pulsing actor pulsing.actors.Router \\
+            --http_host 0.0.0.0 \\
+            --http_port 8080 \\
+            --model_name my-llm \\
+            --worker_name worker
+
+        # Or programmatically
+        router = Router(http_port=8080, model_name="my-llm")
+        await system.spawn("router", router, public=True)
+    """
+
+    def __init__(
+        self,
+        http_host: str = "0.0.0.0",
+        http_port: int = 8080,
+        model_name: str = "pulsing-model",
+        worker_name: str = "worker",
+        scheduler_type: str = "stream_load",
+    ):
+        self.http_host = http_host
+        self.http_port = http_port
+        self.model_name = model_name
+        self.worker_name = worker_name
+        self.scheduler_type = scheduler_type
+
+        self._runner: web.AppRunner | None = None
+        self._actor_id: ActorId | None = None
+
+    async def on_start(self, actor_id: ActorId) -> None:
+        """Start the HTTP server when actor starts"""
+        self._actor_id = actor_id
+
+        # Get global system (set by CLI via init())
+        system = get_system()
+
+        # Start HTTP server
+        self._runner = await start_router(
+            system=system,
+            http_host=self.http_host,
+            http_port=self.http_port,
+            model_name=self.model_name,
+            worker_name=self.worker_name,
+            scheduler_type=self.scheduler_type,
+        )
+
+        print(f"[Router] Actor started: {actor_id}")
+
+    def on_stop(self) -> None:
+        """Stop the HTTP server when actor stops"""
+        if self._runner:
+            # Schedule cleanup in background (on_stop is sync)
+            asyncio.create_task(self._cleanup())
+
+    async def _cleanup(self):
+        """Async cleanup helper"""
+        if self._runner:
+            await stop_router(self._runner)
+            self._runner = None
+
+    def metadata(self) -> dict[str, str]:
+        """Return router metadata for diagnostics"""
+        return {
+            "type": "router",
+            "http_host": self.http_host,
+            "http_port": str(self.http_port),
+            "model_name": self.model_name,
+            "worker_name": self.worker_name,
+            "scheduler_type": self.scheduler_type,
+        }
+
+    async def receive(self, msg: Message) -> Message | None:
+        """Handle diagnostic messages"""
+        if msg.msg_type == "HealthCheck":
+            return Message.from_json(
+                "Ok",
+                {
+                    "status": "healthy",
+                    "http_port": self.http_port,
+                    "model_name": self.model_name,
+                },
+            )
+        elif msg.msg_type == "GetConfig":
+            return Message.from_json(
+                "Config",
+                {
+                    "http_host": self.http_host,
+                    "http_port": self.http_port,
+                    "model_name": self.model_name,
+                    "worker_name": self.worker_name,
+                    "scheduler_type": self.scheduler_type,
+                },
+            )
+        else:
+            return Message.from_json("Error", {"error": f"Unknown: {msg.msg_type}"})

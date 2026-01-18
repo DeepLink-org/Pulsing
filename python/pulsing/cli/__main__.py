@@ -18,9 +18,9 @@ def actor(
 
     Actor type must be a full class path:
     - Format: 'module.path.ClassName'
-    - Example: 'pulsing.actors.router.RouterActor'
-    - Example: 'pulsing.actors.worker.TransformersWorker'
-    - Example: 'pulsing.actors.vllm.VllmWorker'
+    - Example: 'pulsing.actors.Router'
+    - Example: 'pulsing.actors.TransformersWorker'
+    - Example: 'pulsing.actors.VllmWorker'
     - Example: 'my_module.my_actor.MyCustomActor'
 
     Pass constructor parameters directly as command-line arguments.
@@ -38,17 +38,17 @@ def actor(
 
     Examples:
         # Start a Transformers worker
-        pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2 --device cpu --name my-worker
+        pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --device cpu --name my-worker
 
         # Start a vLLM worker
-        pulsing actor pulsing.actors.vllm.VllmWorker --model Qwen/Qwen2 --role aggregated --max_new_tokens 512 --name vllm-worker
+        pulsing actor pulsing.actors.VllmWorker --model Qwen/Qwen2 --role aggregated --max_new_tokens 512 --name vllm-worker
 
         # Start a Router with OpenAI-compatible API
-        pulsing actor pulsing.actors.router.RouterActor --http_host 0.0.0.0 --http_port 8080 --model_name my-llm --worker_name worker
+        pulsing actor pulsing.actors.Router --http_host 0.0.0.0 --http_port 8080 --model_name my-llm --worker_name worker
 
         # Start multiple workers with different names
-        pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2 --name worker-1 --seeds 127.0.0.1:8000
-        pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2 --name worker-2 --seeds 127.0.0.1:8000
+        pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --name worker-1 --seeds 127.0.0.1:8000
+        pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --name worker-2 --seeds 127.0.0.1:8000
     """
     from .actors import start_generic_actor
 

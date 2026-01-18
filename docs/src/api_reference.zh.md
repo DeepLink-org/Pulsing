@@ -176,7 +176,7 @@ class ActorSystem:
 
 ### ActorRef
 
-Actor 的引用（本地或远程）。
+Actor 的底层引用（本地或远程）。通常不需要直接使用，推荐使用 `ActorProxy`。
 
 ```python
 class ActorRef:
@@ -192,6 +192,30 @@ class ActorRef:
         """发送流式消息。"""
         pass
 ```
+
+### ActorProxy
+
+对 Actor 的高级代理封装，由 `@remote` 装饰器的 `spawn()` 和 `resolve()` 返回。
+**推荐直接使用 ActorProxy 调用方法**，无需手动构造 `Message`。
+
+```python
+class ActorProxy:
+    @property
+    def ref(self) -> ActorRef:
+        """获取底层 ActorRef（需要低级 ask/tell 时使用）"""
+        pass
+
+    # 可直接调用 actor 上的方法，例如：
+    # result = await proxy.my_method(arg1, arg2)
+```
+
+**ActorProxy vs ActorRef 对比**：
+
+| 场景 | 推荐 |
+|------|------|
+| 调用 `@remote` 类的方法 | `ActorProxy`：`await proxy.method()` |
+| 需要底层 ask/tell | `ActorRef`：`await proxy.ref.ask(msg)` |
+| 需要 actor_id | `ActorRef`：`proxy.ref.actor_id` |
 
 ## 装饰器
 
@@ -259,7 +283,11 @@ result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
 
 装饰后，类提供：
 
-- `spawn(**kwargs) -> ActorRef`: 创建 actor（使用 `init()` 初始化的全局系统）
+- `spawn(**kwargs) -> ActorProxy`: 创建 actor 并返回代理（使用 `init()` 初始化的全局系统）
+- `local(system, **kwargs) -> ActorProxy`: 在指定 system 上创建 actor
+- `resolve(name) -> ActorProxy`: 按名称解析已存在的 actor
+
+**推荐**：直接使用返回的 `ActorProxy` 调用方法；如需底层 `ask/tell`，使用 `proxy.ref`
 
 ## 函数
 

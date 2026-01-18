@@ -12,9 +12,9 @@ Pulsing 内置 CLI 工具，用于启动 actors、检查系统和基准测试分
 
 Actor 类型必须是完整的类路径：
 - 格式: `module.path.ClassName`
-- 示例: `pulsing.actors.router.RouterActor`
-- 示例: `pulsing.actors.worker.TransformersWorker`
-- 示例: `pulsing.actors.vllm.VllmWorker`
+- 示例: `pulsing.actors.Router`
+- 示例: `pulsing.actors.TransformersWorker`
+- 示例: `pulsing.actors.VllmWorker`
 - 示例: `my_module.my_actor.MyCustomActor`
 
 ### 示例
@@ -22,13 +22,13 @@ Actor 类型必须是完整的类路径：
 #### Router（OpenAI 兼容 HTTP API）
 
 ```bash
-pulsing actor pulsing.actors.router.RouterActor \
+pulsing actor pulsing.actors.Router \
   --addr 0.0.0.0:8000 \
   --http_host 0.0.0.0 \
   --http_port 8080 \
   --model_name my-llm \
   --worker_name worker \
-  --scheduler stream_load
+  --scheduler_type stream_load
 ```
 
 #### Transformers Worker
@@ -69,7 +69,7 @@ pulsing actor pulsing.actors.worker.TransformersWorker \
   --seeds 127.0.0.1:8000
 
 # Router 路由到特定 worker 名称
-pulsing actor pulsing.actors.router.RouterActor \
+pulsing actor pulsing.actors.Router \
   --worker_name worker-1 \
   --seeds 127.0.0.1:8000
 ```
@@ -209,10 +209,10 @@ pulsing bench gpt2 --url http://localhost:8080
 
 | 任务 | 命令 |
 |------|------|
-| 启动 router | `pulsing actor pulsing.actors.router.RouterActor --addr 0.0.0.0:8000 --http_port 8080` |
-| 启动 worker | `pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2 --seeds ...` |
-| 启动多个 worker | `pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2 --name worker-1 --seeds ...` |
-| Router 指定 worker | `pulsing actor pulsing.actors.router.RouterActor --worker_name worker-1 --seeds ...` |
+| 启动 router | `pulsing actor pulsing.actors.Router --addr 0.0.0.0:8000 --http_port 8080` |
+| 启动 worker | `pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --seeds ...` |
+| 启动多个 worker | `pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --name worker-1 --seeds ...` |
+| Router 指定 worker | `pulsing actor pulsing.actors.Router --worker_name worker-1 --seeds ...` |
 | 列出 actors | `pulsing inspect actors --endpoint 127.0.0.1:8000` |
 | 检查集群 | `pulsing inspect cluster --seeds 127.0.0.1:8000` |
 | 检查 actors | `pulsing inspect actors --seeds 127.0.0.1:8000 --top 10` |

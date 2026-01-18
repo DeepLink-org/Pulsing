@@ -43,7 +43,7 @@ Choose a backend:
 Open **Terminal A**:
 
 ```bash
-pulsing actor router \
+pulsing actor pulsing.actors.Router \
   --addr 0.0.0.0:8000 \
   --http_port 8080 \
   --model_name my-llm
@@ -64,8 +64,8 @@ Open **Terminal B**:
 === "Transformers (CPU)"
 
     ```bash
-    pulsing actor transformers \
-      --model gpt2 \
+    pulsing actor pulsing.actors.TransformersWorker \
+      --model_name gpt2 \
       --device cpu \
       --addr 0.0.0.0:8001 \
       --seeds 127.0.0.1:8000
@@ -74,7 +74,7 @@ Open **Terminal B**:
 === "vLLM (GPU)"
 
     ```bash
-    pulsing actor vllm \
+    pulsing actor pulsing.actors.VllmWorker \
       --model Qwen/Qwen2.5-0.5B \
       --addr 0.0.0.0:8002 \
       --seeds 127.0.0.1:8000
@@ -82,7 +82,7 @@ Open **Terminal B**:
 
 | Flag | Description |
 |------|-------------|
-| `--model` | Model name/path |
+| `--model` / `--model_name` | Model name/path (TransformersWorker uses `--model_name`, VllmWorker uses `--model`) |
 | `--seeds` | Router address to join cluster |
 
 ---
@@ -91,10 +91,10 @@ Open **Terminal B**:
 
 ```bash
 # List actors
-pulsing actor list --endpoint 127.0.0.1:8000
+pulsing inspect actors --endpoint 127.0.0.1:8000
 
 # Inspect cluster state
-pulsing inspect --seeds 127.0.0.1:8000
+pulsing inspect cluster --seeds 127.0.0.1:8000
 ```
 
 You should see the `router` and `worker` actors.
@@ -135,10 +135,10 @@ Add more workers to handle more load:
 
 ```bash
 # Terminal C
-pulsing actor transformers --model gpt2 --addr 0.0.0.0:8003 --seeds 127.0.0.1:8000
+pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --addr 0.0.0.0:8003 --seeds 127.0.0.1:8000
 
 # Terminal D
-pulsing actor transformers --model gpt2 --addr 0.0.0.0:8004 --seeds 127.0.0.1:8000
+pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --addr 0.0.0.0:8004 --seeds 127.0.0.1:8000
 ```
 
 The Router automatically load-balances across all workers.

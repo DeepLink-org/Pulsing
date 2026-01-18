@@ -176,7 +176,7 @@ class ActorSystem:
 
 ### ActorRef
 
-Reference to an actor (local or remote).
+Low-level reference to an actor (local or remote). Usually not used directly; prefer `ActorProxy`.
 
 ```python
 class ActorRef:
@@ -192,6 +192,30 @@ class ActorRef:
         """Send a streaming message."""
         pass
 ```
+
+### ActorProxy
+
+High-level proxy wrapper for actors, returned by `@remote` decorator's `spawn()` and `resolve()`.
+**Recommended: use ActorProxy to call methods directly**, no need to manually construct `Message`.
+
+```python
+class ActorProxy:
+    @property
+    def ref(self) -> ActorRef:
+        """Get underlying ActorRef (for low-level ask/tell)"""
+        pass
+
+    # Call actor methods directly, e.g.:
+    # result = await proxy.my_method(arg1, arg2)
+```
+
+**ActorProxy vs ActorRef comparison**:
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Call `@remote` class methods | `ActorProxy`: `await proxy.method()` |
+| Need low-level ask/tell | `ActorRef`: `await proxy.ref.ask(msg)` |
+| Need actor_id | `ActorRef`: `proxy.ref.actor_id` |
 
 ## Decorators
 
@@ -259,7 +283,11 @@ result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
 
 After decoration, the class provides:
 
-- `spawn(**kwargs) -> ActorRef`: Create actor (uses global system from `init()`)
+- `spawn(**kwargs) -> ActorProxy`: Create actor and return proxy (uses global system from `init()`)
+- `local(system, **kwargs) -> ActorProxy`: Create actor on specified system
+- `resolve(name) -> ActorProxy`: Resolve an existing actor by name
+
+**Recommended**: Use the returned `ActorProxy` to call methods directly; use `proxy.ref` for low-level `ask/tell`
 
 ## Functions
 

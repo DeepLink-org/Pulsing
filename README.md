@@ -10,9 +10,13 @@
 **Lightweight distributed framework designed for high-performance AI applications.**
 
 🚀 **Zero Dependencies** — Pure Rust + Tokio, no NATS/etcd/Redis
+
 🌐 **Auto Discovery** — Built-in Gossip protocol for cluster management
+
 🔀 **Location Transparent** — Same API for local and remote Actors
+
 ⚡ **Streaming Ready** — Native support for LLM streaming responses
+
 🤖 **Agent Friendly** — Integrates with AutoGen, LangGraph out of the box
 
 ## 🚀 Get Started in 5 Minutes
@@ -129,10 +133,10 @@ Out-of-the-box GPU cluster inference:
 
 ```bash
 # Start Router (OpenAI-compatible API)
-pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+pulsing actor pulsing.actors.Router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
 
 # Start vLLM Worker (can have multiple)
-pulsing actor vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+pulsing actor pulsing.actors.VllmWorker --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
 
 # Test
 curl http://localhost:8080/v1/chat/completions \

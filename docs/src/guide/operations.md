@@ -12,9 +12,9 @@ The `pulsing actor` command starts actors by providing their full class path. Th
 
 Actor type must be a full class path:
 - Format: `module.path.ClassName`
-- Example: `pulsing.actors.router.RouterActor`
-- Example: `pulsing.actors.worker.TransformersWorker`
-- Example: `pulsing.actors.vllm.VllmWorker`
+- Example: `pulsing.actors.Router`
+- Example: `pulsing.actors.TransformersWorker`
+- Example: `pulsing.actors.VllmWorker`
 - Example: `my_module.my_actor.MyCustomActor`
 
 ### Examples
@@ -22,13 +22,13 @@ Actor type must be a full class path:
 #### Router (OpenAI-compatible HTTP API)
 
 ```bash
-pulsing actor pulsing.actors.router.RouterActor \
+pulsing actor pulsing.actors.Router \
   --addr 0.0.0.0:8000 \
   --http_host 0.0.0.0 \
   --http_port 8080 \
   --model_name my-llm \
   --worker_name worker \
-  --scheduler stream_load
+  --scheduler_type stream_load
 ```
 
 #### Transformers Worker
@@ -69,7 +69,7 @@ pulsing actor pulsing.actors.worker.TransformersWorker \
   --seeds 127.0.0.1:8000
 
 # Router targeting specific worker name
-pulsing actor pulsing.actors.router.RouterActor \
+pulsing actor pulsing.actors.Router \
   --worker_name worker-1 \
   --seeds 127.0.0.1:8000
 ```
@@ -227,10 +227,10 @@ pulsing bench gpt2 --url http://localhost:8080
 
 | Task | Command |
 |------|---------|
-| Start router | `pulsing actor pulsing.actors.router.RouterActor --addr 0.0.0.0:8000 --http_port 8080` |
-| Start worker | `pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2 --seeds ...` |
-| Start multiple workers | `pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2 --name worker-1 --seeds ...` |
-| Router with custom worker | `pulsing actor pulsing.actors.router.RouterActor --worker_name worker-1 --seeds ...` |
+| Start router | `pulsing actor pulsing.actors.Router --addr 0.0.0.0:8000 --http_port 8080` |
+| Start worker | `pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --seeds ...` |
+| Start multiple workers | `pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --name worker-1 --seeds ...` |
+| Router with custom worker | `pulsing actor pulsing.actors.Router --worker_name worker-1 --seeds ...` |
 | List actors | `pulsing inspect actors --endpoint 127.0.0.1:8000` |
 | Inspect cluster | `pulsing inspect cluster --seeds 127.0.0.1:8000` |
 | Inspect actors | `pulsing inspect actors --seeds 127.0.0.1:8000 --top 10` |

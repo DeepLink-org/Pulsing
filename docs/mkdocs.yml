@@ -94,6 +94,7 @@ plugins:
             Operations: CLI 运维
             Distributed Queue: 分布式内存队列
             Semantics: 语义与保证
+            Style Guide: 术语与风格
             Agent: Agent 框架
             Overview: 概述
             Pulsing Native: Pulsing 原生
@@ -138,6 +139,7 @@ nav:
     - Security: guide/security.md
     - Distributed Queue: guide/queue.md
     - Semantics: guide/semantics.md
+    - Style Guide: guide/style.md
   - Agent:
     - agent/index.md
     - Pulsing Native: agent/native.md

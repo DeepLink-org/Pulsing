@@ -10,9 +10,13 @@
 **轻量级分布式框架，专为高性能 AI 应用设计。**
 
 🚀 **零外部依赖** — 纯 Rust + Tokio，无需 NATS/etcd/Redis
+
 🌐 **自动发现** — 内置 Gossip 协议管理集群
+
 🔀 **位置透明** — 本地和远程 Actor 使用相同 API
+
 ⚡ **流式支持** — 原生支持 LLM 流式响应
+
 🤖 **Agent 友好** — 开箱即用集成 AutoGen、LangGraph
 
 ## 🚀 5分钟快速体验
@@ -129,10 +133,10 @@ async with runtime(addr="0.0.0.0:8002", seeds=["node1:8001"]):
 
 ```bash
 # 启动 Router（OpenAI 兼容 API）
-pulsing actor router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+pulsing actor pulsing.actors.Router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
 
 # 启动 vLLM Worker（可多个）
-pulsing actor vllm --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+pulsing actor pulsing.actors.VllmWorker --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
 
 # 测试
 curl http://localhost:8080/v1/chat/completions \

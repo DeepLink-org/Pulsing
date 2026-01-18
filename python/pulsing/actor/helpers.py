@@ -9,18 +9,18 @@ if TYPE_CHECKING:
     from . import Actor, ActorSystem
 
 
-async def run_until_signal(
-    system: "ActorSystem", actor_name: str | None = None
-) -> None:
+async def run_until_signal(actor_name: str | None = None) -> None:
     """
     Run until shutdown signal (SIGTERM or SIGINT)
 
     Handles graceful shutdown on first signal, force quits on second signal.
+    Uses the global system via shutdown() to ensure proper cleanup.
 
     Args:
-        system: ActorSystem instance
         actor_name: Optional actor name for logging
     """
+    from . import get_system, shutdown
+
     shutdown_event = asyncio.Event()
     shutting_down = False
 
@@ -43,13 +43,15 @@ async def run_until_signal(
 
     # Perform graceful shutdown
     try:
+        system = get_system()
         if actor_name:
             await system.stop(actor_name)
     except Exception as e:
         print(f"[{actor_name or 'Actor'}] Stop error: {e}")
 
+    # Use module-level shutdown() to properly clear global state
     try:
-        await system.shutdown()
+        await shutdown()
     except Exception as e:
         print(f"[{actor_name or 'Actor'}] Shutdown error: {e}")
 
@@ -64,7 +66,10 @@ async def spawn_and_run(
     public: bool = True,
 ) -> None:
     """
-    Create ActorSystem, spawn actor, and run until signal
+    Create ActorSystem via init(), spawn actor, and run until signal
+
+    This function uses init() to ensure the global system is set,
+    making get_system() available inside actor on_start()/receive().
 
     Args:
         actor: Actor instance
@@ -73,14 +78,11 @@ async def spawn_and_run(
         seeds: List of seed node addresses for cluster discovery
         public: Whether to register as public named actor
     """
-    from . import SystemConfig, create_actor_system
+    from . import get_system, init
 
-    config = SystemConfig.with_addr(addr) if addr else SystemConfig.standalone()
-    if seeds:
-        config = config.with_seeds(seeds)
-
-    system = await create_actor_system(config)
+    # Use init() to set global system (makes get_system() work inside actors)
+    system = await init(addr=addr, seeds=seeds)
     await system.spawn(name, actor, public=public)
 
     print(f"[{name}] Started at {system.addr}")
-    await run_until_signal(system, name)
+    await run_until_signal(name)
