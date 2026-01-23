@@ -120,8 +120,8 @@ class JudgeActor:
 
         remaining = self.deadline - now
         print(
-            f"  ✓ [{idea['agent']}] v{idea.get('version',1)} "
-            f"score:{idea.get('score',0)}/10 iterations:{iterations} remaining:{remaining:.1f}s"
+            f"  ✓ [{idea['agent']}] v{idea.get('version', 1)} "
+            f"score:{idea.get('score', 0)}/10 iterations:{iterations} remaining:{remaining:.1f}s"
         )
         return {"accepted": True, "remaining": remaining}
 
@@ -149,14 +149,14 @@ class JudgeActor:
         for i, s in enumerate(self.submissions, 1):
             idea = s["idea"]
             print(
-                f"  {i}. [{idea['agent']}] {idea['title']} - {idea.get('score',0)}/10"
+                f"  {i}. [{idea['agent']}] {idea['title']} - {idea.get('score', 0)}/10"
             )
 
         # Select highest score
         best = max(self.submissions, key=lambda x: x["idea"].get("score", 0))
         self.result = {
             "selected": best["idea"]["agent"],
-            "reason": f"Highest score ({best['idea'].get('score',0)}/10)",
+            "reason": f"Highest score ({best['idea'].get('score', 0)}/10)",
             "proposal": best["idea"]["proposal"],
             "count": len(self.submissions),
         }
@@ -234,7 +234,7 @@ class IdeaAgent:
             "Suggest multi-angle evaluation",
         )
         if self.idea:
-            suggestion += f". Reference my proposal: {self.idea.get('title','')}"
+            suggestion += f". Reference my proposal: {self.idea.get('title', '')}"
 
         print(f"  [{self.persona}] 💡 Reply to [{from_agent}]: {suggestion[:40]}...")
         return {"from": self.persona, "suggestion": suggestion}
@@ -384,7 +384,7 @@ class IdeaAgent:
 
 Proposal: {json.dumps(self.idea, ensure_ascii=False)}
 
-Available experts: {', '.join(available_experts[:5])}
+Available experts: {", ".join(available_experts[:5])}
 
 Output JSON (no markdown):
 {{"score": 1-10, "issues": ["issue1"], "improvements": ["improvement1"], "consult": ["expert name to consult"]}}"""
@@ -559,7 +559,7 @@ async def run(
             if isinstance(r, dict):
                 s = "✓" if r.get("accepted") else "✗"
                 print(
-                    f"  {s} [{r['persona']}] score:{r.get('score',0)} iterations:{r.get('iterations')} collabs:{r.get('collabs',0)}"
+                    f"  {s} [{r['persona']}] score:{r.get('score', 0)} iterations:{r.get('iterations')} collabs:{r.get('collabs', 0)}"
                 )
 
         return {"final": final, "agents": results}

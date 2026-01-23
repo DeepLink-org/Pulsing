@@ -376,7 +376,7 @@ class PulsingRuntime:
         # Create wrapper and spawn
         wrapper = AutoGenAgentWrapper(agent_instance, self)
 
-        actor_ref = await self._system.spawn(full_key, wrapper, public=True)
+        actor_ref = await self._system.spawn(wrapper, name=full_key, public=True)
 
         self._instantiated_agents[full_key] = agent_instance
         self._agent_refs[full_key] = actor_ref
@@ -546,7 +546,7 @@ class PulsingRuntime:
         # Create wrapper and spawn
         wrapper = AutoGenAgentWrapper(agent, self)
 
-        actor_ref = await self._system.spawn(full_key, wrapper, public=True)
+        actor_ref = await self._system.spawn(wrapper, name=full_key, public=True)
 
         self._instantiated_agents[full_key] = agent
         self._agent_refs[full_key] = actor_ref

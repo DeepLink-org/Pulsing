@@ -207,6 +207,12 @@ __all__ = [
     "StreamMessage",
     "SystemConfig",
     "ActorSystem",
+    "ActorRef",
+    "ActorId",
+    "ActorProxy",
+    # Service (for actor_system function)
+    "PythonActorService",
+    "PYTHON_ACTOR_SERVICE_NAME",
     # Advanced constructor (documented)
     "create_actor_system",
 ]
@@ -236,7 +242,7 @@ async def create_actor_system(config: SystemConfig) -> ActorSystem:
 
     # Automatically register PythonActorService (for remote actor creation)
     service = PythonActorService(system)
-    await system.spawn(PYTHON_ACTOR_SERVICE_NAME, service, public=True)
+    await system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
 
     return system
 

@@ -2,8 +2,10 @@
 Pulsing Multi-Agent Research Workflow using @agent decorator
 Same functionality as AutoGen version
 """
+
 from pulsing.actor import resolve
 from pulsing.agent import agent, runtime
+
 
 # Researcher Agent
 @agent(role="Researcher", goal="Research topics")
@@ -14,6 +16,7 @@ class ResearcherAgent:
             f"Research point 2 about {topic}",
         ]
 
+
 # Analyst Agent
 @agent(role="Analyst", goal="Analyze research results")
 class AnalystAgent:
@@ -21,11 +24,13 @@ class AnalystAgent:
         combined = " ".join(points)
         return f"Analysis: {combined[:50]}..."
 
+
 # Reporter Agent
 @agent(role="Reporter", goal="Write final report")
 class ReporterAgent:
     async def write(self, summary: str) -> str:
         return f"Final Report:\n{summary}"
+
 
 # Workflow
 async def run_workflow():
@@ -47,6 +52,8 @@ async def run_workflow():
 
         print(report)
 
+
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(run_workflow())

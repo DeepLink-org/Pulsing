@@ -213,7 +213,7 @@ async def test_actor_system_creation(actor_system):
 @pytest.mark.asyncio
 async def test_spawn_actor(actor_system):
     """Test spawning an actor."""
-    actor_ref = await actor_system.spawn("echo", EchoActor())
+    actor_ref = await actor_system.spawn(EchoActor(), name="echo")
     assert actor_ref is not None
     assert actor_ref.actor_id is not None
     assert actor_ref.is_local()
@@ -223,7 +223,7 @@ async def test_spawn_actor(actor_system):
 @pytest.mark.asyncio
 async def test_ask_single_message(actor_system):
     """Test ask pattern with single message."""
-    actor_ref = await actor_system.spawn("echo", EchoActor())
+    actor_ref = await actor_system.spawn(EchoActor(), name="echo")
 
     # Send message and get response (using send() which supports Message)
     request = Message.from_json("greeting", {"text": "hello"})
@@ -237,7 +237,7 @@ async def test_ask_single_message(actor_system):
 @pytest.mark.asyncio
 async def test_ask_json(actor_system):
     """Test ask with JSON message."""
-    actor_ref = await actor_system.spawn("counter", CounterActor())
+    actor_ref = await actor_system.spawn(CounterActor(), name="counter")
 
     # Test increment
     response = (
@@ -259,7 +259,7 @@ async def test_ask_json(actor_system):
 @pytest.mark.asyncio
 async def test_tell_message(actor_system):
     """Test tell pattern (fire-and-forget)."""
-    actor_ref = await actor_system.spawn("counter", CounterActor())
+    actor_ref = await actor_system.spawn(CounterActor(), name="counter")
 
     # Send tell (fire-and-forget)
     await actor_ref.tell(Message.from_json("increment", {"value": 10}))
@@ -276,7 +276,7 @@ async def test_tell_message(actor_system):
 async def test_actor_lifecycle(actor_system):
     """Test actor on_start and on_stop callbacks."""
     actor = CounterActor()
-    actor_ref = await actor_system.spawn("lifecycle_test", actor)
+    actor_ref = await actor_system.spawn(actor, name="lifecycle_test")
 
     # Do some work
     await actor_ref.ask(Message.from_json("increment", {"value": 1}))
@@ -292,9 +292,9 @@ async def test_actor_lifecycle(actor_system):
 @pytest.mark.asyncio
 async def test_multiple_actors(actor_system):
     """Test multiple actors in the same system."""
-    echo1 = await actor_system.spawn("echo1", EchoActor())
-    echo2 = await actor_system.spawn("echo2", EchoActor())
-    counter = await actor_system.spawn("counter", CounterActor())
+    echo1 = await actor_system.spawn(EchoActor(), name="echo1")
+    echo2 = await actor_system.spawn(EchoActor(), name="echo2")
+    counter = await actor_system.spawn(CounterActor(), name="counter")
 
     # Verify all actors exist
     local_actors = actor_system.local_actor_names()
@@ -315,7 +315,7 @@ async def test_multiple_actors(actor_system):
 @pytest.mark.asyncio
 async def test_actor_metadata(actor_system):
     """Test actor metadata."""
-    actor_ref = await actor_system.spawn("counter_meta", CounterActor())
+    actor_ref = await actor_system.spawn(CounterActor(), name="counter_meta")
 
     # Increment counter
     await actor_ref.ask(Message.from_json("increment", {"value": 42}))
@@ -334,7 +334,7 @@ async def test_actor_metadata(actor_system):
 @pytest.mark.asyncio
 async def test_streaming_response_basic(actor_system):
     """Test basic streaming response."""
-    actor_ref = await actor_system.spawn("generator", StreamingGeneratorActor())
+    actor_ref = await actor_system.spawn(StreamingGeneratorActor(), name="generator")
 
     # Request streaming response
     request = Message.from_json("generate", {"count": 5, "delay": 0.01})
@@ -359,7 +359,7 @@ async def test_streaming_response_basic(actor_system):
 @pytest.mark.asyncio
 async def test_streaming_response_with_stream_reader(actor_system):
     """Test streaming response with stream_reader method."""
-    actor_ref = await actor_system.spawn("generator", StreamingGeneratorActor())
+    actor_ref = await actor_system.spawn(StreamingGeneratorActor(), name="generator")
 
     # Use ask + stream_reader
     request = Message.from_json("generate", {"count": 3})
@@ -376,7 +376,7 @@ async def test_streaming_response_with_stream_reader(actor_system):
 @pytest.mark.asyncio
 async def test_streaming_response_large(actor_system):
     """Test streaming response with many items."""
-    actor_ref = await actor_system.spawn("generator", StreamingGeneratorActor())
+    actor_ref = await actor_system.spawn(StreamingGeneratorActor(), name="generator")
 
     request = Message.from_json("generate", {"count": 100, "delay": 0.001})
     response = await actor_ref.ask(request)
@@ -392,7 +392,7 @@ async def test_streaming_response_large(actor_system):
 @pytest.mark.asyncio
 async def test_streaming_response_with_error(actor_system):
     """Test streaming response that errors midway."""
-    actor_ref = await actor_system.spawn("generator", StreamingGeneratorActor())
+    actor_ref = await actor_system.spawn(StreamingGeneratorActor(), name="generator")
 
     request = Message.from_json("generate_with_error", {})
     response = await actor_ref.ask(request)
@@ -416,7 +416,7 @@ async def test_streaming_response_with_error(actor_system):
 @pytest.mark.asyncio
 async def test_streaming_response_cancel(actor_system):
     """Test cancelling a streaming response."""
-    actor_ref = await actor_system.spawn("generator", StreamingGeneratorActor())
+    actor_ref = await actor_system.spawn(StreamingGeneratorActor(), name="generator")
 
     # Request a long stream
     request = Message.from_json("generate", {"count": 1000, "delay": 0.1})
@@ -443,7 +443,7 @@ async def test_streaming_response_cancel(actor_system):
 @pytest.mark.asyncio
 async def test_streaming_request_basic(actor_system):
     """Test actor receiving streaming request."""
-    actor_ref = await actor_system.spawn("consumer", StreamConsumerActor())
+    actor_ref = await actor_system.spawn(StreamConsumerActor(), name="consumer")
 
     # For now, test with single message (stream input requires client-side streaming)
     request = Message.from_json("test", {"data": "hello"})
@@ -488,7 +488,7 @@ async def test_remote_actor_communication(cluster_systems):
     system1, system2 = cluster_systems
 
     # Spawn actor on system1
-    actor_ref1 = await system1.spawn("remote_echo", EchoActor(), public=True)
+    actor_ref1 = await system1.spawn(EchoActor(), name="remote_echo", public=True)
 
     # Wait for actor registration to propagate
     await asyncio.sleep(1.0)
@@ -513,7 +513,7 @@ async def test_remote_streaming_response(cluster_systems):
 
     # Spawn streaming actor on system1
     actor_ref1 = await system1.spawn(
-        "remote_generator", StreamingGeneratorActor(), public=True
+        StreamingGeneratorActor(), name="remote_generator", public=True
     )
 
     # Wait for propagation
@@ -554,7 +554,7 @@ async def test_actor_not_found(actor_system):
 @pytest.mark.asyncio
 async def test_message_to_stopped_actor(actor_system):
     """Test sending message to stopped actor."""
-    actor_ref = await actor_system.spawn("temp_actor", EchoActor())
+    actor_ref = await actor_system.spawn(EchoActor(), name="temp_actor")
 
     # Stop the actor
     await actor_system.stop("temp_actor")
@@ -572,7 +572,7 @@ async def test_message_to_stopped_actor(actor_system):
 @pytest.mark.asyncio
 async def test_high_throughput_messages(actor_system):
     """Test sending many messages quickly."""
-    actor_ref = await actor_system.spawn("perf_counter", CounterActor())
+    actor_ref = await actor_system.spawn(CounterActor(), name="perf_counter")
 
     # Send many increments
     num_messages = 100
@@ -590,7 +590,9 @@ async def test_high_throughput_messages(actor_system):
 @pytest.mark.asyncio
 async def test_concurrent_streaming(actor_system):
     """Test multiple concurrent streaming responses."""
-    actor_ref = await actor_system.spawn("concurrent_gen", StreamingGeneratorActor())
+    actor_ref = await actor_system.spawn(
+        StreamingGeneratorActor(), name="concurrent_gen"
+    )
 
     async def consume_stream(stream_id: int):
         request = Message.from_json("generate", {"count": 10, "delay": 0.01})

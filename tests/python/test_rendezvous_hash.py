@@ -88,9 +88,9 @@ class TestRendezvousHashing:
         # Allow 20% deviation
         for node_id, count in distribution.items():
             ratio = count / expected
-            assert (
-                0.8 <= ratio <= 1.2
-            ), f"Node {node_id} has {count} keys, expected ~{expected}"
+            assert 0.8 <= ratio <= 1.2, (
+                f"Node {node_id} has {count} keys, expected ~{expected}"
+            )
 
     def test_minimal_migration_on_add_node(self):
         """Migration ratio should be approximately 1/(N+1) when adding a node"""
@@ -115,9 +115,9 @@ class TestRendezvousHashing:
 
         # Rendezvous hashing: migration ratio should be close to 1/(N+1)
         # Allow 50% error margin
-        assert (
-            migration_ratio < expected_ratio * 1.5
-        ), f"Migration ratio {migration_ratio:.2%} too high, expected ~{expected_ratio:.2%}"
+        assert migration_ratio < expected_ratio * 1.5, (
+            f"Migration ratio {migration_ratio:.2%} too high, expected ~{expected_ratio:.2%}"
+        )
         print(
             f"[Rendezvous] Add node: migration ratio = {migration_ratio:.2%} (expected ~{expected_ratio:.2%})"
         )
@@ -142,9 +142,9 @@ class TestRendezvousHashing:
         migration_ratio = migrated / num_keys
         expected_ratio = 1 / 6  # Approximately 16.7%
 
-        assert (
-            migration_ratio < expected_ratio * 1.5
-        ), f"Migration ratio {migration_ratio:.2%} too high, expected ~{expected_ratio:.2%}"
+        assert migration_ratio < expected_ratio * 1.5, (
+            f"Migration ratio {migration_ratio:.2%} too high, expected ~{expected_ratio:.2%}"
+        )
         print(
             f"[Rendezvous] Remove node: migration ratio = {migration_ratio:.2%} (expected ~{expected_ratio:.2%})"
         )
@@ -182,9 +182,9 @@ class TestRendezvousHashing:
         )
 
         # New algorithm should be significantly better than old
-        assert (
-            new_ratio < old_ratio * 0.5
-        ), f"New algorithm ({new_ratio:.2%}) should be much better than old ({old_ratio:.2%})"
+        assert new_ratio < old_ratio * 0.5, (
+            f"New algorithm ({new_ratio:.2%}) should be much better than old ({old_ratio:.2%})"
+        )
 
     def test_only_alive_nodes(self):
         """Only select nodes in Alive state"""

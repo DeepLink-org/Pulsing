@@ -18,7 +18,7 @@ class PingPong(Actor):
 
 async def main():
     system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn("pingpong", PingPong())
+    actor = await system.spawn(PingPong(, name="pingpong"))
 
     # Simple string message
     print(await actor.ask("ping"))  # -> pong

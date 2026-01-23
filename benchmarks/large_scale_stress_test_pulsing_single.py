@@ -243,7 +243,7 @@ async def main():
     for name, cls in WORKERS.items():
         workers[name] = []
         for i in range(args.num_workers):
-            ref = await system.spawn(f"{name}_{i}", cls())
+            ref = await system.spawn(cls(), name=f"{name}_{i}")
             workers[name].append(ref)
         print(f"Created {args.num_workers} {name} workers")
 

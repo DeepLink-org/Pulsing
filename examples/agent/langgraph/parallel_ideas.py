@@ -427,9 +427,9 @@ def collect_ideas(state: AgentState) -> dict[str, Any]:
     ideas = state.get("ideas", [])
     current_round = state.get("current_round", 1)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"[Collect] Round {current_round} - Collected {len(ideas)} solutions")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     for i, idea in enumerate(ideas, 1):
         agent = idea.get("agent", "unknown")
@@ -450,7 +450,7 @@ def collect_ideas(state: AgentState) -> dict[str, Any]:
         print("│  Risks:")
         for j, risk in enumerate(risks, 1):
             print(f"│    {j}. {risk}")
-        print(f"└{'─'*50}")
+        print(f"└{'─' * 50}")
 
     # Record history
     history = list(state.get("history", []))
@@ -511,9 +511,9 @@ async def critic(state: AgentState) -> dict[str, Any]:
     critique_dicts = [asdict(c) for c in critiques]
     avg_score = sum(c.score for c in critiques) / len(critiques) if critiques else 0
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"[Critic] Round {current_round} - Review Comments")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     for i, c in enumerate(critique_dicts, 1):
         agent = c.get("idea_agent", "unknown")
@@ -528,7 +528,7 @@ async def critic(state: AgentState) -> dict[str, Any]:
         print("│  Improvements:")
         for j, imp in enumerate(improvements, 1):
             print(f"│    {j}. {imp}")
-        print(f"└{'─'*50}")
+        print(f"└{'─' * 50}")
 
     print(f"\n>>> Average Score: {avg_score:.1f}/10")
 

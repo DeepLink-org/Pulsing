@@ -24,7 +24,7 @@ async def main():
         print(f"   Workers:     {n}")
         print(f"   Tasks:       {m}")
         print(f"   Duration:    {dt:.2f}s")
-        print(f"   Throughput:  {m/dt:.1f} qps")
+        print(f"   Throughput:  {m / dt:.1f} qps")
         print("=" * 50)
         print("✅ Same code, more workers = higher throughput")
         print("=" * 50 + "\n")
@@ -32,4 +32,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

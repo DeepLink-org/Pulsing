@@ -493,8 +493,8 @@ class PythonActorService(_ActorBase):
                     return _WrappedActor(instance)
 
                 actor_ref = await self.system.spawn(
-                    actor_name,
                     factory,
+                    name=actor_name,
                     public=public,
                     restart_policy=restart_policy,
                     max_restarts=max_restarts,
@@ -505,7 +505,9 @@ class PythonActorService(_ActorBase):
                 # Standard spawn
                 instance = cls(*args, **kwargs)
                 actor = _WrappedActor(instance)
-                actor_ref = await self.system.spawn(actor_name, actor, public=public)
+                actor_ref = await self.system.spawn(
+                    actor, name=actor_name, public=public
+                )
 
             # Register actor metadata
             _register_actor_metadata(actor_name, cls)
@@ -629,8 +631,8 @@ class ActorClass:
                 return _WrappedActor(instance)
 
             actor_ref = await system.spawn(
-                actor_name,
                 factory,
+                name=actor_name,
                 public=True,
                 restart_policy=self._restart_policy,
                 max_restarts=self._max_restarts,
@@ -640,7 +642,7 @@ class ActorClass:
         else:
             instance = self._cls(*args, **kwargs)
             actor = _WrappedActor(instance)
-            actor_ref = await system.spawn(actor_name, actor, public=True)
+            actor_ref = await system.spawn(actor, name=actor_name, public=True)
 
         # Register actor metadata
         _register_actor_metadata(actor_name, self._cls)

@@ -260,7 +260,7 @@ class TestBucketStorageWithBackend:
             backend="memory",
         )
 
-        actor_ref = await actor_system.spawn("bucket_memory_test", storage)
+        actor_ref = await actor_system.spawn(storage, name="bucket_memory_test")
 
         # Put records
         for i in range(5):
@@ -289,7 +289,7 @@ class TestBucketStorageWithBackend:
             backend="memory",
         )
 
-        actor_ref = await actor_system.spawn("bucket_batch_test", storage)
+        actor_ref = await actor_system.spawn(storage, name="bucket_batch_test")
 
         # Put batch
         records = [{"id": f"batch_{i}", "value": i} for i in range(10)]
@@ -538,7 +538,7 @@ class TestCustomBackendProtocol:
             backend="tracking",
         )
 
-        actor_ref = await actor_system.spawn("tracking_bucket", storage)
+        actor_ref = await actor_system.spawn(storage, name="tracking_bucket")
 
         # Perform operations
         await actor_ref.ask(Message.from_json("Put", {"record": {"id": "1"}}))

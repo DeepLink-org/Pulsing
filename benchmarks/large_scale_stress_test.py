@@ -288,7 +288,7 @@ async def main():
     # Create local workers
     worker_refs = {}
     for name, cls in WORKERS.items():
-        ref = await system.spawn(f"{name}_{rank}", cls(), public=True)
+        ref = await system.spawn(cls(), name=f"{name}_{rank}", public=True)
         worker_refs[name] = ref
         print(f"  Spawned {name}_{rank}")
 

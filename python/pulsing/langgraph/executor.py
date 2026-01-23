@@ -299,10 +299,9 @@ async def start_worker(
     actor = LangGraphNodeActor(node_name, node_func, executor_config)
     name = actor_name or f"langgraph_node_{node_name}"
 
-    await system.spawn(name, actor, public=True)
+    await system.spawn(actor, name=name, public=True)
     logger.info(
-        f"Worker started: {name} @ {addr} "
-        f"(workers={max_workers}, queue={queue_size})"
+        f"Worker started: {name} @ {addr} (workers={max_workers}, queue={queue_size})"
     )
 
     try:

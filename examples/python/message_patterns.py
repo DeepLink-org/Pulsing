@@ -54,7 +54,7 @@ class PatternDemo(Actor):
 
 async def main():
     system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn("demo", PatternDemo())
+    actor = await system.spawn(PatternDemo(, name="demo"))
 
     # Pattern 1: Dict messages
     print("--- Dict Messages ---")

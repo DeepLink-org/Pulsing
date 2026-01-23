@@ -934,9 +934,9 @@ async def test_data_integrity_under_stress(actor_system, temp_storage_path):
         actual_checksum = hashlib.md5(
             f"{record_id}:{record['value']}".encode()
         ).hexdigest()
-        assert (
-            record["checksum"] == expected_checksum
-        ), f"Checksum mismatch for {record_id}"
+        assert record["checksum"] == expected_checksum, (
+            f"Checksum mismatch for {record_id}"
+        )
         assert actual_checksum == expected_checksum, f"Value corruption for {record_id}"
 
 
@@ -956,7 +956,7 @@ async def test_bucket_storage_direct(actor_system, temp_storage_path):
     )
 
     # Spawn actor
-    actor_ref = await actor_system.spawn("test_bucket", storage)
+    actor_ref = await actor_system.spawn(storage, name="test_bucket")
 
     from pulsing.actor import Message
 

@@ -68,7 +68,11 @@ class DispatcherActor(Actor):
             worker_id = f"worker-{random.randint(1, 3)}"
             return Message.from_json(
                 "Dispatched",
-                {"task": task, "worker": worker_id, "dispatched": self.tasks_dispatched},
+                {
+                    "task": task,
+                    "worker": worker_id,
+                    "dispatched": self.tasks_dispatched,
+                },
             )
         elif msg.msg_type == "GetStats":
             return Message.from_json(
@@ -106,9 +110,9 @@ class CacheActor(Actor):
 
 async def run_node(port: int, seed: str | None):
     """Run a node in the cluster"""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Pulsing Demo Service - Node on port {port}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     config = SystemConfig.with_addr(f"127.0.0.1:{port}")
     if seed:
@@ -122,12 +126,12 @@ async def run_node(port: int, seed: str | None):
     if seed is None:
         # Node 1: Create dispatcher and some workers
         print("Creating actors on node 1...")
-        await system.spawn("dispatcher", DispatcherActor(), public=True)
+        await system.spawn(DispatcherActor(), name="dispatcher", public=True)
         print("  ✓ actors/dispatcher")
 
         for i in range(1, 3):
             worker_name = f"worker-{i}"
-            await system.spawn(worker_name, WorkerActor(worker_name), public=True)
+            await system.spawn(WorkerActor(worker_name), name=worker_name, public=True)
             print(f"  ✓ actors/{worker_name}")
 
         print("\n✓ Node 1 ready!")
@@ -150,7 +154,7 @@ async def run_node(port: int, seed: str | None):
         print("Creating actors on node 2...")
         for i in range(3, 5):
             worker_name = f"worker-{i}"
-            await system.spawn(worker_name, WorkerActor(worker_name), public=True)
+            await system.spawn(WorkerActor(worker_name), name=worker_name, public=True)
             print(f"  ✓ actors/{worker_name}")
         print("\n✓ Node 2 ready!")
 
@@ -158,7 +162,7 @@ async def run_node(port: int, seed: str | None):
         # Node 3: Add cache
         await asyncio.sleep(1)
         print("Creating actors on node 3...")
-        await system.spawn("cache", CacheActor(), public=True)
+        await system.spawn(CacheActor(), name="cache", public=True)
         print("  ✓ actors/cache")
         print("\n✓ Node 3 ready!")
 

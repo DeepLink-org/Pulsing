@@ -30,7 +30,7 @@ use crate::watch::ActorLifecycle;
 use dashmap::DashMap;
 use handle::LocalActorHandle;
 use handler::SystemMessageHandler;
-use runtime::run_supervision_loop;
+use runtime::{run_actor_instance, run_supervision_loop};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -482,6 +482,71 @@ impl ActorSystem {
         self.local_actors.insert(name.to_string(), handle);
 
         // Create ActorRef
+        Ok(ActorRef::local(actor_id, sender))
+    }
+
+    /// Spawn an anonymous actor (no name, only accessible via ActorRef)
+    pub async fn spawn_anonymous<A>(self: &Arc<Self>, actor: A) -> anyhow::Result<ActorRef>
+    where
+        A: Actor,
+    {
+        self.spawn_anonymous_with_options(actor, SpawnOptions::default())
+            .await
+    }
+
+    /// Spawn an anonymous actor with custom options
+    pub async fn spawn_anonymous_with_options<A>(
+        self: &Arc<Self>,
+        actor: A,
+        options: SpawnOptions,
+    ) -> anyhow::Result<ActorRef>
+    where
+        A: Actor,
+    {
+        let actor_id = self.next_actor_id();
+
+        // Use configured mailbox capacity
+        let capacity = options
+            .mailbox_capacity
+            .unwrap_or(self.default_mailbox_capacity);
+        let mailbox = Mailbox::with_capacity(capacity);
+        let (sender, receiver) = mailbox.split();
+
+        let stats = Arc::new(ActorStats::default());
+
+        // Create context with system reference
+        let ctx = ActorContext::with_system(
+            actor_id,
+            self.clone() as Arc<dyn ActorSystemRef>,
+            self.cancel_token.clone(),
+            sender.clone(),
+        );
+
+        // Spawn actor loop (no supervision for anonymous actors, they can't restart without a factory)
+        let stats_clone = stats.clone();
+        let cancel = self.cancel_token.clone();
+        let actor_id_for_log = actor_id;
+
+        let join_handle = tokio::spawn(async move {
+            let mut receiver = receiver;
+            let mut ctx = ctx;
+            let reason = run_actor_instance(actor, &mut receiver, &mut ctx, cancel, stats_clone).await;
+            tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Anonymous actor stopped");
+        });
+
+        // Register using actor_id as key (not user-visible)
+        let handle = LocalActorHandle {
+            sender: sender.clone(),
+            join_handle,
+            stats: stats.clone(),
+            metadata: options.metadata.clone(),
+            named_path: None,
+            actor_id,
+        };
+
+        // Use actor_id string as internal key
+        self.local_actors.insert(actor_id.to_string(), handle);
+
         Ok(ActorRef::local(actor_id, sender))
     }
 

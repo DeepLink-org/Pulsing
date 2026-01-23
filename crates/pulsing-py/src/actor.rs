@@ -130,6 +130,33 @@ impl PyActorId {
     fn __eq__(&self, other: &PyActorId) -> bool {
         self.inner == other.inner
     }
+
+    /// Parse ActorId from string format "node_id:local_id"
+    #[staticmethod]
+    fn from_str(s: &str) -> PyResult<Self> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() != 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid ActorId format: '{}'. Expected 'node_id:local_id'",
+                s
+            )));
+        }
+        let node_id: u64 = parts[0].parse().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid node_id in ActorId: '{}'",
+                parts[0]
+            ))
+        })?;
+        let local_id: u64 = parts[1].parse().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid local_id in ActorId: '{}'",
+                parts[1]
+            ))
+        })?;
+        Ok(Self {
+            inner: ActorId::new(NodeId::new(node_id), local_id),
+        })
+    }
 }
 
 /// Python wrapper for Message (unified, supports both single and stream)
@@ -977,8 +1004,9 @@ impl PyActorSystem {
     }
 
     #[pyo3(signature = (
-        name,
-        handler,
+        actor,
+        *,
+        name=None,
         public=false,
         restart_policy="never",
         max_restarts=3,
@@ -989,8 +1017,8 @@ impl PyActorSystem {
     fn spawn<'py>(
         &self,
         py: Python<'py>,
-        name: String,
-        handler: PyObject,
+        actor: PyObject,
+        name: Option<String>,
         public: bool,
         restart_policy: &str,
         max_restarts: u32,
@@ -1029,15 +1057,15 @@ impl PyActorSystem {
             // This handles the @remote decorator case where we wrap user classes
             let (module, qualname, file) = {
                 // Check for __original_module__, __original_qualname__, __original_file__
-                let orig_module = handler
+                let orig_module = actor
                     .getattr(py, "__original_module__")
                     .ok()
                     .and_then(|m| m.extract::<String>(py).ok());
-                let orig_qualname = handler
+                let orig_qualname = actor
                     .getattr(py, "__original_qualname__")
                     .ok()
                     .and_then(|q| q.extract::<String>(py).ok());
-                let orig_file = handler
+                let orig_file = actor
                     .getattr(py, "__original_file__")
                     .ok()
                     .and_then(|f| f.extract::<String>(py).ok());
@@ -1046,9 +1074,9 @@ impl PyActorSystem {
                     (orig_module, orig_qualname, orig_file)
                 } else {
                     // Fallback to regular class info
-                    let class = handler
+                    let class = actor
                         .getattr(py, "__class__")
-                        .unwrap_or_else(|_| handler.clone_ref(py));
+                        .unwrap_or_else(|_| actor.clone_ref(py));
 
                     let module = class
                         .getattr(py, "__module__")
@@ -1092,46 +1120,62 @@ impl PyActorSystem {
                 .supervision(supervision)
                 .metadata(metadata);
 
-            let actor_ref = if matches!(policy, RestartPolicy::Never) {
-                // handler is the instance
-                let actor = PythonActorWrapper::new(handler, event_loop);
-                if public {
-                    let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
+            let actor_ref = match name {
+                // Anonymous actor - no name provided
+                None => {
+                    // Anonymous actors cannot have supervision (no factory to restart from)
+                    let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
                     system
-                        .spawn_named_with_options(path, &name, actor, options)
-                        .await
-                        .map_err(to_pyerr)?
-                } else {
-                    system
-                        .spawn_with_options(&name, actor, options)
+                        .spawn_anonymous_with_options(actor_wrapper, options)
                         .await
                         .map_err(to_pyerr)?
                 }
-            } else {
-                // handler is a factory
-                let factory = move || {
-                    Python::with_gil(|py| -> anyhow::Result<PythonActorWrapper> {
-                        // Clone PyObjects inside GIL
-                        let event_loop = event_loop.clone_ref(py);
-                        // Call factory to get instance
-                        let instance = handler
-                            .call0(py)
-                            .map_err(|e| anyhow::anyhow!("Python factory error: {:?}", e))?;
-                        Ok(PythonActorWrapper::new(instance, event_loop))
-                    })
-                };
+                // Named actor
+                Some(name) => {
+                    if matches!(policy, RestartPolicy::Never) {
+                        // actor is the instance
+                        let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
+                        if public {
+                            let path =
+                                ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
+                            system
+                                .spawn_named_with_options(path, &name, actor_wrapper, options)
+                                .await
+                                .map_err(to_pyerr)?
+                        } else {
+                            system
+                                .spawn_with_options(&name, actor_wrapper, options)
+                                .await
+                                .map_err(to_pyerr)?
+                        }
+                    } else {
+                        // actor is a factory
+                        let factory = move || {
+                            Python::with_gil(|py| -> anyhow::Result<PythonActorWrapper> {
+                                // Clone PyObjects inside GIL
+                                let event_loop = event_loop.clone_ref(py);
+                                // Call factory to get instance
+                                let instance = actor
+                                    .call0(py)
+                                    .map_err(|e| anyhow::anyhow!("Python factory error: {:?}", e))?;
+                                Ok(PythonActorWrapper::new(instance, event_loop))
+                            })
+                        };
 
-                if public {
-                    let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
-                    system
-                        .spawn_named_factory(path, &name, factory, options)
-                        .await
-                        .map_err(to_pyerr)?
-                } else {
-                    system
-                        .spawn_factory(&name, factory, options)
-                        .await
-                        .map_err(to_pyerr)?
+                        if public {
+                            let path =
+                                ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
+                            system
+                                .spawn_named_factory(path, &name, factory, options)
+                                .await
+                                .map_err(to_pyerr)?
+                        } else {
+                            system
+                                .spawn_factory(&name, factory, options)
+                                .await
+                                .map_err(to_pyerr)?
+                        }
+                    }
                 }
             };
 
@@ -1147,6 +1191,11 @@ impl PyActorSystem {
             let actor_ref = system.actor_ref(&id).await.map_err(to_pyerr)?;
             Ok(PyActorRef { inner: actor_ref })
         })
+    }
+
+    /// Alias for actor_ref - get actor reference by ID
+    fn refer<'py>(&self, py: Python<'py>, actor_id: PyActorId) -> PyResult<Bound<'py, PyAny>> {
+        self.actor_ref(py, actor_id)
     }
 
     fn members<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -1312,6 +1361,17 @@ impl PyActorSystem {
                 .map_err(to_pyerr)?;
             Ok(PyActorRef { inner: actor_ref })
         })
+    }
+
+    /// Alias for resolve_named - resolve actor by name
+    #[pyo3(signature = (name, *, node_id=None))]
+    fn resolve<'py>(
+        &self,
+        py: Python<'py>,
+        name: String,
+        node_id: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.resolve_named(py, name, node_id)
     }
 
     fn stop<'py>(&self, py: Python<'py>, actor_name: String) -> PyResult<Bound<'py, PyAny>> {
