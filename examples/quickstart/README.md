@@ -55,6 +55,85 @@ python examples/quickstart/ai_chat_room.py
 python examples/quickstart/ai_chat_room.py --topic "远程办公是否会成为主流？" --rounds 5
 ```
 
+---
+
+## ⚡ 进阶示例
+
+### 示例 3: Function → Fleet（横向扩展）
+
+**一行代码把函数变成可横向扩展的服务**——同一份代码，workers 从 1→N，吞吐线性提升：
+
+```bash
+# 8 个 worker 处理 200 个任务
+python examples/quickstart/function_to_fleet.py
+
+# 调整 worker 数量
+WORKERS=16 ITEMS=500 python examples/quickstart/function_to_fleet.py
+```
+
+输出：
+```
+==================================================
+⚡ Function → Fleet Result
+==================================================
+   Workers:     8
+   Tasks:       200
+   Duration:    0.52s
+   Throughput:  384.6 qps
+==================================================
+✅ Same code, more workers = higher throughput
+==================================================
+```
+
+**核心代码**（仅 27 行）：
+```python
+@remote
+class Worker:
+    async def run(self, x: int) -> int:
+        await asyncio.sleep(0.02)  # simulate I/O
+        return x * x
+
+async with runtime():
+    ws = [await Worker.spawn(name=f"w{i}") for i in range(n)]
+    res = await asyncio.gather(*(ws[i % n].run(i) for i in range(m)))
+```
+
+### 示例 4: Chaos-proof（故障自愈）
+
+**Actor 崩溃后自动重启**——30% 崩溃率下，任务仍然全部完成：
+
+```bash
+python examples/quickstart/chaos_proof.py
+```
+
+输出：
+```
+==================================================
+🛡️  Chaos-proof Result
+==================================================
+   Total tasks:   50
+   Succeeded:     50
+   Retries:       23
+   Crash rate:    30%
+==================================================
+✅ All succeeded! Actor auto-restarted on crash.
+==================================================
+```
+
+**核心代码**：
+```python
+@remote(restart_policy="on-failure", max_restarts=50)
+class FlakyWorker:
+    def work(self, x: int) -> int:
+        if random.random() < 0.3:  # 30% 概率崩溃
+            raise RuntimeError("boom")
+        return x + 1
+```
+
+**亮点**：30% 崩溃率，框架自动重启 Actor，调用方简单重试，最终 100% 完成。
+
+---
+
 ## 核心概念（10秒理解）
 
 ```python

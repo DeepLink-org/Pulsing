@@ -1110,10 +1110,9 @@ impl PyActorSystem {
             } else {
                 // handler is a factory
                 let factory = move || {
-                    let handler = handler.clone();
-                    let event_loop = event_loop.clone();
-
                     Python::with_gil(|py| -> anyhow::Result<PythonActorWrapper> {
+                        // Clone PyObjects inside GIL
+                        let event_loop = event_loop.clone_ref(py);
                         // Call factory to get instance
                         let instance = handler
                             .call0(py)
