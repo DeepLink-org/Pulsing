@@ -147,16 +147,14 @@ get_bucket_ref(system, topic, bucket_id)
 
 ```python
 import asyncio
-from pulsing.actor import SystemConfig, create_actor_system
-from pulsing.queue import read_queue, write_queue
+import pulsing as pul
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
+    system = await pul.actor_system()
 
     # 生产者
-    writer = await write_queue(
-        system,
-        topic="my_queue",
+    writer = await system.queue.write(
+        "my_queue",
         bucket_column="user_id",
         num_buckets=4,
     )
@@ -165,7 +163,7 @@ async def main():
     await writer.put({"user_id": "u1", "message": "Hello"})
 
     # 消费者
-    reader = await read_queue(system, topic="my_queue")
+    reader = await system.queue.read("my_queue")
 
     # 读取数据（内存 + 持久化同时可见）
     records = await reader.get(limit=100)
@@ -199,17 +197,16 @@ records = sync_reader.get(limit=100)  # 同步读取
 
 ## API
 
-### `write_queue(system, topic, ...)`
+### `system.queue.write(topic, ...)`
 
 打开队列用于写入。
 
 ```python
-writer = await write_queue(
-    system,
-    topic="my_queue",
+writer = await system.queue.write(
+    "my_queue",
     bucket_column="user_id",  # 分桶列
-    num_buckets=4,               # 桶数量
-    batch_size=100,              # 批处理大小
+    num_buckets=4,            # 桶数量
+    batch_size=100,           # 批处理大小
 )
 
 await writer.put({"user_id": "u1", "msg": "hello"})
@@ -217,21 +214,21 @@ await writer.put([record1, record2, ...])  # 批量写入
 await writer.flush()  # 强制持久化
 ```
 
-### `read_queue(system, topic, ...)`
+### `system.queue.read(topic, ...)`
 
 打开队列用于读取。支持三种模式：
 
 ```python
 # 1. 读取所有 bucket
-reader = await read_queue(system, topic="my_queue")
+reader = await system.queue.read("my_queue")
 
 # 2. 读取指定 bucket
-reader = await read_queue(system, topic="my_queue", bucket_id=0)
-reader = await read_queue(system, topic="my_queue", bucket_ids=[0, 2])
+reader = await system.queue.read("my_queue", bucket_id=0)
+reader = await system.queue.read("my_queue", bucket_ids=[0, 2])
 
 # 3. 分布式消费：通过 rank/world_size 自动分配 bucket
-reader0 = await read_queue(system, "q", rank=0, world_size=2, num_buckets=4)  # bucket 0, 2
-reader1 = await read_queue(system, "q", rank=1, world_size=2, num_buckets=4)  # bucket 1, 3
+reader0 = await system.queue.read("q", rank=0, world_size=2, num_buckets=4)  # bucket 0, 2
+reader1 = await system.queue.read("q", rank=1, world_size=2, num_buckets=4)  # bucket 1, 3
 
 # 读取数据
 records = await reader.get(limit=100)
@@ -284,20 +281,20 @@ pip install persisting[lance]
 
 ```python
 # 使用默认内存后端
-writer = await write_queue(system, "my_queue")
+writer = await system.queue.write("my_queue")
 
 # 使用 persisting 的 Lance 持久化后端
 from persisting.queue import LanceBackend
 from pulsing.queue import register_backend
 
 register_backend("lance", LanceBackend)
-writer = await write_queue(system, "my_queue", backend="lance")
+writer = await system.queue.write("my_queue", backend="lance")
 
 # 使用增强版后端
 from persisting.queue import PersistingBackend
 register_backend("persisting", PersistingBackend)
-writer = await write_queue(
-    system, "my_queue",
+writer = await system.queue.write(
+    "my_queue",
     backend="persisting",
     backend_options={"enable_wal": True, "enable_metrics": True}
 )

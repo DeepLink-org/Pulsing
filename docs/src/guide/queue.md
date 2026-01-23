@@ -61,21 +61,19 @@ flowchart TB
 
 ```python
 import asyncio
-from pulsing.actor import SystemConfig, create_actor_system
-from pulsing.queue import write_queue, read_queue
+import pulsing as pul
 
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
+    system = await pul.actor_system()
     try:
-        writer = await write_queue(
-            system,
-            topic="my_queue",
+        writer = await system.queue.write(
+            "my_queue",
             bucket_column="user_id",
             num_buckets=4,
             batch_size=10,
         )
-        reader = await read_queue(system, topic="my_queue")
+        reader = await system.queue.read("my_queue")
 
         # write
         await writer.put({"user_id": "u1", "payload": "hello"})
@@ -98,15 +96,15 @@ asyncio.run(main())
 If you need a blocking API (e.g. called from a thread), use `.sync()`:
 
 ```python
-writer = (await write_queue(system, "my_queue")).sync()
-reader = (await read_queue(system, "my_queue")).sync()
+writer = (await system.queue.write("my_queue")).sync()
+reader = (await system.queue.read("my_queue")).sync()
 
 writer.put({"id": "1", "value": 100})
 records = reader.get(limit=10)
 writer.flush()
 ```
 
-Note: don’t call the sync wrapper **inside** an async function (it blocks).
+Note: don't call the sync wrapper **inside** an async function (it blocks).
 
 ## Partitioning & bucketing
 
@@ -116,7 +114,7 @@ Note: don’t call the sync wrapper **inside** an async function (it blocks).
 
 ## Reading modes
 
-`read_queue` supports:
+`system.queue.read()` supports:
 
 - **All buckets** (default): one reader iterates all buckets
 - **Specific buckets**: `bucket_id=` or `bucket_ids=`
@@ -125,8 +123,8 @@ Note: don’t call the sync wrapper **inside** an async function (it blocks).
 Example:
 
 ```python
-reader0 = await read_queue(system, "q", rank=0, world_size=2, num_buckets=4)  # [0, 2]
-reader1 = await read_queue(system, "q", rank=1, world_size=2, num_buckets=4)  # [1, 3]
+reader0 = await system.queue.read("q", rank=0, world_size=2, num_buckets=4)  # [0, 2]
+reader1 = await system.queue.read("q", rank=1, world_size=2, num_buckets=4)  # [1, 3]
 ```
 
 ## Streaming & blocking reads
@@ -169,9 +167,8 @@ flowchart LR
 The default `MemoryBackend` stores data in memory without persistence:
 
 ```python
-writer = await write_queue(
-    system,
-    topic="my_queue",
+writer = await system.queue.write(
+    "my_queue",
     backend="memory",  # default, can be omitted
 )
 ```
@@ -182,24 +179,25 @@ For persistent storage, use backends from [Persisting](https://github.com/DeepLi
 
 ```python
 import pulsing as pul
+from pulsing.queue import register_backend
 import persisting as pst
 
 # Register backends from Persisting
-pul.queue.register_backend("lance", pst.queue.LanceBackend)
-pul.queue.register_backend("persisting", pst.queue.PersistingBackend)
+register_backend("lance", pst.queue.LanceBackend)
+register_backend("persisting", pst.queue.PersistingBackend)
+
+system = await pul.actor_system()
 
 # Use Lance backend for persistence
-writer = await pul.queue.write_queue(
-    system,
-    topic="my_queue",
+writer = await system.queue.write(
+    "my_queue",
     backend="lance",
     storage_path="/data/queues",
 )
 
 # Or use enhanced Persisting backend with WAL
-writer = await pul.queue.write_queue(
-    system,
-    topic="my_queue",
+writer = await system.queue.write(
+    "my_queue",
     backend="persisting",
     storage_path="/data/queues",
     backend_options={"enable_wal": True},
@@ -211,7 +209,7 @@ writer = await pul.queue.write_queue(
 Implement the `StorageBackend` protocol and register:
 
 ```python
-import pulsing as pul
+from pulsing.queue import register_backend
 
 class MyBackend:
     async def put(self, record): ...
@@ -219,8 +217,8 @@ class MyBackend:
     async def flush(self): ...
     # ... other methods
 
-pul.queue.register_backend("my_backend", MyBackend)
-writer = await pul.queue.write_queue(system, "topic", backend="my_backend")
+register_backend("my_backend", MyBackend)
+writer = await system.queue.write("topic", backend="my_backend")
 ```
 
 ## Multi-consumer offsets: strategy & limitations

@@ -227,11 +227,14 @@ async def create_actor_system(config: SystemConfig) -> ActorSystem:
 
     The function also automatically registers PythonActorService for remote actor creation.
 
+    Note: For queue API, use `pul.actor_system()` instead which returns a wrapped
+    ActorSystem with `.queue` attribute.
+
     Args:
         config: SystemConfig instance (use SystemConfig.standalone() or SystemConfig.with_addr())
 
     Returns:
-        ActorSystem instance
+        ActorSystem instance (raw, without .queue API)
 
     Example:
         config = SystemConfig.with_addr("0.0.0.0:8000")

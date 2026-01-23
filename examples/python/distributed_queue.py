@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Distributed memory queue example
 
-Demonstrates how to use write_queue and read_queue for basic data read/write operations.
+Demonstrates how to use system.queue.write/read for basic data read/write operations.
 
 Architecture features:
 - Each bucket corresponds to an independent BucketStorage Actor
@@ -11,8 +11,7 @@ Architecture features:
 import asyncio
 import logging
 
-from pulsing.actor import SystemConfig, create_actor_system
-from pulsing.queue import read_queue, write_queue
+import pulsing as pul
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -25,14 +24,13 @@ async def main():
     logger.info("=== Distributed Memory Queue Example ===\n")
 
     # Create Actor system
-    system = await create_actor_system(SystemConfig.standalone())
+    system = await pul.actor_system()
     logger.info("✓ Actor system started\n")
 
     try:
         # Producer: open queue for writing
-        writer = await write_queue(
-            system,
-            topic="my_queue",
+        writer = await system.queue.write(
+            "my_queue",
             bucket_column="user_id",  # Bucket by user_id
             num_buckets=4,
             batch_size=10,
@@ -40,7 +38,7 @@ async def main():
         logger.info("✓ Queue created (one Actor per bucket)\n")
 
         # Consumer: open queue for reading
-        reader = await read_queue(system, topic="my_queue")
+        reader = await system.queue.read("my_queue")
         logger.info("✓ Queue opened\n")
 
         # Write data (data immediately visible to consumers, no need to wait for persistence)

@@ -7,13 +7,8 @@ Usage: python examples/python/message_patterns.py
 
 import asyncio
 
-from pulsing.actor import (
-    Actor,
-    Message,
-    StreamMessage,
-    SystemConfig,
-    create_actor_system,
-)
+import pulsing as pul
+from pulsing.actor import Actor, Message, StreamMessage
 
 
 class PatternDemo(Actor):
@@ -53,8 +48,8 @@ class PatternDemo(Actor):
 
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn(PatternDemo(, name="demo"))
+    system = await pul.actor_system()
+    actor = await system.spawn(PatternDemo(), name="demo")
 
     # Pattern 1: Dict messages
     print("--- Dict Messages ---")

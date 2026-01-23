@@ -14,36 +14,37 @@ If you want a runnable baseline, start from `examples/python/named_actors.py` an
 
 ```python
 import asyncio
-from pulsing.actor import Actor, Message, SystemConfig, create_actor_system
+import pulsing as pul
 
 
-class Counter(Actor):
+class Counter:
     def __init__(self):
         self.v = 0
 
-    def receive(self, msg: Message) -> Message:
-        if msg.msg_type == "Inc":
-            self.v += int(msg.to_json().get("n", 1))
-            return Message.from_json("Value", {"v": self.v})
-        if msg.msg_type == "Get":
-            return Message.from_json("Value", {"v": self.v})
-        return Message.empty()
+    async def receive(self, msg):
+        if msg.get("action") == "inc":
+            self.v += msg.get("n", 1)
+            return {"v": self.v}
+        if msg.get("action") == "get":
+            return {"v": self.v}
+        return {}
 
 
 async def seed():
-    system = await create_actor_system(SystemConfig.with_addr("0.0.0.0:8000"))
-    await system.spawn("global_counter", Counter(), public=True)
+    system = await pul.actor_system(addr="0.0.0.0:8000")
+    await system.spawn(Counter(), name="global_counter", public=True)
     await asyncio.Event().wait()
 
 
 async def worker():
-    system = await create_actor_system(
-        SystemConfig.with_addr("0.0.0.0:8001").with_seeds(["127.0.0.1:8000"])
+    system = await pul.actor_system(
+        addr="0.0.0.0:8001",
+        seeds=["127.0.0.1:8000"]
     )
     await asyncio.sleep(1.0)
-    ref = await system.find("global_counter")
-    resp = await ref.ask(Message.from_json("Inc", {"n": 1}))
-    print(resp.to_json())
+    ref = await system.resolve("global_counter")
+    resp = await ref.ask({"action": "inc", "n": 1})
+    print(resp)
 
 
 asyncio.run(asyncio.gather(seed(), worker()))

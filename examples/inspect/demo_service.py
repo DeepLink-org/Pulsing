@@ -21,7 +21,8 @@ import asyncio
 import random
 import time
 
-from pulsing.actor import Actor, ActorId, Message, SystemConfig, create_actor_system
+import pulsing as pul
+from pulsing.actor import Actor, ActorId, Message
 
 
 class WorkerActor(Actor):
@@ -34,7 +35,7 @@ class WorkerActor(Actor):
     def on_start(self, actor_id: ActorId):
         print(f"[Worker {self.worker_id}] Started")
 
-    def receive(self, msg: Message) -> Message:
+    async def receive(self, msg: Message) -> Message:
         if msg.msg_type == "ProcessTask":
             task = msg.to_json().get("task", "")
             self.tasks_processed += 1
@@ -60,7 +61,7 @@ class DispatcherActor(Actor):
     def on_start(self, actor_id: ActorId):
         print("[Dispatcher] Started")
 
-    def receive(self, msg: Message) -> Message:
+    async def receive(self, msg: Message) -> Message:
         if msg.msg_type == "RouteTask":
             self.tasks_dispatched += 1
             task = msg.to_json().get("task", "")
@@ -90,7 +91,7 @@ class CacheActor(Actor):
     def on_start(self, actor_id: ActorId):
         print("[Cache] Started")
 
-    def receive(self, msg: Message) -> Message:
+    async def receive(self, msg: Message) -> Message:
         if msg.msg_type == "Get":
             key = msg.to_json().get("key", "")
             value = self.cache.get(key, None)
@@ -114,13 +115,14 @@ async def run_node(port: int, seed: str | None):
     print(f"Pulsing Demo Service - Node on port {port}")
     print(f"{'=' * 60}\n")
 
-    config = SystemConfig.with_addr(f"127.0.0.1:{port}")
-    if seed:
-        config = config.with_seeds([seed])
-        print(f"Joining cluster via: {seed}")
+    addr = f"127.0.0.1:{port}"
+    seeds = [seed] if seed else None
 
-    system = await create_actor_system(config)
-    print(f"✓ System started: {system.node_id} @ {system.addr}\n")
+    system = await pul.actor_system(addr, seeds=seeds)
+    print(f"✓ System started: {system.node_id} @ {system.addr}")
+    if seed:
+        print(f"  Joined via: {seed}")
+    print()
 
     # Create different actors based on node role
     if seed is None:

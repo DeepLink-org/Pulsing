@@ -457,7 +457,7 @@ async def test_module_resolve_function():
         await SimpleService.spawn(name="simple_svc")
 
         # Use module-level resolve (dynamic mode)
-        proxy = await resolve("simple_svc")
+        proxy = await SimpleService.resolve("simple_svc")
         assert await proxy.ping() == "pong"
 
     finally:

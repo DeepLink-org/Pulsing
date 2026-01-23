@@ -11,8 +11,7 @@ Differences from async version:
 import asyncio
 import logging
 
-from pulsing.actor import SystemConfig, create_actor_system
-from pulsing.queue import read_queue, write_queue
+import pulsing as pul
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -25,15 +24,14 @@ async def main():
     logger.info("=== Distributed Memory Queue Example (Synchronous Version) ===\n")
 
     # Create Actor system
-    system = await create_actor_system(SystemConfig.standalone())
+    system = await pul.actor_system()
     logger.info("✓ Actor system started\n")
 
     try:
         # Producer: open queue for writing, get synchronous wrapper
         writer = (
-            await write_queue(
-                system,
-                topic="my_queue",
+            await system.queue.write(
+                "my_queue",
                 bucket_column="user_id",  # Bucket by user_id
                 num_buckets=4,
                 batch_size=10,
@@ -42,7 +40,7 @@ async def main():
         logger.info("✓ Queue created (synchronous writer)\n")
 
         # Consumer: open queue for reading, get synchronous wrapper
-        reader = (await read_queue(system, topic="my_queue")).sync()
+        reader = (await system.queue.read("my_queue")).sync()
         logger.info("✓ Queue opened (synchronous reader)\n")
 
         # Synchronously write data

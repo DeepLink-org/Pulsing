@@ -888,20 +888,18 @@ async def ping(system: ActorSystem, node_id: int | None = None) -> dict:
 async def resolve(
     name: str,
     *,
-    system: ActorSystem | None = None,
     node_id: int | None = None,
-    methods: list[str] | None = None,
-) -> ActorProxy:
-    """Resolve a named actor by name, return callable ActorProxy
+) -> ActorRef:
+    """Resolve a named actor by name, return ActorRef
+
+    For typed ActorProxy with method calls, use Counter.resolve(name) instead.
 
     Args:
         name: Actor name
-        system: ActorSystem instance, uses global system if not provided
         node_id: Target node ID, searches in cluster if not provided
-        methods: Optional list of method names. If not provided, allows calling any method (dynamic mode)
 
     Returns:
-        ActorProxy: Proxy object that can directly call methods
+        ActorRef: Low-level actor reference for ask/tell operations.
 
     Example:
         from pulsing.actor import init, remote, resolve
@@ -913,24 +911,25 @@ async def resolve(
             def __init__(self, init=0): self.value = init
             def increment(self): self.value += 1; return self.value
 
-        # Node A creates actor
+        # Create actor
         counter = await Counter.spawn(name="my_counter")
 
-        # Node B resolves and calls
-        proxy = await resolve("my_counter")
-        result = await proxy.increment()  # Remote call
+        # Method 1: Use typed resolve (recommended)
+        proxy = await Counter.resolve("my_counter")
+        result = await proxy.increment()
+
+        # Method 2: Use low-level resolve + ask
+        ref = await resolve("my_counter")
+        result = await ref.ask({"method": "increment", "args": [], "kwargs": {}})
     """
     from . import _global_system
 
-    if system is None:
-        if _global_system is None:
-            raise RuntimeError(
-                "Actor system not initialized. Call 'await init()' first."
-            )
-        system = _global_system
+    if _global_system is None:
+        raise RuntimeError(
+            "Actor system not initialized. Call 'await init()' first."
+        )
 
-    actor_ref = await system.resolve_named(name, node_id=node_id)
-    return ActorProxy(actor_ref, methods)
+    return await _global_system.resolve(name, node_id=node_id)
 
 
 RemoteClass = ActorClass

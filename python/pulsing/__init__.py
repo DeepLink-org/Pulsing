@@ -71,7 +71,7 @@ from pulsing.actor import (
     resolve,
     # Types
     Actor,
-    ActorSystem,
+    ActorSystem as _ActorSystem,
     ActorRef,
     ActorId,
     ActorProxy,
@@ -82,6 +82,26 @@ from pulsing.actor import (
     PythonActorService,
     PYTHON_ACTOR_SERVICE_NAME,
 )
+
+
+class ActorSystem:
+    """ActorSystem wrapper with queue API
+    
+    This wraps the Rust ActorSystem and adds Python-level extensions
+    like the queue API.
+    """
+    
+    def __init__(self, inner: _ActorSystem):
+        self._inner = inner
+        from pulsing.queue import QueueAPI
+        self.queue = QueueAPI(inner)
+    
+    def __getattr__(self, name):
+        # Delegate all other attributes to the inner ActorSystem
+        return getattr(self._inner, name)
+    
+    def __repr__(self):
+        return f"ActorSystem(node_id={self._inner.node_id}, addr={self._inner.addr})"
 
 
 async def actor_system(
@@ -101,7 +121,7 @@ async def actor_system(
         passphrase: Enable TLS with this passphrase
 
     Returns:
-        ActorSystem instance
+        ActorSystem instance with .queue API
 
     Example:
         import pulsing as pul
@@ -123,6 +143,10 @@ async def actor_system(
             addr="0.0.0.0:8000",
             passphrase="my-secret"
         )
+
+        # Queue API
+        writer = await system.queue.write("my_topic")
+        reader = await system.queue.read("my_topic")
     """
     # Build config
     if addr:
@@ -137,11 +161,14 @@ async def actor_system(
         config = config.with_passphrase(passphrase)
 
     loop = asyncio.get_running_loop()
-    system = await ActorSystem.create(config, loop)
+    inner = await _ActorSystem.create(config, loop)
+
+    # Wrap with Python ActorSystem
+    system = ActorSystem(inner)
 
     # Automatically register PythonActorService (for remote actor creation)
-    service = PythonActorService(system)
-    await system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
+    service = PythonActorService(inner)
+    await inner.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
 
     return system
 

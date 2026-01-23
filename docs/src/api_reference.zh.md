@@ -291,9 +291,37 @@ result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
 
 ## 函数
 
-### create_actor_system
+### pul.actor_system（推荐）
 
-创建新的 Actor System 实例。
+使用简单参数创建新的 Actor System 实例。
+
+```python
+import pulsing as pul
+
+system = await pul.actor_system(
+    addr: str | None = None,      # 绑定地址，None 为单机模式
+    *,
+    seeds: list[str] | None = None,  # 集群种子节点
+    passphrase: str | None = None,   # TLS 密码短语
+) -> ActorSystem
+```
+
+**示例：**
+
+```python
+# 单机模式
+system = await pul.actor_system()
+
+# 集群模式
+system = await pul.actor_system(addr="0.0.0.0:8000")
+
+# 加入现有集群
+system = await pul.actor_system(addr="0.0.0.0:8001", seeds=["127.0.0.1:8000"])
+```
+
+### create_actor_system（底层）
+
+使用 SystemConfig 创建新的 Actor System 实例。
 
 ```python
 async def create_actor_system(config: SystemConfig) -> ActorSystem:

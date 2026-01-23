@@ -6,10 +6,10 @@
 
 ```python
 import asyncio
-from pulsing.actor import Actor, SystemConfig, create_actor_system
+import pulsing as pul
 
 
-class PingPong(Actor):
+class PingPong:
     async def receive(self, msg):
         if msg == "ping":
             return "pong"
@@ -17,8 +17,8 @@ class PingPong(Actor):
 
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn("pingpong", PingPong())
+    system = await pul.actor_system()
+    actor = await system.spawn(PingPong())
 
     print(await actor.ask("ping"))   # -> pong
     print(await actor.ask("hello"))  # -> echo: hello
@@ -37,7 +37,7 @@ python examples/python/ping_pong.py
 
 ## 要点
 
-- `Actor` 是基类，实现 `receive()` 处理消息
+- 实现 `receive()` 处理消息
 - **任意 Python 对象**都可以作为消息（字符串、字典、列表等）
 - `actor.ask(msg)` 发送消息并等待响应
 - `system.shutdown()` 干净地停止所有 Actor

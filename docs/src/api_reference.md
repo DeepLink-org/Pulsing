@@ -291,9 +291,37 @@ After decoration, the class provides:
 
 ## Functions
 
-### create_actor_system
+### pul.actor_system (Recommended)
 
-Create a new Actor System instance.
+Create a new Actor System instance with simple parameters.
+
+```python
+import pulsing as pul
+
+system = await pul.actor_system(
+    addr: str | None = None,      # Bind address, None for standalone
+    *,
+    seeds: list[str] | None = None,  # Seed nodes for cluster
+    passphrase: str | None = None,   # TLS passphrase
+) -> ActorSystem
+```
+
+**Example:**
+
+```python
+# Standalone mode
+system = await pul.actor_system()
+
+# Cluster mode
+system = await pul.actor_system(addr="0.0.0.0:8000")
+
+# Join existing cluster
+system = await pul.actor_system(addr="0.0.0.0:8001", seeds=["127.0.0.1:8000"])
+```
+
+### create_actor_system (Low-level)
+
+Create a new Actor System instance with SystemConfig.
 
 ```python
 async def create_actor_system(config: SystemConfig) -> ActorSystem:
