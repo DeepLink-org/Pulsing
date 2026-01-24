@@ -12,10 +12,10 @@ env:
 
 jobs:
   # ============================================
-  # 代码规范检查（快速反馈，集中检查所有格式和 lint 问题）
+  # 代码规范检查（快速反馈）
   # ============================================
   lint:
-    name: Lint & Format Check
+    name: Lint & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +38,7 @@ jobs:
         run: ruff check python/
 
   # ============================================
-  # Rust 构建和测试（多平台并行）
+  # Rust 构建和测试（多平台）
   # ============================================
   rust-test:
     name: Rust Test (${{ matrix.os }})
@@ -67,20 +67,11 @@ jobs:
         run: cargo test --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
 
   # ============================================
-  # ARM64 交叉编译检查
+  # Linux ARM64 交叉编译检查（仅构建，不测试）
   # ============================================
-  rust-arm64:
-    name: Rust ARM64 (${{ matrix.target }})
+  rust-linux-arm64:
+    name: Rust Build (linux-arm64)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-unknown-linux-gnu
-            linker: gcc-aarch64-linux-gnu
-          - target: aarch64-apple-darwin
-            linker: aarch64-apple-darwin-gcc
-
     steps:
       - uses: actions/checkout@v4
 
@@ -90,20 +81,28 @@ jobs:
           rust-toolchain: stable
           install-cargo-tools: 'false'
 
-      - name: Install ARM64 target
-        run: rustup target add ${{ matrix.target }}
-
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Install ARM64 target and tools
         run: |
+          rustup target add aarch64-unknown-linux-gnu
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ $(lsb_release -cs) main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          sudo apt-get install -y libssl-dev:arm64
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
-      - name: Build for ARM64
-        run: cargo build --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets --target ${{ matrix.target }}
+      - name: Build for Linux ARM64
+        env:
+          PKG_CONFIG_ALLOW_CROSS: 1
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+          OPENSSL_DIR: /usr
+          OPENSSL_LIB_DIR: /usr/lib/aarch64-linux-gnu
+          OPENSSL_INCLUDE_DIR: /usr/include
+        run: cargo build --workspace --exclude pulsing-py --exclude pulsing-bench-py --target aarch64-unknown-linux-gnu
 
   # ============================================
   # Rust 覆盖率收集
@@ -141,14 +140,15 @@ jobs:
           retention-days: 30
 
   # ============================================
-  # Python 构建和测试（多版本并行）
+  # Python 构建和测试（多平台多版本）
   # ============================================
   python-test:
-    name: Python Test (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
@@ -240,12 +240,13 @@ jobs:
           verbose: true
 
   # ============================================
-  # 构建 Python Wheel
+  # 构建 Python Wheel（多平台）
   # ============================================
   build:
     name: Build Wheel (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
 
@@ -265,9 +266,35 @@ jobs:
         with:
           args: --release --out dist
           sccache: 'true'
+          manylinux: auto
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
+          path: dist/*.whl
+
+  # ============================================
+  # 构建 Linux ARM64 Wheel（交叉编译）
+  # ============================================
+  build-linux-arm64:
+    name: Build Wheel (linux-arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheel for Linux ARM64
+        uses: PyO3/maturin-action@v1
+        with:
+          target: aarch64-unknown-linux-gnu
+          args: --release --out dist
+          sccache: 'true'
+          manylinux: auto
+          before-script-linux: |
+            yum install -y openssl-devel perl-IPC-Cmd || apt-get update && apt-get install -y libssl-dev
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-arm64
           path: dist/*.whl

@@ -257,8 +257,7 @@ fn generate_deterministic_key_pair(seed: &[u8; 32]) -> anyhow::Result<KeyPair> {
     pkcs8_der.extend_from_slice(&content);
 
     // Create rcgen KeyPair from the DER
-    let private_key_der = rustls::pki_types::PrivatePkcs8KeyDer::try_from(pkcs8_der.as_slice())
-        .map_err(|e| anyhow::anyhow!("Failed to parse PKCS#8 DER: {:?}", e))?;
+    let private_key_der = rustls::pki_types::PrivatePkcs8KeyDer::from(pkcs8_der.as_slice());
     let key_pair = KeyPair::from_pkcs8_der_and_sign_algo(&private_key_der, &PKCS_ED25519)
         .map_err(|e| anyhow::anyhow!("Failed to create rcgen KeyPair: {}", e))?;
 
