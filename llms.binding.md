@@ -213,3 +213,141 @@ ready, remaining = ray.wait(
     timeout: float | None = None
 ) -> tuple[list[ObjectRef], list[ObjectRef]]
 ```
+
+### Actor 行为
+
+#### 基础 Actor（使用 `receive` 方法）
+
+```python
+from pulsing.actor import Actor
+
+class EchoActor(Actor):
+    """receive 方法 - 同步或异步均可，框架自动检测"""
+    
+    # 方式1：同步方法
+    def receive(self, msg):
+        return msg
+    
+    # 方式2：异步方法（需要 await 时使用）
+    async def receive(self, msg):
+        result = await some_async_operation()
+        return result
+
+class FireAndForget(Actor):
+    """无返回值（适合 tell 调用）"""
+    def receive(self, msg):
+        print(f"Received: {msg}")
+        # 无返回值
+```
+
+**注意：** `receive` 方法可以是 `def` 或 `async def`，Pulsing 会自动检测并正确处理。
+只有当方法内部需要 `await` 其他协程时，才需要使用 `async def`。
+
+#### @pul.remote 装饰器（推荐）
+
+```python
+import pulsing as pul
+
+@pul.remote
+class Counter:
+    def __init__(self, init=0):
+        self.value = init
+    
+    # 同步方法 - 阻塞处理，请求按顺序执行
+    # 适合：快速计算、状态修改
+    def incr(self):
+        self.value += 1
+        return self.value
+    
+    # 异步方法 - 非阻塞，可并发处理多个请求
+    # 适合：IO 密集型操作（网络请求、数据库查询）
+    async def fetch_and_add(self, url):
+        data = await http_get(url)  # 等待期间可处理其他请求
+        self.value += data
+        return self.value
+    
+    # 无返回值方法 - 适合 tell() 调用
+    def reset(self):
+        self.value = 0
+
+# 同步 vs 异步方法的并发行为：
+# - def method():     阻塞 Actor，请求排队顺序执行
+# - async def method(): 非阻塞，await 期间可处理其他请求（并发）
+
+# 使用
+counter = await Counter.spawn(name="counter")
+result = await counter.incr()      # ask 模式，等待返回
+await counter.reset()              # 无返回值，但仍等待完成
+```
+
+#### 消息传递模式
+
+```python
+# ask - 发送消息并等待响应
+response = await actorref.ask({"action": "get"})
+
+# tell - 发送消息，不等待响应（fire-and-forget）
+await actorref.tell({"action": "log", "data": "hello"})
+```
+
+#### Actor 生命周期
+
+```python
+from pulsing.actor import Actor, ActorId
+
+class MyActor(Actor):
+    def on_start(self, actor_id: ActorId):
+        """Actor 启动时调用"""
+        print(f"Started: {actor_id}")
+    
+    def on_stop(self):
+        """Actor 停止时调用"""
+        print("Stopping...")
+    
+    def metadata(self) -> dict[str, str]:
+        """返回 Actor 元数据（用于诊断）"""
+        return {"type": "worker", "version": "1.0"}
+    
+    async def receive(self, msg):
+        return msg
+```
+
+#### 监督与重启策略
+
+```python
+@pul.remote(
+    restart_policy="on_failure",  # "never" | "on_failure" | "always"
+    max_restarts=3,               # 最大重启次数
+    min_backoff=0.1,              # 最小退避时间（秒）
+    max_backoff=30.0,             # 最大退避时间（秒）
+)
+class ResilientWorker:
+    def process(self, data):
+        # 如果抛出异常，Actor 会自动重启
+        return heavy_computation(data)
+```
+
+#### 流式响应
+
+```python
+@pul.remote
+class StreamingService:
+    # 直接返回 generator，Pulsing 自动处理为流式响应
+    async def generate_stream(self, n):
+        for i in range(n):
+            yield f"chunk_{i}"
+    
+    # 同步 generator 也支持
+    def sync_stream(self, n):
+        for i in range(n):
+            yield f"item_{i}"
+
+# 使用
+service = await StreamingService.spawn()
+
+# 客户端消费流
+async for chunk in service.generate_stream(10):
+    print(chunk)  # chunk_0, chunk_1, ...
+```
+
+**注意：** 对于 `@pul.remote` 类，直接返回 generator（同步或异步）即可，Pulsing 会自动检测并按流式响应处理。
