@@ -97,6 +97,19 @@ class ActorSystem:
 
         self.queue = QueueAPI(inner)
 
+    async def refer(self, actorid: ActorId | str) -> ActorRef:
+        """Get actor reference by ID
+
+        Args:
+            actorid: Actor ID (ActorId instance or string in format "node_id:local_id")
+
+        Returns:
+            ActorRef to the actor
+        """
+        if isinstance(actorid, str):
+            actorid = ActorId.from_str(actorid)
+        return await self._inner.refer(actorid)
+
     def __getattr__(self, name):
         # Delegate all other attributes to the inner ActorSystem
         return getattr(self._inner, name)

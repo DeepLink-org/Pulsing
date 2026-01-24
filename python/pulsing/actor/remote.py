@@ -581,11 +581,18 @@ class ActorClass:
         self,
         *args,
         name: str | None = None,
+        public: bool | None = None,
         **kwargs,
     ) -> ActorProxy:
         """Create actor using global system (simple API)
 
         Must call `await init()` before using this method.
+
+        Args:
+            *args: Positional arguments for the class constructor
+            name: Optional actor name (if provided, defaults to public=True)
+            public: Whether the actor should be publicly resolvable (default: True if name provided)
+            **kwargs: Keyword arguments for the class constructor
 
         Example:
             from pulsing.actor import init, remote
@@ -608,20 +615,36 @@ class ActorClass:
                 "Actor system not initialized. Call 'await init()' first."
             )
 
-        return await self.local(_global_system, *args, name=name, **kwargs)
+        # Default public=True if name is provided
+        if public is None:
+            public = name is not None
+
+        return await self.local(_global_system, *args, name=name, public=public, **kwargs)
 
     async def local(
         self,
         system: ActorSystem,
         *args,
         name: str | None = None,
+        public: bool | None = None,
         **kwargs,
     ) -> ActorProxy:
         """Create actor locally with explicit system.
 
+        Args:
+            system: The ActorSystem to spawn the actor in
+            *args: Positional arguments for the class constructor
+            name: Optional actor name (if provided, defaults to public=True)
+            public: Whether the actor should be publicly resolvable (default: True if name provided)
+            **kwargs: Keyword arguments for the class constructor
+
         Note: Use pul.actor_system() to create ActorSystem,
         which automatically registers PythonActorService.
         """
+        # Default public=True if name is provided
+        if public is None:
+            public = name is not None
+
         actor_name = name or f"{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
 
         if self._restart_policy != "never":
@@ -633,7 +656,7 @@ class ActorClass:
             actor_ref = await system.spawn(
                 factory,
                 name=actor_name,
-                public=True,
+                public=public,
                 restart_policy=self._restart_policy,
                 max_restarts=self._max_restarts,
                 min_backoff=self._min_backoff,
@@ -642,7 +665,7 @@ class ActorClass:
         else:
             instance = self._cls(*args, **kwargs)
             actor = _WrappedActor(instance)
-            actor_ref = await system.spawn(actor, name=actor_name, public=True)
+            actor_ref = await system.spawn(actor, name=actor_name, public=public)
 
         # Register actor metadata
         _register_actor_metadata(actor_name, self._cls)
@@ -654,13 +677,24 @@ class ActorClass:
         system: ActorSystem,
         *args,
         name: str | None = None,
+        public: bool | None = None,
         **kwargs,
     ) -> ActorProxy:
         """Create actor remotely (randomly selects a remote node).
 
+        Args:
+            system: The ActorSystem to spawn the actor in
+            *args: Positional arguments for the class constructor
+            name: Optional actor name (if provided, defaults to public=True)
+            public: Whether the actor should be publicly resolvable (default: True if name provided)
+            **kwargs: Keyword arguments for the class constructor
+
         Note: Use pul.actor_system() to create ActorSystem,
         which automatically registers PythonActorService.
         """
+        # Default public=True if name is provided
+        if public is None:
+            public = name is not None
 
         members = await system.members()
         local_id = system.node_id.id
@@ -671,7 +705,7 @@ class ActorClass:
         if not remote_nodes:
             # No remote nodes, fallback to local creation
             logger.warning("No remote nodes, fallback to local")
-            return await self.local(system, *args, name=name, **kwargs)
+            return await self.local(system, *args, name=name, public=public, **kwargs)
 
         # Randomly select one
         target = random.choice(remote_nodes)
@@ -693,7 +727,7 @@ class ActorClass:
                     "actor_name": actor_name,
                     "args": list(args),
                     "kwargs": kwargs,
-                    "public": True,
+                    "public": public,
                     # Supervision config
                     "restart_policy": self._restart_policy,
                     "max_restarts": self._max_restarts,
