@@ -549,6 +549,8 @@ enum PyActorResponse {
     StreamChannel(String, mpsc::Receiver<anyhow::Result<Message>>),
     /// Pickled Python object for Python-to-Python communication
     Sealed(Vec<u8>),
+    /// Generator (async or sync) to be iterated
+    Generator(PyObject, PyObject, bool), // (generator, event_loop, is_async)
 }
 
 /// Python wrapper for ActorRef
@@ -907,6 +909,23 @@ impl Actor for PythonActorWrapper {
                         return Ok(PyActorResponse::Single(PyMessage::empty()));
                     }
 
+                    // Check for generator (sync or async) - fast path using type name
+                    let type_name = py_result_bound
+                        .get_type()
+                        .qualname()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let is_gen = type_name == "generator";
+                    let is_async_gen = type_name == "async_generator";
+
+                    if is_async_gen || is_gen {
+                        return Ok(PyActorResponse::Generator(
+                            py_result.clone_ref(py),
+                            event_loop.clone_ref(py),
+                            is_async_gen,
+                        ));
+                    }
+
                     // Handle StreamMessage
                     if py_result_bound.is_instance_of::<PyStreamMessage>() {
                         let stream_msg_cell = py_result_bound.downcast::<PyStreamMessage>()?;
@@ -962,6 +981,86 @@ impl Actor for PythonActorWrapper {
                 Ok(Message::from_channel(&default_msg_type, rx))
             }
             PyActorResponse::Sealed(data) => Ok(Message::single(SEALED_PY_MSG_TYPE, data)),
+            PyActorResponse::Generator(generator, event_loop, is_async) => {
+                // Create channel for streaming generator values
+                let (tx, rx) = mpsc::channel(32);
+
+                // Spawn background task to iterate generator
+                tokio::spawn(async move {
+                    let result = python_executor()
+                        .execute(move || {
+                            Python::with_gil(|py| -> PyResult<()> {
+                                let gen = generator.bind(py);
+                                let asyncio = py.import("asyncio")?;
+
+                                if is_async {
+                                    // Async generator: iterate using anext()
+                                    let run_coroutine_threadsafe =
+                                        asyncio.getattr("run_coroutine_threadsafe")?;
+                                    loop {
+                                        let anext_coro = gen.call_method0("__anext__")?;
+                                        let future = run_coroutine_threadsafe
+                                            .call1((&anext_coro, &event_loop))?;
+                                        match future.call_method0("result") {
+                                            Ok(item) => {
+                                                let pickled = pickle_object(py, &item.unbind())?;
+                                                let msg =
+                                                    Message::single(SEALED_PY_MSG_TYPE, pickled);
+                                                if tx.blocking_send(Ok(msg)).is_err() {
+                                                    break;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                // Check if StopAsyncIteration
+                                                if e.is_instance_of::<pyo3::exceptions::PyStopAsyncIteration>(py) {
+                                                    break;
+                                                }
+                                                let _ = tx.blocking_send(Err(anyhow::anyhow!(
+                                                    "Generator error: {}",
+                                                    e
+                                                )));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Sync generator: iterate using next()
+                                    loop {
+                                        match gen.call_method0("__next__") {
+                                            Ok(item) => {
+                                                let pickled = pickle_object(py, &item.unbind())?;
+                                                let msg =
+                                                    Message::single(SEALED_PY_MSG_TYPE, pickled);
+                                                if tx.blocking_send(Ok(msg)).is_err() {
+                                                    break;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                // Check if StopIteration
+                                                if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) {
+                                                    break;
+                                                }
+                                                let _ = tx.blocking_send(Err(anyhow::anyhow!(
+                                                    "Generator error: {}",
+                                                    e
+                                                )));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(())
+                            })
+                        })
+                        .await;
+
+                    if let Err(e) = result {
+                        tracing::error!("Generator iteration error: {:?}", e);
+                    }
+                });
+
+                Ok(Message::from_channel(SEALED_PY_MSG_TYPE, rx))
+            }
         }
     }
 }
