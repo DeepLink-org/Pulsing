@@ -12,4 +12,4 @@ pub use mailbox::{Envelope, Mailbox, MailboxSender, ResponseChannel, DEFAULT_MAI
 pub use reference::{
     ActorRef, ActorRefInner, ActorResolver, LazyActorRef, RemoteActorRef, RemoteTransport,
 };
-pub use traits::{Actor, ActorId, Message, MessageStream, NodeId, StopReason};
+pub use traits::{Actor, ActorId, IntoActor, Message, MessageStream, NodeId, StopReason};

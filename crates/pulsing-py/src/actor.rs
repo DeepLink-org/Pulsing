@@ -1224,29 +1224,19 @@ impl PyActorSystem {
             let actor_ref = match name {
                 // Anonymous actor - no name provided (not resolvable)
                 None => {
-                    if matches!(policy, RestartPolicy::Never) {
-                        // actor is the instance
-                        let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
-                        system
-                            .spawn_anonymous_with_options(actor_wrapper, options)
-                            .await
-                            .map_err(to_pyerr)?
-                    } else {
-                        // actor is a factory - anonymous actor with supervision
-                        let factory = move || {
-                            Python::with_gil(|py| -> anyhow::Result<PythonActorWrapper> {
-                                let event_loop = event_loop.clone_ref(py);
-                                let instance = actor.call0(py).map_err(|e| {
-                                    anyhow::anyhow!("Python factory error: {:?}", e)
-                                })?;
-                                Ok(PythonActorWrapper::new(instance, event_loop))
-                            })
-                        };
-                        system
-                            .spawn_anonymous_factory(factory, options)
-                            .await
-                            .map_err(to_pyerr)?
+                    // Anonymous actors do not support supervision/restart
+                    if !matches!(policy, RestartPolicy::Never) {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "Anonymous actors do not support supervision/restart. \
+                             Provide a name to enable supervision, or set restart_policy='never'.",
+                        ));
                     }
+                    // actor is the instance
+                    let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
+                    system
+                        .spawn_anonymous_with_options(actor_wrapper, options)
+                        .await
+                        .map_err(to_pyerr)?
                 }
                 // Named actor (resolvable by name)
                 Some(name) => {

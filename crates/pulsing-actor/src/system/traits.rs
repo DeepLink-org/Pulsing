@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::actor::{Actor, ActorId, ActorPath, ActorRef, IntoActorPath, NodeId};
+use crate::actor::{Actor, ActorId, ActorPath, ActorRef, IntoActor, IntoActorPath, NodeId};
 use crate::cluster::{MemberInfo, NamedActorInfo};
 use crate::supervision::SupervisionSpec;
 use crate::system_actor::BoxedActorFactory;
@@ -66,24 +66,32 @@ use tokio_util::sync::CancellationToken;
 #[async_trait::async_trait]
 pub trait ActorSystemCoreExt: Sized {
     /// Spawn an anonymous actor (not resolvable by name, only accessible via ActorRef)
+    ///
+    /// Accepts any type that implements `IntoActor`, including:
+    /// - Types implementing `Actor` directly
+    /// - `Behavior<M>` (automatically wrapped)
     async fn spawn<A>(&self, actor: A) -> anyhow::Result<ActorRef>
     where
-        A: Actor;
+        A: IntoActor;
 
     /// Spawn a named actor (resolvable by name across the cluster)
     ///
     /// Named actors can be discovered and resolved by other nodes using [`resolve`](Self::resolve).
     ///
+    /// Accepts any type that implements `IntoActor`, including:
+    /// - Types implementing `Actor` directly
+    /// - `Behavior<M>` (automatically wrapped)
+    ///
     /// # Arguments
     /// - `name` - The name for discovery (e.g., "services/echo")
-    /// - `actor` - The actor instance
+    /// - `actor` - The actor instance or Behavior
     async fn spawn_named<A>(
         &self,
         name: impl AsRef<str> + Send,
         actor: A,
     ) -> anyhow::Result<ActorRef>
     where
-        A: Actor;
+        A: IntoActor;
 
     /// Get a builder for spawning actors with advanced options
     ///
@@ -201,12 +209,17 @@ impl<'a> SpawnBuilder<'a> {
 
     /// Spawn the actor
     ///
+    /// Accepts any type that implements `IntoActor`, including:
+    /// - Types implementing `Actor` directly
+    /// - `Behavior<M>` (automatically wrapped)
+    ///
     /// If a name was set, spawns a named actor (resolvable).
     /// Otherwise, spawns an anonymous actor (only accessible via ActorRef).
     pub async fn spawn<A>(self, actor: A) -> anyhow::Result<ActorRef>
     where
-        A: Actor,
+        A: IntoActor,
     {
+        let actor = actor.into_actor();
         match self.name {
             Some(name) => {
                 // Named actor: resolvable by name
@@ -352,24 +365,15 @@ impl<'a> ResolveBuilder<'a> {
 ///         .restart_policy(RestartPolicy::OnFailure)
 ///         .max_restarts(3));
 ///
-/// let actor = system.spawn_anonymous_factory(|| Ok(Worker::new()), options).await?;
-///
-/// // Spawn named actor with factory
+/// // Spawn named actor with factory (only named actors support supervision)
 /// let named = system.spawn_named_factory("services/worker", || Ok(Worker::new()), options).await?;
 /// ```
 #[async_trait::async_trait]
 pub trait ActorSystemAdvancedExt {
-    /// Spawn an anonymous actor using a factory function (enables supervision restarts)
-    async fn spawn_anonymous_factory<F, A>(
-        &self,
-        factory: F,
-        options: SpawnOptions,
-    ) -> anyhow::Result<ActorRef>
-    where
-        F: FnMut() -> anyhow::Result<A> + Send + 'static,
-        A: Actor;
-
     /// Spawn a named actor using a factory function (enables supervision restarts)
+    ///
+    /// Note: Only named actors support supervision/restart. Anonymous actors cannot
+    /// be restarted because they have no stable identity for re-resolution.
     async fn spawn_named_factory<P, F, A>(
         &self,
         name: P,
@@ -513,9 +517,9 @@ use super::ActorSystem;
 impl ActorSystemCoreExt for Arc<ActorSystem> {
     async fn spawn<A>(&self, actor: A) -> anyhow::Result<ActorRef>
     where
-        A: Actor,
+        A: IntoActor,
     {
-        ActorSystem::spawn_anonymous(self, actor).await
+        ActorSystem::spawn_anonymous(self, actor.into_actor()).await
     }
 
     async fn spawn_named<A>(
@@ -524,10 +528,10 @@ impl ActorSystemCoreExt for Arc<ActorSystem> {
         actor: A,
     ) -> anyhow::Result<ActorRef>
     where
-        A: Actor,
+        A: IntoActor,
     {
         let name = name.as_ref();
-        ActorSystem::spawn_named_with_options(self, name, actor, SpawnOptions::default()).await
+        ActorSystem::spawn_named_with_options(self, name, actor.into_actor(), SpawnOptions::default()).await
     }
 
     fn spawning(&self) -> SpawnBuilder<'_> {
@@ -560,18 +564,6 @@ impl ActorSystemCoreExt for Arc<ActorSystem> {
 
 #[async_trait::async_trait]
 impl ActorSystemAdvancedExt for Arc<ActorSystem> {
-    async fn spawn_anonymous_factory<F, A>(
-        &self,
-        factory: F,
-        options: SpawnOptions,
-    ) -> anyhow::Result<ActorRef>
-    where
-        F: FnMut() -> anyhow::Result<A> + Send + 'static,
-        A: Actor,
-    {
-        ActorSystem::spawn_anonymous_factory(self, factory, options).await
-    }
-
     async fn spawn_named_factory<P, F, A>(
         &self,
         name: P,

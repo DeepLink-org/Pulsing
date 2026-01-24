@@ -431,13 +431,11 @@ system.resolving()
 
 #### ActorSystemAdvancedExt（高级：可重启 supervision）
 
-Factory 模式 spawn，支持 supervision 重启：
+Factory 模式 spawn，支持 supervision 重启（仅命名 actor）：
 
 ```rust
-// 匿名 actor + factory（可重启）
-system.spawn_anonymous_factory(|| Ok(Worker::new()), options).await?;
-
 // 命名 actor + factory（可重启 + 可 resolve）
+// 注意：匿名 actor 不支持 supervision，因为无法重新解析
 system.spawn_named_factory(name, || Ok(Service::new()), options).await?;
 ```
 
@@ -462,10 +460,25 @@ system.shutdown().await?;
   - `resolve(name)`：一次性解析（迁移后可能 stale）
   - `resolve_lazy(name)`：懒解析 + 自动刷新（~5s TTL）
 - **流式**：返回 `Message::Stream`，取消语义 best-effort。
-- **监督**：只有 `spawn_anonymous_factory` / `spawn_named_factory` 支持失败重启。
+- **监督**：只有 `spawn_named_factory` 支持失败重启，匿名 actor 不支持 supervision。
 
 ### Behavior（类型安全，Akka Typed 风格）
 
 - **核心**：`Behavior<M>` + `TypedRef<M>` + `BehaviorAction (Same/Become/Stop)`
-- **启动**：`system.spawn_behavior("name", behavior).await? -> TypedRef<M>`
 - **约定**：`TypedRef<M>` 要求 `M: Serialize + DeserializeOwned + Send + 'static`
+
+除了定义时候使用函数语法以外，其他与 Actor 完全相同：
+
+```rust
+fn counter(init: i32) -> Behavior<i32> {
+    stateful(init, |count, n, _ctx| {
+        *count += n;
+        BehaviorAction::Same
+    })
+}
+
+// Behavior 实现 IntoActor trait，可以直接传给 spawn/spawn_named
+// 无需手动包装，系统会自动转换
+let counter = system.spawn(counter(0)).await?;
+let counter = system.spawn_named("actors/counter", counter(0)).await?;
+```

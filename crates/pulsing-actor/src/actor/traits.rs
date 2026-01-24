@@ -302,6 +302,41 @@ pub trait Actor: Send + Sync + 'static {
     }
 }
 
+/// Trait for types that can be converted into an Actor
+///
+/// This trait enables a uniform API for spawning both regular actors
+/// and behavior-based actors using the same `spawn` and `spawn_named` methods.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // Regular actor - implements Actor directly
+/// struct MyActor;
+/// impl Actor for MyActor { ... }
+/// system.spawn(MyActor).await?;
+///
+/// // Behavior - implements IntoActor via BehaviorWrapper
+/// fn counter(init: i32) -> Behavior<i32> { ... }
+/// system.spawn(counter(0)).await?;  // Automatically wrapped
+/// system.spawn_named("counter", counter(0)).await?;
+/// ```
+pub trait IntoActor: Send + 'static {
+    /// The actor type produced by this conversion
+    type Actor: Actor;
+
+    /// Convert self into an Actor
+    fn into_actor(self) -> Self::Actor;
+}
+
+/// Blanket implementation: any Actor can be converted to itself
+impl<A: Actor> IntoActor for A {
+    type Actor = A;
+
+    fn into_actor(self) -> Self::Actor {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

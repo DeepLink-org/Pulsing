@@ -14,6 +14,7 @@
 //!
 //! ```rust,ignore
 //! use pulsing_actor::behavior::*;
+//! use pulsing_actor::prelude::*;
 //!
 //! // Define message type
 //! #[derive(Serialize, Deserialize)]
@@ -40,9 +41,9 @@
 //!     })
 //! }
 //!
-//! // Spawn and use
-//! let counter_ref: TypedRef<CounterMsg> = system.spawn_behavior("counter", counter(0)).await?;
-//! counter_ref.tell(CounterMsg::Increment(5)).await?;
+//! // Spawn using standard spawn/spawn_named - Behavior implements IntoActor
+//! let actor_ref = system.spawn_named("actors/counter", counter(0)).await?;
+//! actor_ref.tell(CounterMsg::Increment(5)).await?;
 //! ```
 
 mod context;
@@ -51,6 +52,5 @@ mod reference;
 mod spawn;
 
 pub use context::BehaviorContext;
-pub use core::{stateful, stateless, Behavior, BehaviorAction, BehaviorFn};
+pub use core::{stateful, stateless, Behavior, BehaviorAction, BehaviorFn, BehaviorWrapper};
 pub use reference::TypedRef;
-pub use spawn::BehaviorSpawner;

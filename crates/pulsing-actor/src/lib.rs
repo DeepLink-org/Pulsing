@@ -131,7 +131,7 @@ pub mod watch;
 /// For advanced usage (ActorPath, ActorAddress, NodeId, etc.),
 /// import from `pulsing_actor::actor::*`.
 pub mod prelude {
-    pub use crate::actor::{Actor, ActorContext, ActorRef, Message};
+    pub use crate::actor::{Actor, ActorContext, ActorRef, IntoActor, Message};
     pub use crate::supervision::{BackoffStrategy, RestartPolicy, SupervisionSpec};
     pub use crate::system::{
         ActorSystem, ActorSystemAdvancedExt, ActorSystemCoreExt, ActorSystemOpsExt, ResolveOptions,

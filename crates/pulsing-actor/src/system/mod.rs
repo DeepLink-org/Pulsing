@@ -18,7 +18,7 @@ pub use traits::{ActorSystemAdvancedExt, ActorSystemCoreExt, ActorSystemOpsExt};
 
 use crate::actor::{
     Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorResolver, ActorSystemRef,
-    IntoActorPath, Mailbox, NodeId, StopReason,
+    IntoActor, IntoActorPath, Mailbox, NodeId, StopReason,
 };
 use crate::cluster::{
     GossipBackend, HeadNodeBackend, MemberInfo, MemberStatus, NamedActorInfo, NamingBackend,
@@ -388,71 +388,16 @@ impl ActorSystem {
         }
     }
 
-    /// Spawn an anonymous actor using a factory function (enables supervision restarts)
-    pub async fn spawn_anonymous_factory<F, A>(
-        self: &Arc<Self>,
-        factory: F,
-        options: SpawnOptions,
-    ) -> anyhow::Result<ActorRef>
-    where
-        F: FnMut() -> anyhow::Result<A> + Send + 'static,
-        A: Actor,
-    {
-        let actor_id = self.next_actor_id();
-
-        // Use configured mailbox capacity
-        let capacity = options
-            .mailbox_capacity
-            .unwrap_or(self.default_mailbox_capacity);
-        let mailbox = Mailbox::with_capacity(capacity);
-        let (sender, receiver) = mailbox.split();
-
-        let stats = Arc::new(ActorStats::default());
-        let metadata = options.metadata.clone();
-
-        // Create context with system reference for actor_ref/watch/schedule_self
-        let ctx = ActorContext::with_system(
-            actor_id,
-            self.clone() as Arc<dyn ActorSystemRef>,
-            self.cancel_token.clone(),
-            sender.clone(),
-        );
-
-        // Spawn actor loop with supervision
-        let stats_clone = stats.clone();
-        let cancel = self.cancel_token.clone();
-        let actor_id_for_log = actor_id;
-        let supervision = options.supervision.clone();
-
-        let join_handle = tokio::spawn(async move {
-            let reason =
-                run_supervision_loop(factory, receiver, ctx, cancel, stats_clone, supervision)
-                    .await;
-            tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Anonymous actor stopped");
-        });
-
-        // Register actor using actor_id as key
-        let handle = LocalActorHandle {
-            sender: sender.clone(),
-            join_handle,
-            stats: stats.clone(),
-            metadata,
-            named_path: None,
-            actor_id,
-        };
-
-        self.local_actors.insert(actor_id.to_string(), handle);
-
-        // Create ActorRef
-        Ok(ActorRef::local(actor_id, sender))
-    }
-
     /// Spawn an anonymous actor (no name, only accessible via ActorRef)
+    ///
+    /// Note: Anonymous actors do not support supervision/restart because they have
+    /// no stable identity for re-resolution. Use `spawn_named_factory` for actors
+    /// that need supervision.
     pub async fn spawn_anonymous<A>(self: &Arc<Self>, actor: A) -> anyhow::Result<ActorRef>
     where
-        A: Actor,
+        A: IntoActor,
     {
-        self.spawn_anonymous_with_options(actor, SpawnOptions::default())
+        self.spawn_anonymous_with_options(actor.into_actor(), SpawnOptions::default())
             .await
     }
 
@@ -463,8 +408,9 @@ impl ActorSystem {
         options: SpawnOptions,
     ) -> anyhow::Result<ActorRef>
     where
-        A: Actor,
+        A: IntoActor,
     {
+        let actor = actor.into_actor();
         let actor_id = self.next_actor_id();
 
         // Use configured mailbox capacity
@@ -523,10 +469,10 @@ impl ActorSystem {
     pub async fn spawn_named<P, A>(self: &Arc<Self>, name: P, actor: A) -> anyhow::Result<ActorRef>
     where
         P: IntoActorPath,
-        A: Actor,
+        A: IntoActor,
     {
         let path = name.into_actor_path()?;
-        self.spawn_named_factory(path, Self::once_factory(actor), SpawnOptions::default())
+        self.spawn_named_factory(path, Self::once_factory(actor.into_actor()), SpawnOptions::default())
             .await
     }
 
@@ -539,10 +485,10 @@ impl ActorSystem {
     ) -> anyhow::Result<ActorRef>
     where
         P: IntoActorPath,
-        A: Actor,
+        A: IntoActor,
     {
         let path = name.into_actor_path()?;
-        self.spawn_named_factory(path, Self::once_factory(actor), options)
+        self.spawn_named_factory(path, Self::once_factory(actor.into_actor()), options)
             .await
     }
 
@@ -586,12 +532,13 @@ impl ActorSystem {
         let stats = Arc::new(ActorStats::default());
         let metadata = options.metadata.clone();
 
-        // Create context with system reference for actor_ref/watch/schedule_self
-        let ctx = ActorContext::with_system(
+        // Create context with system reference and named path
+        let ctx = ActorContext::with_system_and_name(
             actor_id,
             self.clone() as Arc<dyn ActorSystemRef>,
             self.cancel_token.clone(),
             sender.clone(),
+            Some(name_str.to_string()),
         );
 
         // Spawn actor loop
@@ -1117,6 +1064,10 @@ impl ActorSystemRef for ActorSystem {
         let target_key = target.to_string();
         self.lifecycle.unwatch(&watcher_key, &target_key).await;
         Ok(())
+    }
+
+    fn local_actor_ref_by_name(&self, name: &str) -> Option<ActorRef> {
+        ActorSystem::local_actor_ref_by_name(self, name)
     }
 }
 
