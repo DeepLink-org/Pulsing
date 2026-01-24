@@ -22,91 +22,91 @@ import random
 import time
 
 import pulsing as pul
-from pulsing.actor import Actor, ActorId, Message
 
 
-class WorkerActor(Actor):
+class WorkerActor:
     """A simple worker actor that processes tasks"""
 
     def __init__(self, worker_id: str):
         self.worker_id = worker_id
         self.tasks_processed = 0
 
-    def on_start(self, actor_id: ActorId):
+    def on_start(self, actor_id):
         print(f"[Worker {self.worker_id}] Started")
 
-    async def receive(self, msg: Message) -> Message:
-        if msg.msg_type == "ProcessTask":
-            task = msg.to_json().get("task", "")
+    async def receive(self, msg):
+        action = msg.get("action") if isinstance(msg, dict) else None
+
+        if action == "process":
+            task = msg.get("task", "")
             self.tasks_processed += 1
             result = f"Processed: {task} (total: {self.tasks_processed})"
             print(f"[Worker {self.worker_id}] {result}")
-            return Message.from_json(
-                "TaskResult", {"result": result, "worker": self.worker_id}
-            )
-        elif msg.msg_type == "GetStats":
-            return Message.from_json(
-                "Stats", {"worker_id": self.worker_id, "tasks": self.tasks_processed}
-            )
-        return Message.empty()
+            return {"result": result, "worker": self.worker_id}
+
+        if action == "stats":
+            return {"worker_id": self.worker_id, "tasks": self.tasks_processed}
+
+        return {"error": "unknown action"}
 
 
-class DispatcherActor(Actor):
+class DispatcherActor:
     """A dispatcher actor that distributes tasks to workers (for demo purposes)"""
 
     def __init__(self):
         self.workers = []
         self.tasks_dispatched = 0
 
-    def on_start(self, actor_id: ActorId):
+    def on_start(self, actor_id):
         print("[Dispatcher] Started")
 
-    async def receive(self, msg: Message) -> Message:
-        if msg.msg_type == "RouteTask":
+    async def receive(self, msg):
+        action = msg.get("action") if isinstance(msg, dict) else None
+
+        if action == "route":
             self.tasks_dispatched += 1
-            task = msg.to_json().get("task", "")
+            task = msg.get("task", "")
             # Simulate routing logic
             worker_id = f"worker-{random.randint(1, 3)}"
-            return Message.from_json(
-                "Dispatched",
-                {
-                    "task": task,
-                    "worker": worker_id,
-                    "dispatched": self.tasks_dispatched,
-                },
-            )
-        elif msg.msg_type == "GetStats":
-            return Message.from_json(
-                "Stats", {"dispatcher": True, "tasks_dispatched": self.tasks_dispatched}
-            )
-        return Message.empty()
+            return {
+                "task": task,
+                "worker": worker_id,
+                "dispatched": self.tasks_dispatched,
+            }
+
+        if action == "stats":
+            return {"dispatcher": True, "tasks_dispatched": self.tasks_dispatched}
+
+        return {"error": "unknown action"}
 
 
-class CacheActor(Actor):
+class CacheActor:
     """A cache actor that stores key-value pairs"""
 
     def __init__(self):
         self.cache = {}
 
-    def on_start(self, actor_id: ActorId):
+    def on_start(self, actor_id):
         print("[Cache] Started")
 
-    async def receive(self, msg: Message) -> Message:
-        if msg.msg_type == "Get":
-            key = msg.to_json().get("key", "")
+    async def receive(self, msg):
+        action = msg.get("action") if isinstance(msg, dict) else None
+
+        if action == "get":
+            key = msg.get("key", "")
             value = self.cache.get(key, None)
-            return Message.from_json(
-                "Value", {"key": key, "value": value, "found": value is not None}
-            )
-        elif msg.msg_type == "Set":
-            data = msg.to_json()
-            key = data.get("key", "")
-            value = data.get("value", "")
+            return {"key": key, "value": value, "found": value is not None}
+
+        if action == "set":
+            key = msg.get("key", "")
+            value = msg.get("value", "")
             self.cache[key] = value
-            return Message.from_json("SetResult", {"key": key, "success": True})
-        elif msg.msg_type == "GetStats":
-            return Message.from_json("Stats", {"cache_size": len(self.cache)})
-        return Message.empty()
+            return {"key": key, "success": True}
+
+        if action == "stats":
+            return {"cache_size": len(self.cache)}
+
+        return {"error": "unknown action"}
 
 
 async def run_node(port: int, seed: str | None):

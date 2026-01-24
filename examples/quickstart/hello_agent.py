@@ -7,7 +7,7 @@ You will see two agents greeting each other!
 """
 
 import asyncio
-from pulsing.actor import remote, resolve
+from pulsing.actor import remote
 from pulsing.agent import runtime
 
 
@@ -26,7 +26,8 @@ class Greeter:
 
     async def say_hello_to(self, peer_name: str) -> str:
         """Greet another agent"""
-        peer = await resolve(peer_name)
+        # Use Class.resolve() to get ActorProxy (with method type info)
+        peer = await Greeter.resolve(peer_name)
         print(f"👋 [{self.display_name}] is greeting [{peer_name}]...")
         reply = await peer.greet(f"Hi, I'm {self.display_name}!")
         print(f"💬 [{self.display_name}] received reply: {reply}")

@@ -11,20 +11,19 @@ Usage: python examples/python/named_actors.py
 import asyncio
 
 import pulsing as pul
-from pulsing.actor import Actor, ActorId, Message
 
 
-class EchoActor(Actor):
-    def on_start(self, actor_id: ActorId):
+class EchoActor:
+    """Simple echo actor that can be discovered by name."""
+
+    def on_start(self, actor_id):
         print(f"[{actor_id}] Started")
 
-    async def receive(self, msg: Message) -> Message:
-        message = msg.to_json().get("message", "")
+    async def receive(self, msg):
+        # Accept dict messages
+        message = msg.get("message", "") if isinstance(msg, dict) else str(msg)
         print(f"[Echo] {message}")
-        return Message.from_json(
-            "EchoResponse",
-            {"echo": message, "actor": msg.to_json().get("_actor_id", "unknown")},
-        )
+        return {"echo": message}
 
 
 async def main():
@@ -40,7 +39,7 @@ async def main():
     # Resolve by name
     print("--- Resolve by name ---")
     actor = await system.resolve("echo")
-    resp = (await actor.ask(Message.from_json("Echo", {"message": "Hello!"}))).to_json()
+    resp = await actor.ask({"message": "Hello!"})
     print(f"Response: {resp['echo']}\n")
 
     # List instances

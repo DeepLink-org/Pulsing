@@ -7,7 +7,7 @@ from pulsing.actor import remote
 from pulsing.agent import runtime
 
 
-@remote(restart_policy="on-failure", max_restarts=50)
+@remote(restart_policy="on_failure", max_restarts=50)
 class FlakyWorker:
     def __init__(self):
         self.call_count = 0
