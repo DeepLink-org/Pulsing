@@ -202,8 +202,8 @@ let actor_ref = counter.as_untyped()?;
 ## Complete Example
 
 ```rust
-use pulsing_actor::behavior::{stateful, Behavior, BehaviorAction, BehaviorSpawner};
-use pulsing_actor::system::ActorSystem;
+use pulsing_actor::behavior::{stateful, Behavior, BehaviorAction};
+use pulsing_actor::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]

@@ -12,8 +12,8 @@ import pulsing as pul
 # Node 1: Start seed node
 system = await pul.actor_system(addr="0.0.0.0:8000")
 
-# Spawn a public actor
-await system.spawn(WorkerActor(), name="worker", public=True)
+# Spawn a named actor (discoverable via resolve)
+await system.spawn(WorkerActor(), name="worker")
 ```
 
 ### Joining a Cluster
@@ -51,38 +51,44 @@ worker = await Worker.resolve("worker")
 result = await worker.process("hello")  # Direct method call
 ```
 
-## Public vs Private Actors
+## Named vs Anonymous Actors
 
-### Public Actors
+### Named Actors (Discoverable)
 
-Public actors are visible to all nodes in the cluster:
+Named actors are discoverable by any node in the cluster via `resolve()`:
 
 ```python
-# Public actor - can be found by other nodes
-await system.spawn(WorkerActor(), name="worker", public=True)
+# Named actor - discoverable via resolve() from any node
+await system.spawn(WorkerActor(), name="worker")
+
+# Other nodes can find it by name
+ref = await other_system.resolve("worker")
 ```
 
-### Private Actors
+### Anonymous Actors (Local Reference Only)
 
-Private actors are only accessible locally:
+Anonymous actors can only be accessed via the ActorRef returned by spawn:
 
 ```python
-# Private actor - local only
-await system.spawn(WorkerActor(), name="local-worker", public=False)
+# Anonymous actor - only accessible via ActorRef
+local_ref = await system.spawn(WorkerActor())
+
+# Cannot be found via resolve(), only use the returned ActorRef
+await local_ref.ask(msg)
 ```
 
 ## Location Transparency
 
-The same API works for both local and remote actors:
+Named actors support location transparency — same API for local and remote:
 
 ```python
-# Local actor
-local_ref = await system.spawn(MyActor(), name="local")
+# Local named actor
+local_ref = await system.spawn(MyActor(), name="local-worker")
 
-# Remote actor (found via cluster)
+# Remote named actor (resolved via cluster)
 remote_ref = await system.resolve("remote-worker")
 
-# Same API for both
+# Exactly the same API for both
 response1 = await local_ref.ask(msg)
 response2 = await remote_ref.ask(msg)
 ```
@@ -103,7 +109,7 @@ except Exception as e:
 
 1. **Wait for cluster sync**: Add a small delay after joining a cluster
 2. **Handle errors gracefully**: Wrap remote calls in try-except blocks
-3. **Use public actors for cluster communication**: Set `public=True` for actors that need remote access
+3. **Use named actors**: Actors that need remote access must have a `name`
 4. **Use @remote with resolve()**: Get typed proxies for better API experience
 5. **Use timeouts**: Consider adding timeouts for remote calls
 
@@ -124,9 +130,9 @@ class DistributedCounter:
         self.value += n
         return self.value
 
-# Node 1: Create counter
+# Node 1: Create named counter (discoverable remotely)
 system1 = await pul.actor_system(addr="0.0.0.0:8000")
-counter = await DistributedCounter.local(system1, init_value=0)
+counter = await DistributedCounter.spawn(name="counter", init_value=0)
 
 # Node 2: Access remote counter
 system2 = await pul.actor_system(addr="0.0.0.0:8001", seeds=["127.0.0.1:8000"])

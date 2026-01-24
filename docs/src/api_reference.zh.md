@@ -126,13 +126,18 @@ class ActorSystem:
         actor: Actor,
         *,
         name: str | None = None,
-        public: bool = False,
+        # public 参数已废弃：所有命名 actor 自动可被 resolve
         restart_policy: str = "never",
         max_restarts: int = 3,
         min_backoff: float = 0.1,
         max_backoff: float = 30.0
     ) -> ActorRef:
-        """生成新的 actor。"""
+        """
+        生成新的 actor。
+        
+        - 有 name: 命名 actor，可通过 resolve() 发现
+        - 无 name: 匿名 actor，仅通过返回的 ActorRef 访问
+        """
         pass
 
     async def refer(self, actorid: ActorId | str) -> ActorRef:
@@ -319,31 +324,42 @@ Rust API 通过三层 trait 组织（均在 `pulsing_actor::prelude::*` 中 re-e
 核心 spawn 与 resolve 操作：
 
 ```rust
-// Spawn actors
-system.spawn("name", actor).await?;
-system.spawn_with_options("name", actor, options).await?;
-system.spawn_named("path", "local_name", actor).await?;
-system.spawn_named_with_options("path", "local_name", actor, options).await?;
+// Spawn - 简洁 API
+system.spawn(actor).await?;                    // 匿名 actor（不可 resolve）
+system.spawn_named(name, actor).await?;        // 命名 actor（可 resolve）
 
-// Resolve actors
-system.actor_ref(&actor_id).await?;
-system.resolve_named("path", node_id_opt).await?;
-system.resolve_named_with_options(&path, options).await?;
-system.resolve_named_lazy("path")?;  // 懒解析，约 5s 后自动刷新
+// Spawn - Builder 模式（高级配置）
+system.spawning()
+    .name("services/counter")                  // 可选：有 name = 可 resolve
+    .supervision(SupervisionSpec::on_failure().max_restarts(3))
+    .mailbox_capacity(256)
+    .spawn(actor).await?;
+
+// Resolve - 简洁 API
+system.actor_ref(&actor_id).await?;            // 按 ActorId 获取
+system.resolve(name).await?;                   // 按名称解析
+
+// Resolve - Builder 模式（高级配置）
+system.resolving()
+    .node(node_id)                             // 可选：指定目标节点
+    .policy(RoundRobinPolicy::new())           // 可选：负载均衡策略
+    .filter_alive(true)                        // 可选：只选存活节点
+    .resolve(name).await?;                     // 解析单个
+
+system.resolving().list(name).await?;          // 获取所有实例
+system.resolving().lazy(name)?;                // 懒解析（~5s TTL 自动刷新）
 ```
 
 ### ActorSystemAdvancedExt（高级：监督/重启）
 
-基于 factory 的 spawn，支持失败重启：
+Factory 模式 spawn，支持 supervision 重启（仅命名 actor）：
 
 ```rust
 let options = SpawnOptions::new()
-    .supervision(SupervisionSpec::new()
-        .restart_policy(RestartPolicy::OnFailure)
-        .max_restarts(3));
+    .supervision(SupervisionSpec::on_failure().max_restarts(3));
 
-system.spawn_factory("name", || Ok(MyActor::new()), options).await?;
-system.spawn_named_factory("path", "name", || Ok(MyActor::new()), options).await?;
+// 仅命名 actor 支持 supervision（匿名 actor 无法重新解析）
+system.spawn_named_factory(name, || Ok(Service::new()), options).await?;
 ```
 
 ### ActorSystemOpsExt（运维/诊断）
@@ -355,7 +371,7 @@ system.node_id();
 system.addr();
 system.members().await;
 system.all_named_actors().await;
-system.stop("name").await?;
+system.stop(name).await?;
 system.shutdown().await?;
 ```
 

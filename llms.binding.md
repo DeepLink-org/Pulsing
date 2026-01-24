@@ -381,8 +381,8 @@ impl Actor for Echo {
 async fn main() -> anyhow::Result<()> {
     let system = ActorSystem::builder().build().await?;
 
-    // 命名 actor（可通过 resolve 发现）
-    let actor = system.spawn_named("echo", Echo).await?;
+    // 命名 actor（可通过 resolve 发现，使用 namespace/name 格式）
+    let actor = system.spawn_named("services/echo", Echo).await?;
     let Pong(x): Pong = actor.ask(Ping(1)).await?;
 
     // 匿名 actor（仅通过 ActorRef 访问）

@@ -275,8 +275,8 @@ import pulsing as pul
 # 创建系统
 system = await pul.actor_system()
 
-# 生成 actor
-actor = await system.spawn(MyActor(), name="my_actor", public=True)
+# 生成命名 actor（可通过 resolve 发现）
+actor = await system.spawn(MyActor(), name="my_actor")
 
 # 调用方法
 result = await actor.ask({"action": "do_something"})

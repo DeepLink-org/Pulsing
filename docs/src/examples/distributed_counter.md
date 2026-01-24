@@ -6,7 +6,7 @@ If you want a runnable baseline, start from `examples/python/named_actors.py` an
 
 ## Pattern
 
-1. Start a seed node and spawn a **public named actor**
+1. Start a seed node and spawn a **named actor** (discoverable via resolve)
 2. Start worker nodes that join the cluster and **resolve the actor by name**
 3. Use `ask` to update state and get a response
 
@@ -32,7 +32,8 @@ class Counter:
 
 async def seed():
     system = await pul.actor_system(addr="0.0.0.0:8000")
-    await system.spawn(Counter(), name="global_counter", public=True)
+    # Named actors are automatically discoverable via resolve
+    await system.spawn(Counter(), name="global_counter")
     await asyncio.Event().wait()
 
 

@@ -81,15 +81,13 @@ class PongActor:
 
 
 async def main():
-    # 节点 1：启动 pong Actor
+    # 节点 1：启动命名 pong Actor（可被远程发现）
     await init(addr="0.0.0.0:8000")
-    pong = await PongActor.spawn()
-    system = get_system()
-    await system.register("pong", pong, public=True)
+    pong = await PongActor.spawn(name="pong")
 
     # 节点 2：在另一台机器上运行
     # await init(addr="0.0.0.0:8001", seeds=["node1:8000"])
-    # pong_ref = await get_system().find("pong")
+    # pong_ref = await PongActor.resolve("pong")
     # ping = await PingActor.spawn(pong_ref=pong_ref)
     # await ping.start_ping(10)
 

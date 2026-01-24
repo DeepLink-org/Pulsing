@@ -128,12 +128,12 @@ async def run_node(port: int, seed: str | None):
     if seed is None:
         # Node 1: Create dispatcher and some workers
         print("Creating actors on node 1...")
-        await system.spawn(DispatcherActor(), name="dispatcher", public=True)
+        await system.spawn(DispatcherActor(), name="dispatcher")
         print("  ✓ actors/dispatcher")
 
         for i in range(1, 3):
             worker_name = f"worker-{i}"
-            await system.spawn(WorkerActor(worker_name), name=worker_name, public=True)
+            await system.spawn(WorkerActor(worker_name), name=worker_name)
             print(f"  ✓ actors/{worker_name}")
 
         print("\n✓ Node 1 ready!")
@@ -156,7 +156,7 @@ async def run_node(port: int, seed: str | None):
         print("Creating actors on node 2...")
         for i in range(3, 5):
             worker_name = f"worker-{i}"
-            await system.spawn(WorkerActor(worker_name), name=worker_name, public=True)
+            await system.spawn(WorkerActor(worker_name), name=worker_name)
             print(f"  ✓ actors/{worker_name}")
         print("\n✓ Node 2 ready!")
 
@@ -164,7 +164,7 @@ async def run_node(port: int, seed: str | None):
         # Node 3: Add cache
         await asyncio.sleep(1)
         print("Creating actors on node 3...")
-        await system.spawn(CacheActor(), name="cache", public=True)
+        await system.spawn(CacheActor(), name="cache")
         print("  ✓ actors/cache")
         print("\n✓ Node 3 ready!")
 

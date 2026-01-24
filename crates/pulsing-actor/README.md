@@ -87,8 +87,8 @@ let system2 = ActorSystem::builder()
     .build()
     .await?;
 
-// 通过路径解析远程 Actor
-let remote = system2.resolve_named("services/echo", None).await?;
+// 通过名称解析远程 Actor
+let remote = system2.resolve("services/echo").await?;
 let resp: String = remote.ask("hello".to_string()).await?;
 ```
 

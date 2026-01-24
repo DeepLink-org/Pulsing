@@ -275,8 +275,8 @@ import pulsing as pul
 # Create system
 system = await pul.actor_system()
 
-# Spawn actor
-actor = await system.spawn(MyActor(), name="my_actor", public=True)
+# Spawn named actor (discoverable via resolve)
+actor = await system.spawn(MyActor(), name="my_actor")
 
 # Call method
 result = await actor.ask({"action": "do_something"})

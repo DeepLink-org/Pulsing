@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
 
         // Resolve remote actor
         let actor = loop {
-            match system.resolve_named(path, None).await {
+            match system.resolve(path).await {
                 Ok(a) => break a,
                 Err(_) => {
                     print!(".");

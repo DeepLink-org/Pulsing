@@ -32,9 +32,9 @@ async def main():
     system = await pul.actor_system()
     print(f"✓ System started: {system.node_id}\n")
 
-    # Create named public actor
-    await system.spawn(EchoActor(), name="echo", public=True)
-    print("✓ Created: echo (public=True)\n")
+    # Create named actor (named actors are discoverable via resolve)
+    await system.spawn(EchoActor(), name="echo")
+    print("✓ Created: echo (named, discoverable)\n")
 
     # Resolve by name
     print("--- Resolve by name ---")

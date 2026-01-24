@@ -51,7 +51,6 @@ async def run_node(port: int, seed: str | None):
         await system.spawn(
             SharedCounter(str(system.node_id)),
             name="counter",
-            public=True,
         )
         print("✓ Created: counter")
         print("Start node 2: python cluster.py --port 8001 --seed 127.0.0.1:8000\n")

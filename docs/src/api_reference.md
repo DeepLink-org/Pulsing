@@ -126,13 +126,18 @@ class ActorSystem:
         actor: Actor,
         *,
         name: str | None = None,
-        public: bool = False,
+        # public parameter is deprecated: all named actors are resolvable
         restart_policy: str = "never",
         max_restarts: int = 3,
         min_backoff: float = 0.1,
         max_backoff: float = 30.0
     ) -> ActorRef:
-        """Spawn a new actor."""
+        """
+        Spawn a new actor.
+        
+        - With name: named actor, discoverable via resolve()
+        - Without name: anonymous actor, only accessible via returned ActorRef
+        """
         pass
 
     async def refer(self, actorid: ActorId | str) -> ActorRef:
@@ -319,31 +324,42 @@ The Rust API is organized into three trait layers (all re-exported in `pulsing_a
 Core spawn and resolve operations:
 
 ```rust
-// Spawn actors
-system.spawn("name", actor).await?;
-system.spawn_with_options("name", actor, options).await?;
-system.spawn_named("path", "local_name", actor).await?;
-system.spawn_named_with_options("path", "local_name", actor, options).await?;
+// Spawn - Simple API
+system.spawn(actor).await?;                    // Anonymous actor (not resolvable)
+system.spawn_named(name, actor).await?;        // Named actor (resolvable)
 
-// Resolve actors
-system.actor_ref(&actor_id).await?;
-system.resolve_named("path", node_id_opt).await?;
-system.resolve_named_with_options(&path, options).await?;
-system.resolve_named_lazy("path")?;  // Auto-refresh after ~5s
+// Spawn - Builder pattern (advanced config)
+system.spawning()
+    .name("services/counter")                  // Optional: with name = resolvable
+    .supervision(SupervisionSpec::on_failure().max_restarts(3))
+    .mailbox_capacity(256)
+    .spawn(actor).await?;
+
+// Resolve - Simple API
+system.actor_ref(&actor_id).await?;            // Get by ActorId
+system.resolve(name).await?;                   // Resolve by name
+
+// Resolve - Builder pattern (advanced config)
+system.resolving()
+    .node(node_id)                             // Optional: target node
+    .policy(RoundRobinPolicy::new())           // Optional: load balancing
+    .filter_alive(true)                        // Optional: only alive nodes
+    .resolve(name).await?;                     // Resolve single
+
+system.resolving().list(name).await?;          // Get all instances
+system.resolving().lazy(name)?;                // Lazy resolution (~5s TTL auto-refresh)
 ```
 
 ### ActorSystemAdvancedExt (Supervision/Restart)
 
-Factory-based spawning for restartable actors:
+Factory-based spawning for supervision restarts (named actors only):
 
 ```rust
 let options = SpawnOptions::new()
-    .supervision(SupervisionSpec::new()
-        .restart_policy(RestartPolicy::OnFailure)
-        .max_restarts(3));
+    .supervision(SupervisionSpec::on_failure().max_restarts(3));
 
-system.spawn_factory("name", || Ok(MyActor::new()), options).await?;
-system.spawn_named_factory("path", "name", || Ok(MyActor::new()), options).await?;
+// Only named actors support supervision (anonymous cannot be re-resolved)
+system.spawn_named_factory(name, || Ok(Service::new()), options).await?;
 ```
 
 ### ActorSystemOpsExt (Operations/Diagnostics)
@@ -355,7 +371,7 @@ system.node_id();
 system.addr();
 system.members().await;
 system.all_named_actors().await;
-system.stop("name").await?;
+system.stop(name).await?;
 system.shutdown().await?;
 ```
 

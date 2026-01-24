@@ -83,13 +83,11 @@ class PongActor:
 async def main():
     # Node 1: Start pong actor
     await init(addr="0.0.0.0:8000")
-    pong = await PongActor.spawn()
-    system = get_system()
-    await system.register("pong", pong, public=True)
+    pong = await PongActor.spawn(name="pong")
 
     # Node 2: Would run on another machine
     # await init(addr="0.0.0.0:8001", seeds=["node1:8000"])
-    # pong_ref = await get_system().find("pong")
+    # pong_ref = await PongActor.resolve("pong")
     # ping = await PingActor.spawn(pong_ref=pong_ref)
     # await ping.start_ping(10)
 

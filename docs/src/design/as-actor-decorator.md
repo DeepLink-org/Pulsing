@@ -166,7 +166,7 @@ counter = await Counter.spawn(name="global_counter", init_value=0)
 
 # 其他地方可以通过名称解析
 from pulsing.actor import get_system
-ref = await get_system().resolve_named("global_counter")
+ref = await get_system().resolve("global_counter")
 ```
 
 ### 作为普通类使用

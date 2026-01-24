@@ -6,7 +6,7 @@
 
 ## 模式说明
 
-1. 启动 seed 节点，并创建一个**public 的具名 Actor**
+1. 启动 seed 节点，并创建一个**命名 Actor**（可被 resolve 发现）
 2. 启动其它节点加入集群，通过名称 **resolve**
 3. 使用 `ask` 远程更新状态并获取返回值
 
@@ -32,7 +32,8 @@ class Counter:
 
 async def seed():
     system = await pul.actor_system(addr="0.0.0.0:8000")
-    await system.spawn(Counter(), name="global_counter", public=True)
+    # 命名 actor 自动可被 resolve 发现
+    await system.spawn(Counter(), name="global_counter")
     await asyncio.Event().wait()
 
 
