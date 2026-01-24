@@ -1246,11 +1246,19 @@ impl PyActorSystem {
                     } else {
                         format!("actors/{}", name)
                     };
+
+                    // Parse the path - use new_system for system/* paths (internal use only)
+                    let path = if name.starts_with("system/") {
+                        ActorPath::new_system(&name).map_err(to_pyerr)?
+                    } else {
+                        ActorPath::new(&name).map_err(to_pyerr)?
+                    };
+
                     if matches!(policy, RestartPolicy::Never) {
                         // actor is the instance
                         let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
                         system
-                            .spawn_named_with_options(name, actor_wrapper, options)
+                            .spawn_named_with_options(path, actor_wrapper, options)
                             .await
                             .map_err(to_pyerr)?
                     } else {
@@ -1265,7 +1273,7 @@ impl PyActorSystem {
                             })
                         };
                         system
-                            .spawn_named_factory(name, factory, options)
+                            .spawn_named_factory(path, factory, options)
                             .await
                             .map_err(to_pyerr)?
                     }
@@ -1329,7 +1337,12 @@ impl PyActorSystem {
             } else {
                 format!("actors/{}", name)
             };
-            let path = ActorPath::new(name).map_err(to_pyerr)?;
+            // Use new_system for system/* paths (internal use)
+            let path = if name.starts_with("system/") {
+                ActorPath::new_system(&name).map_err(to_pyerr)?
+            } else {
+                ActorPath::new(&name).map_err(to_pyerr)?
+            };
             let instances = system.get_named_instances_detailed(&path).await;
             let result: Vec<std::collections::HashMap<String, serde_json::Value>> = instances
                 .into_iter()
@@ -1458,7 +1471,12 @@ impl PyActorSystem {
             } else {
                 format!("actors/{}", name)
             };
-            let path = ActorPath::new(name).map_err(to_pyerr)?;
+            // Use new_system for system/* paths (internal use)
+            let path = if name.starts_with("system/") {
+                ActorPath::new_system(&name).map_err(to_pyerr)?
+            } else {
+                ActorPath::new(&name).map_err(to_pyerr)?
+            };
             let node = node_id.map(NodeId::new);
             let actor_ref = system
                 .resolve_named(&path, node.as_ref())
@@ -1512,7 +1530,8 @@ impl PyActorSystem {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let path = ActorPath::new("system").map_err(to_pyerr)?;
+            // Use system/core - the correct system actor path
+            let path = ActorPath::new_system("system/core").map_err(to_pyerr)?;
             let actor_ref = system
                 .resolve_named(&path, Some(&NodeId::new(node_id)))
                 .await

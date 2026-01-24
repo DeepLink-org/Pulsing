@@ -340,8 +340,9 @@ impl ActorSystem {
         // Create SystemActor with default factory
         let system_actor = SystemActor::with_default_factory(system_ref);
 
-        // Spawn as named actor with path "system"
-        self.spawn_named(SYSTEM_ACTOR_PATH, system_actor).await?;
+        // Spawn as named actor with path "system" (use new_system to bypass namespace check)
+        let system_path = ActorPath::new_system(SYSTEM_ACTOR_PATH)?;
+        self.spawn_named(system_path, system_actor).await?;
 
         tracing::debug!(path = SYSTEM_ACTOR_PATH, "SystemActor started");
         Ok(())
@@ -368,8 +369,9 @@ impl ActorSystem {
         // Create SystemActor with custom factory
         let system_actor = SystemActor::new(system_ref, factory);
 
-        // Spawn as named actor
-        self.spawn_named(SYSTEM_ACTOR_PATH, system_actor).await?;
+        // Spawn as named actor (use new_system to bypass namespace check)
+        let system_path = ActorPath::new_system(SYSTEM_ACTOR_PATH)?;
+        self.spawn_named(system_path, system_actor).await?;
 
         tracing::debug!(
             path = SYSTEM_ACTOR_PATH,
@@ -380,7 +382,7 @@ impl ActorSystem {
 
     /// Get SystemActor reference
     pub async fn system(&self) -> anyhow::Result<ActorRef> {
-        self.resolve_named(&ActorPath::new(SYSTEM_ACTOR_PATH)?, None)
+        self.resolve_named(&ActorPath::new_system(SYSTEM_ACTOR_PATH)?, None)
             .await
     }
 
