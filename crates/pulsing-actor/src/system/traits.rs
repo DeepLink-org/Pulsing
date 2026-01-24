@@ -458,8 +458,23 @@ pub trait ActorSystemOpsExt {
     /// Decrement load after a request completes
     fn decrement_node_load(&self, addr: &SocketAddr);
 
+    /// Clean up stale node load trackers to prevent memory leaks
+    ///
+    /// Removes entries for nodes that have not been active for longer than the threshold.
+    /// Call this periodically (e.g., every few minutes) in long-running systems.
+    ///
+    /// # Arguments
+    /// * `stale_threshold` - Remove trackers inactive for longer than this duration
+    ///
+    /// # Returns
+    /// Number of entries removed
+    fn cleanup_stale_node_trackers(&self, stale_threshold: std::time::Duration) -> usize;
+
+    /// Get the number of tracked nodes
+    fn tracked_node_count(&self) -> usize;
+
     /// Resolve an actor address and get an ActorRef
-    async fn resolve(&self, address: &crate::actor::ActorAddress) -> anyhow::Result<ActorRef>;
+    async fn resolve_address(&self, address: &crate::actor::ActorAddress) -> anyhow::Result<ActorRef>;
 
     /// Get all instances of a named actor across the cluster
     async fn get_named_instances(&self, path: &ActorPath) -> Vec<MemberInfo>;
@@ -639,7 +654,15 @@ impl ActorSystemOpsExt for Arc<ActorSystem> {
         ActorSystem::decrement_node_load(self.as_ref(), addr)
     }
 
-    async fn resolve(&self, address: &crate::actor::ActorAddress) -> anyhow::Result<ActorRef> {
+    fn cleanup_stale_node_trackers(&self, stale_threshold: std::time::Duration) -> usize {
+        ActorSystem::cleanup_stale_node_trackers(self.as_ref(), stale_threshold)
+    }
+
+    fn tracked_node_count(&self) -> usize {
+        ActorSystem::tracked_node_count(self.as_ref())
+    }
+
+    async fn resolve_address(&self, address: &crate::actor::ActorAddress) -> anyhow::Result<ActorRef> {
         ActorSystem::resolve(self.as_ref(), address).await
     }
 

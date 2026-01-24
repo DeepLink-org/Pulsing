@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 /// Actor runtime statistics
 #[derive(Debug, Default)]
@@ -46,6 +47,9 @@ pub(crate) struct LocalActorHandle {
 
     /// Actor task handle
     pub join_handle: JoinHandle<()>,
+
+    /// Cancellation token for graceful shutdown of this specific actor
+    pub cancel_token: CancellationToken,
 
     /// Runtime statistics
     pub stats: Arc<ActorStats>,

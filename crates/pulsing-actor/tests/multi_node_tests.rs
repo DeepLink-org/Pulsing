@@ -595,7 +595,7 @@ mod addressing_multi_node_tests {
         let addr = ActorAddress::parse("actor:///services/api/handler").unwrap();
         let mut resolved_ref = None;
         for attempt in 1..=15 {
-            match ActorSystemOpsExt::resolve(&system2, &addr).await {
+            match ActorSystemOpsExt::resolve_address(&system2, &addr).await {
                 Ok(r) => {
                     resolved_ref = Some(r);
                     break;
@@ -711,7 +711,7 @@ mod addressing_multi_node_tests {
         let addr = ActorAddress::global(node1_id, actor_ref.id().local_id());
         let mut resolved_ref = None;
         for attempt in 1..=15 {
-            match ActorSystemOpsExt::resolve(&system2, &addr).await {
+            match ActorSystemOpsExt::resolve_address(&system2, &addr).await {
                 Ok(r) => {
                     resolved_ref = Some(r);
                     break;

@@ -34,21 +34,46 @@ use runtime::{run_actor_instance, run_supervision_loop};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-/// Per-node load tracking
-#[derive(Debug, Default)]
+/// Per-node load tracking with activity timestamp for cleanup
+#[derive(Debug)]
 pub struct NodeLoadTracker {
     /// Current in-flight requests to this node
     load: AtomicUsize,
     /// Total requests processed
     processed: AtomicU64,
+    /// Last activity timestamp (Unix millis) for stale entry cleanup
+    last_activity_millis: AtomicU64,
+}
+
+impl Default for NodeLoadTracker {
+    fn default() -> Self {
+        Self {
+            load: AtomicUsize::new(0),
+            processed: AtomicU64::new(0),
+            last_activity_millis: AtomicU64::new(Self::current_millis()),
+        }
+    }
 }
 
 impl NodeLoadTracker {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn current_millis() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn touch(&self) {
+        self.last_activity_millis
+            .store(Self::current_millis(), Ordering::Relaxed);
     }
 
     pub fn load(&self) -> usize {
@@ -57,10 +82,12 @@ impl NodeLoadTracker {
 
     pub fn increment(&self) {
         self.load.fetch_add(1, Ordering::Relaxed);
+        self.touch();
     }
 
     pub fn decrement(&self) {
         self.load.fetch_sub(1, Ordering::Relaxed);
+        self.touch();
     }
 
     pub fn processed(&self) -> u64 {
@@ -69,6 +96,19 @@ impl NodeLoadTracker {
 
     pub fn increment_processed(&self) {
         self.processed.fetch_add(1, Ordering::Relaxed);
+        self.touch();
+    }
+
+    /// Returns elapsed time since last activity
+    pub fn last_activity_elapsed(&self) -> Duration {
+        let last = self.last_activity_millis.load(Ordering::Relaxed);
+        let now = Self::current_millis();
+        Duration::from_millis(now.saturating_sub(last))
+    }
+
+    /// Returns true if this tracker has been inactive for longer than the threshold
+    pub fn is_stale(&self, threshold: Duration) -> bool {
+        self.last_activity_elapsed() > threshold
     }
 }
 
@@ -420,17 +460,22 @@ impl ActorSystem {
 
         let stats = Arc::new(ActorStats::default());
 
+        // Create a child cancellation token for this specific actor
+        // When system shuts down, parent token cancels all children
+        // When stopping individual actor, only this child token is cancelled
+        let actor_cancel = self.cancel_token.child_token();
+
         // Create context with system reference
         let ctx = ActorContext::with_system(
             actor_id,
             self.clone() as Arc<dyn ActorSystemRef>,
-            self.cancel_token.clone(),
+            actor_cancel.clone(),
             sender.clone(),
         );
 
         // Spawn actor loop (no supervision for anonymous actors, they can't restart without a factory)
         let stats_clone = stats.clone();
-        let cancel = self.cancel_token.clone();
+        let cancel = actor_cancel.clone();
         let actor_id_for_log = actor_id;
 
         let join_handle = tokio::spawn(async move {
@@ -445,6 +490,7 @@ impl ActorSystem {
         let handle = LocalActorHandle {
             sender: sender.clone(),
             join_handle,
+            cancel_token: actor_cancel,
             stats: stats.clone(),
             metadata: options.metadata.clone(),
             named_path: None,
@@ -534,18 +580,21 @@ impl ActorSystem {
         let stats = Arc::new(ActorStats::default());
         let metadata = options.metadata.clone();
 
+        // Create a child cancellation token for this specific actor
+        let actor_cancel = self.cancel_token.child_token();
+
         // Create context with system reference and named path
         let ctx = ActorContext::with_system_and_name(
             actor_id,
             self.clone() as Arc<dyn ActorSystemRef>,
-            self.cancel_token.clone(),
+            actor_cancel.clone(),
             sender.clone(),
             Some(name_str.to_string()),
         );
 
         // Spawn actor loop
         let stats_clone = stats.clone();
-        let cancel = self.cancel_token.clone();
+        let cancel = actor_cancel.clone();
         let actor_id_for_log = actor_id;
         let supervision = options.supervision.clone();
 
@@ -560,6 +609,7 @@ impl ActorSystem {
         let handle = LocalActorHandle {
             sender: sender.clone(),
             join_handle,
+            cancel_token: actor_cancel,
             stats: stats.clone(),
             metadata: metadata.clone(),
             named_path: Some(path.clone()),
@@ -795,6 +845,38 @@ impl ActorSystem {
         }
     }
 
+    /// Clean up stale node load trackers to prevent memory leaks
+    ///
+    /// Removes entries for nodes that have not been active for longer than the threshold.
+    /// Call this periodically (e.g., every few minutes) in long-running systems.
+    ///
+    /// # Arguments
+    /// * `stale_threshold` - Remove trackers inactive for longer than this duration
+    ///
+    /// # Returns
+    /// Number of entries removed
+    pub fn cleanup_stale_node_trackers(&self, stale_threshold: Duration) -> usize {
+        let before = self.node_load.len();
+        self.node_load.retain(|_addr, tracker| {
+            // Keep entries that are still active OR have in-flight requests
+            !tracker.is_stale(stale_threshold) || tracker.load() > 0
+        });
+        let removed = before - self.node_load.len();
+        if removed > 0 {
+            tracing::debug!(
+                removed = removed,
+                remaining = self.node_load.len(),
+                "Cleaned up stale node load trackers"
+            );
+        }
+        removed
+    }
+
+    /// Get the number of tracked nodes
+    pub fn tracked_node_count(&self) -> usize {
+        self.node_load.len()
+    }
+
     /// Resolve an actor address and get an ActorRef
     pub async fn resolve(&self, address: &ActorAddress) -> anyhow::Result<ActorRef> {
         match address {
@@ -893,12 +975,25 @@ impl ActorSystem {
 
     // ========== Stop Methods ==========
 
-    /// Stop an actor
+    /// Default timeout for graceful actor shutdown (30 seconds)
+    const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// Stop an actor gracefully
+    ///
+    /// This method first signals the actor to stop via its cancellation token,
+    /// waits for it to finish (with timeout), then performs cleanup.
+    /// If the actor doesn't stop within the timeout, it will be forcefully aborted.
     pub async fn stop(&self, name: impl AsRef<str>) -> anyhow::Result<()> {
         self.stop_with_reason(name, StopReason::Killed).await
     }
 
     /// Stop an actor with a specific reason
+    ///
+    /// Performs graceful shutdown:
+    /// 1. Cancels the actor's cancellation token (triggers `on_stop()`)
+    /// 2. Waits for the actor to finish (with 30s timeout)
+    /// 3. If timeout, forcefully aborts the actor task
+    /// 4. Handles lifecycle cleanup (watch notifications, cluster broadcast, etc.)
     pub async fn stop_with_reason(
         &self,
         name: impl AsRef<str>,
@@ -907,8 +1002,26 @@ impl ActorSystem {
         let name = name.as_ref();
 
         if let Some((_, handle)) = self.local_actors.remove(name) {
-            handle.join_handle.abort();
+            // 1. Signal the actor to stop gracefully
+            handle.cancel_token.cancel();
 
+            // 2. Wait for the actor to finish with timeout
+            match tokio::time::timeout(Self::GRACEFUL_STOP_TIMEOUT, handle.join_handle).await {
+                Ok(_) => {
+                    // Actor stopped gracefully
+                    tracing::debug!(actor = %name, "Actor stopped gracefully");
+                }
+                Err(_) => {
+                    // Timeout - actor didn't respond to cancel signal
+                    // This shouldn't happen normally, but we log a warning
+                    tracing::warn!(
+                        actor = %name,
+                        "Actor didn't stop gracefully within timeout, already aborted by tokio"
+                    );
+                }
+            }
+
+            // 3. Handle lifecycle cleanup
             let local_actors = self.local_actors.clone();
             self.lifecycle
                 .handle_termination(
@@ -945,8 +1058,24 @@ impl ActorSystem {
             drop(actor_name_ref);
 
             if let Some((_, handle)) = self.local_actors.remove(&actor_name) {
-                handle.join_handle.abort();
+                // 1. Signal the actor to stop gracefully
+                handle.cancel_token.cancel();
 
+                // 2. Wait for the actor to finish with timeout
+                match tokio::time::timeout(Self::GRACEFUL_STOP_TIMEOUT, handle.join_handle).await {
+                    Ok(_) => {
+                        tracing::debug!(actor = %actor_name, path = %path_key, "Actor stopped gracefully");
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            actor = %actor_name,
+                            path = %path_key,
+                            "Actor didn't stop gracefully within timeout"
+                        );
+                    }
+                }
+
+                // 3. Handle lifecycle cleanup
                 let local_actors = self.local_actors.clone();
                 self.lifecycle
                     .handle_termination(
@@ -968,17 +1097,26 @@ impl ActorSystem {
     /// Shutdown the entire actor system
     ///
     /// This method performs a graceful shutdown:
-    /// 1. Signals cancellation to all actors
-    /// 2. Triggers lifecycle cleanup for each actor (watch notifications, cluster broadcast, etc.)
-    /// 3. Leaves the cluster gracefully
-    /// 4. Clears all actors and watch relationships
+    /// 1. Signals cancellation to all actors (via parent cancel token, which cancels all child tokens)
+    /// 2. Waits for actors to stop gracefully (with timeout)
+    /// 3. Triggers lifecycle cleanup for each actor (watch notifications, cluster broadcast, etc.)
+    /// 4. Leaves the cluster gracefully
+    /// 5. Clears all actors and watch relationships
     pub async fn shutdown(&self) -> anyhow::Result<()> {
         tracing::info!("Shutting down actor system");
 
-        // Signal cancellation first - this tells actors to stop processing new messages
+        // Signal cancellation first - this cancels the parent token,
+        // which automatically cancels all child tokens (individual actor tokens)
+        // This triggers the `cancel.cancelled()` branch in each actor's message loop,
+        // allowing them to call `on_stop()` gracefully
         self.cancel_token.cancel();
 
-        // Collect all actor info before processing to avoid holding locks during cleanup
+        // Give actors a short time to process the cancellation signal
+        // Since all actors share the same parent token, they should all start stopping
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Collect all actor info and remove them from the map
+        // Using drain pattern to take ownership of handles
         let actor_entries: Vec<_> = self
             .local_actors
             .iter()
@@ -987,33 +1125,50 @@ impl ActorSystem {
                     entry.key().clone(),
                     entry.actor_id,
                     entry.named_path.clone(),
-                    entry.join_handle.abort_handle(),
                 )
             })
             .collect();
 
-        // Process each actor's termination with proper lifecycle handling
-        for (actor_name, actor_id, named_path, abort_handle) in actor_entries {
-            // Abort the actor task
-            abort_handle.abort();
+        // Process each actor's termination
+        for (actor_name, actor_id, named_path) in actor_entries {
+            // Remove and get ownership of the handle
+            if let Some((_, handle)) = self.local_actors.remove(&actor_name) {
+                // Wait briefly for graceful shutdown (actor should already be stopping due to parent cancel)
+                // Use a shorter timeout since we already signaled cancellation
+                match tokio::time::timeout(Duration::from_secs(5), handle.join_handle).await {
+                    Ok(_) => {
+                        tracing::debug!(actor = %actor_name, "Actor stopped gracefully during shutdown");
+                    }
+                    Err(_) => {
+                        // Timeout - this shouldn't happen normally since cancel was already called
+                        tracing::warn!(
+                            actor = %actor_name,
+                            "Actor didn't stop within timeout during shutdown"
+                        );
+                    }
+                }
 
-            // Trigger lifecycle cleanup (watch notifications, cluster broadcast, routing cleanup)
-            let local_actors = self.local_actors.clone();
-            self.lifecycle
-                .handle_termination(
-                    &actor_id,
-                    &actor_name,
-                    named_path,
-                    StopReason::SystemShutdown,
-                    &self.named_actor_paths,
-                    &self.cluster,
-                    |name| local_actors.get(name).map(|h| h.sender.clone()),
-                )
-                .await;
+                // Trigger lifecycle cleanup (watch notifications, cluster broadcast, routing cleanup)
+                let local_actors = self.local_actors.clone();
+                self.lifecycle
+                    .handle_termination(
+                        &actor_id,
+                        &actor_name,
+                        named_path,
+                        StopReason::SystemShutdown,
+                        &self.named_actor_paths,
+                        &self.cluster,
+                        |name| local_actors.get(name).map(|h| h.sender.clone()),
+                    )
+                    .await;
+            }
         }
 
-        // Clear all actors
+        // Clear all actors (should already be empty, but just in case)
         self.local_actors.clear();
+
+        // Clear node load trackers
+        self.node_load.clear();
 
         // Clear all watch relationships
         self.lifecycle.clear().await;

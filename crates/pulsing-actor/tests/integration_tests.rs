@@ -593,7 +593,7 @@ mod addressing_tests {
 
         // Resolve by address
         let addr = ActorAddress::parse("actor:///services/api/handler").unwrap();
-        let resolved_ref = ActorSystemOpsExt::resolve(&system, &addr).await.unwrap();
+        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr).await.unwrap();
 
         // Send message via resolved ref
         let response: Pong = resolved_ref.ask(Ping { value: 10 }).await.unwrap();
@@ -622,7 +622,7 @@ mod addressing_tests {
         let addr = ActorAddress::local(actor_ref.id().local_id());
 
         // Resolve
-        let resolved_ref = ActorSystemOpsExt::resolve(&system, &addr).await.unwrap();
+        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr).await.unwrap();
         let response: Pong = resolved_ref.ask(Ping { value: 5 }).await.unwrap();
         assert_eq!(response.result, 10);
 
@@ -650,7 +650,7 @@ mod addressing_tests {
             ActorAddress::parse(&format!("actor://0/{}", actor_ref.id().local_id())).unwrap();
         assert!(addr.is_local());
 
-        let resolved_ref = ActorSystemOpsExt::resolve(&system, &addr).await.unwrap();
+        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr).await.unwrap();
         let response: Pong = resolved_ref.ask(Ping { value: 7 }).await.unwrap();
         assert_eq!(response.result, 14);
 
@@ -737,12 +737,12 @@ mod addressing_tests {
 
         // Try to resolve non-existent named actor
         let addr = ActorAddress::parse("actor:///services/nonexistent").unwrap();
-        let result = ActorSystemOpsExt::resolve(&system, &addr).await;
+        let result = ActorSystemOpsExt::resolve_address(&system, &addr).await;
         assert!(result.is_err());
 
         // Try to resolve non-existent global actor (use numeric node_id and actor_id)
         let addr = ActorAddress::parse("actor://999/999").unwrap();
-        let result = ActorSystemOpsExt::resolve(&system, &addr).await;
+        let result = ActorSystemOpsExt::resolve_address(&system, &addr).await;
         assert!(result.is_err());
 
         system.shutdown().await.unwrap();
