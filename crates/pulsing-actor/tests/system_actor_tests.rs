@@ -307,7 +307,7 @@ async fn test_system_actor_list_actors() {
     match parsed {
         SystemResponse::ActorList { actors } => {
             // Initially empty (SystemActor doesn't register itself in the registry)
-            assert!(actors.is_empty() || actors.iter().all(|a| a.name != "_system_internal"));
+            assert!(actors.is_empty() || actors.iter().all(|a| a.name != "system/core"));
         }
         _ => panic!("Expected ActorList response"),
     }

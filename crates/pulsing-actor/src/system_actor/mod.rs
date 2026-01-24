@@ -36,9 +36,6 @@ use tokio::sync::mpsc;
 /// Named path for SystemActor (system/core satisfies namespace/name format requirement)
 pub const SYSTEM_ACTOR_PATH: &str = "system/core";
 
-/// Internal local name for SystemActor
-pub(crate) const SYSTEM_ACTOR_LOCAL_NAME: &str = "_system_internal";
-
 /// System metrics
 #[derive(Debug, Default)]
 pub struct SystemMetrics {

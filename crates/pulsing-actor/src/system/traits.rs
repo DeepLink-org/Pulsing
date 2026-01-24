@@ -350,8 +350,8 @@ impl<'a> ResolveBuilder<'a> {
 /// the system can recreate it using the factory function.
 ///
 /// Note: Regular `spawn` methods use a one-shot factory internally, so the actor
-/// cannot be restarted. Use `spawn_factory` or `spawn_named_factory` if you need
-/// supervision with restart capability.
+/// cannot be restarted. Use `spawn_named_factory` if you need supervision with
+/// restart capability. Anonymous actors do not support supervision.
 ///
 /// # Example
 /// ```rust,ignore
@@ -359,7 +359,6 @@ impl<'a> ResolveBuilder<'a> {
 ///
 /// let system = ActorSystem::builder().build().await?;
 ///
-/// // Spawn anonymous actor with factory - enables restart on failure
 /// let options = SpawnOptions::new()
 ///     .supervision(SupervisionSpec::new()
 ///         .restart_policy(RestartPolicy::OnFailure)
@@ -442,7 +441,7 @@ pub trait ActorSystemOpsExt {
     /// Spawn an anonymous actor (no name, only accessible via ActorRef)
     async fn spawn_anonymous<A>(&self, actor: A) -> anyhow::Result<ActorRef>
     where
-        A: Actor;
+        A: IntoActor;
 
     /// Spawn an anonymous actor with custom options
     async fn spawn_anonymous_with_options<A>(
@@ -451,7 +450,7 @@ pub trait ActorSystemOpsExt {
         options: SpawnOptions,
     ) -> anyhow::Result<ActorRef>
     where
-        A: Actor;
+        A: IntoActor;
 
     /// Get load tracker for a node address
     fn get_node_load_tracker(&self, addr: &SocketAddr) -> Option<Arc<NodeLoadTracker>>;
@@ -531,7 +530,13 @@ impl ActorSystemCoreExt for Arc<ActorSystem> {
         A: IntoActor,
     {
         let name = name.as_ref();
-        ActorSystem::spawn_named_with_options(self, name, actor.into_actor(), SpawnOptions::default()).await
+        ActorSystem::spawn_named_with_options(
+            self,
+            name,
+            actor.into_actor(),
+            SpawnOptions::default(),
+        )
+        .await
     }
 
     fn spawning(&self) -> SpawnBuilder<'_> {
@@ -610,7 +615,7 @@ impl ActorSystemOpsExt for Arc<ActorSystem> {
 
     async fn spawn_anonymous<A>(&self, actor: A) -> anyhow::Result<ActorRef>
     where
-        A: Actor,
+        A: IntoActor,
     {
         ActorSystem::spawn_anonymous(self, actor).await
     }
@@ -621,7 +626,7 @@ impl ActorSystemOpsExt for Arc<ActorSystem> {
         options: SpawnOptions,
     ) -> anyhow::Result<ActorRef>
     where
-        A: Actor,
+        A: IntoActor,
     {
         ActorSystem::spawn_anonymous_with_options(self, actor, options).await
     }

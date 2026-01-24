@@ -24,9 +24,7 @@ use crate::cluster::{
     GossipBackend, HeadNodeBackend, MemberInfo, MemberStatus, NamedActorInfo, NamingBackend,
 };
 use crate::policies::{LoadBalancingPolicy, RoundRobinPolicy, Worker};
-use crate::system_actor::{
-    BoxedActorFactory, SystemActor, SystemRef, SYSTEM_ACTOR_LOCAL_NAME, SYSTEM_ACTOR_PATH,
-};
+use crate::system_actor::{BoxedActorFactory, SystemActor, SystemRef, SYSTEM_ACTOR_PATH};
 use crate::transport::{Http2RemoteTransport, Http2Transport};
 use crate::watch::ActorLifecycle;
 use dashmap::DashMap;
@@ -315,7 +313,7 @@ impl ActorSystem {
         factory: BoxedActorFactory,
     ) -> anyhow::Result<()> {
         // Check if already started
-        if self.local_actors.contains_key(SYSTEM_ACTOR_LOCAL_NAME) {
+        if self.local_actors.contains_key(SYSTEM_ACTOR_PATH) {
             return Err(anyhow::anyhow!("SystemActor already started"));
         }
 
@@ -472,8 +470,12 @@ impl ActorSystem {
         A: IntoActor,
     {
         let path = name.into_actor_path()?;
-        self.spawn_named_factory(path, Self::once_factory(actor.into_actor()), SpawnOptions::default())
-            .await
+        self.spawn_named_factory(
+            path,
+            Self::once_factory(actor.into_actor()),
+            SpawnOptions::default(),
+        )
+        .await
     }
 
     /// Spawn a named actor with custom options

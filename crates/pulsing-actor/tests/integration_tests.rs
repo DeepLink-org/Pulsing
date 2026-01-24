@@ -235,7 +235,7 @@ mod stress_tests {
             );
         }
 
-        // +1 for SystemActor (_system_internal)
+        // +1 for SystemActor (system/core)
         assert_eq!(system.local_actor_names().len(), actor_count + 1);
 
         // Send one message to each

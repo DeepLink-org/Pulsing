@@ -1,8 +1,8 @@
 //! Typed actor context for behavior-based actors
 
 use super::reference::TypedRef;
-use crate::actor::ActorSystemRef;
 use crate::actor::ActorId;
+use crate::actor::ActorSystemRef;
 use serde::{de::DeserializeOwned, Serialize};
 use std::marker::PhantomData;
 use std::sync::Arc;

@@ -105,7 +105,9 @@ async fn main() -> anyhow::Result<()> {
         transitions: 0,
     };
     // Behavior implements IntoActor, can be passed directly to spawn_named
-    let light = system.spawn_named("actors/light", red(initial_stats)).await?;
+    let light = system
+        .spawn_named("actors/light", red(initial_stats))
+        .await?;
 
     // Run through 2 complete cycles
     for _ in 0..2 {

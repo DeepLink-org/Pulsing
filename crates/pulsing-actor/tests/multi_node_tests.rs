@@ -217,9 +217,9 @@ mod multi_node_tests {
             .unwrap();
 
         // Each node has exactly one user actor + SystemActor
-        assert_eq!(system1.local_actor_names().len(), 2); // _system_internal + actor-on-node1
-        assert_eq!(system2.local_actor_names().len(), 2); // _system_internal + actor-on-node2
-        assert_eq!(system3.local_actor_names().len(), 2); // _system_internal + actor-on-node3
+        assert_eq!(system1.local_actor_names().len(), 2); // system/core + test/actor-on-node1
+        assert_eq!(system2.local_actor_names().len(), 2); // system/core + test/actor-on-node2
+        assert_eq!(system3.local_actor_names().len(), 2); // system/core + test/actor-on-node3
 
         system1.shutdown().await.unwrap();
         system2.shutdown().await.unwrap();
