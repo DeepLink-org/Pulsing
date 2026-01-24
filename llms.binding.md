@@ -411,11 +411,22 @@ system.spawning()
     .mailbox_capacity(256)
     .spawn(actor).await?;
 
-// Resolve
+// Resolve - 简单方式
 system.actor_ref(&actor_id).await?;            // 按 ActorId 获取
 system.resolve(name).await?;                   // 按名称解析
-system.resolve_with_options(&path, options).await?;  // 带负载均衡选项
-system.resolve_lazy(name)?;                    // 懒解析，TTL≈5s
+
+// Resolve - Builder 模式（高级配置）
+system.resolving()
+    .node(node_id)                             // 可选：指定目标节点
+    .policy(RoundRobinPolicy::new())           // 可选：负载均衡策略
+    .filter_alive(true)                        // 可选：只选存活节点
+    .resolve(name).await?;                     // 解析单个
+
+system.resolving()
+    .list(name).await?;                        // 获取所有实例
+
+system.resolving()
+    .lazy(name)?;                              // 懒解析
 ```
 
 #### ActorSystemAdvancedExt（高级：可重启 supervision）

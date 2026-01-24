@@ -869,6 +869,36 @@ impl ActorSystem {
         }
     }
 
+    /// Resolve all instances of a named actor as ActorRefs
+    pub async fn resolve_all_instances(
+        &self,
+        path: &ActorPath,
+        filter_alive: bool,
+    ) -> anyhow::Result<Vec<ActorRef>> {
+        let cluster_guard = self.cluster.read().await;
+        let cluster = cluster_guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Cluster not initialized"))?;
+
+        let instances = cluster.get_named_actor_instances_detailed(path).await;
+
+        let mut refs = Vec::new();
+        for (member, instance_opt) in instances {
+            // Filter by alive status if requested
+            if filter_alive && member.status != MemberStatus::Alive {
+                continue;
+            }
+
+            // Get actor_id from instance info
+            if let Some(instance) = instance_opt {
+                let actor_ref = self.actor_ref(&instance.actor_id).await?;
+                refs.push(actor_ref);
+            }
+        }
+
+        Ok(refs)
+    }
+
     /// Get detailed instances with actor_id and metadata
     pub async fn get_named_instances_detailed(
         &self,

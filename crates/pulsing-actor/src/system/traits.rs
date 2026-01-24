@@ -16,6 +16,7 @@ use crate::system_actor::BoxedActorFactory;
 
 use super::config::{ResolveOptions, SpawnOptions};
 use super::NodeLoadTracker;
+use crate::policies::LoadBalancingPolicy;
 
 use tokio_util::sync::CancellationToken;
 
@@ -116,13 +117,24 @@ pub trait ActorSystemCoreExt: Sized {
         options: ResolveOptions,
     ) -> anyhow::Result<ActorRef>;
 
-    /// Resolve a named actor with lazy resolution (re-resolves after cache expires)
+    /// Get a builder for resolving actors with advanced options
     ///
-    /// Returns an ActorRef that automatically re-resolves after ~5 seconds.
-    /// This is useful for named actors that may migrate between nodes.
-    fn resolve_lazy<P>(&self, name: P) -> anyhow::Result<ActorRef>
-    where
-        P: IntoActorPath;
+    /// # Example
+    /// ```rust,ignore
+    /// // With load balancing
+    /// let actor = system.resolving()
+    ///     .policy(RoundRobinPolicy::new())
+    ///     .resolve("services/worker").await?;
+    ///
+    /// // List all instances
+    /// let actors = system.resolving()
+    ///     .list("services/worker").await?;
+    ///
+    /// // Lazy resolve
+    /// let actor = system.resolving()
+    ///     .lazy("services/worker")?;
+    /// ```
+    fn resolving(&self) -> ResolveBuilder<'_>;
 }
 
 // =============================================================================
@@ -211,6 +223,107 @@ impl<'a> SpawnBuilder<'a> {
                 ActorSystem::spawn_anonymous_with_options(self.system, actor, self.options).await
             }
         }
+    }
+}
+
+// =============================================================================
+// ResolveBuilder: Fluent API for resolving actors
+// =============================================================================
+
+/// Builder for resolving actors with advanced options.
+///
+/// # Example
+/// ```rust,ignore
+/// // Simple resolve
+/// let actor = system.resolve("services/counter").await?;
+///
+/// // With load balancing policy
+/// let actor = system.resolving()
+///     .policy(RoundRobinPolicy::new())
+///     .resolve("services/counter").await?;
+///
+/// // Get all instances
+/// let actors = system.resolving()
+///     .list("services/counter").await?;
+///
+/// // Lazy resolve (auto re-resolves on stale)
+/// let actor = system.resolving()
+///     .lazy("services/counter")?;
+/// ```
+pub struct ResolveBuilder<'a> {
+    system: &'a Arc<ActorSystem>,
+    node_id: Option<NodeId>,
+    policy: Option<Arc<dyn LoadBalancingPolicy>>,
+    filter_alive: bool,
+}
+
+impl<'a> ResolveBuilder<'a> {
+    /// Create a new ResolveBuilder
+    pub(crate) fn new(system: &'a Arc<ActorSystem>) -> Self {
+        Self {
+            system,
+            node_id: None,
+            policy: None,
+            filter_alive: true,
+        }
+    }
+
+    /// Target a specific node (bypasses load balancing)
+    pub fn node(mut self, node_id: NodeId) -> Self {
+        self.node_id = Some(node_id);
+        self
+    }
+
+    /// Set load balancing policy
+    pub fn policy(mut self, policy: Arc<dyn LoadBalancingPolicy>) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
+    /// Set whether to filter only alive nodes (default: true)
+    pub fn filter_alive(mut self, filter: bool) -> Self {
+        self.filter_alive = filter;
+        self
+    }
+
+    /// Build ResolveOptions from this builder
+    fn build_options(&self) -> ResolveOptions {
+        let mut options = ResolveOptions::new();
+        if let Some(node_id) = self.node_id {
+            options = options.node_id(node_id);
+        }
+        if let Some(ref policy) = self.policy {
+            options = options.policy(policy.clone());
+        }
+        options = options.filter_alive(self.filter_alive);
+        options
+    }
+
+    /// Resolve a named actor
+    pub async fn resolve<P>(self, name: P) -> anyhow::Result<ActorRef>
+    where
+        P: IntoActorPath + Send,
+    {
+        let path = name.into_actor_path()?;
+        let options = self.build_options();
+        ActorSystem::resolve_named_with_options(self.system, &path, options).await
+    }
+
+    /// List all instances of a named actor
+    pub async fn list<P>(self, name: P) -> anyhow::Result<Vec<ActorRef>>
+    where
+        P: IntoActorPath + Send,
+    {
+        let path = name.into_actor_path()?;
+        ActorSystem::resolve_all_instances(self.system, &path, self.filter_alive).await
+    }
+
+    /// Lazy resolve - returns ActorRef that auto re-resolves when stale
+    pub fn lazy<P>(self, name: P) -> anyhow::Result<ActorRef>
+    where
+        P: IntoActorPath,
+    {
+        ActorSystem::resolve_named_lazy(self.system, name)
     }
 }
 
@@ -440,11 +553,8 @@ impl ActorSystemCoreExt for Arc<ActorSystem> {
         ActorSystem::resolve_named_with_options(self.as_ref(), name, options).await
     }
 
-    fn resolve_lazy<P>(&self, name: P) -> anyhow::Result<ActorRef>
-    where
-        P: IntoActorPath,
-    {
-        ActorSystem::resolve_named_lazy(self, name)
+    fn resolving(&self) -> ResolveBuilder<'_> {
+        ResolveBuilder::new(self)
     }
 }
 
