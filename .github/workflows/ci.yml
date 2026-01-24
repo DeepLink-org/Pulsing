@@ -11,15 +11,42 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Rust 检查和测试
-  rust:
-    name: Rust ${{ matrix.rust }} on ${{ matrix.os }}
+  # ============================================
+  # 代码规范检查（快速反馈，集中检查所有格式和 lint 问题）
+  # ============================================
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          rust-toolchain: stable
+          python-version: '3.12'
+          install-cargo-tools: 'false'
+          install-python-deps: 'true'
+
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Rust clippy
+        run: cargo clippy --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets -- -D warnings
+
+      - name: Python lint (ruff)
+        run: ruff check python/
+
+  # ============================================
+  # Rust 构建和测试（多平台并行）
+  # ============================================
+  rust-test:
+    name: Rust Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        rust: [stable]
 
     steps:
       - uses: actions/checkout@v4
@@ -27,17 +54,11 @@ jobs:
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-env
         with:
-          rust-toolchain: ${{ matrix.rust }}
+          rust-toolchain: stable
           install-cargo-tools: 'false'
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets -- -D warnings
 
       - name: Build
         run: cargo build --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
@@ -45,14 +66,15 @@ jobs:
       - name: Test
         run: cargo test --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
 
+  # ============================================
   # ARM64 交叉编译检查
+  # ============================================
   rust-arm64:
-    name: Rust ${{ matrix.rust }} ARM64 (${{ matrix.target }})
+    name: Rust ARM64 (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        rust: [stable]
         include:
           - target: aarch64-unknown-linux-gnu
             linker: gcc-aarch64-linux-gnu
@@ -65,7 +87,7 @@ jobs:
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-env
         with:
-          rust-toolchain: ${{ matrix.rust }}
+          rust-toolchain: stable
           install-cargo-tools: 'false'
 
       - name: Install ARM64 target
@@ -80,27 +102,12 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Clippy (host only)
-        run: cargo clippy --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets -- -D warnings
-
       - name: Build for ARM64
         run: cargo build --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets --target ${{ matrix.target }}
 
-      - name: Test ARM64 build (Linux only)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          # We can't run tests on ARM64 in x86 CI, but we can check that the build succeeded
-          if [ -f "target/${{ matrix.target }}/debug/pulsing-actor" ]; then
-            echo "✅ ARM64 build successful"
-          else
-            echo "❌ ARM64 build failed - binary not found"
-            exit 1
-          fi
-
-  # Rust 测试 + 覆盖率收集 (仅 Linux)
+  # ============================================
+  # Rust 覆盖率收集
+  # ============================================
   rust-coverage:
     name: Rust Coverage
     runs-on: ubuntu-latest
@@ -116,7 +123,7 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
-      - name: Run Rust tests and collect coverage
+      - name: Run tests and collect coverage
         shell: bash
         run: |
           source <(cargo llvm-cov show-env --export-prefix)
@@ -126,16 +133,18 @@ jobs:
           cargo nextest run --workspace --exclude pulsing-py --exclude pulsing-bench-py
           cargo llvm-cov --no-run --lcov --output-path coverage.lcov
 
-      - name: Upload Rust coverage report
+      - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
           name: rust-coverage
           path: coverage.lcov
           retention-days: 30
 
-  # Python 检查和测试
-  python:
-    name: Python ${{ matrix.python-version }}
+  # ============================================
+  # Python 构建和测试（多版本并行）
+  # ============================================
+  python-test:
+    name: Python Test (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -157,13 +166,12 @@ jobs:
       - name: Build Python package
         run: maturin develop
 
-      - name: Lint with ruff
-        run: ruff check python/
-
       - name: Test with pytest
         run: pytest tests/python -v
 
-  # Python 测试 + 覆盖率收集
+  # ============================================
+  # Python 覆盖率收集
+  # ============================================
   python-coverage:
     name: Python Coverage
     runs-on: ubuntu-latest
@@ -182,55 +190,48 @@ jobs:
       - name: Build Python package
         run: maturin develop
 
-      - name: Run Python tests and collect coverage
-        run: |
-          pytest tests/python --cov=python/pulsing --cov-report=xml:coverage.xml -v
+      - name: Run tests and collect coverage
+        run: pytest tests/python --cov=python/pulsing --cov-report=xml:coverage.xml -v
 
-      - name: Upload Python coverage report
+      - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
           name: python-coverage
           path: coverage.xml
           retention-days: 30
 
+  # ============================================
   # 上传覆盖率到 Codecov
+  # ============================================
   codecov:
-    name: Upload Coverage to Codecov
+    name: Upload Coverage
     needs: [rust-coverage, python-coverage]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Rust coverage report
+      - name: Download Rust coverage
         uses: actions/download-artifact@v4
         with:
           name: rust-coverage
           path: .
         continue-on-error: true
 
-      - name: Download Python coverage report
+      - name: Download Python coverage
         uses: actions/download-artifact@v4
         with:
           name: python-coverage
           path: .
         continue-on-error: true
 
-      - name: Check coverage files exist
+      - name: Check coverage files
         run: |
           echo "=== Coverage files check ==="
-          if [ -f coverage.lcov ]; then
-            echo "✓ coverage.lcov exists ($(wc -l < coverage.lcov) lines)"
-          else
-            echo "✗ coverage.lcov not found"
-          fi
-          if [ -f coverage.xml ]; then
-            echo "✓ coverage.xml exists ($(wc -l < coverage.xml) lines)"
-          else
-            echo "✗ coverage.xml not found"
-          fi
+          [ -f coverage.lcov ] && echo "✓ coverage.lcov exists" || echo "✗ coverage.lcov not found"
+          [ -f coverage.xml ] && echo "✓ coverage.xml exists" || echo "✗ coverage.xml not found"
 
-      - name: Upload coverage reports to Codecov
+      - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         with:
           files: coverage.lcov,coverage.xml
@@ -238,22 +239,11 @@ jobs:
           fail_ci_if_error: false
           verbose: true
 
-  # Pre-commit 检查
-  pre-commit:
-    name: Pre-commit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: pre-commit/action@v3.0.1
-        with:
-          extra_args: --all-files
-
-  # 构建检查
+  # ============================================
+  # 构建 Python Wheel
+  # ============================================
   build:
-    name: Build wheels on ${{ matrix.os }}
+    name: Build Wheel (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
