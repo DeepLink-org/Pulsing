@@ -541,7 +541,7 @@ class ActorClass:
         counter = await Counter.spawn(init=10)
 
     2. Explicit system:
-        system = await create_actor_system(config)
+        system = await pul.actor_system()
         counter = await Counter.local(system, init=10)
     """
 
@@ -619,7 +619,7 @@ class ActorClass:
     ) -> ActorProxy:
         """Create actor locally with explicit system.
 
-        Note: Use create_actor_system() to create ActorSystem,
+        Note: Use pul.actor_system() to create ActorSystem,
         which automatically registers PythonActorService.
         """
         actor_name = name or f"{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
@@ -658,7 +658,7 @@ class ActorClass:
     ) -> ActorProxy:
         """Create actor remotely (randomly selects a remote node).
 
-        Note: Use create_actor_system() to create ActorSystem,
+        Note: Use pul.actor_system() to create ActorSystem,
         which automatically registers PythonActorService.
         """
 
@@ -925,9 +925,7 @@ async def resolve(
     from . import _global_system
 
     if _global_system is None:
-        raise RuntimeError(
-            "Actor system not initialized. Call 'await init()' first."
-        )
+        raise RuntimeError("Actor system not initialized. Call 'await init()' first.")
 
     return await _global_system.resolve(name, node_id=node_id)
 

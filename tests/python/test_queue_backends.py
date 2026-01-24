@@ -18,7 +18,7 @@ from typing import Any, AsyncIterator
 
 import pytest
 
-from pulsing.actor import SystemConfig, create_actor_system
+import pulsing as pul
 from pulsing.queue import (
     BucketStorage,
     MemoryBackend,
@@ -40,8 +40,7 @@ from pulsing.queue import (
 @pytest.fixture
 async def actor_system():
     """Create a standalone actor system for testing."""
-    config = SystemConfig.standalone()
-    system = await create_actor_system(config)
+    system = await pul.actor_system()
     yield system
     await system.shutdown()
 

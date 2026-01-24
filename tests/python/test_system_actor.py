@@ -9,12 +9,11 @@ Covers:
 
 import asyncio
 import pytest
+import pulsing as pul
 from pulsing.actor import (
     Actor,
     ActorId,
     Message,
-    SystemConfig,
-    create_actor_system,
     list_actors,
     get_metrics,
     get_node_info,
@@ -32,8 +31,7 @@ from pulsing.actor import (
 @pytest.fixture
 async def system():
     """Create a test ActorSystem."""
-    config = SystemConfig.standalone()
-    system = await create_actor_system(config)
+    system = await pul.actor_system()
     yield system
     await system.shutdown()
 

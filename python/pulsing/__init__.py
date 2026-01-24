@@ -86,20 +86,21 @@ from pulsing.actor import (
 
 class ActorSystem:
     """ActorSystem wrapper with queue API
-    
+
     This wraps the Rust ActorSystem and adds Python-level extensions
     like the queue API.
     """
-    
+
     def __init__(self, inner: _ActorSystem):
         self._inner = inner
         from pulsing.queue import QueueAPI
+
         self.queue = QueueAPI(inner)
-    
+
     def __getattr__(self, name):
         # Delegate all other attributes to the inner ActorSystem
         return getattr(self._inner, name)
-    
+
     def __repr__(self):
         return f"ActorSystem(node_id={self._inner.node_id}, addr={self._inner.addr})"
 

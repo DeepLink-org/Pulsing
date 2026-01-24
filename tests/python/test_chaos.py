@@ -6,8 +6,8 @@ from pulsing.actor import (
     ActorId,
     Message,
     SystemConfig,
-    create_actor_system,
 )
+import pulsing as pul
 
 
 class ResilienceWorker(Actor):
@@ -29,8 +29,7 @@ class ResilienceWorker(Actor):
 
 @pytest.fixture
 async def actor_system():
-    config = SystemConfig.standalone()
-    system = await create_actor_system(config)
+    system = await pul.actor_system()
     yield system
     await system.shutdown()
 
@@ -97,14 +96,13 @@ async def test_cluster_node_failure_detection():
     systems = []
 
     # Seed node (let OS assign port)
-    sys1 = await create_actor_system(SystemConfig.with_addr("127.0.0.1:0"))
+    sys1 = await pul.actor_system(addr="127.0.0.1:0")
     systems.append(sys1)
     seed_addr = sys1.addr  # Get the actual assigned address
 
     # Other nodes
     for i in range(2):
-        cfg = SystemConfig.with_addr("127.0.0.1:0").with_seeds([seed_addr])
-        sys = await create_actor_system(cfg)
+        sys = await pul.actor_system(addr="127.0.0.1:0", seeds=[seed_addr])
         systems.append(sys)
 
     # Wait for cluster formation

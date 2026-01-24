@@ -17,7 +17,8 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from pulsing.actor import Actor, StreamMessage, SystemConfig, create_actor_system
+import pulsing as pul
+from pulsing.actor import Actor, StreamMessage, SystemConfig
 
 
 # ============================================================================
@@ -268,14 +269,15 @@ async def main():
 
     # Configure system
     port = (8000 if args.port == 0 else args.port) + rank
-    config = SystemConfig.with_addr(f"0.0.0.0:{port}")
+    addr = f"0.0.0.0:{port}"
 
+    seeds = None
     if args.seed_nodes:
-        config = config.with_seeds(args.seed_nodes)
+        seeds = args.seed_nodes
     elif rank > 0:
-        config = config.with_seeds([f"127.0.0.1:{8000 + rank - 1}"])
+        seeds = [f"127.0.0.1:{8000 + rank - 1}"]
 
-    system = await create_actor_system(config)
+    system = await pul.actor_system(addr=addr, seeds=seeds)
     print(f"System started at {system.addr}")
 
     # Wait for cluster to stabilize

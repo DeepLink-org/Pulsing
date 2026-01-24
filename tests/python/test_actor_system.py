@@ -18,8 +18,8 @@ from pulsing.actor import (
     Message,
     StreamMessage,
     SystemConfig,
-    create_actor_system,
 )
+import pulsing as pul
 
 # Actor system tests are standalone and don't require NATS/ETCD
 
@@ -171,8 +171,7 @@ class BidirectionalStreamActor(Actor):
 @pytest.fixture
 async def actor_system():
     """Create a standalone actor system for testing."""
-    config = SystemConfig.standalone()
-    system = await create_actor_system(config)
+    system = await pul.actor_system()
     yield system
     await system.shutdown()
 
@@ -181,12 +180,10 @@ async def actor_system():
 async def cluster_systems():
     """Create two actor systems that form a cluster."""
     # First node
-    config1 = SystemConfig.with_addr("127.0.0.1:18001")
-    system1 = await create_actor_system(config1)
+    system1 = await pul.actor_system(addr="127.0.0.1:18001")
 
     # Second node, joins the first
-    config2 = SystemConfig.with_addr("127.0.0.1:18002").with_seeds(["127.0.0.1:18001"])
-    system2 = await create_actor_system(config2)
+    system2 = await pul.actor_system(addr="127.0.0.1:18002", seeds=["127.0.0.1:18001"])
 
     # Wait for cluster to form
     await asyncio.sleep(0.5)

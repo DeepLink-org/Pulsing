@@ -16,7 +16,8 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from pulsing.actor import Actor, StreamMessage, SystemConfig, create_actor_system
+import pulsing as pul
+from pulsing.actor import Actor, StreamMessage, SystemConfig
 
 
 # ============================================================================
@@ -235,7 +236,7 @@ async def main():
     )
     print(f"{'=' * 50}\n")
 
-    system = await create_actor_system(SystemConfig.with_addr(f"0.0.0.0:{args.port}"))
+    system = await pul.actor_system(addr=f"0.0.0.0:{args.port}")
     print(f"System started at {system.addr}")
 
     # Create workers

@@ -29,7 +29,8 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from pulsing.actor import SystemConfig, create_actor_system
+import pulsing as pul
+from pulsing.actor import SystemConfig
 from pulsing.queue import read_queue, write_queue
 
 
@@ -353,17 +354,18 @@ async def main():
     else:
         port = args.port + rank
 
-    config = SystemConfig.with_addr(f"0.0.0.0:{port}")
+    addr = f"0.0.0.0:{port}"
 
     # Add seed nodes
+    seeds = None
     if args.seed_nodes:
-        config = config.with_seeds(args.seed_nodes)
+        seeds = args.seed_nodes
     elif rank > 0:
         prev_port = 9000 + (rank - 1)
-        config = config.with_seeds([f"127.0.0.1:{prev_port}"])
+        seeds = [f"127.0.0.1:{prev_port}"]
 
     # Create system
-    system = await create_actor_system(config)
+    system = await pul.actor_system(addr=addr, seeds=seeds)
     print(f"[Process {rank}] ActorSystem started at {system.addr}")
 
     # Wait for cluster to stabilize

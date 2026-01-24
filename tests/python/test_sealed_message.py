@@ -17,9 +17,8 @@ from pulsing.actor import (
     Actor,
     Message,
     SealedPyMessage,
-    SystemConfig,
-    create_actor_system,
 )
+import pulsing as pul
 
 
 # ============================================================================
@@ -152,8 +151,7 @@ class ComplexObjectActor(Actor):
 @pytest.fixture
 async def actor_system():
     """Create a standalone actor system for testing."""
-    config = SystemConfig.standalone()
-    system = await create_actor_system(config)
+    system = await pul.actor_system()
     yield system
     await system.shutdown()
 
