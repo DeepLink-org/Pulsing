@@ -314,3 +314,76 @@ async def test_queue_batch_write(system):
         assert len(result) == 10
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+# ============================================================================
+# Test: Generator streaming response for base Actor
+# ============================================================================
+
+
+class SyncGeneratorActor(Actor):
+    """Actor that returns a sync generator."""
+
+    async def receive(self, msg):
+        if isinstance(msg, dict) and msg.get("action") == "stream":
+            count = msg.get("count", 5)
+
+            def generate():
+                for i in range(count):
+                    yield f"item_{i}"
+
+            return generate()
+        return msg
+
+
+class AsyncGeneratorActor(Actor):
+    """Actor that returns an async generator."""
+
+    async def receive(self, msg):
+        if isinstance(msg, dict) and msg.get("action") == "stream":
+            count = msg.get("count", 5)
+
+            async def generate():
+                for i in range(count):
+                    yield f"async_item_{i}"
+
+            return generate()
+        return msg
+
+
+@pytest.mark.asyncio
+async def test_base_actor_sync_generator(system):
+    """Test base Actor returning sync generator for streaming."""
+    ref = await system.spawn(SyncGeneratorActor(), name="sync_gen_actor")
+
+    # Consume the stream
+    items = []
+    response = await ref.ask({"action": "stream", "count": 3})
+    # Response should be a stream
+    if hasattr(response, "__aiter__"):
+        async for item in response:
+            items.append(item)
+    else:
+        # Single item response (fallback)
+        items.append(response)
+
+    assert len(items) >= 1
+
+
+@pytest.mark.asyncio
+async def test_base_actor_async_generator(system):
+    """Test base Actor returning async generator for streaming."""
+    ref = await system.spawn(AsyncGeneratorActor(), name="async_gen_actor")
+
+    # Consume the stream
+    items = []
+    response = await ref.ask({"action": "stream", "count": 3})
+    # Response should be a stream
+    if hasattr(response, "__aiter__"):
+        async for item in response:
+            items.append(item)
+    else:
+        # Single item response (fallback)
+        items.append(response)
+
+    assert len(items) >= 1

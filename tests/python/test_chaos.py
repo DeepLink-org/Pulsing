@@ -5,7 +5,6 @@ from pulsing.actor import (
     Actor,
     ActorId,
     Message,
-    SystemConfig,
 )
 import pulsing as pul
 
@@ -41,7 +40,7 @@ async def test_actor_death_recovery(actor_system):
     """
     # 1. Spawn a worker
     worker_name = "resilient_worker"
-    worker = await actor_system.spawn(worker_name, ResilienceWorker())
+    worker = await actor_system.spawn(ResilienceWorker(), name=worker_name)
 
     # 2. Verify it works
     resp = await worker.ask(Message.from_json("process", {}))
@@ -79,7 +78,7 @@ async def test_actor_death_recovery(actor_system):
     # 6. Recovery: Respawn the actor
     # Note: In a real persistent system, we'd recover state.
     # Here we just verify we can reclaim the name.
-    new_worker = await actor_system.spawn(worker_name, ResilienceWorker())
+    new_worker = await actor_system.spawn(ResilienceWorker(), name=worker_name)
     resp = await new_worker.ask(Message.from_json("process", {}))
 
     # New actor starts from 0

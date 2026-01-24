@@ -190,6 +190,9 @@ class _MethodCaller:
                 raise RuntimeError(resp["__error__"])
             return resp.get("__result__")
         elif isinstance(resp, Message):
+            # Check if it's a stream message (generator returned)
+            if resp.is_stream:
+                return _SyncGeneratorStreamReader(resp)
             # Fallback for Rust actor communication
             data = resp.to_json()
             if resp.msg_type == "Error":
@@ -303,6 +306,34 @@ class _SingleValueIterator:
         return self._value
 
 
+class _SyncGeneratorStreamReader:
+    """Stream reader for sync generator returned from non-async method"""
+
+    def __init__(self, message: Message):
+        self._reader = message.stream_reader()
+        self._final_result = None
+        self._got_result = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            item = await self._reader.__anext__()
+            if isinstance(item, dict):
+                if "__final__" in item:
+                    self._final_result = item.get("__result__")
+                    self._got_result = True
+                    raise StopAsyncIteration
+                if "__error__" in item:
+                    raise RuntimeError(item["__error__"])
+                if "__yield__" in item:
+                    return item["__yield__"]
+            return item
+        except StopAsyncIteration:
+            raise
+
+
 class _WrappedActor(_ActorBase):
     """Wraps user class as an Actor"""
 
@@ -374,6 +405,9 @@ class _WrappedActor(_ActorBase):
                 result = func(*args, **kwargs)
                 if asyncio.iscoroutine(result):
                     result = await result
+                # Check if result is a generator (sync or async)
+                if inspect.isgenerator(result) or inspect.isasyncgen(result):
+                    return self._handle_generator_result(result)
                 return {"__result__": result}
             except Exception as e:
                 return {"__error__": str(e)}
@@ -406,6 +440,27 @@ class _WrappedActor(_ActorBase):
                 return Message.from_json("Error", {"error": str(e)})
 
         return {"__error__": f"Unknown message type: {type(msg)}"}
+
+    def _handle_generator_result(self, gen) -> StreamMessage:
+        """Handle generator result, return streaming response"""
+        stream_msg, writer = StreamMessage.create("GeneratorStream")
+
+        async def execute():
+            try:
+                if inspect.isasyncgen(gen):
+                    async for item in gen:
+                        await writer.write({"__yield__": item})
+                else:
+                    for item in gen:
+                        await writer.write({"__yield__": item})
+                await writer.write({"__final__": True, "__result__": None})
+            except Exception as e:
+                await writer.write({"__error__": str(e)})
+            finally:
+                await writer.close()
+
+        asyncio.create_task(execute())
+        return stream_msg
 
     def _handle_async_method(self, func, args, kwargs) -> StreamMessage:
         """Handle async method, return streaming response"""
