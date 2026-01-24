@@ -102,23 +102,18 @@ jobs:
           retention-days: 30
 
   # ============================================
-  # 构建 Python Wheel（多平台）
+  # 构建 macOS Wheel
   # ============================================
-  build:
-    name: Build Wheel (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
+  build-macos:
+    name: Build Wheel (macOS)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-env
         with:
-          python-version: '3.12'
+          python-version: '3.10'
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -128,25 +123,65 @@ jobs:
         with:
           args: --release --out dist
           sccache: 'true'
-          manylinux: auto
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}
+          name: wheels-macos
           path: dist/*.whl
 
   # ============================================
-  # Python 测试（使用 build 产出的 wheel）
+  # 构建 Linux Wheel（x86-64 和 aarch64）
   # ============================================
-  python-test:
-    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
-    needs: build
-    runs-on: ${{ matrix.os }}
+  build-linux:
+    name: Build Wheel (Linux ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - arch: x86-64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64
+            runner: ubuntu-24.04-arm64
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          python-version: '3.10'
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          sccache: 'true'
+          manylinux: '2_17'
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.arch }}
+          path: dist/*.whl
+
+  # ============================================
+  # macOS Python 测试（多 Python 版本）
+  # ============================================
+  test-macos:
+    name: Test macOS (Python ${{ matrix.python-version }})
+    needs: build-macos
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
@@ -160,7 +195,7 @@ jobs:
       - name: Download wheel
         uses: actions/download-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}
+          name: wheels-macos
           path: dist/
 
       - name: Install wheel and test dependencies
@@ -172,11 +207,103 @@ jobs:
         run: pytest tests/python -v
 
   # ============================================
+  # Ubuntu Python 测试（多版本 × 多架构 × 多 Python 版本）
+  # ============================================
+  test-ubuntu:
+    name: Test Ubuntu ${{ matrix.ubuntu }} ${{ matrix.arch }} (Python ${{ matrix.python-version }})
+    needs: build-linux
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["20.04", "22.04", "24.04"]
+        arch: [x86-64, aarch64]
+        python-version: ["3.10", "3.11", "3.12"]
+        include:
+          # x86-64 runners
+          - ubuntu: "20.04"
+            arch: x86-64
+            runner: ubuntu-20.04
+          - ubuntu: "22.04"
+            arch: x86-64
+            runner: ubuntu-22.04
+          - ubuntu: "24.04"
+            arch: x86-64
+            runner: ubuntu-24.04
+          # aarch64 runners (only 24.04 available)
+          - ubuntu: "24.04"
+            arch: aarch64
+            runner: ubuntu-24.04-arm64
+        exclude:
+          # Ubuntu 20.04/22.04 ARM64 runner 不可用
+          - ubuntu: "20.04"
+            arch: aarch64
+          - ubuntu: "22.04"
+            arch: aarch64
+          # Ubuntu 20.04 不支持 Python 3.12
+          - ubuntu: "20.04"
+            python-version: "3.12"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.arch }}
+          path: dist/
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install wheel and test dependencies
+        run: |
+          pip install dist/*.whl
+          pip install pytest pytest-asyncio pytest-cov
+
+      - name: Test with pytest
+        run: pytest tests/python -v
+
+  # ============================================
+  # Fedora Python 测试（x86-64）
+  # ============================================
+  test-fedora:
+    name: Test Fedora x86-64 (Python ${{ matrix.python-version }})
+    needs: build-linux
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux-x86-64
+          path: dist/
+
+      - name: Test on Fedora
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace \
+            fedora:latest \
+            bash -c "
+              dnf install -y python${{ matrix.python-version }} python${{ matrix.python-version }}-pip && \
+              python${{ matrix.python-version }} -m pip install dist/*.whl && \
+              python${{ matrix.python-version }} -m pip install pytest pytest-asyncio pytest-cov && \
+              python${{ matrix.python-version }} -m pytest tests/python -v
+            "
+
+  # ============================================
   # Python 覆盖率收集
   # ============================================
   python-coverage:
     name: Python Coverage
-    needs: build
+    needs: build-linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -189,7 +316,7 @@ jobs:
       - name: Download wheel
         uses: actions/download-artifact@v4
         with:
-          name: wheels-ubuntu-latest
+          name: wheels-linux-x86-64
           path: dist/
 
       - name: Install wheel and test dependencies
