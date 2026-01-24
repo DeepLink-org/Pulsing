@@ -21,6 +21,30 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         rust: [stable]
 
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          rust-toolchain: ${{ matrix.rust }}
+          install-cargo-tools: 'false'
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
+
+      - name: Test
+        run: cargo test --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
+
   # ARM64 交叉编译检查
   rust-arm64:
     name: Rust ${{ matrix.rust }} ARM64 (${{ matrix.target }})
@@ -75,30 +99,6 @@ jobs:
             echo "❌ ARM64 build failed - binary not found"
             exit 1
           fi
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Build Environment
-        uses: ./.github/actions/setup-build-env
-        with:
-          rust-toolchain: ${{ matrix.rust }}
-          install-cargo-tools: 'false'
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets -- -D warnings
-
-      - name: Build
-        run: cargo build --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
-
-      - name: Test
-        run: cargo test --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
 
   # Rust 测试 + 覆盖率收集 (仅 Linux)
   rust-coverage:
