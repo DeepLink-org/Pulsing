@@ -1250,6 +1250,12 @@ impl PyActorSystem {
                 }
                 // Named actor (resolvable by name)
                 Some(name) => {
+                    // Ensure name follows namespace/name format
+                    let name = if name.contains('/') {
+                        name
+                    } else {
+                        format!("actors/{}", name)
+                    };
                     if matches!(policy, RestartPolicy::Never) {
                         // actor is the instance
                         let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
@@ -1327,7 +1333,13 @@ impl PyActorSystem {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
+            // Ensure name follows namespace/name format
+            let name = if name.contains('/') {
+                name
+            } else {
+                format!("actors/{}", name)
+            };
+            let path = ActorPath::new(name).map_err(to_pyerr)?;
             let instances = system.get_named_instances_detailed(&path).await;
             let result: Vec<std::collections::HashMap<String, serde_json::Value>> = instances
                 .into_iter()
@@ -1450,7 +1462,13 @@ impl PyActorSystem {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
+            // Ensure name follows namespace/name format
+            let name = if name.contains('/') {
+                name
+            } else {
+                format!("actors/{}", name)
+            };
+            let path = ActorPath::new(name).map_err(to_pyerr)?;
             let node = node_id.map(NodeId::new);
             let actor_ref = system
                 .resolve_named(&path, node.as_ref())

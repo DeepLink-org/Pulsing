@@ -90,7 +90,7 @@ def get_actor_metadata(name: str) -> dict[str, str] | None:
 
 
 # Python actor service name (different from Rust SystemActor "system/core")
-PYTHON_ACTOR_SERVICE_NAME = "_python_actor_service"
+PYTHON_ACTOR_SERVICE_NAME = "system/python_actor_service"
 
 
 class ActorProxy:
@@ -702,7 +702,12 @@ class ActorClass:
         if public is None:
             public = name is not None
 
-        actor_name = name or f"{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
+        # Actor name must follow namespace/name format
+        if name:
+            # Ensure user-provided name has namespace
+            actor_name = name if "/" in name else f"actors/{name}"
+        else:
+            actor_name = f"actors/{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
 
         if self._restart_policy != "never":
 
@@ -773,7 +778,11 @@ class ActorClass:
             PYTHON_ACTOR_SERVICE_NAME, node_id=target_id
         )
 
-        actor_name = name or f"{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
+        # Actor name must follow namespace/name format
+        if name:
+            actor_name = name if "/" in name else f"actors/{name}"
+        else:
+            actor_name = f"actors/{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
 
         # Send creation request
         resp = await service_ref.ask(

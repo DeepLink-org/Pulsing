@@ -45,14 +45,14 @@ async def system():
 async def test_system_actor_auto_registered(system):
     """SystemActor should be automatically registered on startup."""
     actors = system.local_actor_names()
-    assert "_system_internal" in actors, "SystemActor should be registered"
+    assert "system/core" in actors, "SystemActor should be registered"
 
 
 @pytest.mark.asyncio
 async def test_python_actor_service_auto_registered(system):
     """PythonActorService should be automatically registered on startup."""
     actors = system.local_actor_names()
-    assert "_python_actor_service" in actors, "PythonActorService should be registered"
+    assert "system/python_actor_service" in actors, "PythonActorService should be registered"
 
 
 # ============================================================================
@@ -265,7 +265,7 @@ async def test_create_actor_not_supported_in_rust(system):
 @pytest.mark.asyncio
 async def test_python_actor_service_list_registry(system):
     """PythonActorService should list registered actor classes."""
-    service_ref = await system.resolve_named("_python_actor_service")
+    service_ref = await system.resolve_named("system/python_actor_service")
     msg = Message.from_json("ListRegistry", {})
     resp = await service_ref.ask(msg)
     data = resp.to_json()
@@ -310,7 +310,7 @@ async def test_remote_local_creation(system):
 @pytest.mark.asyncio
 async def test_remote_class_registered(system):
     """@remote decorated class should be registered in global registry."""
-    service_ref = await system.resolve_named("_python_actor_service")
+    service_ref = await system.resolve_named("system/python_actor_service")
     msg = Message.from_json("ListRegistry", {})
     resp = await service_ref.ask(msg)
     data = resp.to_json()
