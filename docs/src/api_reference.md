@@ -2,6 +2,66 @@
 
 Complete API documentation for Pulsing Actor Framework.
 
+## Contract & Semantics (Derived from `llms.binding.md`)
+
+This section is the **user-facing contract** for Pulsing's Python API. It is **derived from** the repository document **`llms.binding.md`**.
+
+- **Source of truth**: `llms.binding.md` is the canonical contract.
+- **This page**: API reference + explicit semantics (concurrency, errors, trust boundaries).
+- **If there's a mismatch**: treat `llms.binding.md` as authoritative; please open an issue/PR to sync docs.
+
+### Concurrency model for `@pulsing.remote`
+
+For a `@pulsing.remote` class, method calls are translated into actor messages.
+
+- **Sync method (`def method`)**
+  - Executed **serially** (one request at a time) in the actor.
+  - Recommended for fast CPU work and state mutation.
+- **Async method (`async def method`)**
+  - The call uses **stream-backed execution** and is scheduled as a background task on the actor side.
+  - While the method is awaiting, the actor can continue receiving other messages (**non-blocking** behavior).
+  - You can either:
+    - `await proxy.async_method(...)` to get the final value, or
+    - `async for chunk in proxy.async_method(...): ...` to consume streamed yields.
+- **Generators (sync/async)**
+  - Returning a generator (sync or async) is treated as a **streaming response**.
+
+### Streaming & cancellation
+
+- Streaming is implemented via Pulsing stream messages; cancellation is **best-effort**.
+- If a caller cancels the local await/iteration, the remote side may or may not stop immediately, depending on transport-level cancellation propagation.
+
+### `ask` vs `tell`
+
+- **`ask(msg)`**: request/response. Returns a value (or raises).
+- **`tell(msg)`**: fire-and-forget. No response is awaited.
+
+### Error model (current behavior)
+
+- Actor-side exceptions are transported back and typically raised as **`RuntimeError(str(e))`** on the caller side.
+- Timeout helpers (where used) raise **`asyncio.TimeoutError`**.
+
+Note: error *type information and remote stack traces* are not guaranteed to be preserved.
+
+### Trust boundary & security notes
+
+- **Pickle-based payloads (Python ↔ Python)**:
+  - Python-to-Python payloads are transported as **pickle** by default for convenience.
+  - **Risk**: unpickling untrusted data can lead to arbitrary code execution (RCE).
+  - **Guideline**: only use pickle payloads inside a **trusted network / trusted cluster** boundary.
+- **Transport security (TLS)**:
+  - For production deployments, always enable TLS and treat the cluster as an authenticated trust boundary.
+
+### Queue semantics (distributed queue)
+
+- **Bucketing**:
+  - Writer uses `bucket_column` + `num_buckets` to partition records into buckets.
+  - Readers must use a consistent `num_buckets` (and backend) with writers.
+- **Ownership**:
+  - Bucket ownership is computed by hashing over live cluster members; requests may be redirected to the owning node.
+- **Backends**:
+  - Default backend is in-memory; persistence depends on the selected backend.
+
 ## Core Functions
 
 ### pul.actor_system

@@ -443,13 +443,12 @@ async def read_queue(
     else:
         assigned_buckets = None  # Read from all buckets
 
-    # Create Queue
+    # Create Queue (reader side doesn't need bucket_column for hashing, but it must
+    # keep `num_buckets/storage_path/backend` consistent with writer).
     queue = Queue(
         system=system,
         topic=topic,
-        bucket_column="id",
         num_buckets=num_buckets,
-        batch_size=100,
         storage_path=storage_path,
         backend=backend,
         backend_options=backend_options,
@@ -458,7 +457,8 @@ async def read_queue(
     # Try to resolve existing bucket Actors
     if assigned_buckets:
         for bid in assigned_buckets:
-            actor_name = f"queue_{topic}_bucket_{bid}"
+            # Must match `StorageManager` bucket actor naming: "bucket_{topic}_{bucket_id}"
+            actor_name = f"bucket_{topic}_{bid}"
             try:
                 queue._bucket_refs[bid] = await system.resolve_named(actor_name)
             except Exception:

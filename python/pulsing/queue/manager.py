@@ -28,8 +28,16 @@ def _compute_owner(bucket_key: str, nodes: list[dict]) -> int | None:
     if not nodes:
         return None
 
-    # Only select nodes in Alive state
-    alive_nodes = [n for n in nodes if n.get("state") == "Alive"]
+    # Only select nodes in Alive state.
+    #
+    # Note: `ActorSystem.members()` (Rust binding) currently returns `status`
+    # (e.g. "Alive"/"Suspect"/"Dead") rather than `state`, while some older
+    # callers used `state`. Support both to stay backward compatible.
+    alive_nodes = [
+        n
+        for n in nodes
+        if (n.get("state") or n.get("status")) == "Alive"
+    ]
     if not alive_nodes:
         # If no Alive nodes, fallback to all nodes
         alive_nodes = nodes

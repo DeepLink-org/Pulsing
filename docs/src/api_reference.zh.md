@@ -2,6 +2,66 @@
 
 Pulsing Actor 框架的完整 API 文档。
 
+## 契约与语义（由 `llms.binding.md` 派生）
+
+本节是 Pulsing Python API 的**面向用户契约**，内容**派生自**仓库根目录的 **`llms.binding.md`**。
+
+- **权威来源**：`llms.binding.md` 是对外契约源文件。
+- **本文档**：API 参考 + 显式语义声明（并发、错误、信任边界）。
+- **若两者不一致**：以 `llms.binding.md` 为准，并请提 Issue/PR 同步。
+
+### `@pulsing.remote` 的并发语义
+
+对 `@pulsing.remote` 类，方法调用会被翻译为 actor 消息并在 actor 内执行。
+
+- **同步方法（`def method`）**
+  - 在 actor 内**串行执行**（一次处理一个请求）。
+  - 适合：快速计算、状态修改。
+- **异步方法（`async def method`）**
+  - 调用走**基于流（stream）的执行路径**，在 actor 侧以后台任务调度。
+  - 当方法处于 `await` 等待期间，actor 仍可继续处理其他消息（即“非阻塞 actor”语义）。
+  - 你既可以：
+    - `await proxy.async_method(...)` 获取最终返回值；也可以
+    - `async for chunk in proxy.async_method(...): ...` 消费中间 `yield`。
+- **生成器（同步/异步）**
+  - 返回 generator（sync/async）会被当作**流式响应**。
+
+### 流式与取消（cancellation）
+
+- 流式响应通过 Pulsing stream message 实现；取消传播属于 **best-effort**。
+- 调用方取消本地 `await/async for` 时，远端是否立即停止取决于传输层取消传播。
+
+### `ask` 与 `tell`
+
+- **`ask(msg)`**：请求-响应，返回值或抛异常。
+- **`tell(msg)`**：fire-and-forget，不等待返回。
+
+### 错误模型（当前行为）
+
+- actor 内抛出的异常通常会在调用方表现为 **`RuntimeError(str(e))`**。
+- 若使用超时封装（如 `asyncio.wait_for`），超时会抛 **`asyncio.TimeoutError`**。
+
+注意：错误类型信息与远端堆栈不保证完整保留。
+
+### 信任边界与安全声明
+
+- **Python ↔ Python 默认使用 Pickle**：
+  - 为了易用性，Python↔Python 对象载荷默认使用 **pickle**。
+  - **风险**：对不可信数据 unpickle 可能导致任意代码执行（RCE）。
+  - **建议**：仅在**可信网络/可信集群边界**内使用。
+- **传输层安全（TLS）**：
+  - 生产环境建议启用 TLS/mTLS，并把集群内部通信视为经过认证的信任边界。
+
+### 队列语义（Distributed Queue）
+
+- **分桶**：
+  - 写端使用 `bucket_column` + `num_buckets` 决定 record 落到哪个 bucket。
+  - 读端必须与写端保持一致的 `num_buckets`（以及 backend）。
+- **归属（owner）**：
+  - bucket 的 owner 基于集群成员一致性哈希计算；请求可能被重定向到 owner 节点。
+- **后端**：
+  - 默认内存后端；是否持久化取决于 backend。
+
 ## 核心函数
 
 ### pul.actor_system
