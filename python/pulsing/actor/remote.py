@@ -90,7 +90,7 @@ def get_actor_metadata(name: str) -> dict[str, str] | None:
 
 
 # Python actor service name (different from Rust SystemActor "system/core")
-PYTHON_ACTOR_SERVICE_NAME = "_python_actor_service"
+PYTHON_ACTOR_SERVICE_NAME = "system/python_actor_service"
 
 
 class ActorProxy:
@@ -190,6 +190,9 @@ class _MethodCaller:
                 raise RuntimeError(resp["__error__"])
             return resp.get("__result__")
         elif isinstance(resp, Message):
+            # Check if it's a stream message (generator returned)
+            if resp.is_stream:
+                return _SyncGeneratorStreamReader(resp)
             # Fallback for Rust actor communication
             data = resp.to_json()
             if resp.msg_type == "Error":
@@ -303,6 +306,34 @@ class _SingleValueIterator:
         return self._value
 
 
+class _SyncGeneratorStreamReader:
+    """Stream reader for sync generator returned from non-async method"""
+
+    def __init__(self, message: Message):
+        self._reader = message.stream_reader()
+        self._final_result = None
+        self._got_result = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            item = await self._reader.__anext__()
+            if isinstance(item, dict):
+                if "__final__" in item:
+                    self._final_result = item.get("__result__")
+                    self._got_result = True
+                    raise StopAsyncIteration
+                if "__error__" in item:
+                    raise RuntimeError(item["__error__"])
+                if "__yield__" in item:
+                    return item["__yield__"]
+            return item
+        except StopAsyncIteration:
+            raise
+
+
 class _WrappedActor(_ActorBase):
     """Wraps user class as an Actor"""
 
@@ -372,6 +403,10 @@ class _WrappedActor(_ActorBase):
             # Regular method or not marked as async call
             try:
                 result = func(*args, **kwargs)
+                # Check if result is a generator (sync or async) FIRST
+                # This must come before the coroutine check to avoid awaiting generators
+                if inspect.isgenerator(result) or inspect.isasyncgen(result):
+                    return self._handle_generator_result(result)
                 if asyncio.iscoroutine(result):
                     result = await result
                 return {"__result__": result}
@@ -406,6 +441,27 @@ class _WrappedActor(_ActorBase):
                 return Message.from_json("Error", {"error": str(e)})
 
         return {"__error__": f"Unknown message type: {type(msg)}"}
+
+    def _handle_generator_result(self, gen) -> StreamMessage:
+        """Handle generator result, return streaming response"""
+        stream_msg, writer = StreamMessage.create("GeneratorStream")
+
+        async def execute():
+            try:
+                if inspect.isasyncgen(gen):
+                    async for item in gen:
+                        await writer.write({"__yield__": item})
+                else:
+                    for item in gen:
+                        await writer.write({"__yield__": item})
+                await writer.write({"__final__": True, "__result__": None})
+            except Exception as e:
+                await writer.write({"__error__": str(e)})
+            finally:
+                await writer.close()
+
+        asyncio.create_task(execute())
+        return stream_msg
 
     def _handle_async_method(self, func, args, kwargs) -> StreamMessage:
         """Handle async method, return streaming response"""
@@ -493,8 +549,8 @@ class PythonActorService(_ActorBase):
                     return _WrappedActor(instance)
 
                 actor_ref = await self.system.spawn(
-                    actor_name,
                     factory,
+                    name=actor_name,
                     public=public,
                     restart_policy=restart_policy,
                     max_restarts=max_restarts,
@@ -505,7 +561,9 @@ class PythonActorService(_ActorBase):
                 # Standard spawn
                 instance = cls(*args, **kwargs)
                 actor = _WrappedActor(instance)
-                actor_ref = await self.system.spawn(actor_name, actor, public=public)
+                actor_ref = await self.system.spawn(
+                    actor, name=actor_name, public=public
+                )
 
             # Register actor metadata
             _register_actor_metadata(actor_name, cls)
@@ -539,7 +597,7 @@ class ActorClass:
         counter = await Counter.spawn(init=10)
 
     2. Explicit system:
-        system = await create_actor_system(config)
+        system = await pul.actor_system()
         counter = await Counter.local(system, init=10)
     """
 
@@ -579,11 +637,18 @@ class ActorClass:
         self,
         *args,
         name: str | None = None,
+        public: bool | None = None,
         **kwargs,
     ) -> ActorProxy:
         """Create actor using global system (simple API)
 
         Must call `await init()` before using this method.
+
+        Args:
+            *args: Positional arguments for the class constructor
+            name: Optional actor name (if provided, defaults to public=True)
+            public: Whether the actor should be publicly resolvable (default: True if name provided)
+            **kwargs: Keyword arguments for the class constructor
 
         Example:
             from pulsing.actor import init, remote
@@ -606,21 +671,44 @@ class ActorClass:
                 "Actor system not initialized. Call 'await init()' first."
             )
 
-        return await self.local(_global_system, *args, name=name, **kwargs)
+        # Default public=True if name is provided
+        if public is None:
+            public = name is not None
+
+        return await self.local(
+            _global_system, *args, name=name, public=public, **kwargs
+        )
 
     async def local(
         self,
         system: ActorSystem,
         *args,
         name: str | None = None,
+        public: bool | None = None,
         **kwargs,
     ) -> ActorProxy:
         """Create actor locally with explicit system.
 
-        Note: Use create_actor_system() to create ActorSystem,
+        Args:
+            system: The ActorSystem to spawn the actor in
+            *args: Positional arguments for the class constructor
+            name: Optional actor name (if provided, defaults to public=True)
+            public: Whether the actor should be publicly resolvable (default: True if name provided)
+            **kwargs: Keyword arguments for the class constructor
+
+        Note: Use pul.actor_system() to create ActorSystem,
         which automatically registers PythonActorService.
         """
-        actor_name = name or f"{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
+        # Default public=True if name is provided
+        if public is None:
+            public = name is not None
+
+        # Actor name must follow namespace/name format
+        if name:
+            # Ensure user-provided name has namespace
+            actor_name = name if "/" in name else f"actors/{name}"
+        else:
+            actor_name = f"actors/{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
 
         if self._restart_policy != "never":
 
@@ -629,9 +717,9 @@ class ActorClass:
                 return _WrappedActor(instance)
 
             actor_ref = await system.spawn(
-                actor_name,
                 factory,
-                public=True,
+                name=actor_name,
+                public=public,
                 restart_policy=self._restart_policy,
                 max_restarts=self._max_restarts,
                 min_backoff=self._min_backoff,
@@ -640,7 +728,7 @@ class ActorClass:
         else:
             instance = self._cls(*args, **kwargs)
             actor = _WrappedActor(instance)
-            actor_ref = await system.spawn(actor_name, actor, public=True)
+            actor_ref = await system.spawn(actor, name=actor_name, public=public)
 
         # Register actor metadata
         _register_actor_metadata(actor_name, self._cls)
@@ -652,13 +740,24 @@ class ActorClass:
         system: ActorSystem,
         *args,
         name: str | None = None,
+        public: bool | None = None,
         **kwargs,
     ) -> ActorProxy:
         """Create actor remotely (randomly selects a remote node).
 
-        Note: Use create_actor_system() to create ActorSystem,
+        Args:
+            system: The ActorSystem to spawn the actor in
+            *args: Positional arguments for the class constructor
+            name: Optional actor name (if provided, defaults to public=True)
+            public: Whether the actor should be publicly resolvable (default: True if name provided)
+            **kwargs: Keyword arguments for the class constructor
+
+        Note: Use pul.actor_system() to create ActorSystem,
         which automatically registers PythonActorService.
         """
+        # Default public=True if name is provided
+        if public is None:
+            public = name is not None
 
         members = await system.members()
         local_id = system.node_id.id
@@ -669,7 +768,7 @@ class ActorClass:
         if not remote_nodes:
             # No remote nodes, fallback to local creation
             logger.warning("No remote nodes, fallback to local")
-            return await self.local(system, *args, name=name, **kwargs)
+            return await self.local(system, *args, name=name, public=public, **kwargs)
 
         # Randomly select one
         target = random.choice(remote_nodes)
@@ -680,7 +779,11 @@ class ActorClass:
             PYTHON_ACTOR_SERVICE_NAME, node_id=target_id
         )
 
-        actor_name = name or f"{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
+        # Actor name must follow namespace/name format
+        if name:
+            actor_name = name if "/" in name else f"actors/{name}"
+        else:
+            actor_name = f"actors/{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
 
         # Send creation request
         resp = await service_ref.ask(
@@ -691,7 +794,7 @@ class ActorClass:
                     "actor_name": actor_name,
                     "args": list(args),
                     "kwargs": kwargs,
-                    "public": True,
+                    "public": public,
                     # Supervision config
                     "restart_policy": self._restart_policy,
                     "max_restarts": self._max_restarts,
@@ -886,20 +989,18 @@ async def ping(system: ActorSystem, node_id: int | None = None) -> dict:
 async def resolve(
     name: str,
     *,
-    system: ActorSystem | None = None,
     node_id: int | None = None,
-    methods: list[str] | None = None,
-) -> ActorProxy:
-    """Resolve a named actor by name, return callable ActorProxy
+) -> ActorRef:
+    """Resolve a named actor by name, return ActorRef
+
+    For typed ActorProxy with method calls, use Counter.resolve(name) instead.
 
     Args:
         name: Actor name
-        system: ActorSystem instance, uses global system if not provided
         node_id: Target node ID, searches in cluster if not provided
-        methods: Optional list of method names. If not provided, allows calling any method (dynamic mode)
 
     Returns:
-        ActorProxy: Proxy object that can directly call methods
+        ActorRef: Low-level actor reference for ask/tell operations.
 
     Example:
         from pulsing.actor import init, remote, resolve
@@ -911,24 +1012,23 @@ async def resolve(
             def __init__(self, init=0): self.value = init
             def increment(self): self.value += 1; return self.value
 
-        # Node A creates actor
+        # Create actor
         counter = await Counter.spawn(name="my_counter")
 
-        # Node B resolves and calls
-        proxy = await resolve("my_counter")
-        result = await proxy.increment()  # Remote call
+        # Method 1: Use typed resolve (recommended)
+        proxy = await Counter.resolve("my_counter")
+        result = await proxy.increment()
+
+        # Method 2: Use low-level resolve + ask
+        ref = await resolve("my_counter")
+        result = await ref.ask({"method": "increment", "args": [], "kwargs": {}})
     """
     from . import _global_system
 
-    if system is None:
-        if _global_system is None:
-            raise RuntimeError(
-                "Actor system not initialized. Call 'await init()' first."
-            )
-        system = _global_system
+    if _global_system is None:
+        raise RuntimeError("Actor system not initialized. Call 'await init()' first.")
 
-    actor_ref = await system.resolve_named(name, node_id=node_id)
-    return ActorProxy(actor_ref, methods)
+    return await _global_system.resolve(name, node_id=node_id)
 
 
 RemoteClass = ActorClass

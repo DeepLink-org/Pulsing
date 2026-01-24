@@ -135,9 +135,9 @@ result = ray.get(worker.process.remote("hello"))
 新代码建议使用原生异步 API：
 
 ```python
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
-@remote
+@pul.remote
 class Counter:
     def __init__(self):
         self.value = 0
@@ -147,10 +147,10 @@ class Counter:
         return self.value
 
 async def main():
-    await init()
+    await pul.init()
     counter = await Counter.spawn()
     print(await counter.inc())  # 1
-    await shutdown()
+    await pul.shutdown()
 ```
 
 **优势：**

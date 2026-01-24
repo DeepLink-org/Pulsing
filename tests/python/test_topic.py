@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from pulsing.actor import SystemConfig, create_actor_system
+import pulsing as pul
 from pulsing.topic import (
     PublishMode,
     PublishResult,
@@ -34,8 +34,7 @@ from pulsing.topic import (
 @pytest.fixture
 async def actor_system():
     """Create a standalone actor system for testing."""
-    config = SystemConfig.standalone()
-    system = await create_actor_system(config)
+    system = await pul.actor_system()
     yield system
     await system.shutdown()
 
@@ -893,7 +892,7 @@ async def test_publish_timeout_error(actor_system):
     # Manually create slow subscriber
     slow_actor = SlowSubscriber()
     actor_name = "_topic_sub_timeout_error_topic_slow_sub"
-    await actor_system.spawn(actor_name, slow_actor, public=True)
+    await actor_system.spawn(slow_actor, name=actor_name, public=True)
 
     # Register with broker
     from pulsing.queue.manager import get_topic_broker
@@ -936,7 +935,7 @@ async def test_ask_with_timeout_success(actor_system):
             return {"echo": msg}
 
     echo = EchoActor()
-    ref = await actor_system.spawn("echo_timeout_test", echo)
+    ref = await actor_system.spawn(echo, name="echo_timeout_test")
 
     # ask_with_timeout success scenario
     result = await ask_with_timeout(ref, {"hello": "world"}, timeout=5.0)
@@ -960,7 +959,7 @@ async def test_ask_with_timeout_error(actor_system):
             return {"done": True}
 
     slow = SlowActor()
-    ref = await actor_system.spawn("slow_timeout_test", slow)
+    ref = await actor_system.spawn(slow, name="slow_timeout_test")
 
     # ask_with_timeout timeout scenario
     with pytest.raises(asyncio.TimeoutError):
@@ -986,7 +985,7 @@ async def test_tell_with_timeout_success(actor_system):
             return None
 
     collector = CollectorActor()
-    ref = await actor_system.spawn("collector_timeout_test", collector)
+    ref = await actor_system.spawn(collector, name="collector_timeout_test")
 
     # tell_with_timeout success scenario (fire-and-forget doesn't wait for response)
     await tell_with_timeout(ref, {"hello": "world"}, timeout=5.0)
@@ -1047,7 +1046,7 @@ async def test_subscriber_failure_threshold_eviction(actor_system):
 
     failing_actor = FailingSubscriber()
     actor_name = "_topic_sub_eviction_test_topic_failing"
-    await actor_system.spawn(actor_name, failing_actor, public=True)
+    await actor_system.spawn(failing_actor, name=actor_name, public=True)
 
     # Register failing subscriber with broker
     broker = await get_topic_broker(actor_system, "eviction_test_topic")
@@ -1173,7 +1172,7 @@ async def test_resolve_named_returns_actor(actor_system):
 
     # Spawn a public actor
     test_actor = TestActor()
-    await actor_system.spawn("lb_test_actor", test_actor, public=True)
+    await actor_system.spawn(test_actor, name="lb_test_actor", public=True)
 
     # Resolve the named actor
     ref = await actor_system.resolve_named("lb_test_actor")
@@ -1208,7 +1207,7 @@ async def test_resolve_named_multiple_calls(actor_system):
             return {"count": self.count}
 
     counter = CounterActor()
-    await actor_system.spawn("counter_lb_test", counter, public=True)
+    await actor_system.spawn(counter, name="counter_lb_test", public=True)
 
     # Multiple resolves and calls
     results = []

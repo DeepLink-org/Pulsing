@@ -23,7 +23,6 @@ Pulsing provides native support for popular agent frameworks, enabling seamless 
 For building multi-agent applications from scratch, use Pulsing's native `@agent` decorator:
 
 ```python
-from pulsing.actor import resolve
 from pulsing.agent import agent, runtime, llm, list_agents
 
 @agent(role="Researcher", goal="Deep analysis")

@@ -13,7 +13,7 @@ Optional arguments:
 import argparse
 import asyncio
 import random
-from pulsing.actor import remote, resolve
+from pulsing.actor import remote
 from pulsing.agent import runtime
 
 # AI persona configuration
@@ -58,45 +58,6 @@ AI_PERSONAS = {
 
 
 @remote
-class ChatAgent:
-    """AI agent in the chat room"""
-
-    def __init__(self, agent_name: str, persona: str, topic: str):
-        self.agent_name = agent_name
-        self.persona = persona
-        self.topic = topic
-        self.config = AI_PERSONAS[persona]
-        self.history: list[str] = []
-
-    def receive_message(self, from_agent: str, message: str) -> str:
-        """Receive messages from other agents"""
-        self.history.append(f"{from_agent}: {message}")
-        return "Received"
-
-    def generate_response(self) -> str:
-        """Generate response (mock mode)"""
-        phrase = random.choice(self.config["phrases"])
-
-        responses = [
-            f"{phrase} Regarding '{self.topic}', I think this is a topic worth exploring in depth.",
-            f"{phrase} Speaking of this topic, I'd like to add my own perspective.",
-            f"{phrase} After hearing everyone's discussion, I have some new ideas.",
-            f"{phrase} This topic is very interesting, it reminds me of some things.",
-        ]
-        return random.choice(responses)
-
-    async def speak(self, room_name: str) -> dict:
-        """Speak in the chat room"""
-        response = self.generate_response()
-
-        # Notify the chat room
-        room = await resolve(room_name)
-        await room.broadcast(self.agent_name, response)
-
-        return {"agent": self.agent_name, "message": response}
-
-
-@remote
 class ChatRoom:
     """Chat room - coordinates agent conversations"""
 
@@ -131,6 +92,45 @@ class ChatRoom:
     def get_history(self) -> list[dict]:
         """Get chat history"""
         return self.messages
+
+
+@remote
+class ChatAgent:
+    """AI agent in the chat room"""
+
+    def __init__(self, agent_name: str, persona: str, topic: str):
+        self.agent_name = agent_name
+        self.persona = persona
+        self.topic = topic
+        self.config = AI_PERSONAS[persona]
+        self.history: list[str] = []
+
+    def receive_message(self, from_agent: str, message: str) -> str:
+        """Receive messages from other agents"""
+        self.history.append(f"{from_agent}: {message}")
+        return "Received"
+
+    def generate_response(self) -> str:
+        """Generate response (mock mode)"""
+        phrase = random.choice(self.config["phrases"])
+
+        responses = [
+            f"{phrase} Regarding '{self.topic}', I think this is a topic worth exploring in depth.",
+            f"{phrase} Speaking of this topic, I'd like to add my own perspective.",
+            f"{phrase} After hearing everyone's discussion, I have some new ideas.",
+            f"{phrase} This topic is very interesting, it reminds me of some things.",
+        ]
+        return random.choice(responses)
+
+    async def speak(self, room_name: str) -> dict:
+        """Speak in the chat room"""
+        response = self.generate_response()
+
+        # Resolve chat room and broadcast message
+        room = await ChatRoom.resolve(room_name)
+        await room.broadcast(self.agent_name, response)
+
+        return {"agent": self.agent_name, "message": response}
 
 
 async def main(topic: str, rounds: int):

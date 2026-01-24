@@ -82,7 +82,7 @@ async def spawn_and_run(
 
     # Use init() to set global system (makes get_system() work inside actors)
     system = await init(addr=addr, seeds=seeds)
-    await system.spawn(name, actor, public=public)
+    await system.spawn(actor, name=name, public=public)
 
     print(f"[{name}] Started at {system.addr}")
     await run_until_signal(name)

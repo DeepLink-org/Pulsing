@@ -7,16 +7,12 @@ Usage: python examples/python/message_patterns.py
 
 import asyncio
 
-from pulsing.actor import (
-    Actor,
-    Message,
-    StreamMessage,
-    SystemConfig,
-    create_actor_system,
-)
+import pulsing as pul
 
 
-class PatternDemo(Actor):
+class PatternDemo:
+    """Base Actor with various message patterns."""
+
     def __init__(self):
         self.value = 0
 
@@ -29,52 +25,81 @@ class PatternDemo(Actor):
             if msg.get("action") == "get":
                 return {"value": self.value}
 
-        # Pattern 2: Streaming response (e.g., LLM token generation)
+        # Pattern 2: Streaming response - just return a generator!
         if msg == "stream":
-            stream_msg, writer = StreamMessage.create("tokens")
 
-            async def produce():
-                try:
-                    for token in ["Hello", " ", "World", "!"]:
-                        await writer.write({"token": token})
-                        await asyncio.sleep(0.1)
-                    await writer.close()
-                except Exception:
-                    pass  # Stream closed, ignore
+            async def generate():
+                for token in ["Hello", " ", "World", "!"]:
+                    yield {"token": token}
+                    await asyncio.sleep(0.1)
 
-            asyncio.create_task(produce())
-            return stream_msg
-
-        # Pattern 3: JSON Message (for Rust actor compatibility)
-        if isinstance(msg, Message):
-            return Message.from_json("Echo", {"received": msg.msg_type})
+            return generate()
 
         return f"unknown: {msg}"
 
 
-async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn("demo", PatternDemo())
+@pul.remote
+class RemotePatternDemo:
+    """@pul.remote Actor with cleaner API (recommended)."""
 
-    # Pattern 1: Dict messages
-    print("--- Dict Messages ---")
+    def __init__(self):
+        self.value = 0
+
+    # Sync method - simple request/response
+    def add(self, n: int = 1) -> dict:
+        self.value += n
+        return {"value": self.value}
+
+    def get(self) -> dict:
+        return {"value": self.value}
+
+    # Async generator - automatic streaming
+    async def stream(self):
+        for token in ["Hello", " ", "World", "!"]:
+            yield {"token": token}
+            await asyncio.sleep(0.1)
+
+
+async def main():
+    system = await pul.actor_system()
+
+    print("=" * 50)
+    print("Pattern 1: Base Actor with dict messages")
+    print("=" * 50)
+
+    actor = await system.spawn(PatternDemo(), name="demo")
+
     print(await actor.ask({"action": "add", "n": 10}))  # {'value': 10}
     print(await actor.ask({"action": "add", "n": 5}))  # {'value': 15}
     print(await actor.ask({"action": "get"}))  # {'value': 15}
 
-    # Pattern 2: Streaming (transparent Python objects)
-    print("\n--- Streaming ---")
+    print("\n" + "=" * 50)
+    print("Pattern 2: Base Actor streaming (return generator)")
+    print("=" * 50)
+
     response = await actor.ask("stream")
     async for chunk in response.stream_reader():
-        print(chunk["token"], end="", flush=True)  # Directly a Python dict
+        print(chunk["token"], end="")
     print()
 
-    # Pattern 3: JSON Message (backward compatible)
-    print("\n--- JSON Message ---")
-    resp = await actor.ask(Message.from_json("Test", {"data": 123}))
-    print(resp.to_json())  # {'received': 'Test'}
+    print("\n" + "=" * 50)
+    print("Pattern 3: @pul.remote (recommended)")
+    print("=" * 50)
+
+    service = await RemotePatternDemo.local(system)
+
+    # Direct method calls - no need for ask/tell!
+    print(await service.add(10))  # {'value': 10}
+    print(await service.add(5))  # {'value': 15}
+    print(await service.get())  # {'value': 15}
+
+    print("\n--- Async generator streaming ---")
+    async for chunk in service.stream():
+        print(chunk["token"], end="")
+    print()
 
     await system.shutdown()
+    print("\n✓ Done!")
 
 
 if __name__ == "__main__":

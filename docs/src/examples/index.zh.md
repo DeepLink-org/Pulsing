@@ -10,18 +10,18 @@
 
 ```python
 import asyncio
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
-@remote
+@pul.remote
 class HelloActor:
     def greet(self, name: str) -> str:
         return f"Hello, {name}!"
 
 async def main():
-    await init()
+    await pul.init()
     hello = await HelloActor.spawn()
     print(await hello.greet("World"))
-    await shutdown()
+    await pul.shutdown()
 
 asyncio.run(main())
 ```
@@ -31,7 +31,7 @@ asyncio.run(main())
 维护计数器的有状态 Actor：
 
 ```python
-@remote
+@pul.remote
 class Counter:
     def __init__(self, initial: int = 0):
         self.value = initial
@@ -59,9 +59,9 @@ class Counter:
 两个 Actor 跨节点通信：
 
 ```python
-from pulsing.actor import init, shutdown, remote, get_system
+import pulsing as pul
 
-@remote
+@pul.remote
 class PingActor:
     def __init__(self, pong_ref=None):
         self.pong = pong_ref
@@ -74,22 +74,20 @@ class PingActor:
             print(f"收到: {response}")
         return self.count
 
-@remote
+@pul.remote
 class PongActor:
     def pong(self, n: int) -> str:
         return f"pong-{n}"
 
 
 async def main():
-    # 节点 1：启动 pong Actor
+    # 节点 1：启动命名 pong Actor（可被远程发现）
     await init(addr="0.0.0.0:8000")
-    pong = await PongActor.spawn()
-    system = get_system()
-    await system.register("pong", pong, public=True)
+    pong = await PongActor.spawn(name="pong")
 
     # 节点 2：在另一台机器上运行
     # await init(addr="0.0.0.0:8001", seeds=["node1:8000"])
-    # pong_ref = await get_system().find("pong")
+    # pong_ref = await PongActor.resolve("pong")
     # ping = await PingActor.spawn(pong_ref=pong_ref)
     # await ping.start_ping(10)
 

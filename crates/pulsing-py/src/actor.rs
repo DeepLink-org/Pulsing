@@ -130,6 +130,33 @@ impl PyActorId {
     fn __eq__(&self, other: &PyActorId) -> bool {
         self.inner == other.inner
     }
+
+    /// Parse ActorId from string format "node_id:local_id"
+    #[staticmethod]
+    fn from_str(s: &str) -> PyResult<Self> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() != 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid ActorId format: '{}'. Expected 'node_id:local_id'",
+                s
+            )));
+        }
+        let node_id: u64 = parts[0].parse().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid node_id in ActorId: '{}'",
+                parts[0]
+            ))
+        })?;
+        let local_id: u64 = parts[1].parse().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid local_id in ActorId: '{}'",
+                parts[1]
+            ))
+        })?;
+        Ok(Self {
+            inner: ActorId::new(NodeId::new(node_id), local_id),
+        })
+    }
 }
 
 /// Python wrapper for Message (unified, supports both single and stream)
@@ -522,6 +549,8 @@ enum PyActorResponse {
     StreamChannel(String, mpsc::Receiver<anyhow::Result<Message>>),
     /// Pickled Python object for Python-to-Python communication
     Sealed(Vec<u8>),
+    /// Generator (async or sync) to be iterated
+    Generator(PyObject, PyObject, bool), // (generator, event_loop, is_async)
 }
 
 /// Python wrapper for ActorRef
@@ -880,6 +909,23 @@ impl Actor for PythonActorWrapper {
                         return Ok(PyActorResponse::Single(PyMessage::empty()));
                     }
 
+                    // Check for generator (sync or async) - fast path using type name
+                    let type_name = py_result_bound
+                        .get_type()
+                        .qualname()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let is_gen = type_name == "generator";
+                    let is_async_gen = type_name == "async_generator";
+
+                    if is_async_gen || is_gen {
+                        return Ok(PyActorResponse::Generator(
+                            py_result.clone_ref(py),
+                            event_loop.clone_ref(py),
+                            is_async_gen,
+                        ));
+                    }
+
                     // Handle StreamMessage
                     if py_result_bound.is_instance_of::<PyStreamMessage>() {
                         let stream_msg_cell = py_result_bound.downcast::<PyStreamMessage>()?;
@@ -935,6 +981,86 @@ impl Actor for PythonActorWrapper {
                 Ok(Message::from_channel(&default_msg_type, rx))
             }
             PyActorResponse::Sealed(data) => Ok(Message::single(SEALED_PY_MSG_TYPE, data)),
+            PyActorResponse::Generator(generator, event_loop, is_async) => {
+                // Create channel for streaming generator values
+                let (tx, rx) = mpsc::channel(32);
+
+                // Spawn background task to iterate generator
+                tokio::spawn(async move {
+                    let result = python_executor()
+                        .execute(move || {
+                            Python::with_gil(|py| -> PyResult<()> {
+                                let gen = generator.bind(py);
+                                let asyncio = py.import("asyncio")?;
+
+                                if is_async {
+                                    // Async generator: iterate using anext()
+                                    let run_coroutine_threadsafe =
+                                        asyncio.getattr("run_coroutine_threadsafe")?;
+                                    loop {
+                                        let anext_coro = gen.call_method0("__anext__")?;
+                                        let future = run_coroutine_threadsafe
+                                            .call1((&anext_coro, &event_loop))?;
+                                        match future.call_method0("result") {
+                                            Ok(item) => {
+                                                let pickled = pickle_object(py, &item.unbind())?;
+                                                let msg =
+                                                    Message::single(SEALED_PY_MSG_TYPE, pickled);
+                                                if tx.blocking_send(Ok(msg)).is_err() {
+                                                    break;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                // Check if StopAsyncIteration
+                                                if e.is_instance_of::<pyo3::exceptions::PyStopAsyncIteration>(py) {
+                                                    break;
+                                                }
+                                                let _ = tx.blocking_send(Err(anyhow::anyhow!(
+                                                    "Generator error: {}",
+                                                    e
+                                                )));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Sync generator: iterate using next()
+                                    loop {
+                                        match gen.call_method0("__next__") {
+                                            Ok(item) => {
+                                                let pickled = pickle_object(py, &item.unbind())?;
+                                                let msg =
+                                                    Message::single(SEALED_PY_MSG_TYPE, pickled);
+                                                if tx.blocking_send(Ok(msg)).is_err() {
+                                                    break;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                // Check if StopIteration
+                                                if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) {
+                                                    break;
+                                                }
+                                                let _ = tx.blocking_send(Err(anyhow::anyhow!(
+                                                    "Generator error: {}",
+                                                    e
+                                                )));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(())
+                            })
+                        })
+                        .await;
+
+                    if let Err(e) = result {
+                        tracing::error!("Generator iteration error: {:?}", e);
+                    }
+                });
+
+                Ok(Message::from_channel(SEALED_PY_MSG_TYPE, rx))
+            }
         }
     }
 }
@@ -977,8 +1103,9 @@ impl PyActorSystem {
     }
 
     #[pyo3(signature = (
-        name,
-        handler,
+        actor,
+        *,
+        name=None,
         public=false,
         restart_policy="never",
         max_restarts=3,
@@ -989,8 +1116,8 @@ impl PyActorSystem {
     fn spawn<'py>(
         &self,
         py: Python<'py>,
-        name: String,
-        handler: PyObject,
+        actor: PyObject,
+        name: Option<String>,
         public: bool,
         restart_policy: &str,
         max_restarts: u32,
@@ -1029,15 +1156,15 @@ impl PyActorSystem {
             // This handles the @remote decorator case where we wrap user classes
             let (module, qualname, file) = {
                 // Check for __original_module__, __original_qualname__, __original_file__
-                let orig_module = handler
+                let orig_module = actor
                     .getattr(py, "__original_module__")
                     .ok()
                     .and_then(|m| m.extract::<String>(py).ok());
-                let orig_qualname = handler
+                let orig_qualname = actor
                     .getattr(py, "__original_qualname__")
                     .ok()
                     .and_then(|q| q.extract::<String>(py).ok());
-                let orig_file = handler
+                let orig_file = actor
                     .getattr(py, "__original_file__")
                     .ok()
                     .and_then(|f| f.extract::<String>(py).ok());
@@ -1046,9 +1173,9 @@ impl PyActorSystem {
                     (orig_module, orig_qualname, orig_file)
                 } else {
                     // Fallback to regular class info
-                    let class = handler
+                    let class = actor
                         .getattr(py, "__class__")
-                        .unwrap_or_else(|_| handler.clone_ref(py));
+                        .unwrap_or_else(|_| actor.clone_ref(py));
 
                     let module = class
                         .getattr(py, "__module__")
@@ -1086,52 +1213,70 @@ impl PyActorSystem {
             meta
         });
 
+        // Note: 'public' parameter is now ignored - all named actors are resolvable
+        let _ = public;
+
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let options = pulsing_actor::system::SpawnOptions::new()
-                .public(public)
                 .supervision(supervision)
                 .metadata(metadata);
 
-            let actor_ref = if matches!(policy, RestartPolicy::Never) {
-                // handler is the instance
-                let actor = PythonActorWrapper::new(handler, event_loop);
-                if public {
-                    let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
+            let actor_ref = match name {
+                // Anonymous actor - no name provided (not resolvable)
+                None => {
+                    // Anonymous actors do not support supervision/restart
+                    if !matches!(policy, RestartPolicy::Never) {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "Anonymous actors do not support supervision/restart. \
+                             Provide a name to enable supervision, or set restart_policy='never'.",
+                        ));
+                    }
+                    // actor is the instance
+                    let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
                     system
-                        .spawn_named_with_options(path, &name, actor, options)
-                        .await
-                        .map_err(to_pyerr)?
-                } else {
-                    system
-                        .spawn_with_options(&name, actor, options)
+                        .spawn_anonymous_with_options(actor_wrapper, options)
                         .await
                         .map_err(to_pyerr)?
                 }
-            } else {
-                // handler is a factory
-                let factory = move || {
-                    Python::with_gil(|py| -> anyhow::Result<PythonActorWrapper> {
-                        // Clone PyObjects inside GIL
-                        let event_loop = event_loop.clone_ref(py);
-                        // Call factory to get instance
-                        let instance = handler
-                            .call0(py)
-                            .map_err(|e| anyhow::anyhow!("Python factory error: {:?}", e))?;
-                        Ok(PythonActorWrapper::new(instance, event_loop))
-                    })
-                };
+                // Named actor (resolvable by name)
+                Some(name) => {
+                    // Ensure name follows namespace/name format
+                    let name = if name.contains('/') {
+                        name
+                    } else {
+                        format!("actors/{}", name)
+                    };
 
-                if public {
-                    let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
-                    system
-                        .spawn_named_factory(path, &name, factory, options)
-                        .await
-                        .map_err(to_pyerr)?
-                } else {
-                    system
-                        .spawn_factory(&name, factory, options)
-                        .await
-                        .map_err(to_pyerr)?
+                    // Parse the path - use new_system for system/* paths (internal use only)
+                    let path = if name.starts_with("system/") {
+                        ActorPath::new_system(&name).map_err(to_pyerr)?
+                    } else {
+                        ActorPath::new(&name).map_err(to_pyerr)?
+                    };
+
+                    if matches!(policy, RestartPolicy::Never) {
+                        // actor is the instance
+                        let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
+                        system
+                            .spawn_named_with_options(path, actor_wrapper, options)
+                            .await
+                            .map_err(to_pyerr)?
+                    } else {
+                        // actor is a factory - named actor with supervision
+                        let factory = move || {
+                            Python::with_gil(|py| -> anyhow::Result<PythonActorWrapper> {
+                                let event_loop = event_loop.clone_ref(py);
+                                let instance = actor.call0(py).map_err(|e| {
+                                    anyhow::anyhow!("Python factory error: {:?}", e)
+                                })?;
+                                Ok(PythonActorWrapper::new(instance, event_loop))
+                            })
+                        };
+                        system
+                            .spawn_named_factory(path, factory, options)
+                            .await
+                            .map_err(to_pyerr)?
+                    }
                 }
             };
 
@@ -1147,6 +1292,11 @@ impl PyActorSystem {
             let actor_ref = system.actor_ref(&id).await.map_err(to_pyerr)?;
             Ok(PyActorRef { inner: actor_ref })
         })
+    }
+
+    /// Alias for actor_ref - get actor reference by ID
+    fn refer<'py>(&self, py: Python<'py>, actor_id: PyActorId) -> PyResult<Bound<'py, PyAny>> {
+        self.actor_ref(py, actor_id)
     }
 
     fn members<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -1181,7 +1331,18 @@ impl PyActorSystem {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
+            // Ensure name follows namespace/name format
+            let name = if name.contains('/') {
+                name
+            } else {
+                format!("actors/{}", name)
+            };
+            // Use new_system for system/* paths (internal use)
+            let path = if name.starts_with("system/") {
+                ActorPath::new_system(&name).map_err(to_pyerr)?
+            } else {
+                ActorPath::new(&name).map_err(to_pyerr)?
+            };
             let instances = system.get_named_instances_detailed(&path).await;
             let result: Vec<std::collections::HashMap<String, serde_json::Value>> = instances
                 .into_iter()
@@ -1304,7 +1465,18 @@ impl PyActorSystem {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let path = ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
+            // Ensure name follows namespace/name format
+            let name = if name.contains('/') {
+                name
+            } else {
+                format!("actors/{}", name)
+            };
+            // Use new_system for system/* paths (internal use)
+            let path = if name.starts_with("system/") {
+                ActorPath::new_system(&name).map_err(to_pyerr)?
+            } else {
+                ActorPath::new(&name).map_err(to_pyerr)?
+            };
             let node = node_id.map(NodeId::new);
             let actor_ref = system
                 .resolve_named(&path, node.as_ref())
@@ -1312,6 +1484,17 @@ impl PyActorSystem {
                 .map_err(to_pyerr)?;
             Ok(PyActorRef { inner: actor_ref })
         })
+    }
+
+    /// Alias for resolve_named - resolve actor by name
+    #[pyo3(signature = (name, *, node_id=None))]
+    fn resolve<'py>(
+        &self,
+        py: Python<'py>,
+        name: String,
+        node_id: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.resolve_named(py, name, node_id)
     }
 
     fn stop<'py>(&self, py: Python<'py>, actor_name: String) -> PyResult<Bound<'py, PyAny>> {
@@ -1347,7 +1530,8 @@ impl PyActorSystem {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let path = ActorPath::new("system").map_err(to_pyerr)?;
+            // Use system/core - the correct system actor path
+            let path = ActorPath::new_system("system/core").map_err(to_pyerr)?;
             let actor_ref = system
                 .resolve_named(&path, Some(&NodeId::new(node_id)))
                 .await

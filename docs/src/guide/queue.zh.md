@@ -61,21 +61,19 @@ flowchart TB
 
 ```python
 import asyncio
-from pulsing.actor import SystemConfig, create_actor_system
-from pulsing.queue import write_queue, read_queue
+import pulsing as pul
 
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
+    system = await pul.actor_system()
     try:
-        writer = await write_queue(
-            system,
-            topic="my_queue",
+        writer = await system.queue.write(
+            "my_queue",
             bucket_column="user_id",
             num_buckets=4,
             batch_size=10,
         )
-        reader = await read_queue(system, topic="my_queue")
+        reader = await system.queue.read("my_queue")
 
         # 写入
         await writer.put({"user_id": "u1", "payload": "hello"})
@@ -98,8 +96,8 @@ asyncio.run(main())
 如果你需要阻塞式 API（例如在线程里调用），用 `.sync()`：
 
 ```python
-writer = (await write_queue(system, "my_queue")).sync()
-reader = (await read_queue(system, "my_queue")).sync()
+writer = (await system.queue.write("my_queue")).sync()
+reader = (await system.queue.read("my_queue")).sync()
 
 writer.put({"id": "1", "value": 100})
 records = reader.get(limit=10)
@@ -116,7 +114,7 @@ writer.flush()
 
 ## 读取模式
 
-`read_queue` 支持：
+`system.queue.read()` 支持：
 
 - **读取所有 bucket**（默认）
 - **读取指定 bucket**：`bucket_id=` / `bucket_ids=`
@@ -125,8 +123,8 @@ writer.flush()
 例子：
 
 ```python
-reader0 = await read_queue(system, "q", rank=0, world_size=2, num_buckets=4)  # [0, 2]
-reader1 = await read_queue(system, "q", rank=1, world_size=2, num_buckets=4)  # [1, 3]
+reader0 = await system.queue.read("q", rank=0, world_size=2, num_buckets=4)  # [0, 2]
+reader1 = await system.queue.read("q", rank=1, world_size=2, num_buckets=4)  # [1, 3]
 ```
 
 ## 流式读取与阻塞等待
@@ -169,9 +167,8 @@ flowchart LR
 默认的 `MemoryBackend` 将数据存储在内存中，无持久化：
 
 ```python
-writer = await write_queue(
-    system,
-    topic="my_queue",
+writer = await system.queue.write(
+    "my_queue",
     backend="memory",  # 默认，可省略
 )
 ```
@@ -182,24 +179,25 @@ writer = await write_queue(
 
 ```python
 import pulsing as pul
+from pulsing.queue import register_backend
 import persisting as pst
 
 # 从 Persisting 注册后端
-pul.queue.register_backend("lance", pst.queue.LanceBackend)
-pul.queue.register_backend("persisting", pst.queue.PersistingBackend)
+register_backend("lance", pst.queue.LanceBackend)
+register_backend("persisting", pst.queue.PersistingBackend)
+
+system = await pul.actor_system()
 
 # 使用 Lance 后端实现持久化
-writer = await pul.queue.write_queue(
-    system,
-    topic="my_queue",
+writer = await system.queue.write(
+    "my_queue",
     backend="lance",
     storage_path="/data/queues",
 )
 
 # 或使用增强版 Persisting 后端（支持 WAL）
-writer = await pul.queue.write_queue(
-    system,
-    topic="my_queue",
+writer = await system.queue.write(
+    "my_queue",
     backend="persisting",
     storage_path="/data/queues",
     backend_options={"enable_wal": True},
@@ -211,7 +209,7 @@ writer = await pul.queue.write_queue(
 实现 `StorageBackend` 协议并注册：
 
 ```python
-import pulsing as pul
+from pulsing.queue import register_backend
 
 class MyBackend:
     async def put(self, record): ...
@@ -219,8 +217,8 @@ class MyBackend:
     async def flush(self): ...
     # ... 其他方法
 
-pul.queue.register_backend("my_backend", MyBackend)
-writer = await pul.queue.write_queue(system, "topic", backend="my_backend")
+register_backend("my_backend", MyBackend)
+writer = await system.queue.write("topic", backend="my_backend")
 ```
 
 ## 多消费者 offset：策略与局限

@@ -197,14 +197,20 @@ impl ActorSystem {
     /// Builder 模式创建系统 (推荐)
     pub fn builder() -> ActorSystemBuilder;
 
-    /// 创建 Actor
-    pub async fn spawn<A: Actor>(&self, name: &str, actor: A) -> anyhow::Result<ActorRef>;
+    /// 创建匿名 Actor (仅通过 ActorRef 访问)
+    pub async fn spawn<A: IntoActor>(&self, actor: A) -> anyhow::Result<ActorRef>;
 
     /// 创建命名 Actor (支持跨节点发现)
-    pub async fn spawn_named(&self, path: &str, name: &str, actor: A) -> anyhow::Result<ActorRef>;
+    pub async fn spawn_named<P: AsRef<str>, A: IntoActor>(&self, name: P, actor: A) -> anyhow::Result<ActorRef>;
+
+    /// Builder 模式创建 Actor (高级配置)
+    pub fn spawning(&self) -> SpawnBuilder;
 
     /// 解析命名 Actor
-    pub async fn resolve_named(&self, path: &str, node_id: Option<&NodeId>) -> anyhow::Result<ActorRef>;
+    pub async fn resolve<P: IntoActorPath>(&self, name: P) -> anyhow::Result<ActorRef>;
+
+    /// Builder 模式解析 Actor (高级配置)
+    pub fn resolving(&self) -> ResolveBuilder;
 
     /// 停止 Actor
     pub async fn stop(&self, actor_name: &str) -> anyhow::Result<()>;
@@ -388,7 +394,7 @@ let system1 = ActorSystem::builder()
     .await?;
 
 // 创建命名 Actor (可跨节点发现)
-system1.spawn_named("services/echo", "echo", EchoActor).await?;
+system1.spawn_named("services/echo", EchoActor).await?;
 
 // 节点 2 (加入集群)
 let system2 = ActorSystem::builder()
@@ -400,8 +406,8 @@ let system2 = ActorSystem::builder()
 // 等待集群同步
 tokio::time::sleep(Duration::from_millis(500)).await;
 
-// 通过路径解析远程 Actor
-let remote_ref = system2.resolve_named("services/echo", None).await?;
+// 通过名称解析远程 Actor
+let remote_ref = system2.resolve("services/echo").await?;
 
 let response: Pong = remote_ref.ask(Ping { value: 10 }).await?;
 assert_eq!(response.result, 20);

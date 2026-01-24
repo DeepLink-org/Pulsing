@@ -2,7 +2,7 @@
 
 use super::reference::TypedRef;
 use crate::actor::ActorId;
-use crate::system::ActorSystem;
+use crate::actor::ActorSystemRef;
 use serde::{de::DeserializeOwned, Serialize};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ pub struct BehaviorContext<M> {
     /// Actor's unique identifier
     actor_id: ActorId,
     /// Reference to the actor system
-    system: Arc<ActorSystem>,
+    system: Arc<dyn ActorSystemRef>,
     /// Typed self-reference for receiving messages
     self_ref: TypedRef<M>,
     /// Cancellation token for graceful shutdown
@@ -35,7 +35,7 @@ where
     pub(crate) fn new(
         actor_name: String,
         actor_id: ActorId,
-        system: Arc<ActorSystem>,
+        system: Arc<dyn ActorSystemRef>,
         self_ref: TypedRef<M>,
         cancel_token: CancellationToken,
     ) -> Self {
@@ -120,7 +120,7 @@ where
     }
 
     /// Get a reference to the underlying actor system
-    pub fn system(&self) -> &Arc<ActorSystem> {
+    pub fn system(&self) -> &Arc<dyn ActorSystemRef> {
         &self.system
     }
 

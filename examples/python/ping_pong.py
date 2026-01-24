@@ -6,10 +6,10 @@ Usage: python examples/python/ping_pong.py
 """
 
 import asyncio
-from pulsing.actor import Actor, SystemConfig, create_actor_system
+import pulsing as pul
 
 
-class PingPong(Actor):
+class PingPong:
     async def receive(self, msg):
         if msg == "ping":
             return "pong"
@@ -17,8 +17,8 @@ class PingPong(Actor):
 
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn("pingpong", PingPong())
+    system = await pul.actor_system()
+    actor = await system.spawn(PingPong())
 
     # Simple string message
     print(await actor.ask("ping"))  # -> pong

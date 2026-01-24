@@ -58,15 +58,15 @@ Pulsing follows the **classical Actor model** (like Erlang/Akka):
 
 | API | Import | Style | Best For |
 |-----|--------|-------|----------|
-| **Native Async** | `from pulsing.actor import ...` | `async/await` | New projects, maximum performance |
+| **Native Async** | `import pulsing as pul` | `async/await` | New projects, maximum performance |
 | **Ray-Compatible** | `from pulsing.compat import ray` | Synchronous | Migrating from Ray, quick prototyping |
 
 ### Native Async API (Recommended)
 
 ```python
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
-@remote
+@pul.remote
 class Calculator:
     def __init__(self, initial_value: int = 0):
         self.value = initial_value
@@ -76,10 +76,10 @@ class Calculator:
         return self.value
 
 async def main():
-    await init()
+    await pul.init()
     calc = await Calculator.spawn(initial_value=100)
     result = await calc.add(50)  # 150
-    await shutdown()
+    await pul.shutdown()
 ```
 
 ### Ray-Compatible API
@@ -123,32 +123,23 @@ result = await calc.add(10)
 ### Tell (Fire-and-Forget)
 
 ```python
-await actor_ref.tell(Message.single("notify", b"event_data"))
+await actor_ref.tell({"event": "notify", "data": "event_data"})
 ```
 
 ### Streaming Messages
 
-For continuous data flow (e.g., LLM token generation):
+For continuous data flow (e.g., LLM token generation), just return a generator:
 
 ```python
-from pulsing.actor import StreamMessage
-
 @remote
 class TokenGenerator:
-    async def generate(self, prompt: str) -> Message:
-        stream_msg, writer = StreamMessage.create("tokens")
-
-        async def produce():
-            for token in self.generate_tokens(prompt):
-                await writer.write({"token": token})
-            await writer.close()
-
-        asyncio.create_task(produce())
-        return stream_msg
+    async def generate(self, prompt: str):
+        # Just return an async generator - Pulsing handles streaming automatically
+        for token in self.generate_tokens(prompt):
+            yield {"token": token}
 
 # Consume the stream
-response = await generator.generate("Hello")
-async for chunk in response.stream_reader():
+async for chunk in generator.generate("Hello"):
     print(chunk["token"], end="", flush=True)
 ```
 
@@ -279,17 +270,29 @@ class ResilientActor:
 ### Common Operations
 
 ```python
-# Spawn
-actor = await MyActor.spawn(param=10)
+import pulsing as pul
+
+# Create system
+system = await pul.actor_system()
+
+# Spawn named actor (discoverable via resolve)
+actor = await system.spawn(MyActor(), name="my_actor")
 
 # Call method
-result = await actor.method(arg)
+result = await actor.ask({"action": "do_something"})
 
-# With system handle
-system = await create_actor_system(config)
-actor = await system.spawn(MyActor(), "name", public=True)
-remote_actor = await system.find("remote-name")
-await system.stop("name")
+# Using @remote decorator (recommended)
+@pul.remote
+class MyService:
+    def process(self, data): return data
+
+service = await MyService.spawn(name="service")
+result = await service.process("hello")
+
+# Resolve existing actor
+proxy = await MyService.resolve("service")
+
+# Shutdown
 await system.shutdown()
 ```
 

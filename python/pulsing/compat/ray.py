@@ -233,7 +233,8 @@ def init(
 
     _ensure_not_initialized(ignore_reinit_error)
 
-    from pulsing.actor import SystemConfig, create_actor_system
+    from pulsing.actor import ActorSystem, SystemConfig
+    from pulsing.actor.remote import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
 
     # If we're already inside a running event loop (e.g., Jupyter/pytest-asyncio),
     # we must not call run_until_complete() on it. Use a dedicated background loop.
@@ -249,8 +250,13 @@ def init(
         _loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_loop)
 
-    config = SystemConfig.standalone()
-    _system = _run_coro_sync(create_actor_system(config))
+    async def _create_system():
+        system = await ActorSystem.create(SystemConfig.standalone(), _loop)
+        service = PythonActorService(system)
+        await system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
+        return system
+
+    _system = _run_coro_sync(_create_system())
 
 
 def shutdown() -> None:

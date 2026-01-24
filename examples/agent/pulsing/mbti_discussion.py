@@ -195,17 +195,17 @@ class ModeratorActor:
 
     async def start_discussion(self) -> dict:
         for r in range(self.rounds):
-            print(f"\n{'='*60}")
-            print(f"Round {r+1}: Express Opinions")
-            print(f"{'='*60}")
+            print(f"\n{'=' * 60}")
+            print(f"Round {r + 1}: Express Opinions")
+            print(f"{'=' * 60}")
 
             for agent_info in self.agents:
                 proxy = await resolve(agent_info["name"])
                 await proxy.form_opinion(self.opinions[-10:])
 
-            print(f"\n{'='*60}")
-            print(f"Round {r+1}: Free Debate ({self.debate_time}s)")
-            print(f"{'='*60}")
+            print(f"\n{'=' * 60}")
+            print(f"Round {r + 1}: Free Debate ({self.debate_time}s)")
+            print(f"{'=' * 60}")
 
             for agent_info in self.agents:
                 my_opinion = next(
@@ -239,9 +239,9 @@ class ModeratorActor:
                     )
                     print(f"       └─ {icon} [{result['to']}]: {result['reply']}")
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("Final Voting")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         for agent_info in self.agents:
             proxy = await resolve(agent_info["name"])
@@ -250,9 +250,9 @@ class ModeratorActor:
         return self._summarize()
 
     def _summarize(self) -> dict:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("Voting Results")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         total = sum(len(v) for v in self.votes.values())
         sorted_votes = sorted(self.votes.items(), key=lambda x: len(x[1]), reverse=True)
@@ -269,9 +269,9 @@ class ModeratorActor:
         print(
             f"\nDebate Statistics: {len(self.debates)} exchanges, {success} successful persuasions"
         )
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Final Result: {winner} wins")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         return {"winner": winner, "votes": self.votes, "debates": len(self.debates)}
 
@@ -326,7 +326,7 @@ class MBTIAgent:
                 if others
                 else "None"
             )
-            prompt = f"""You are {self.mbti} ({self.info['name']}), personality traits: {self.info['traits']}.
+            prompt = f"""You are {self.mbti} ({self.info["name"]}), personality traits: {self.info["traits"]}.
 Topic: {self.topic}
 Others' views:
 {ctx}
@@ -371,8 +371,8 @@ The other party {target_mbti}'s stance is {target_stance}. Persuade them in one 
             )
 
             target_info = MBTI_TYPES[target_mbti]
-            prompt2 = f"""You are {target_mbti} ({target_info['name']}), {self.mbti} says: "{message}".
-Based on your personality traits ({target_info['traits']}), would you be persuaded? Output JSON: {{"changed": true/false, "reply": "Reply (within 10 characters)"}}"""
+            prompt2 = f"""You are {target_mbti} ({target_info["name"]}), {self.mbti} says: "{message}".
+Based on your personality traits ({target_info["traits"]}), would you be persuaded? Output JSON: {{"changed": true/false, "reply": "Reply (within 10 characters)"}}"""
             resp2 = await client.ainvoke(prompt2)
             data = parse_json(resp2.content, {})
             changed = data.get("changed", False)

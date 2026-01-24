@@ -57,8 +57,7 @@ async fn main() -> anyhow::Result<()> {
         // Node 1: Create actor and wait
         system
             .spawn_named(
-                path,
-                "counter",
+                "services/counter",
                 Counter {
                     count: 0,
                     node_id: system.node_id().to_string(),
@@ -82,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
 
         // Resolve remote actor
         let actor = loop {
-            match system.resolve_named(path, None).await {
+            match system.resolve(path).await {
                 Ok(a) => break a,
                 Err(_) => {
                     print!(".");

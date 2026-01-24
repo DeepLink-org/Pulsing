@@ -21,113 +21,119 @@ import asyncio
 import random
 import time
 
-from pulsing.actor import Actor, ActorId, Message, SystemConfig, create_actor_system
+import pulsing as pul
 
 
-class WorkerActor(Actor):
+class WorkerActor:
     """A simple worker actor that processes tasks"""
 
     def __init__(self, worker_id: str):
         self.worker_id = worker_id
         self.tasks_processed = 0
 
-    def on_start(self, actor_id: ActorId):
+    def on_start(self, actor_id):
         print(f"[Worker {self.worker_id}] Started")
 
-    def receive(self, msg: Message) -> Message:
-        if msg.msg_type == "ProcessTask":
-            task = msg.to_json().get("task", "")
+    async def receive(self, msg):
+        action = msg.get("action") if isinstance(msg, dict) else None
+
+        if action == "process":
+            task = msg.get("task", "")
             self.tasks_processed += 1
             result = f"Processed: {task} (total: {self.tasks_processed})"
             print(f"[Worker {self.worker_id}] {result}")
-            return Message.from_json(
-                "TaskResult", {"result": result, "worker": self.worker_id}
-            )
-        elif msg.msg_type == "GetStats":
-            return Message.from_json(
-                "Stats", {"worker_id": self.worker_id, "tasks": self.tasks_processed}
-            )
-        return Message.empty()
+            return {"result": result, "worker": self.worker_id}
+
+        if action == "stats":
+            return {"worker_id": self.worker_id, "tasks": self.tasks_processed}
+
+        return {"error": "unknown action"}
 
 
-class DispatcherActor(Actor):
+class DispatcherActor:
     """A dispatcher actor that distributes tasks to workers (for demo purposes)"""
 
     def __init__(self):
         self.workers = []
         self.tasks_dispatched = 0
 
-    def on_start(self, actor_id: ActorId):
+    def on_start(self, actor_id):
         print("[Dispatcher] Started")
 
-    def receive(self, msg: Message) -> Message:
-        if msg.msg_type == "RouteTask":
+    async def receive(self, msg):
+        action = msg.get("action") if isinstance(msg, dict) else None
+
+        if action == "route":
             self.tasks_dispatched += 1
-            task = msg.to_json().get("task", "")
+            task = msg.get("task", "")
             # Simulate routing logic
             worker_id = f"worker-{random.randint(1, 3)}"
-            return Message.from_json(
-                "Dispatched",
-                {"task": task, "worker": worker_id, "dispatched": self.tasks_dispatched},
-            )
-        elif msg.msg_type == "GetStats":
-            return Message.from_json(
-                "Stats", {"dispatcher": True, "tasks_dispatched": self.tasks_dispatched}
-            )
-        return Message.empty()
+            return {
+                "task": task,
+                "worker": worker_id,
+                "dispatched": self.tasks_dispatched,
+            }
+
+        if action == "stats":
+            return {"dispatcher": True, "tasks_dispatched": self.tasks_dispatched}
+
+        return {"error": "unknown action"}
 
 
-class CacheActor(Actor):
+class CacheActor:
     """A cache actor that stores key-value pairs"""
 
     def __init__(self):
         self.cache = {}
 
-    def on_start(self, actor_id: ActorId):
+    def on_start(self, actor_id):
         print("[Cache] Started")
 
-    def receive(self, msg: Message) -> Message:
-        if msg.msg_type == "Get":
-            key = msg.to_json().get("key", "")
+    async def receive(self, msg):
+        action = msg.get("action") if isinstance(msg, dict) else None
+
+        if action == "get":
+            key = msg.get("key", "")
             value = self.cache.get(key, None)
-            return Message.from_json(
-                "Value", {"key": key, "value": value, "found": value is not None}
-            )
-        elif msg.msg_type == "Set":
-            data = msg.to_json()
-            key = data.get("key", "")
-            value = data.get("value", "")
+            return {"key": key, "value": value, "found": value is not None}
+
+        if action == "set":
+            key = msg.get("key", "")
+            value = msg.get("value", "")
             self.cache[key] = value
-            return Message.from_json("SetResult", {"key": key, "success": True})
-        elif msg.msg_type == "GetStats":
-            return Message.from_json("Stats", {"cache_size": len(self.cache)})
-        return Message.empty()
+            return {"key": key, "success": True}
+
+        if action == "stats":
+            return {"cache_size": len(self.cache)}
+
+        return {"error": "unknown action"}
 
 
 async def run_node(port: int, seed: str | None):
     """Run a node in the cluster"""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Pulsing Demo Service - Node on port {port}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
-    config = SystemConfig.with_addr(f"127.0.0.1:{port}")
+    addr = f"127.0.0.1:{port}"
+    seeds = [seed] if seed else None
+
+    system = await pul.actor_system(addr, seeds=seeds)
+    print(f"✓ System started: {system.node_id} @ {system.addr}")
     if seed:
-        config = config.with_seeds([seed])
-        print(f"Joining cluster via: {seed}")
-
-    system = await create_actor_system(config)
-    print(f"✓ System started: {system.node_id} @ {system.addr}\n")
+        print(f"  Joined via: {seed}")
+    print()
 
     # Create different actors based on node role
     if seed is None:
         # Node 1: Create dispatcher and some workers
         print("Creating actors on node 1...")
-        await system.spawn("dispatcher", DispatcherActor(), public=True)
+        await system.spawn(DispatcherActor(), name="dispatcher")
         print("  ✓ actors/dispatcher")
 
         for i in range(1, 3):
             worker_name = f"worker-{i}"
-            await system.spawn(worker_name, WorkerActor(worker_name), public=True)
+            await system.spawn(WorkerActor(worker_name), name=worker_name)
             print(f"  ✓ actors/{worker_name}")
 
         print("\n✓ Node 1 ready!")
@@ -150,7 +156,7 @@ async def run_node(port: int, seed: str | None):
         print("Creating actors on node 2...")
         for i in range(3, 5):
             worker_name = f"worker-{i}"
-            await system.spawn(worker_name, WorkerActor(worker_name), public=True)
+            await system.spawn(WorkerActor(worker_name), name=worker_name)
             print(f"  ✓ actors/{worker_name}")
         print("\n✓ Node 2 ready!")
 
@@ -158,7 +164,7 @@ async def run_node(port: int, seed: str | None):
         # Node 3: Add cache
         await asyncio.sleep(1)
         print("Creating actors on node 3...")
-        await system.spawn("cache", CacheActor(), public=True)
+        await system.spawn(CacheActor(), name="cache")
         print("  ✓ actors/cache")
         print("\n✓ Node 3 ready!")
 

@@ -5,8 +5,8 @@
 //!
 //! Run: cargo run --example behavior_fsm -p pulsing-actor
 
-use pulsing_actor::behavior::{stateful, Behavior, BehaviorAction, BehaviorSpawner};
-use pulsing_actor::system::ActorSystem;
+use pulsing_actor::behavior::{stateful, Behavior, BehaviorAction};
+use pulsing_actor::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// Statistics passed between states
@@ -104,7 +104,10 @@ async fn main() -> anyhow::Result<()> {
         cycles: 0,
         transitions: 0,
     };
-    let light = system.spawn_behavior("light", red(initial_stats)).await?;
+    // Behavior implements IntoActor, can be passed directly to spawn_named
+    let light = system
+        .spawn_named("actors/light", red(initial_stats))
+        .await?;
 
     // Run through 2 complete cycles
     for _ in 0..2 {

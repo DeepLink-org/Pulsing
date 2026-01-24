@@ -87,8 +87,8 @@ let system2 = ActorSystem::builder()
     .build()
     .await?;
 
-// 通过路径解析远程 Actor
-let remote = system2.resolve_named("services/echo", None).await?;
+// 通过名称解析远程 Actor
+let remote = system2.resolve("services/echo").await?;
 let resp: String = remote.ask("hello".to_string()).await?;
 ```
 
@@ -97,10 +97,11 @@ let resp: String = remote.ask("hello".to_string()).await?;
 除了传统 Actor trait，还提供函数式 Behavior API：
 
 ```rust
-use pulsing_actor::behavior::{stateful, BehaviorAction, BehaviorSpawner};
+use pulsing_actor::behavior::{stateful, Behavior, BehaviorAction};
+use pulsing_actor::prelude::*;
 
 fn counter(initial: i32) -> Behavior<i32> {
-    stateful(initial, |count, n| {
+    stateful(initial, |count, n, _ctx| {
         *count += n;
         println!("count = {}", *count);
         BehaviorAction::Same
@@ -108,7 +109,8 @@ fn counter(initial: i32) -> Behavior<i32> {
 }
 
 let system = ActorSystem::builder().build().await?;
-let counter_ref = system.spawn_behavior("counter", counter(0)).await?;
+// Behavior 实现 IntoActor，可以直接传给 spawn_named
+let counter_ref = system.spawn_named("actors/counter", counter(0)).await?;
 
 counter_ref.tell(5).await?;  // count = 5
 counter_ref.tell(3).await?;  // count = 8

@@ -1,8 +1,15 @@
 //! Behavior definitions and combinators
 
 use super::context::BehaviorContext;
+use super::reference::TypedRef;
+use crate::actor::ActorSystemRef;
+use crate::actor::{Actor, ActorContext, IntoActor, Message};
+use async_trait::async_trait;
 use futures::future::BoxFuture;
+use serde::{de::DeserializeOwned, Serialize};
 use std::marker::PhantomData;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Action returned by a behavior after processing a message
 pub enum BehaviorAction<M> {
@@ -65,6 +72,167 @@ where
     /// Process a message with this behavior
     pub async fn receive(&mut self, msg: M, ctx: &mut BehaviorContext<M>) -> BehaviorAction<M> {
         (self.inner)(msg, ctx).await
+    }
+}
+
+/// IntoActor implementation for Behavior<M>
+///
+/// This allows Behavior to be passed directly to `spawn` and `spawn_named`:
+/// ```rust,ignore
+/// let counter = system.spawn(counter(0)).await?;
+/// let counter = system.spawn_named("counter", counter(0)).await?;
+/// ```
+impl<M> IntoActor for Behavior<M>
+where
+    M: Serialize + DeserializeOwned + Send + Sync + 'static,
+{
+    type Actor = BehaviorWrapper<M>;
+
+    fn into_actor(self) -> Self::Actor {
+        BehaviorWrapper::new(self)
+    }
+}
+
+/// A wrapper that allows Behavior<M> to be used as an Actor
+///
+/// This wrapper implements the Actor trait, allowing behaviors to be spawned
+/// using the standard `system.spawn()` and `system.spawn_named()` methods.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// fn counter(init: i32) -> Behavior<i32> {
+///     stateful(init, |count, n, _ctx| {
+///         *count += n;
+///         BehaviorAction::Same
+///     })
+/// }
+///
+/// // Use as Actor via IntoActor trait
+/// let counter = system.spawn(counter(0)).await?;
+/// let counter = system.spawn_named("counter", counter(0)).await?;
+/// ```
+pub struct BehaviorWrapper<M>
+where
+    M: Serialize + DeserializeOwned + Send + 'static,
+{
+    behavior: Mutex<Behavior<M>>,
+    behavior_ctx: Mutex<Option<BehaviorContext<M>>>,
+    name: Mutex<Option<String>>,
+}
+
+impl<M> BehaviorWrapper<M>
+where
+    M: Serialize + DeserializeOwned + Send + 'static,
+{
+    /// Create a new BehaviorWrapper from a Behavior
+    pub fn new(behavior: Behavior<M>) -> Self {
+        Self {
+            behavior: Mutex::new(behavior),
+            behavior_ctx: Mutex::new(None),
+            name: Mutex::new(None),
+        }
+    }
+}
+
+impl<M> From<Behavior<M>> for BehaviorWrapper<M>
+where
+    M: Serialize + DeserializeOwned + Send + 'static,
+{
+    fn from(behavior: Behavior<M>) -> Self {
+        Self::new(behavior)
+    }
+}
+
+#[async_trait]
+impl<M> Actor for BehaviorWrapper<M>
+where
+    M: Serialize + DeserializeOwned + Send + Sync + 'static,
+{
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+        // Deserialize the incoming message
+        let typed_msg: M = msg.unpack()?;
+
+        // Get mutable access to behavior and context
+        let mut behavior = self.behavior.lock().await;
+        let mut ctx_guard = self.behavior_ctx.lock().await;
+
+        let ctx = ctx_guard
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("BehaviorContext not initialized"))?;
+
+        // Process the message
+        let action = behavior.receive(typed_msg, ctx).await;
+
+        // Handle the action
+        match action {
+            BehaviorAction::Same => Message::pack(&()),
+            BehaviorAction::Become(new_behavior) => {
+                *behavior = new_behavior;
+                Message::pack(&())
+            }
+            BehaviorAction::Stop(reason) => {
+                let actor_name = self.name.lock().await;
+                let name = actor_name.as_deref().unwrap_or("unknown");
+                if let Some(ref r) = reason {
+                    tracing::info!(actor = %name, reason = %r, "Behavior actor stopping");
+                } else {
+                    tracing::info!(actor = %name, "Behavior actor stopping");
+                }
+
+                drop(behavior);
+                drop(ctx_guard);
+
+                _ctx.cancel_token().cancel();
+
+                Err(anyhow::anyhow!(
+                    "Actor stopped: {}",
+                    reason.unwrap_or_default()
+                ))
+            }
+            BehaviorAction::AlreadyStopped => {
+                let actor_name = self.name.lock().await;
+                let name = actor_name.as_deref().unwrap_or("unknown");
+                tracing::warn!(actor = %name, "Message received after actor stopped");
+                Err(anyhow::anyhow!("Actor already stopped"))
+            }
+        }
+    }
+
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+        // Get or derive the actor name
+        let actor_name = ctx
+            .named_path()
+            .map(String::from)
+            .unwrap_or_else(|| format!("behavior-{}", ctx.id()));
+
+        // Store name for logging
+        *self.name.lock().await = Some(actor_name.clone());
+
+        // We need a system reference - get it from the context
+        // Note: This requires ActorContext to provide system access
+        let system: Arc<dyn ActorSystemRef> = ctx
+            .system()
+            .ok_or_else(|| anyhow::anyhow!("No system reference available in context"))?;
+
+        // Initialize the behavior context
+        let actor_id = *ctx.id();
+
+        // Create typed self reference
+        let self_ref = TypedRef::from_name(&actor_name, system.clone());
+
+        let behavior_ctx = BehaviorContext::new(
+            actor_name,
+            actor_id,
+            system,
+            self_ref,
+            ctx.cancel_token().clone(),
+        );
+
+        let mut ctx_guard = self.behavior_ctx.lock().await;
+        *ctx_guard = Some(behavior_ctx);
+
+        Ok(())
     }
 }
 

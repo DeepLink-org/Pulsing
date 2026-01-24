@@ -93,6 +93,7 @@ plugins:
             Reliability: 可靠性
             Operations: CLI 运维
             Distributed Queue: 分布式内存队列
+            Python API Contract: Python API 契约
             Semantics: 语义与保证
             Style Guide: 术语与风格
             Agent: Agent 框架

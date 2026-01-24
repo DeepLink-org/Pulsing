@@ -36,8 +36,8 @@ from pulsing.actor import (
     ActorSystem,
     Message,
     SystemConfig,
-    create_actor_system,
 )
+from pulsing.actor.remote import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
 
 logger = logging.getLogger("pulsing.autogen")
 T = TypeVar("T")
@@ -117,7 +117,11 @@ class PulsingRuntime:
             # Standalone mode
             config = SystemConfig.standalone()
 
-        self._system = await create_actor_system(config)
+        loop = asyncio.get_running_loop()
+        self._system = await ActorSystem.create(config, loop)
+        # Register PythonActorService for remote actor creation
+        service = PythonActorService(self._system)
+        await self._system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
         self._running = True
 
         mode = "distributed" if self.is_distributed else "standalone"
@@ -376,7 +380,7 @@ class PulsingRuntime:
         # Create wrapper and spawn
         wrapper = AutoGenAgentWrapper(agent_instance, self)
 
-        actor_ref = await self._system.spawn(full_key, wrapper, public=True)
+        actor_ref = await self._system.spawn(wrapper, name=full_key, public=True)
 
         self._instantiated_agents[full_key] = agent_instance
         self._agent_refs[full_key] = actor_ref
@@ -546,7 +550,7 @@ class PulsingRuntime:
         # Create wrapper and spawn
         wrapper = AutoGenAgentWrapper(agent, self)
 
-        actor_ref = await self._system.spawn(full_key, wrapper, public=True)
+        actor_ref = await self._system.spawn(wrapper, name=full_key, public=True)
 
         self._instantiated_agents[full_key] = agent
         self._agent_refs[full_key] = actor_ref

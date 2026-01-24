@@ -28,8 +28,12 @@ def _compute_owner(bucket_key: str, nodes: list[dict]) -> int | None:
     if not nodes:
         return None
 
-    # Only select nodes in Alive state
-    alive_nodes = [n for n in nodes if n.get("state") == "Alive"]
+    # Only select nodes in Alive state.
+    #
+    # Note: `ActorSystem.members()` (Rust binding) currently returns `status`
+    # (e.g. "Alive"/"Suspect"/"Dead") rather than `state`, while some older
+    # callers used `state`. Support both to stay backward compatible.
+    alive_nodes = [n for n in nodes if (n.get("state") or n.get("status")) == "Alive"]
     if not alive_nodes:
         # If no Alive nodes, fallback to all nodes
         alive_nodes = nodes
@@ -153,7 +157,7 @@ class StorageManager(Actor):
                     backend_options=backend_options,
                 )
                 self._buckets[key] = await self.system.spawn(
-                    actor_name, storage, public=True
+                    storage, name=actor_name, public=True
                 )
                 logger.info(f"Created bucket: {actor_name} at {bucket_storage_path}")
 
@@ -178,7 +182,7 @@ class StorageManager(Actor):
 
                 broker = TopicBroker(topic_name, self.system)
                 self._topics[topic_name] = await self.system.spawn(
-                    actor_name, broker, public=True
+                    broker, name=actor_name, public=True
                 )
                 logger.info(f"Created topic broker: {actor_name}")
 
@@ -357,7 +361,7 @@ async def get_storage_manager(system: ActorSystem) -> ActorRef:
         # Create new StorageManager
         try:
             manager = StorageManager(system)
-            return await system.spawn(STORAGE_MANAGER_NAME, manager, public=True)
+            return await system.spawn(manager, name=STORAGE_MANAGER_NAME, public=True)
         except Exception as e:
             if "already exists" in str(e).lower():
                 return await system.resolve_named(

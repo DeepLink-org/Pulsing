@@ -2,8 +2,10 @@
 Pulsing Multi-Agent Research Workflow using @agent decorator
 Same functionality as AutoGen version
 """
+
 from pulsing.actor import resolve
 from pulsing.agent import agent, runtime
+
 
 # Researcher Agent
 @agent(role="Researcher", goal="Research topics")
@@ -47,6 +49,8 @@ async def run_workflow():
 
         print(report)
 
+
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(run_workflow())

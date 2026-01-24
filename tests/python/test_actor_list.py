@@ -54,8 +54,8 @@ async def test_actor_list_basic():
 
             name = path_str[7:] if path_str.startswith("actors/") else path_str
 
-            # Skip internal actors
-            if name.startswith("_"):
+            # Skip internal actors (old style and new system/ namespace)
+            if name.startswith("_") or name.startswith("system/"):
                 continue
 
             # Get instances for this actor
@@ -147,7 +147,7 @@ async def test_actor_list_all():
         assert "test-counter" in output
 
         # Should also contain system actors
-        assert "_system_internal" in output or "_python_actor_service" in output
+        assert "system/core" in output or "system/python_actor_service" in output
 
     finally:
         sys.stdout = old_stdout

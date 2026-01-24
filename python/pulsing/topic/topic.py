@@ -234,7 +234,7 @@ class TopicReader:
         actor_name = f"_topic_sub_{self._topic}_{self._reader_id}"
         subscriber = _SubscriberActor(self._callbacks)
         self._subscriber_ref = await self._system.spawn(
-            actor_name, subscriber, public=True
+            subscriber, name=actor_name, public=True
         )
 
         # Register with broker

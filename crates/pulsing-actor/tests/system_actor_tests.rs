@@ -168,7 +168,6 @@ fn test_actor_info_serialization() {
         actor_id: 123,
         actor_type: "TestActor".to_string(),
         uptime_secs: 60,
-        public: true,
         metadata: std::collections::HashMap::new(),
     };
     let json = serde_json::to_string(&info).unwrap();
@@ -181,7 +180,6 @@ fn test_actor_info_serialization() {
     assert_eq!(parsed.actor_id, 123);
     assert_eq!(parsed.actor_type, "TestActor");
     assert_eq!(parsed.uptime_secs, 60);
-    assert!(parsed.public);
 }
 
 // ============================================================================
@@ -309,7 +307,7 @@ async fn test_system_actor_list_actors() {
     match parsed {
         SystemResponse::ActorList { actors } => {
             // Initially empty (SystemActor doesn't register itself in the registry)
-            assert!(actors.is_empty() || actors.iter().all(|a| a.name != "_system_internal"));
+            assert!(actors.is_empty() || actors.iter().all(|a| a.name != "system/core"));
         }
         _ => panic!("Expected ActorList response"),
     }
@@ -430,7 +428,7 @@ fn test_actor_registry() {
     let registry = ActorRegistry::new();
     let actor_id = ActorId::local(1);
 
-    registry.register("test", actor_id, "TestActor", true);
+    registry.register("test", actor_id, "TestActor");
     assert!(registry.contains("test"));
     assert_eq!(registry.count(), 1);
 
@@ -446,8 +444,8 @@ fn test_actor_registry() {
 fn test_actor_registry_list_all() {
     let registry = ActorRegistry::new();
 
-    registry.register("actor1", ActorId::local(1), "TypeA", true);
-    registry.register("actor2", ActorId::local(2), "TypeB", false);
+    registry.register("actor1", ActorId::local(1), "TypeA");
+    registry.register("actor2", ActorId::local(2), "TypeB");
 
     let actors = registry.list_all();
     assert_eq!(actors.len(), 2);

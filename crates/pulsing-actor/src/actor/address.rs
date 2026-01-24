@@ -27,6 +27,12 @@ pub enum AddressParseError {
     EmptySegment,
     /// Invalid character in path
     InvalidCharacter,
+    /// Path exceeds maximum length
+    PathTooLong,
+    /// Single segment exceeds maximum length
+    SegmentTooLong,
+    /// Attempted to use a reserved system namespace
+    ReservedNamespace,
 }
 
 impl fmt::Display for AddressParseError {
@@ -40,6 +46,19 @@ impl fmt::Display for AddressParseError {
             }
             Self::EmptySegment => write!(f, "Path segment cannot be empty"),
             Self::InvalidCharacter => write!(f, "Invalid character in path"),
+            Self::PathTooLong => write!(
+                f,
+                "Path exceeds maximum length of {} characters",
+                ActorPath::MAX_PATH_LENGTH
+            ),
+            Self::SegmentTooLong => write!(
+                f,
+                "Segment exceeds maximum length of {} characters",
+                ActorPath::MAX_SEGMENT_LENGTH
+            ),
+            Self::ReservedNamespace => {
+                write!(f, "Cannot use reserved system namespace for user actors")
+            }
         }
     }
 }
@@ -61,12 +80,26 @@ pub struct ActorPath {
 }
 
 impl ActorPath {
-    /// Reserved system namespaces
+    /// Reserved system namespaces that cannot be used by user actors
     pub const SYSTEM_NAMESPACES: &'static [&'static str] = &["system"];
+
+    /// Maximum total path length (prevents DoS and memory issues)
+    pub const MAX_PATH_LENGTH: usize = 256;
+
+    /// Maximum single segment length
+    pub const MAX_SEGMENT_LENGTH: usize = 64;
 
     /// Create a new actor path from a string
     ///
     /// The path must have at least two segments (namespace/name).
+    ///
+    /// # Validation Rules
+    /// - Path cannot be empty
+    /// - Path cannot exceed 256 characters
+    /// - Each segment cannot exceed 64 characters
+    /// - Each segment can only contain alphanumeric characters, `_`, and `-`
+    /// - Path must have at least two segments (namespace/name)
+    /// - User code cannot use reserved system namespaces (use `new_system` for internal use)
     ///
     /// # Examples
     /// ```
@@ -75,9 +108,18 @@ impl ActorPath {
     /// let path = ActorPath::new("services/llm/router").unwrap();
     /// assert_eq!(path.namespace(), "services");
     /// assert_eq!(path.name(), "router");
+    ///
+    /// // These will fail:
+    /// // ActorPath::new("system/internal").unwrap(); // Reserved namespace
+    /// // ActorPath::new("a".repeat(300)).unwrap();   // Too long
     /// ```
     pub fn new(path: impl AsRef<str>) -> Result<Self, AddressParseError> {
         let path = path.as_ref().trim_matches('/');
+
+        // Check total path length
+        if path.len() > Self::MAX_PATH_LENGTH {
+            return Err(AddressParseError::PathTooLong);
+        }
 
         if path.is_empty() {
             return Err(AddressParseError::MissingNamespace);
@@ -89,6 +131,59 @@ impl ActorPath {
         for segment in &segments {
             if segment.is_empty() {
                 return Err(AddressParseError::EmptySegment);
+            }
+            if segment.len() > Self::MAX_SEGMENT_LENGTH {
+                return Err(AddressParseError::SegmentTooLong);
+            }
+            if !Self::is_valid_segment(segment) {
+                return Err(AddressParseError::InvalidCharacter);
+            }
+        }
+
+        // Must have at least namespace/name
+        if segments.len() < 2 {
+            return Err(AddressParseError::MissingNamespace);
+        }
+
+        // Check for reserved system namespaces (user code cannot use these)
+        if Self::SYSTEM_NAMESPACES.contains(&segments[0].as_str()) {
+            return Err(AddressParseError::ReservedNamespace);
+        }
+
+        Ok(Self { segments })
+    }
+
+    /// Create a system actor path (bypasses reserved namespace check)
+    ///
+    /// # Warning
+    /// This method is intended for framework internals (actor system, Python bindings).
+    /// Application code should use `new()` which enforces namespace restrictions.
+    ///
+    /// # Use Cases
+    /// - Creating paths for built-in system actors like `system/core`
+    /// - Python bindings for `PythonActorService` at `system/python_actor_service`
+    #[doc(hidden)]
+    pub fn new_system(path: impl AsRef<str>) -> Result<Self, AddressParseError> {
+        let path = path.as_ref().trim_matches('/');
+
+        // Check total path length
+        if path.len() > Self::MAX_PATH_LENGTH {
+            return Err(AddressParseError::PathTooLong);
+        }
+
+        if path.is_empty() {
+            return Err(AddressParseError::MissingNamespace);
+        }
+
+        let segments: Vec<String> = path.split('/').map(|s| s.trim().to_string()).collect();
+
+        // Validate segments
+        for segment in &segments {
+            if segment.is_empty() {
+                return Err(AddressParseError::EmptySegment);
+            }
+            if segment.len() > Self::MAX_SEGMENT_LENGTH {
+                return Err(AddressParseError::SegmentTooLong);
             }
             if !Self::is_valid_segment(segment) {
                 return Err(AddressParseError::InvalidCharacter);
@@ -475,11 +570,40 @@ mod tests {
 
     #[test]
     fn test_actor_path_system_namespace() {
-        let path = ActorPath::new("system/cluster/monitor").unwrap();
+        // System namespace is reserved - regular new() should fail
+        assert!(matches!(
+            ActorPath::new("system/cluster/monitor"),
+            Err(AddressParseError::ReservedNamespace)
+        ));
+
+        // Use new_system for internal system actors
+        let path = ActorPath::new_system("system/cluster/monitor").unwrap();
         assert!(path.is_system());
 
+        // Regular namespaces work normally
         let path = ActorPath::new("services/api").unwrap();
         assert!(!path.is_system());
+    }
+
+    #[test]
+    fn test_actor_path_length_limits() {
+        // Path too long
+        let long_path = format!("services/{}", "a".repeat(300));
+        assert!(matches!(
+            ActorPath::new(&long_path),
+            Err(AddressParseError::PathTooLong)
+        ));
+
+        // Single segment too long
+        let long_segment = format!("services/{}", "b".repeat(100));
+        assert!(matches!(
+            ActorPath::new(&long_segment),
+            Err(AddressParseError::SegmentTooLong)
+        ));
+
+        // Valid length path
+        let valid_path = format!("services/{}", "c".repeat(50));
+        assert!(ActorPath::new(&valid_path).is_ok());
     }
 
     #[test]

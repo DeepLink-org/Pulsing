@@ -130,7 +130,7 @@ impl CoordinatorActor {
         if self.display_enabled {
             let renderer = ConsoleRendererActor::new();
             let renderer_ref = system
-                .spawn(format!("renderer-{}", start.run_id), renderer)
+                .spawn_named(format!("renderer-{}", start.run_id), renderer)
                 .await?;
             self.renderer_ref = Some(renderer_ref);
         }
@@ -141,7 +141,7 @@ impl CoordinatorActor {
             metrics = metrics.with_renderer(renderer.clone());
         }
         let metrics_ref = system
-            .spawn(format!("metrics-{}", start.run_id), metrics)
+            .spawn_named(format!("metrics-{}", start.run_id), metrics)
             .await?;
         self.metrics_ref = Some(metrics_ref.clone());
 
@@ -158,7 +158,7 @@ impl CoordinatorActor {
             let worker =
                 WorkerActor::new(format!("worker-{}", i)).with_metrics(metrics_ref.clone());
             let worker_ref = system
-                .spawn(format!("worker-{}-{}", start.run_id, i), worker)
+                .spawn_named(format!("worker-{}-{}", start.run_id, i), worker)
                 .await?;
             self.workers.push(worker_ref);
         }
@@ -180,7 +180,7 @@ impl CoordinatorActor {
                 start.config.model_name.clone(),
             );
         let scheduler_ref = system
-            .spawn(format!("scheduler-{}", start.run_id), scheduler)
+            .spawn_named(format!("scheduler-{}", start.run_id), scheduler)
             .await?;
         self.scheduler_ref = Some(scheduler_ref);
 

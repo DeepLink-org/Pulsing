@@ -458,7 +458,7 @@ class Router(Actor):
 
         # Or programmatically
         router = Router(http_port=8080, model_name="my-llm")
-        await system.spawn("router", router, public=True)
+        await system.spawn(router, name="router", public=True)
     """
 
     def __init__(

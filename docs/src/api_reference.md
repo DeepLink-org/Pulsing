@@ -2,149 +2,118 @@
 
 Complete API documentation for Pulsing Actor Framework.
 
+## Contract & Semantics (Derived from `llms.binding.md`)
+
+This section is the **user-facing contract** for Pulsing's Python API. It is **derived from** the repository document **`llms.binding.md`**.
+
+- **Source of truth**: `llms.binding.md` is the canonical contract.
+- **This page**: API reference + explicit semantics (concurrency, errors, trust boundaries).
+- **If there's a mismatch**: treat `llms.binding.md` as authoritative; please open an issue/PR to sync docs.
+
+### Concurrency model for `@pulsing.remote`
+
+For a `@pulsing.remote` class, method calls are translated into actor messages.
+
+- **Sync method (`def method`)**
+  - Executed **serially** (one request at a time) in the actor.
+  - Recommended for fast CPU work and state mutation.
+- **Async method (`async def method`)**
+  - The call uses **stream-backed execution** and is scheduled as a background task on the actor side.
+  - While the method is awaiting, the actor can continue receiving other messages (**non-blocking** behavior).
+  - You can either:
+    - `await proxy.async_method(...)` to get the final value, or
+    - `async for chunk in proxy.async_method(...): ...` to consume streamed yields.
+- **Generators (sync/async)**
+  - Returning a generator (sync or async) is treated as a **streaming response**.
+
+### Streaming & cancellation
+
+- Streaming is implemented via Pulsing stream messages; cancellation is **best-effort**.
+- If a caller cancels the local await/iteration, the remote side may or may not stop immediately, depending on transport-level cancellation propagation.
+
+### `ask` vs `tell`
+
+- **`ask(msg)`**: request/response. Returns a value (or raises).
+- **`tell(msg)`**: fire-and-forget. No response is awaited.
+
+### Error model (current behavior)
+
+- Actor-side exceptions are transported back and typically raised as **`RuntimeError(str(e))`** on the caller side.
+- Timeout helpers (where used) raise **`asyncio.TimeoutError`**.
+
+Note: error *type information and remote stack traces* are not guaranteed to be preserved.
+
+### Trust boundary & security notes
+
+- **Pickle-based payloads (Python ↔ Python)**:
+  - Python-to-Python payloads are transported as **pickle** by default for convenience.
+  - **Risk**: unpickling untrusted data can lead to arbitrary code execution (RCE).
+  - **Guideline**: only use pickle payloads inside a **trusted network / trusted cluster** boundary.
+- **Transport security (TLS)**:
+  - For production deployments, always enable TLS and treat the cluster as an authenticated trust boundary.
+
+### Queue semantics (distributed queue)
+
+- **Bucketing**:
+  - Writer uses `bucket_column` + `num_buckets` to partition records into buckets.
+  - Readers must use a consistent `num_buckets` (and backend) with writers.
+- **Ownership**:
+  - Bucket ownership is computed by hashing over live cluster members; requests may be redirected to the owning node.
+- **Backends**:
+  - Default backend is in-memory; persistence depends on the selected backend.
+
+## Core Functions
+
+### pul.actor_system
+
+Create a new Actor System instance.
+
+```python
+import pulsing as pul
+
+system = await pul.actor_system(
+    addr: str | None = None,        # Bind address, None for standalone
+    *,
+    seeds: list[str] | None = None, # Seed nodes for cluster
+    passphrase: str | None = None,  # TLS passphrase
+) -> ActorSystem
+```
+
+**Example:**
+
+```python
+# Standalone mode
+system = await pul.actor_system()
+
+# Cluster mode
+system = await pul.actor_system(addr="0.0.0.0:8000")
+
+# Join existing cluster
+system = await pul.actor_system(addr="0.0.0.0:8001", seeds=["127.0.0.1:8000"])
+
+# Shutdown
+await system.shutdown()
+```
+
+### pul.init / pul.shutdown
+
+Global system initialization (Ray-style async API).
+
+```python
+import pulsing as pul
+
+# Initialize global system
+await pul.init(addr=None, seeds=None, passphrase=None)
+
+# Use global system
+actor = await pul.spawn(MyActor())
+ref = await pul.resolve("actor_name")
+
+# Shutdown
+await pul.shutdown()
+```
+
 ## Core Classes
-
-### Actor
-
-Base class for all actors.
-
-```python
-class Actor:
-    async def receive(self, msg: Message) -> Message:
-        """Handle incoming messages."""
-        pass
-```
-
-### Message
-
-Message wrapper for actor communication.
-
-```python
-class Message:
-    @property
-    def msg_type(self) -> str:
-        """Get the message type."""
-        pass
-
-    @property
-    def payload(self) -> bytes:
-        """Get the raw payload bytes."""
-        pass
-
-    @property
-    def is_stream(self) -> bool:
-        """Check if this is a streaming message."""
-        pass
-
-    @staticmethod
-    def single(msg_type: str, payload: bytes) -> Message:
-        """Create a single message with raw bytes."""
-        pass
-
-    def to_json(self) -> Any:
-        """Deserialize payload as JSON."""
-        pass
-
-    def to_object(self) -> Any:
-        """Deserialize payload as Python object (pickle)."""
-        pass
-
-    def stream_reader(self) -> StreamReader:
-        """Get stream reader for streaming messages."""
-        pass
-```
-
-### StreamMessage
-
-Factory for creating streaming responses.
-
-```python
-class StreamMessage:
-    @staticmethod
-    def create(
-        msg_type: str = "",
-        buffer_size: int = 32
-    ) -> tuple[Message, StreamWriter]:
-        """
-        Create a streaming message and its writer.
-
-        Args:
-            msg_type: Default message type for stream chunks
-            buffer_size: Bounded channel buffer size (backpressure)
-
-        Returns:
-            tuple of (Message, StreamWriter)
-        """
-        pass
-```
-
-### StreamWriter
-
-Writer for streaming responses. Supports automatic Python object serialization.
-
-```python
-class StreamWriter:
-    async def write(self, obj: Any) -> None:
-        """
-        Write a Python object to the stream.
-
-        The object is automatically serialized using pickle,
-        making Python-to-Python streaming transparent.
-
-        Args:
-            obj: Any picklable Python object (dict, list, str, etc.)
-        """
-        pass
-
-    async def close(self) -> None:
-        """Close the stream normally."""
-        pass
-
-    async def error(self, message: str) -> None:
-        """Close the stream with an error."""
-        pass
-```
-
-### StreamReader
-
-Reader for streaming responses. Automatically deserializes Python objects.
-
-```python
-class StreamReader:
-    async def __anext__(self) -> Any:
-        """
-        Get the next item from the stream.
-
-        Returns Python objects directly (automatically unpickled).
-        Raises StopAsyncIteration when stream ends.
-        """
-        pass
-
-    def __aiter__(self) -> StreamReader:
-        """Return self as async iterator."""
-        pass
-```
-
-### SystemConfig
-
-Configuration for Actor System.
-
-```python
-class SystemConfig:
-    @staticmethod
-    def standalone() -> SystemConfig:
-        """Create standalone (non-cluster) configuration."""
-        pass
-
-    @staticmethod
-    def with_addr(addr: str) -> SystemConfig:
-        """Create configuration with address."""
-        pass
-
-    def with_seeds(self, seeds: List[str]) -> SystemConfig:
-        """Add seed nodes for cluster discovery."""
-        pass
-```
 
 ### ActorSystem
 
@@ -155,18 +124,28 @@ class ActorSystem:
     async def spawn(
         self,
         actor: Actor,
-        name: str,
-        public: bool = False
+        *,
+        name: str | None = None,
+        # public parameter is deprecated: all named actors are resolvable
+        restart_policy: str = "never",
+        max_restarts: int = 3,
+        min_backoff: float = 0.1,
+        max_backoff: float = 30.0
     ) -> ActorRef:
-        """Spawn a new actor."""
+        """
+        Spawn a new actor.
+
+        - With name: named actor, discoverable via resolve()
+        - Without name: anonymous actor, only accessible via returned ActorRef
+        """
         pass
 
-    async def find(self, name: str) -> Optional[ActorRef]:
-        """Find an actor by name in the cluster."""
+    async def refer(self, actorid: ActorId | str) -> ActorRef:
+        """Get ActorRef by ActorId."""
         pass
 
-    async def has_actor(self, name: str) -> bool:
-        """Check if an actor exists."""
+    async def resolve(self, name: str, *, node_id: int | None = None) -> ActorRef:
+        """Resolve actor by name."""
         pass
 
     async def shutdown(self) -> None:
@@ -176,129 +155,224 @@ class ActorSystem:
 
 ### ActorRef
 
-Low-level reference to an actor (local or remote). Usually not used directly; prefer `ActorProxy`.
+Low-level reference to an actor. Use `ask()` and `tell()` to communicate.
 
 ```python
 class ActorRef:
-    async def ask(self, msg: Message) -> Message:
+    @property
+    def actor_id(self) -> ActorId:
+        """Get the actor's ID."""
+        pass
+
+    async def ask(self, msg: Any) -> Any:
         """Send a message and wait for response."""
         pass
 
-    async def tell(self, msg: Message) -> None:
-        """Send a message without waiting for response."""
-        pass
-
-    async def ask_stream(self, msg: Message) -> AsyncIterator[Message]:
-        """Send a streaming message."""
+    async def tell(self, msg: Any) -> None:
+        """Send a message without waiting for response (fire-and-forget)."""
         pass
 ```
 
 ### ActorProxy
 
-High-level proxy wrapper for actors, returned by `@remote` decorator's `spawn()` and `resolve()`.
-**Recommended: use ActorProxy to call methods directly**, no need to manually construct `Message`.
+High-level proxy for `@remote` classes. Call methods directly.
 
 ```python
 class ActorProxy:
     @property
     def ref(self) -> ActorRef:
-        """Get underlying ActorRef (for low-level ask/tell)"""
+        """Get underlying ActorRef."""
         pass
 
-    # Call actor methods directly, e.g.:
+    # Call methods directly:
     # result = await proxy.my_method(arg1, arg2)
 ```
 
-**ActorProxy vs ActorRef comparison**:
-
-| Scenario | Recommendation |
-|----------|----------------|
-| Call `@remote` class methods | `ActorProxy`: `await proxy.method()` |
-| Need low-level ask/tell | `ActorRef`: `await proxy.ref.ask(msg)` |
-| Need actor_id | `ActorRef`: `proxy.ref.actor_id` |
-
 ## Decorators
 
-### @remote
+### @remote / @pul.remote
 
-Convert a class into an Actor automatically.
+Convert a class into a distributed Actor.
 
 ```python
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
-@remote
-class MyActor:
-    def __init__(self, value: int):
-        self.value = value
+@pul.remote
+class Counter:
+    def __init__(self, init_value: int = 0):
+        self.value = init_value
 
-    def get(self) -> int:
+    # Sync method - sequential execution
+    def incr(self) -> int:
+        self.value += 1
         return self.value
 
-    async def process(self, data: str) -> dict:
-        return {"result": data.upper()}
+    # Async method - concurrent execution during await
+    async def fetch_and_add(self, url: str) -> int:
+        data = await http_get(url)
+        self.value += data
+        return self.value
 
-async def main():
-    await init()
-    actor = await MyActor.spawn(value=10)
-    print(await actor.get())  # 10
-    await shutdown()
+    # Generator - automatic streaming
+    async def stream(self):
+        for i in range(10):
+            yield {"count": i}
+
+# Create actor
+counter = await Counter.spawn(name="counter")
+
+# Call methods directly
+result = await counter.incr()
+
+# Streaming
+async for chunk in counter.stream():
+    print(chunk)
+
+# Resolve existing actor
+proxy = await Counter.resolve("counter")
 ```
 
-#### Supervision (actor-level restarts)
-
-`@remote` supports **actor-level restarts** via optional parameters:
-
-- `restart_policy`: `"never"` (default), `"always"`, `"on-failure"`
-- `max_restarts`: maximum number of restarts (default: `3`)
-- `min_backoff` / `max_backoff`: backoff bounds in seconds
-
-Example:
+**Supervision parameters:**
 
 ```python
-from pulsing.actor import remote
-
-@remote(restart_policy="on-failure", max_restarts=5, min_backoff=0.2, max_backoff=10.0)
-class Worker:
-    def work(self, x: int) -> int:
-        return 100 // x
+@pul.remote(
+    restart_policy="on_failure",  # "never" | "on_failure" | "always"
+    max_restarts=3,
+    min_backoff=0.1,
+    max_backoff=30.0,
+)
+class ResilientWorker:
+    def work(self, data): ...
 ```
 
-Notes:
+## Base Actor
 
-- This is **not** a supervision tree.
-- Restarts do **not** imply exactly-once semantics; design idempotent handlers.
-
-## Helpers
-
-### ask_with_timeout
-
-Convenience wrapper around `ActorRef.ask()` with timeout support:
+For low-level control, inherit from Actor base class.
 
 ```python
-from pulsing.actor import ask_with_timeout
+class MyActor:
+    def __init__(self):
+        self.value = 0
 
-result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
+    def on_start(self, actor_id):
+        """Called when actor starts."""
+        print(f"Started: {actor_id}")
+
+    async def receive(self, msg):
+        """Handle incoming messages."""
+        if msg.get("action") == "add":
+            self.value += msg.get("n", 1)
+            return {"value": self.value}
+        return {"error": "unknown action"}
+
+# Spawn
+system = await pul.actor_system()
+actor = await system.spawn(MyActor(), name="my_actor")
+
+# Communicate via ask/tell
+response = await actor.ask({"action": "add", "n": 10})
 ```
 
+## Queue API
 
-After decoration, the class provides:
-
-- `spawn(**kwargs) -> ActorProxy`: Create actor and return proxy (uses global system from `init()`)
-- `local(system, **kwargs) -> ActorProxy`: Create actor on specified system
-- `resolve(name) -> ActorProxy`: Resolve an existing actor by name
-
-**Recommended**: Use the returned `ActorProxy` to call methods directly; use `proxy.ref` for low-level `ask/tell`
-
-## Functions
-
-### create_actor_system
-
-Create a new Actor System instance.
+Distributed queue for data pipelines.
 
 ```python
-async def create_actor_system(config: SystemConfig) -> ActorSystem:
-    """Create and start an actor system."""
-    pass
+# Write
+writer = await system.queue.write(
+    topic="my_queue",
+    bucket_column="user_id",
+    num_buckets=4,
+)
+await writer.put({"user_id": "u1", "data": "hello"})
+await writer.flush()
+
+# Read
+reader = await system.queue.read("my_queue")
+records = await reader.get(limit=100)
+```
+
+## Ray Compatibility
+
+Drop-in replacement for Ray.
+
+```python
+from pulsing.compat import ray
+
+ray.init()
+
+@ray.remote
+class Counter:
+    def __init__(self):
+        self.value = 0
+    def incr(self):
+        self.value += 1
+        return self.value
+
+counter = Counter.remote()
+result = ray.get(counter.incr.remote())
+
+ray.shutdown()
+```
+
+## Rust API
+
+The Rust API is organized into three trait layers (all re-exported in `pulsing_actor::prelude::*`):
+
+### ActorSystemCoreExt (Primary API)
+
+Core spawn and resolve operations:
+
+```rust
+// Spawn - Simple API
+system.spawn(actor).await?;                    // Anonymous actor (not resolvable)
+system.spawn_named(name, actor).await?;        // Named actor (resolvable)
+
+// Spawn - Builder pattern (advanced config)
+system.spawning()
+    .name("services/counter")                  // Optional: with name = resolvable
+    .supervision(SupervisionSpec::on_failure().max_restarts(3))
+    .mailbox_capacity(256)
+    .spawn(actor).await?;
+
+// Resolve - Simple API
+system.actor_ref(&actor_id).await?;            // Get by ActorId
+system.resolve(name).await?;                   // Resolve by name
+
+// Resolve - Builder pattern (advanced config)
+system.resolving()
+    .node(node_id)                             // Optional: target node
+    .policy(RoundRobinPolicy::new())           // Optional: load balancing
+    .filter_alive(true)                        // Optional: only alive nodes
+    .resolve(name).await?;                     // Resolve single
+
+system.resolving().list(name).await?;          // Get all instances
+system.resolving().lazy(name)?;                // Lazy resolution (~5s TTL auto-refresh)
+```
+
+### ActorSystemAdvancedExt (Supervision/Restart)
+
+Factory-based spawning for supervision restarts (named actors only):
+
+```rust
+let options = SpawnOptions::new()
+    .supervision(SupervisionSpec::on_failure().max_restarts(3));
+
+// Only named actors support supervision (anonymous cannot be re-resolved)
+system.spawn_named_factory(name, || Ok(Service::new()), options).await?;
+```
+
+### ActorSystemOpsExt (Operations/Diagnostics)
+
+System info, cluster membership, lifecycle:
+
+```rust
+system.node_id();
+system.addr();
+system.members().await;
+system.all_named_actors().await;
+system.stop(name).await?;
+system.shutdown().await?;
 ```
 
 ## Examples

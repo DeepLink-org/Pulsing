@@ -1,7 +1,7 @@
 //! Typed actor references
 
 use crate::actor::ActorRef;
-use crate::system::ActorSystem;
+use crate::actor::ActorSystemRef;
 use serde::{de::DeserializeOwned, Serialize};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -13,7 +13,7 @@ enum ResolutionMode {
     /// Direct reference - always use this ActorRef
     Direct(ActorRef),
     /// Dynamic resolution - resolve by name each time (no caching)
-    Dynamic(Arc<ActorSystem>),
+    Dynamic(Arc<dyn ActorSystemRef>),
 }
 
 /// A type-safe actor reference
@@ -29,10 +29,11 @@ enum ResolutionMode {
 /// # Example
 ///
 /// ```rust,ignore
-/// // Type-safe: only CounterMsg can be sent
-/// let counter: TypedRef<CounterMsg> = system.spawn_behavior("counter", counter_behavior).await?;
+/// // Spawn behavior directly (Behavior implements IntoActor)
+/// let counter = system.spawn_named("actors/counter", counter_behavior).await?;
 ///
-/// // Compile-time error if wrong message type
+/// // Or wrap with TypedRef for type-safe sending
+/// let counter: TypedRef<CounterMsg> = TypedRef::new("actors/counter", counter);
 /// counter.tell(CounterMsg::Increment(5)).await?;
 /// ```
 pub struct TypedRef<M> {
@@ -86,7 +87,7 @@ where
     ///
     /// The actor is resolved by name on each operation, ensuring
     /// the reference is always up-to-date (no stale cache).
-    pub(crate) fn from_name(name: &str, system: Arc<ActorSystem>) -> Self {
+    pub(crate) fn from_name(name: &str, system: Arc<dyn ActorSystemRef>) -> Self {
         Self {
             name: name.to_string(),
             mode: ResolutionMode::Dynamic(system),

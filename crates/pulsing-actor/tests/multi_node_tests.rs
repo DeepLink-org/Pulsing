@@ -2,6 +2,7 @@
 
 use pulsing_actor::actor::{ActorAddress, ActorPath};
 use pulsing_actor::prelude::*;
+use pulsing_actor::ActorSystemOpsExt;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -117,7 +118,7 @@ mod two_node_tests {
         let gossip1_addr = system1.addr();
 
         // Spawn actor on node 1
-        let actor1_ref = system1.spawn("echo", Echo).await.unwrap();
+        let actor1_ref = system1.spawn_named("test/echo", Echo).await.unwrap();
 
         // Verify local actor works
         let response: Pong = actor1_ref.ask(Ping { value: 21 }).await.unwrap();
@@ -129,7 +130,7 @@ mod two_node_tests {
         let system2 = ActorSystem::new(config2).await.unwrap();
 
         // Spawn another actor on node 2
-        let actor2_ref = system2.spawn("echo2", Echo).await.unwrap();
+        let actor2_ref = system2.spawn_named("test/echo2", Echo).await.unwrap();
 
         // Wait for cluster sync
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -190,26 +191,35 @@ mod multi_node_tests {
         let system1 = ActorSystem::new(config1).await.unwrap();
         let gossip1_addr = system1.addr();
 
-        let _ref1 = system1.spawn("actor-on-node1", Echo).await.unwrap();
+        let _ref1 = system1
+            .spawn_named("test/actor-on-node1", Echo)
+            .await
+            .unwrap();
 
         // Node 2
         let mut config2 = create_cluster_config(20042);
         config2.seed_nodes = vec![gossip1_addr];
         let system2 = ActorSystem::new(config2).await.unwrap();
 
-        let _ref2 = system2.spawn("actor-on-node2", Echo).await.unwrap();
+        let _ref2 = system2
+            .spawn_named("test/actor-on-node2", Echo)
+            .await
+            .unwrap();
 
         // Node 3
         let mut config3 = create_cluster_config(20043);
         config3.seed_nodes = vec![gossip1_addr];
         let system3 = ActorSystem::new(config3).await.unwrap();
 
-        let _ref3 = system3.spawn("actor-on-node3", Echo).await.unwrap();
+        let _ref3 = system3
+            .spawn_named("test/actor-on-node3", Echo)
+            .await
+            .unwrap();
 
         // Each node has exactly one user actor + SystemActor
-        assert_eq!(system1.local_actor_names().len(), 2); // _system_internal + actor-on-node1
-        assert_eq!(system2.local_actor_names().len(), 2); // _system_internal + actor-on-node2
-        assert_eq!(system3.local_actor_names().len(), 2); // _system_internal + actor-on-node3
+        assert_eq!(system1.local_actor_names().len(), 2); // system/core + test/actor-on-node1
+        assert_eq!(system2.local_actor_names().len(), 2); // system/core + test/actor-on-node2
+        assert_eq!(system3.local_actor_names().len(), 2); // system/core + test/actor-on-node3
 
         system1.shutdown().await.unwrap();
         system2.shutdown().await.unwrap();
@@ -232,7 +242,7 @@ mod shared_state_tests {
         let actor = Counter {
             count: count.clone(),
         };
-        let actor_ref = system.spawn("counter", actor).await.unwrap();
+        let actor_ref = system.spawn_named("test/counter", actor).await.unwrap();
 
         // Multiple increments
         for _ in 0..100 {
@@ -254,7 +264,7 @@ mod shared_state_tests {
         let actor = Counter {
             count: count.clone(),
         };
-        let actor_ref = system.spawn("counter", actor).await.unwrap();
+        let actor_ref = system.spawn_named("test/counter", actor).await.unwrap();
 
         // Concurrent increments
         let mut handles = Vec::new();
@@ -356,7 +366,7 @@ mod performance_tests {
     async fn test_message_latency() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor_ref = system.spawn("echo", Echo).await.unwrap();
+        let actor_ref = system.spawn_named("test/echo", Echo).await.unwrap();
 
         // Warmup
         for _ in 0..100 {
@@ -389,7 +399,7 @@ mod performance_tests {
     async fn test_throughput_benchmark() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let actor_ref = system.spawn("echo", Echo).await.unwrap();
+        let actor_ref = system.spawn_named("test/echo", Echo).await.unwrap();
 
         // Warmup
         for _ in 0..100 {
@@ -431,11 +441,11 @@ mod edge_case_tests {
     async fn test_empty_cluster() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        // SystemActor (_system_internal) is always present
+        // SystemActor (system/core) is always present
         assert_eq!(system.local_actor_names().len(), 1);
         assert!(system
             .local_actor_names()
-            .contains(&"_system_internal".to_string()));
+            .contains(&"system/core".to_string()));
 
         system.shutdown().await.unwrap();
     }
@@ -451,8 +461,8 @@ mod edge_case_tests {
         let system2 = ActorSystem::new(config2).await.unwrap();
 
         // Both nodes have actors with same name
-        let ref1 = system1.spawn("shared-name", Echo).await.unwrap();
-        let ref2 = system2.spawn("shared-name", Echo).await.unwrap();
+        let ref1 = system1.spawn_named("test/shared-name", Echo).await.unwrap();
+        let ref2 = system2.spawn_named("test/shared-name", Echo).await.unwrap();
 
         // They should have different full IDs (different node IDs)
         assert_ne!(ref1.id().node(), ref2.id().node());
@@ -469,15 +479,18 @@ mod edge_case_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         for i in 0..50 {
-            let _ref = system.spawn(format!("rapid-{}", i), Echo).await.unwrap();
-            system.stop(&format!("rapid-{}", i)).await.unwrap();
+            let _ref = system
+                .spawn_named(format!("test/rapid-{}", i), Echo)
+                .await
+                .unwrap();
+            system.stop(format!("test/rapid-{}", i)).await.unwrap();
         }
 
-        // Only SystemActor (_system_internal) should remain
+        // Only SystemActor (system/core) should remain
         assert_eq!(system.local_actor_names().len(), 1);
         assert!(system
             .local_actor_names()
-            .contains(&"_system_internal".to_string()));
+            .contains(&"system/core".to_string()));
 
         system.shutdown().await.unwrap();
     }
@@ -528,11 +541,8 @@ mod addressing_multi_node_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Create named actor on node 1
+        let _actor_ref = system1.spawn_named("services/echo", Echo).await.unwrap();
         let path = ActorPath::new("services/echo").unwrap();
-        let _actor_ref = system1
-            .spawn_named(path.clone(), "echo_impl", Echo)
-            .await
-            .unwrap();
 
         // Wait for gossip to propagate with retries
         let path_clone = path.clone();
@@ -576,9 +586,8 @@ mod addressing_multi_node_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Create named actor on node 1
-        let path = ActorPath::new("services/api/handler").unwrap();
         let _actor_ref = system1
-            .spawn_named(path.clone(), "api_handler", Echo)
+            .spawn_named("services/api/handler", Echo)
             .await
             .unwrap();
 
@@ -586,7 +595,7 @@ mod addressing_multi_node_tests {
         let addr = ActorAddress::parse("actor:///services/api/handler").unwrap();
         let mut resolved_ref = None;
         for attempt in 1..=15 {
-            match system2.resolve(&addr).await {
+            match ActorSystemOpsExt::resolve_address(&system2, &addr).await {
                 Ok(r) => {
                     resolved_ref = Some(r);
                     break;
@@ -629,10 +638,8 @@ mod addressing_multi_node_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Create same named actor on BOTH nodes (multi-instance)
-        let path = ActorPath::new("services/worker/pool").unwrap();
-
         let _ref1 = system1
-            .spawn_named(path.clone(), "pool_instance_1", Echo)
+            .spawn_named("services/worker/pool", Echo)
             .await
             .unwrap();
 
@@ -640,9 +647,10 @@ mod addressing_multi_node_tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let _ref2 = system2
-            .spawn_named(path.clone(), "pool_instance_2", Echo)
+            .spawn_named("services/worker/pool", Echo)
             .await
             .unwrap();
+        let path = ActorPath::new("services/worker/pool").unwrap();
 
         // Wait for gossip propagation with retries until we see 2 instances
         for attempt in 1..=20 {
@@ -694,13 +702,16 @@ mod addressing_multi_node_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Create regular actor on node 1
-        let actor_ref = system1.spawn("remote_worker", Echo).await.unwrap();
+        let actor_ref = system1
+            .spawn_named("test/remote_worker", Echo)
+            .await
+            .unwrap();
 
         // Node 2 resolves using global address with retries
         let addr = ActorAddress::global(node1_id, actor_ref.id().local_id());
         let mut resolved_ref = None;
         for attempt in 1..=15 {
-            match system2.resolve(&addr).await {
+            match ActorSystemOpsExt::resolve_address(&system2, &addr).await {
                 Ok(r) => {
                     resolved_ref = Some(r);
                     break;

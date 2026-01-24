@@ -2,6 +2,7 @@
 
 use pulsing_actor::actor::{ActorAddress, ActorPath};
 use pulsing_actor::prelude::*;
+use pulsing_actor::ActorSystemOpsExt;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -90,7 +91,7 @@ mod single_node_tests {
         let actor = EchoActor {
             echo_count: counter.clone(),
         };
-        let actor_ref = system.spawn("echo", actor).await.unwrap();
+        let actor_ref = system.spawn_named("test/echo", actor).await.unwrap();
 
         let response: Pong = actor_ref.ask(Ping { value: 21 }).await.unwrap();
         assert_eq!(response.result, 42);
@@ -106,7 +107,12 @@ mod single_node_tests {
         let mut refs = Vec::new();
         for i in 0..5 {
             let actor = Accumulator { total: 0 };
-            refs.push(system.spawn(format!("acc-{}", i), actor).await.unwrap());
+            refs.push(
+                system
+                    .spawn_named(format!("test/acc-{}", i), actor)
+                    .await
+                    .unwrap(),
+            );
         }
 
         // Send to all actors concurrently
@@ -148,7 +154,7 @@ mod single_node_tests {
         let actor = EchoActor {
             echo_count: counter.clone(),
         };
-        let actor_ref = system.spawn("echo", actor).await.unwrap();
+        let actor_ref = system.spawn_named("test/echo", actor).await.unwrap();
 
         let message_count: usize = 1000;
         let start = std::time::Instant::now();
@@ -176,11 +182,11 @@ mod single_node_tests {
 
         // Create two accumulators
         let ref1 = system
-            .spawn("acc1", Accumulator { total: 0 })
+            .spawn_named("test/acc1", Accumulator { total: 0 })
             .await
             .unwrap();
         let ref2 = system
-            .spawn("acc2", Accumulator { total: 0 })
+            .spawn_named("test/acc2", Accumulator { total: 0 })
             .await
             .unwrap();
 
@@ -221,10 +227,15 @@ mod stress_tests {
 
         for i in 0..actor_count {
             let actor = Accumulator { total: 0 };
-            refs.push(system.spawn(format!("acc-{}", i), actor).await.unwrap());
+            refs.push(
+                system
+                    .spawn_named(format!("test/acc-{}", i), actor)
+                    .await
+                    .unwrap(),
+            );
         }
 
-        // +1 for SystemActor (_system_internal)
+        // +1 for SystemActor (system/core)
         assert_eq!(system.local_actor_names().len(), actor_count + 1);
 
         // Send one message to each
@@ -246,7 +257,7 @@ mod stress_tests {
         let actor = EchoActor {
             echo_count: counter.clone(),
         };
-        let actor_ref = system.spawn("echo", actor).await.unwrap();
+        let actor_ref = system.spawn_named("test/echo", actor).await.unwrap();
 
         let burst_count = 500;
 
@@ -279,7 +290,7 @@ mod stress_tests {
         let actor = EchoActor {
             echo_count: counter.clone(),
         };
-        let actor_ref = system.spawn("echo", actor).await.unwrap();
+        let actor_ref = system.spawn_named("test/echo", actor).await.unwrap();
 
         let duration = Duration::from_secs(2);
         let start = std::time::Instant::now();
@@ -341,8 +352,8 @@ mod error_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         let actor_ref = system
-            .spawn(
-                "crashy",
+            .spawn_named(
+                "test/crashy",
                 Crashy {
                     crash_count: crash_count.clone(),
                 },
@@ -370,8 +381,8 @@ mod error_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         let actor_ref = system
-            .spawn(
-                "crashy",
+            .spawn_named(
+                "test/crashy",
                 Crashy {
                     crash_count: crash_count.clone(),
                 },
@@ -400,8 +411,8 @@ mod error_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         let actor_ref = system
-            .spawn(
-                "echo",
+            .spawn_named(
+                "test/echo",
                 EchoActor {
                     echo_count: counter,
                 },
@@ -461,8 +472,8 @@ mod lifecycle_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         let actor_ref = system
-            .spawn(
-                "tracker",
+            .spawn_named(
+                "test/tracker",
                 LifecycleTracker {
                     events: events.clone(),
                 },
@@ -495,8 +506,8 @@ mod lifecycle_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         let _ = system
-            .spawn(
-                "tracker1",
+            .spawn_named(
+                "test/tracker1",
                 LifecycleTracker {
                     events: events1.clone(),
                 },
@@ -504,8 +515,8 @@ mod lifecycle_tests {
             .await
             .unwrap();
         let _ = system
-            .spawn(
-                "tracker2",
+            .spawn_named(
+                "test/tracker2",
                 LifecycleTracker {
                     events: events2.clone(),
                 },
@@ -537,18 +548,17 @@ mod addressing_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        // Create a named actor with path
-        let path = ActorPath::new("services/echo").unwrap();
+        // Create a named actor
         let actor_ref = system
             .spawn_named(
-                path.clone(),
-                "echo_impl",
+                "services/echo",
                 EchoActor {
                     echo_count: counter.clone(),
                 },
             )
             .await
             .unwrap();
+        let path = ActorPath::new("services/echo").unwrap();
 
         // Send message via the returned ref
         let response: Pong = actor_ref.ask(Ping { value: 21 }).await.unwrap();
@@ -571,11 +581,9 @@ mod addressing_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         // Create a named actor
-        let path = ActorPath::new("services/api/handler").unwrap();
         let _actor_ref = system
             .spawn_named(
-                path.clone(),
-                "api_handler",
+                "services/api/handler",
                 EchoActor {
                     echo_count: counter.clone(),
                 },
@@ -585,7 +593,9 @@ mod addressing_tests {
 
         // Resolve by address
         let addr = ActorAddress::parse("actor:///services/api/handler").unwrap();
-        let resolved_ref = system.resolve(&addr).await.unwrap();
+        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr)
+            .await
+            .unwrap();
 
         // Send message via resolved ref
         let response: Pong = resolved_ref.ask(Ping { value: 10 }).await.unwrap();
@@ -601,8 +611,8 @@ mod addressing_tests {
 
         // Create a regular actor
         let actor_ref = system
-            .spawn(
-                "worker",
+            .spawn_named(
+                "test/worker",
                 EchoActor {
                     echo_count: counter.clone(),
                 },
@@ -614,7 +624,9 @@ mod addressing_tests {
         let addr = ActorAddress::local(actor_ref.id().local_id());
 
         // Resolve
-        let resolved_ref = system.resolve(&addr).await.unwrap();
+        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr)
+            .await
+            .unwrap();
         let response: Pong = resolved_ref.ask(Ping { value: 5 }).await.unwrap();
         assert_eq!(response.result, 10);
 
@@ -628,8 +640,8 @@ mod addressing_tests {
 
         // Create actor
         let actor_ref = system
-            .spawn(
-                "local_worker",
+            .spawn_named(
+                "test/local_worker",
                 EchoActor {
                     echo_count: counter.clone(),
                 },
@@ -642,7 +654,9 @@ mod addressing_tests {
             ActorAddress::parse(&format!("actor://0/{}", actor_ref.id().local_id())).unwrap();
         assert!(addr.is_local());
 
-        let resolved_ref = system.resolve(&addr).await.unwrap();
+        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr)
+            .await
+            .unwrap();
         let response: Pong = resolved_ref.ask(Ping { value: 7 }).await.unwrap();
         assert_eq!(response.result, 14);
 
@@ -655,17 +669,16 @@ mod addressing_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         // Create a named actor
-        let path = ActorPath::new("services/temp").unwrap();
         let _actor_ref = system
             .spawn_named(
-                path.clone(),
-                "temp_actor",
+                "services/temp",
                 EchoActor {
                     echo_count: counter.clone(),
                 },
             )
             .await
             .unwrap();
+        let path = ActorPath::new("services/temp").unwrap();
 
         // Verify it exists
         assert!(system.lookup_named(&path).await.is_some());
@@ -730,12 +743,12 @@ mod addressing_tests {
 
         // Try to resolve non-existent named actor
         let addr = ActorAddress::parse("actor:///services/nonexistent").unwrap();
-        let result = system.resolve(&addr).await;
+        let result = ActorSystemOpsExt::resolve_address(&system, &addr).await;
         assert!(result.is_err());
 
         // Try to resolve non-existent global actor (use numeric node_id and actor_id)
         let addr = ActorAddress::parse("actor://999/999").unwrap();
-        let result = system.resolve(&addr).await;
+        let result = ActorSystemOpsExt::resolve_address(&system, &addr).await;
         assert!(result.is_err());
 
         system.shutdown().await.unwrap();

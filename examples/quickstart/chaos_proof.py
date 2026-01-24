@@ -1,12 +1,14 @@
 """
 🛡️ Chaos-proof - Actor 崩溃自动重启，任务不丢失
 """
-import asyncio, random
+
+import asyncio
+import random
 from pulsing.actor import remote
 from pulsing.agent import runtime
 
 
-@remote(restart_policy="on-failure", max_restarts=50)
+@remote(restart_policy="on_failure", max_restarts=50)
 class FlakyWorker:
     def __init__(self):
         self.call_count = 0
@@ -38,10 +40,10 @@ async def main():
         print("\n" + "=" * 50)
         print("🛡️  Chaos-proof Result")
         print("=" * 50)
-        print(f"   Total tasks:   50")
+        print("   Total tasks:   50")
         print(f"   Succeeded:     {ok}")
         print(f"   Retries:       {retries}")
-        print(f"   Crash rate:    30%")
+        print("   Crash rate:    30%")
         print("=" * 50)
         if ok == 50:
             print("✅ All succeeded! Actor auto-restarted on crash.")

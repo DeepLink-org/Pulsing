@@ -236,7 +236,7 @@ def _print_actors_table(actors_data: list[dict], detailed: bool = False):
         print(
             f"  {'Name':<25} {'Type':<8} {'Actor ID':<20} {'Class':<25} {'Module':<30}"
         )
-        print(f"  {'-'*110}")
+        print(f"  {'-' * 110}")
 
         for actor in actors_data:
             name = actor.get("name", "")
@@ -251,7 +251,7 @@ def _print_actors_table(actors_data: list[dict], detailed: bool = False):
             print(f"  {name:<25} {actor_type:<8} {actor_id:<20} {cls:<25} {module:<30}")
     else:
         print(f"  {'Name':<40} {'Type':<10} {'Actor ID':<20}")
-        print(f"  {'-'*72}")
+        print(f"  {'-' * 72}")
 
         for actor in actors_data:
             name = actor.get("name", "")
@@ -437,9 +437,9 @@ def inspect_metrics(
 
         if raw:
             # Output raw metrics (as text)
-            print(f"{'='*80}")
-            print(f"[{i+1}/{len(alive_members)}] Node {node_id} ({addr})")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
+            print(f"[{i + 1}/{len(alive_members)}] Node {node_id} ({addr})")
+            print(f"{'=' * 80}")
             print(metrics)
             print()
         else:

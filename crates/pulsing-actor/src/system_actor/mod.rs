@@ -36,9 +36,6 @@ use tokio::sync::mpsc;
 /// Named path for SystemActor (system/core satisfies namespace/name format requirement)
 pub const SYSTEM_ACTOR_PATH: &str = "system/core";
 
-/// Internal local name for SystemActor
-pub(crate) const SYSTEM_ACTOR_LOCAL_NAME: &str = "_system_internal";
-
 /// System metrics
 #[derive(Debug, Default)]
 pub struct SystemMetrics {
@@ -85,7 +82,6 @@ struct ActorEntry {
     actor_id: ActorId,
     actor_type: String,
     created_at: Instant,
-    public: bool,
 }
 
 /// Actor registry
@@ -101,14 +97,13 @@ impl ActorRegistry {
         }
     }
 
-    pub fn register(&self, name: &str, actor_id: ActorId, actor_type: &str, public: bool) {
+    pub fn register(&self, name: &str, actor_id: ActorId, actor_type: &str) {
         self.actors.insert(
             name.to_string(),
             ActorEntry {
                 actor_id,
                 actor_type: actor_type.to_string(),
                 created_at: Instant::now(),
-                public,
             },
         );
     }
@@ -137,7 +132,6 @@ impl ActorRegistry {
                 actor_id: e.actor_id.local_id(),
                 actor_type: e.actor_type.clone(),
                 uptime_secs: e.created_at.elapsed().as_secs(),
-                public: e.public,
                 metadata: std::collections::HashMap::new(), // TODO: get from actor
             })
             .collect()
@@ -149,7 +143,6 @@ impl ActorRegistry {
             actor_id: e.actor_id.local_id(),
             actor_type: e.actor_type.clone(),
             uptime_secs: e.created_at.elapsed().as_secs(),
-            public: e.public,
             metadata: std::collections::HashMap::new(), // TODO: get from actor
         })
     }
@@ -276,8 +269,8 @@ impl SystemActor {
     }
 
     /// Register a created actor (called externally)
-    pub fn register_actor(&self, name: &str, actor_id: ActorId, actor_type: &str, public: bool) {
-        self.registry.register(name, actor_id, actor_type, public);
+    pub fn register_actor(&self, name: &str, actor_id: ActorId, actor_type: &str) {
+        self.registry.register(name, actor_id, actor_type);
         self.metrics.inc_actor_created();
     }
 

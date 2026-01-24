@@ -88,7 +88,13 @@ async def init(
     if passphrase:
         config = config.with_passphrase(passphrase)
 
-    _global_system = await create_actor_system(config)
+    loop = asyncio.get_running_loop()
+    _global_system = await ActorSystem.create(config, loop)
+    # Automatically register PythonActorService for remote actor creation
+    from .remote import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
+
+    service = PythonActorService(_global_system)
+    await _global_system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
     return _global_system
 
 
@@ -207,38 +213,13 @@ __all__ = [
     "StreamMessage",
     "SystemConfig",
     "ActorSystem",
-    # Advanced constructor (documented)
-    "create_actor_system",
+    "ActorRef",
+    "ActorId",
+    "ActorProxy",
+    # Service (for actor_system function)
+    "PythonActorService",
+    "PYTHON_ACTOR_SERVICE_NAME",
 ]
-
-
-async def create_actor_system(config: SystemConfig) -> ActorSystem:
-    """
-    Create a new ActorSystem with automatic event loop injection.
-
-    This is a convenience function that wraps ActorSystem.create() to automatically
-    inject the current event loop, making it easier to use.
-
-    The function also automatically registers PythonActorService for remote actor creation.
-
-    Args:
-        config: SystemConfig instance (use SystemConfig.standalone() or SystemConfig.with_addr())
-
-    Returns:
-        ActorSystem instance
-
-    Example:
-        config = SystemConfig.with_addr("0.0.0.0:8000")
-        system = await create_actor_system(config)
-    """
-    loop = asyncio.get_running_loop()
-    system = await ActorSystem.create(config, loop)
-
-    # Automatically register PythonActorService (for remote actor creation)
-    service = PythonActorService(system)
-    await system.spawn(PYTHON_ACTOR_SERVICE_NAME, service, public=True)
-
-    return system
 
 
 class Actor(ABC):

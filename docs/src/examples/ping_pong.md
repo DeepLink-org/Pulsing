@@ -6,10 +6,10 @@ The simplest actor communication example.
 
 ```python
 import asyncio
-from pulsing.actor import Actor, SystemConfig, create_actor_system
+import pulsing as pul
 
 
-class PingPong(Actor):
+class PingPong:
     async def receive(self, msg):
         if msg == "ping":
             return "pong"
@@ -17,8 +17,8 @@ class PingPong(Actor):
 
 
 async def main():
-    system = await create_actor_system(SystemConfig.standalone())
-    actor = await system.spawn("pingpong", PingPong())
+    system = await pul.actor_system()
+    actor = await system.spawn(PingPong())
 
     print(await actor.ask("ping"))   # -> pong
     print(await actor.ask("hello"))  # -> echo: hello
@@ -37,7 +37,7 @@ python examples/python/ping_pong.py
 
 ## Key Points
 
-- `Actor` is the base class - implement `receive()` to handle messages
+- Implement `receive()` to handle messages
 - **Any Python object** can be a message (string, dict, list, etc.)
 - `actor.ask(msg)` sends a message and waits for response
 - `system.shutdown()` cleanly stops all actors

@@ -29,12 +29,12 @@ Pulsing 不会替你“隐式重试”。一旦你做重试，就要默认可能
 
 ## actor 级别重启（supervision）
 
-你可以在 Python 的 `@remote` 上配置重启策略：
+你可以在 Python 的 `@pul.remote` 上配置重启策略：
 
 ```python
-from pulsing.actor import remote
+import pulsing as pul
 
-@remote(restart_policy="on-failure", max_restarts=5, min_backoff=0.2, max_backoff=10.0)
+@pul.remote(restart_policy="on_failure", max_restarts=5, min_backoff=0.2, max_backoff=10.0)
 class Worker:
     def work(self, x: int) -> int:
         return 100 // x

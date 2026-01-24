@@ -17,7 +17,7 @@ impl Actor for Echo {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let system = ActorSystem::builder().build().await?;
-    let echo = system.spawn("echo", Echo).await?;
+    let echo = system.spawn_named("test/echo", Echo).await?;
 
     // ask: send and wait for response
     let resp: String = echo.ask("hello".to_string()).await?;

@@ -58,15 +58,15 @@ Pulsing 遵循**经典 Actor 模型**（类似 Erlang/Akka）：
 
 | API | 导入方式 | 风格 | 适用场景 |
 |-----|---------|------|----------|
-| **原生异步** | `from pulsing.actor import ...` | `async/await` | 新项目，追求极致性能 |
+| **原生异步** | `import pulsing as pul` | `async/await` | 新项目，追求极致性能 |
 | **Ray 兼容** | `from pulsing.compat import ray` | 同步调用 | 从 Ray 迁移，快速原型 |
 
 ### 原生异步 API（推荐）
 
 ```python
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
-@remote
+@pul.remote
 class Calculator:
     def __init__(self, initial_value: int = 0):
         self.value = initial_value
@@ -76,10 +76,10 @@ class Calculator:
         return self.value
 
 async def main():
-    await init()
+    await pul.init()
     calc = await Calculator.spawn(initial_value=100)
     result = await calc.add(50)  # 150
-    await shutdown()
+    await pul.shutdown()
 ```
 
 ### Ray 兼容 API
@@ -123,32 +123,23 @@ result = await calc.add(10)
 ### Tell（即发即忘）
 
 ```python
-await actor_ref.tell(Message.single("notify", b"event_data"))
+await actor_ref.tell({"event": "notify", "data": "event_data"})
 ```
 
 ### 流式消息
 
-用于持续数据流（如 LLM token 生成）：
+用于持续数据流（如 LLM token 生成），只需返回 generator：
 
 ```python
-from pulsing.actor import StreamMessage
-
 @remote
 class TokenGenerator:
-    async def generate(self, prompt: str) -> Message:
-        stream_msg, writer = StreamMessage.create("tokens")
-
-        async def produce():
-            for token in self.generate_tokens(prompt):
-                await writer.write({"token": token})
-            await writer.close()
-
-        asyncio.create_task(produce())
-        return stream_msg
+    async def generate(self, prompt: str):
+        # 直接返回 async generator - Pulsing 自动处理流式传输
+        for token in self.generate_tokens(prompt):
+            yield {"token": token}
 
 # 消费流
-response = await generator.generate("Hello")
-async for chunk in response.stream_reader():
+async for chunk in generator.generate("Hello"):
     print(chunk["token"], end="", flush=True)
 ```
 
@@ -279,17 +270,29 @@ class ResilientActor:
 ### 常用操作
 
 ```python
-# 创建
-actor = await MyActor.spawn(param=10)
+import pulsing as pul
+
+# 创建系统
+system = await pul.actor_system()
+
+# 生成命名 actor（可通过 resolve 发现）
+actor = await system.spawn(MyActor(), name="my_actor")
 
 # 调用方法
-result = await actor.method(arg)
+result = await actor.ask({"action": "do_something"})
 
-# 使用 system handle
-system = await create_actor_system(config)
-actor = await system.spawn(MyActor(), "name", public=True)
-remote_actor = await system.find("remote-name")
-await system.stop("name")
+# 使用 @remote 装饰器（推荐）
+@pul.remote
+class MyService:
+    def process(self, data): return data
+
+service = await MyService.spawn(name="service")
+result = await service.process("hello")
+
+# 解析已有 actor
+proxy = await MyService.resolve("service")
+
+# 关闭
 await system.shutdown()
 ```
 

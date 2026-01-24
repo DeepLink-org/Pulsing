@@ -33,12 +33,12 @@ fn counter(initial: i32) -> Behavior<i32> {
 A type-safe actor reference that only accepts messages of type `M`:
 
 ```rust
-// Type-safe: only i32 can be sent
-let counter: TypedRef<i32> = system.spawn_behavior("counter", counter(0)).await?;
+// Behavior implements IntoActor, can be spawned directly
+let counter = system.spawn_named("actors/counter", counter(0)).await?;
 
 counter.tell(5).await?;  // OK
 counter.tell(3).await?;  // OK
-// counter.tell("hello").await?;  // Compile error!
+// counter.tell("hello").await?;  // Runtime error (type mismatch on deserialization)
 ```
 
 ### BehaviorAction
@@ -202,8 +202,8 @@ let actor_ref = counter.as_untyped()?;
 ## Complete Example
 
 ```rust
-use pulsing_actor::behavior::{stateful, Behavior, BehaviorAction, BehaviorSpawner};
-use pulsing_actor::system::ActorSystem;
+use pulsing_actor::behavior::{stateful, Behavior, BehaviorAction};
+use pulsing_actor::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -236,10 +236,10 @@ fn counter(initial: i32) -> Behavior<CounterMsg> {
 async fn main() -> anyhow::Result<()> {
     let system = ActorSystem::builder().build().await?;
 
-    // Spawn behavior-based actor
-    let counter = system.spawn_behavior("counter", counter(0)).await?;
+    // Behavior implements IntoActor, can be spawned directly
+    let counter = system.spawn_named("actors/counter", counter(0)).await?;
 
-    // Type-safe message sending
+    // Message sending
     counter.tell(CounterMsg::Increment(5)).await?;
     counter.tell(CounterMsg::Increment(3)).await?;
     counter.tell(CounterMsg::Decrement(2)).await?;

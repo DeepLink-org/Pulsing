@@ -18,7 +18,7 @@ from typing import Any, AsyncIterator
 
 import pytest
 
-from pulsing.actor import SystemConfig, create_actor_system
+import pulsing as pul
 from pulsing.queue import (
     BucketStorage,
     MemoryBackend,
@@ -40,8 +40,7 @@ from pulsing.queue import (
 @pytest.fixture
 async def actor_system():
     """Create a standalone actor system for testing."""
-    config = SystemConfig.standalone()
-    system = await create_actor_system(config)
+    system = await pul.actor_system()
     yield system
     await system.shutdown()
 
@@ -260,7 +259,7 @@ class TestBucketStorageWithBackend:
             backend="memory",
         )
 
-        actor_ref = await actor_system.spawn("bucket_memory_test", storage)
+        actor_ref = await actor_system.spawn(storage, name="bucket_memory_test")
 
         # Put records
         for i in range(5):
@@ -289,7 +288,7 @@ class TestBucketStorageWithBackend:
             backend="memory",
         )
 
-        actor_ref = await actor_system.spawn("bucket_batch_test", storage)
+        actor_ref = await actor_system.spawn(storage, name="bucket_batch_test")
 
         # Put batch
         records = [{"id": f"batch_{i}", "value": i} for i in range(10)]
@@ -538,7 +537,7 @@ class TestCustomBackendProtocol:
             backend="tracking",
         )
 
-        actor_ref = await actor_system.spawn("tracking_bucket", storage)
+        actor_ref = await actor_system.spawn(storage, name="tracking_bucket")
 
         # Perform operations
         await actor_ref.ask(Message.from_json("Put", {"record": {"id": "1"}}))

@@ -17,9 +17,8 @@ from pulsing.actor import (
     Actor,
     Message,
     SealedPyMessage,
-    SystemConfig,
-    create_actor_system,
 )
+import pulsing as pul
 
 
 # ============================================================================
@@ -152,8 +151,7 @@ class ComplexObjectActor(Actor):
 @pytest.fixture
 async def actor_system():
     """Create a standalone actor system for testing."""
-    config = SystemConfig.standalone()
-    system = await create_actor_system(config)
+    system = await pul.actor_system()
     yield system
     await system.shutdown()
 
@@ -236,7 +234,9 @@ def test_sealed_message_repr():
 @pytest.mark.asyncio
 async def test_ask_with_dataclass(actor_system):
     """Test ask with dataclass message."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=0))
+    actor_ref = await actor_system.spawn(
+        SealedCounterActor(initial_value=0), name="counter"
+    )
 
     # Send IncrementCommand dataclass
     response = await actor_ref.ask(IncrementCommand(n=5))
@@ -249,7 +249,7 @@ async def test_ask_with_dataclass(actor_system):
 async def test_ask_multiple_dataclass_messages(actor_system):
     """Test multiple ask calls with dataclass messages."""
     actor_ref = await actor_system.spawn(
-        "counter", SealedCounterActor(initial_value=10)
+        SealedCounterActor(initial_value=10), name="counter"
     )
 
     # Multiple increments
@@ -272,7 +272,9 @@ async def test_ask_multiple_dataclass_messages(actor_system):
 @pytest.mark.asyncio
 async def test_ask_with_dict(actor_system):
     """Test ask with dict message."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=0))
+    actor_ref = await actor_system.spawn(
+        SealedCounterActor(initial_value=0), name="counter"
+    )
 
     # Send dict message
     response = await actor_ref.ask({"action": "increment", "n": 7})
@@ -285,7 +287,7 @@ async def test_ask_with_dict(actor_system):
 async def test_ask_dict_multiple_operations(actor_system):
     """Test multiple dict-based operations."""
     actor_ref = await actor_system.spawn(
-        "counter", SealedCounterActor(initial_value=100)
+        SealedCounterActor(initial_value=100), name="counter"
     )
 
     # Increment
@@ -309,7 +311,7 @@ async def test_ask_dict_multiple_operations(actor_system):
 @pytest.mark.asyncio
 async def test_ask_with_list(actor_system):
     """Test ask with list message."""
-    actor_ref = await actor_system.spawn("processor", ListProcessorActor())
+    actor_ref = await actor_system.spawn(ListProcessorActor(), name="processor")
 
     # Send list of numbers
     response = await actor_ref.ask([1, 2, 3, 4, 5])
@@ -320,7 +322,7 @@ async def test_ask_with_list(actor_system):
 @pytest.mark.asyncio
 async def test_ask_with_mixed_list(actor_system):
     """Test ask with list containing mixed types."""
-    actor_ref = await actor_system.spawn("processor", ListProcessorActor())
+    actor_ref = await actor_system.spawn(ListProcessorActor(), name="processor")
 
     response = await actor_ref.ask([1, "hello", 3.5, "world"])
 
@@ -335,7 +337,7 @@ async def test_ask_with_mixed_list(actor_system):
 @pytest.mark.asyncio
 async def test_ask_with_nested_dict(actor_system):
     """Test ask with nested dict structure."""
-    actor_ref = await actor_system.spawn("complex", ComplexObjectActor())
+    actor_ref = await actor_system.spawn(ComplexObjectActor(), name="complex")
 
     msg = {
         "nested": {"level2": {"level3": "deep_value"}},
@@ -351,7 +353,7 @@ async def test_ask_with_nested_dict(actor_system):
 @pytest.mark.asyncio
 async def test_ask_echo_any_object(actor_system):
     """Test echoing various Python objects."""
-    actor_ref = await actor_system.spawn("echo", EchoAnyActor())
+    actor_ref = await actor_system.spawn(EchoAnyActor(), name="echo")
 
     # Test with different types
     test_cases = [
@@ -378,7 +380,9 @@ async def test_ask_echo_any_object(actor_system):
 @pytest.mark.asyncio
 async def test_tell_with_dataclass(actor_system):
     """Test tell with dataclass message."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=0))
+    actor_ref = await actor_system.spawn(
+        SealedCounterActor(initial_value=0), name="counter"
+    )
 
     # Send tell (fire-and-forget)
     await actor_ref.tell(IncrementCommand(n=10))
@@ -394,7 +398,9 @@ async def test_tell_with_dataclass(actor_system):
 @pytest.mark.asyncio
 async def test_tell_with_dict(actor_system):
     """Test tell with dict message."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=0))
+    actor_ref = await actor_system.spawn(
+        SealedCounterActor(initial_value=0), name="counter"
+    )
 
     # Send multiple tells
     await actor_ref.tell({"action": "increment", "n": 5})
@@ -414,7 +420,9 @@ async def test_tell_with_dict(actor_system):
 @pytest.mark.asyncio
 async def test_message_from_json_still_works(actor_system):
     """Test that Message.from_json still works for backward compatibility."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=0))
+    actor_ref = await actor_system.spawn(
+        SealedCounterActor(initial_value=0), name="counter"
+    )
 
     # Use old Message.from_json style
     response = await actor_ref.ask(Message.from_json("increment", {"n": 5}))
@@ -428,7 +436,9 @@ async def test_message_from_json_still_works(actor_system):
 @pytest.mark.asyncio
 async def test_mixed_message_styles(actor_system):
     """Test mixing old Message style with new Python object style."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=0))
+    actor_ref = await actor_system.spawn(
+        SealedCounterActor(initial_value=0), name="counter"
+    )
 
     # New style
     r1 = await actor_ref.ask(IncrementCommand(n=10))
@@ -451,7 +461,9 @@ async def test_mixed_message_styles(actor_system):
 @pytest.mark.asyncio
 async def test_concurrent_sealed_messages(actor_system):
     """Test concurrent access with sealed messages."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=0))
+    actor_ref = await actor_system.spawn(
+        SealedCounterActor(initial_value=0), name="counter"
+    )
 
     # Send many concurrent increments
     tasks = [actor_ref.ask(IncrementCommand(n=1)) for _ in range(50)]
@@ -469,7 +481,9 @@ async def test_concurrent_sealed_messages(actor_system):
 @pytest.mark.asyncio
 async def test_concurrent_dict_messages(actor_system):
     """Test concurrent access with dict messages."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=0))
+    actor_ref = await actor_system.spawn(
+        SealedCounterActor(initial_value=0), name="counter"
+    )
 
     tasks = [actor_ref.ask({"action": "increment", "n": 1}) for _ in range(30)]
     await asyncio.gather(*tasks)
@@ -486,7 +500,9 @@ async def test_concurrent_dict_messages(actor_system):
 @pytest.mark.asyncio
 async def test_unknown_message_type_returns_error(actor_system):
     """Test that unknown message types return error response."""
-    actor_ref = await actor_system.spawn("counter", SealedCounterActor(initial_value=0))
+    actor_ref = await actor_system.spawn(
+        SealedCounterActor(initial_value=0), name="counter"
+    )
 
     # Send an unknown type
     response = await actor_ref.ask("just a string")
@@ -542,7 +558,7 @@ class CustomHandlerActor(Actor):
 @pytest.mark.asyncio
 async def test_custom_request_response_types(actor_system):
     """Test custom request/response dataclass types."""
-    actor_ref = await actor_system.spawn("custom", CustomHandlerActor())
+    actor_ref = await actor_system.spawn(CustomHandlerActor(), name="custom")
 
     # Sum operation
     r1 = await actor_ref.ask(CustomRequest(operation="sum", values=[1, 2, 3, 4, 5]))

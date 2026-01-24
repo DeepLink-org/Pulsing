@@ -8,7 +8,8 @@ import asyncio
 import logging
 from typing import Any, AsyncIterator, Dict, Optional, Union
 
-from pulsing.actor import SystemConfig, create_actor_system
+from pulsing.actor import ActorSystem, SystemConfig
+from pulsing.actor.remote import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
 from .executor import NodeExecutorPool
 
 logger = logging.getLogger("pulsing.langgraph")
@@ -78,7 +79,11 @@ class PulsingGraphWrapper:
         else:
             config = SystemConfig.standalone()
 
-        self._system = await create_actor_system(config)
+        loop = asyncio.get_running_loop()
+        self._system = await ActorSystem.create(config, loop)
+        # Register PythonActorService for remote actor creation
+        service = PythonActorService(self._system)
+        await self._system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
         self._executor = NodeExecutorPool(self._system, self._node_mapping)
         self._connected = True
 

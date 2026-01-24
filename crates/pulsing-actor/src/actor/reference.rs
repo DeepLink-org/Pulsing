@@ -48,6 +48,9 @@ pub struct RemoteActorRef {
 ///
 /// This ensures the reference is always up-to-date, even if the actor
 /// migrates to a different node.
+///
+/// Uses double-checked locking pattern to avoid resolution storms
+/// when multiple concurrent requests find the cache expired.
 pub struct LazyActorRef {
     /// The named actor path (e.g., "services/echo")
     pub path: ActorPath,
@@ -57,6 +60,10 @@ pub struct LazyActorRef {
 
     /// Cached ActorRef (with version for staleness check)
     cache: RwLock<Option<CachedRef>>,
+
+    /// Lock to ensure only one thread refreshes the cache at a time
+    /// Prevents resolution storms under high concurrency
+    refresh_lock: tokio::sync::Mutex<()>,
 }
 
 /// Cached reference with version for staleness detection
@@ -83,12 +90,17 @@ impl LazyActorRef {
             path,
             resolver,
             cache: RwLock::new(None),
+            refresh_lock: tokio::sync::Mutex::new(()),
         }
     }
 
     /// Get the underlying ActorRef, resolving if necessary
+    ///
+    /// Uses double-checked locking to prevent resolution storms:
+    /// 1. Fast path: check cache with read lock
+    /// 2. Slow path: acquire refresh lock, check again, then resolve
     async fn get(&self) -> anyhow::Result<ActorRef> {
-        // Check cache first
+        // Fast path: check cache with read lock
         {
             let cache = self.cache.read().await;
             if let Some(ref cached) = *cache {
@@ -98,7 +110,20 @@ impl LazyActorRef {
             }
         }
 
-        // Cache miss or expired - resolve and update
+        // Slow path: acquire refresh lock to prevent concurrent resolution
+        let _refresh_guard = self.refresh_lock.lock().await;
+
+        // Double-check: another thread may have refreshed while we waited
+        {
+            let cache = self.cache.read().await;
+            if let Some(ref cached) = *cache {
+                if cached.cached_at.elapsed() < CACHE_TTL {
+                    return Ok(cached.actor_ref.clone());
+                }
+            }
+        }
+
+        // Now we're the only thread refreshing - safe to resolve
         let resolved = self.resolver.resolve_path(&self.path).await?;
         {
             let mut cache = self.cache.write().await;

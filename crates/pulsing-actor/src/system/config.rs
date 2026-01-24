@@ -320,8 +320,6 @@ impl From<&&str> for AddrInput {
 pub struct SpawnOptions {
     /// Override mailbox capacity (None = use system default)
     pub mailbox_capacity: Option<usize>,
-    /// Whether this actor is public (can be resolved by name across cluster)
-    pub public: bool,
     /// Supervision specification (restart policy)
     pub supervision: SupervisionSpec,
     /// Actor metadata (e.g., Python class, module, file path)
@@ -337,12 +335,6 @@ impl SpawnOptions {
     /// Set mailbox capacity override
     pub fn mailbox_capacity(mut self, capacity: usize) -> Self {
         self.mailbox_capacity = Some(capacity);
-        self
-    }
-
-    /// Set whether actor is public
-    pub fn public(mut self, public: bool) -> Self {
-        self.public = public;
         self
     }
 

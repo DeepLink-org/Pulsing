@@ -36,6 +36,9 @@ pub struct ActorContext {
 
     /// Self mailbox sender for schedule_self
     self_sender: Option<mpsc::Sender<Envelope>>,
+
+    /// Named path (if this is a named actor)
+    named_path: Option<String>,
 }
 
 /// Trait for system reference (to avoid circular dependency)
@@ -52,6 +55,9 @@ pub trait ActorSystemRef: Send + Sync {
 
     /// Stop watching an actor
     async fn unwatch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()>;
+
+    /// Get a local actor reference by name (for behavior-based actors)
+    fn local_actor_ref_by_name(&self, name: &str) -> Option<ActorRef>;
 }
 
 impl ActorContext {
@@ -64,6 +70,7 @@ impl ActorContext {
             actor_refs: HashMap::new(),
             system: None,
             self_sender: None,
+            named_path: None,
         }
     }
 
@@ -82,7 +89,38 @@ impl ActorContext {
             actor_refs: HashMap::new(),
             system: Some(system),
             self_sender: Some(self_sender),
+            named_path: None,
         }
+    }
+
+    /// Create context with system reference and named path
+    pub fn with_system_and_name(
+        actor_id: ActorId,
+        system: Arc<dyn ActorSystemRef>,
+        cancel_token: CancellationToken,
+        self_sender: mpsc::Sender<Envelope>,
+        named_path: Option<String>,
+    ) -> Self {
+        let node_id = Some(system.node_id());
+        Self {
+            actor_id,
+            node_id,
+            cancel_token,
+            actor_refs: HashMap::new(),
+            system: Some(system),
+            self_sender: Some(self_sender),
+            named_path,
+        }
+    }
+
+    /// Get the named path (if this is a named actor)
+    pub fn named_path(&self) -> Option<&str> {
+        self.named_path.as_deref()
+    }
+
+    /// Get a reference to the actor system (if available)
+    pub fn system(&self) -> Option<Arc<dyn ActorSystemRef>> {
+        self.system.clone()
     }
 
     /// Get the actor's ID

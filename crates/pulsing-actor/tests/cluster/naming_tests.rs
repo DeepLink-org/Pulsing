@@ -45,10 +45,7 @@ async fn test_naming_backend_register_named_actor() {
     let path = ActorPath::new("test/actor").unwrap();
 
     // Register a named actor by spawning it
-    let _ref = system
-        .spawn_named(path.clone(), "test_actor", TestActor)
-        .await
-        .unwrap();
+    let _ref = system.spawn_named("test/actor", TestActor).await.unwrap();
 
     // Should be able to lookup
     let info = system.lookup_named(&path).await;
@@ -80,17 +77,8 @@ async fn test_naming_backend_all_named_actors() {
     let all = system.all_named_actors().await;
     let initial_count = all.len();
 
-    let path1 = ActorPath::new("test/actor1").unwrap();
-    let path2 = ActorPath::new("test/actor2").unwrap();
-
-    let _ref1 = system
-        .spawn_named(path1, "actor1", TestActor)
-        .await
-        .unwrap();
-    let _ref2 = system
-        .spawn_named(path2, "actor2", TestActor)
-        .await
-        .unwrap();
+    let _ref1 = system.spawn_named("test/actor1", TestActor).await.unwrap();
+    let _ref2 = system.spawn_named("test/actor2", TestActor).await.unwrap();
 
     // Should now have 2 more
     let all = system.all_named_actors().await;
@@ -103,11 +91,8 @@ async fn test_naming_backend_all_named_actors() {
 async fn test_naming_backend_resolve_named_actor() {
     let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
+    let _ref = system.spawn_named("test/resolve", TestActor).await.unwrap();
     let path = ActorPath::new("test/resolve").unwrap();
-    let _ref = system
-        .spawn_named(path.clone(), "resolve_actor", TestActor)
-        .await
-        .unwrap();
 
     // Should be able to resolve
     let resolved = system.resolve_named(&path, None).await;
@@ -120,11 +105,11 @@ async fn test_naming_backend_resolve_named_actor() {
 async fn test_naming_backend_named_actor_instances() {
     let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-    let path = ActorPath::new("test/instances").unwrap();
     let _ref = system
-        .spawn_named(path.clone(), "instances_actor", TestActor)
+        .spawn_named("test/instances", TestActor)
         .await
         .unwrap();
+    let path = ActorPath::new("test/instances").unwrap();
 
     // Get instances
     let instances = system.get_named_instances(&path).await;
@@ -162,13 +147,12 @@ async fn test_gossip_backend_type_downcast() {
 async fn test_named_actor_full_lifecycle() {
     let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-    let path = ActorPath::new("test/lifecycle").unwrap();
-
     // 1. Register
     let _actor_ref = system
-        .spawn_named(path.clone(), "lifecycle_actor", TestActor)
+        .spawn_named("test/lifecycle", TestActor)
         .await
         .unwrap();
+    let path = ActorPath::new("test/lifecycle").unwrap();
 
     // 2. Verify registered
     let info = system.lookup_named(&path).await;
@@ -220,20 +204,18 @@ impl Actor for MetadataActor {
 async fn test_named_actor_with_metadata() {
     let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-    let path = ActorPath::new("test/metadata").unwrap();
     let mut metadata = HashMap::new();
     metadata.insert("python_class".to_string(), "MyActor".to_string());
     metadata.insert("python_module".to_string(), "my_module".to_string());
 
     let _ref = system
-        .spawn_named_with_options(
-            path.clone(),
-            "metadata_actor",
-            MetadataActor::new(metadata.clone()),
-            SpawnOptions::new().public(true).metadata(metadata.clone()),
-        )
+        .spawning()
+        .name("test/metadata_actor")
+        .metadata(metadata.clone())
+        .spawn(MetadataActor::new(metadata.clone()))
         .await
         .unwrap();
+    let path = ActorPath::new("test/metadata_actor").unwrap();
 
     // Get detailed instance info
     let instances = system.get_named_instances_detailed(&path).await;
@@ -293,13 +275,9 @@ async fn test_named_actor_instances_nonexistent() {
 async fn test_multiple_registrations_same_path() {
     let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-    let path = ActorPath::new("test/multi").unwrap();
-
     // First registration
-    let _ref1 = system
-        .spawn_named(path.clone(), "multi_actor", TestActor)
-        .await
-        .unwrap();
+    let _ref1 = system.spawn_named("test/multi", TestActor).await.unwrap();
+    let path = ActorPath::new("test/multi").unwrap();
 
     // Second registration with same path should either:
     // 1. Replace the first one, or
@@ -341,7 +319,7 @@ async fn test_head_node_register_named_actor() {
 
     // Register a named actor on head node
     let _ref = head_system
-        .spawn_named(path.clone(), "head_actor", TestActor)
+        .spawn_named("test/head_actor", TestActor)
         .await
         .unwrap();
 
@@ -362,15 +340,12 @@ async fn test_head_node_all_named_actors() {
 
     let initial_count = head_system.all_named_actors().await.len();
 
-    let path1 = ActorPath::new("test/head1").unwrap();
-    let path2 = ActorPath::new("test/head2").unwrap();
-
     let _ref1 = head_system
-        .spawn_named(path1, "head1", TestActor)
+        .spawn_named("test/head1", TestActor)
         .await
         .unwrap();
     let _ref2 = head_system
-        .spawn_named(path2, "head2", TestActor)
+        .spawn_named("test/head2", TestActor)
         .await
         .unwrap();
 
@@ -387,7 +362,7 @@ async fn test_head_node_resolve_named_actor() {
 
     let path = ActorPath::new("test/head_resolve").unwrap();
     let _ref = head_system
-        .spawn_named(path.clone(), "head_resolve", TestActor)
+        .spawn_named("test/head_resolve", TestActor)
         .await
         .unwrap();
 
@@ -405,7 +380,7 @@ async fn test_head_node_named_actor_instances() {
 
     let path = ActorPath::new("test/head_instances").unwrap();
     let _ref = head_system
-        .spawn_named(path.clone(), "head_instances", TestActor)
+        .spawn_named("test/head_instances", TestActor)
         .await
         .unwrap();
 
@@ -496,7 +471,7 @@ async fn test_head_worker_named_actor_sync() {
     // Register named actor on worker
     let path = ActorPath::new("test/worker_actor").unwrap();
     let _ref = worker_system
-        .spawn_named(path.clone(), "worker_actor", TestActor)
+        .spawn_named("test/worker_actor", TestActor)
         .await
         .unwrap();
 
@@ -537,11 +512,11 @@ async fn test_head_worker_multiple_actors() {
     let path2 = ActorPath::new("test/multi2").unwrap();
 
     let _ref1 = worker_system
-        .spawn_named(path1.clone(), "multi1", TestActor)
+        .spawn_named("test/multi1", TestActor)
         .await
         .unwrap();
     let _ref2 = worker_system
-        .spawn_named(path2.clone(), "multi2", TestActor)
+        .spawn_named("test/multi2", TestActor)
         .await
         .unwrap();
 
@@ -576,7 +551,7 @@ async fn test_head_worker_actor_resolution() {
     // Register actor on worker
     let path = ActorPath::new("test/resolve_actor").unwrap();
     let _ref = worker_system
-        .spawn_named(path.clone(), "resolve_actor", TestActor)
+        .spawn_named("test/resolve_actor", TestActor)
         .await
         .unwrap();
 
@@ -613,7 +588,7 @@ async fn test_head_worker_actor_unregister() {
     // Register actor on worker
     let path = ActorPath::new("test/unregister_actor").unwrap();
     let _ref = worker_system
-        .spawn_named(path.clone(), "unregister_actor", TestActor)
+        .spawn_named("test/unregister_actor", TestActor)
         .await
         .unwrap();
 

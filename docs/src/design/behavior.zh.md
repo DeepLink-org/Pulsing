@@ -33,12 +33,12 @@ fn counter(initial: i32) -> Behavior<i32> {
 类型安全的 Actor 引用，只接受类型 `M` 的消息：
 
 ```rust
-// 类型安全：只能发送 i32
-let counter: TypedRef<i32> = system.spawn_behavior("counter", counter(0)).await?;
+// Behavior 实现了 IntoActor，可以直接 spawn
+let counter = system.spawn_named("actors/counter", counter(0)).await?;
 
 counter.tell(5).await?;  // OK
 counter.tell(3).await?;  // OK
-// counter.tell("hello").await?;  // 编译错误！
+// counter.tell("hello").await?;  // 运行时错误（反序列化时类型不匹配）
 ```
 
 ### BehaviorAction
@@ -202,8 +202,8 @@ let actor_ref = counter.as_untyped()?;
 ## 完整示例
 
 ```rust
-use pulsing_actor::behavior::{stateful, Behavior, BehaviorAction, BehaviorSpawner};
-use pulsing_actor::system::ActorSystem;
+use pulsing_actor::behavior::{stateful, Behavior, BehaviorAction};
+use pulsing_actor::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -236,10 +236,10 @@ fn counter(initial: i32) -> Behavior<CounterMsg> {
 async fn main() -> anyhow::Result<()> {
     let system = ActorSystem::builder().build().await?;
 
-    // 启动 behavior 风格的 Actor
-    let counter = system.spawn_behavior("counter", counter(0)).await?;
+    // Behavior 实现了 IntoActor，可以直接 spawn
+    let counter = system.spawn_named("actors/counter", counter(0)).await?;
 
-    // 类型安全的消息发送
+    // 消息发送
     counter.tell(CounterMsg::Increment(5)).await?;
     counter.tell(CounterMsg::Increment(3)).await?;
     counter.tell(CounterMsg::Decrement(2)).await?;

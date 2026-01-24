@@ -14,9 +14,9 @@ pip install pulsing
 
 ```python
 import asyncio
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
-@remote
+@pul.remote
 class Counter:
     def __init__(self, value=0):
         self.value = value
@@ -26,16 +26,16 @@ class Counter:
         return self.value
 
 async def main():
-    await init()
+    await pul.init()
     counter = await Counter.spawn(value=0)
     print(await counter.inc())  # 1
     print(await counter.inc())  # 2
-    await shutdown()
+    await pul.shutdown()
 
 asyncio.run(main())
 ```
 
-`@remote` 装饰器将任意 Python 类变成分布式 Actor。
+`@pul.remote` 装饰器将任意 Python 类变成分布式 Actor。
 
 ---
 

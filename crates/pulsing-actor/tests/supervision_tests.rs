@@ -46,7 +46,7 @@ async fn test_restart_on_failure() {
     let options = SpawnOptions::new().supervision(spec);
 
     let actor_ref = system
-        .spawn_factory("failing", factory, options)
+        .spawn_named_factory("test/failing", factory, options)
         .await
         .unwrap();
 
@@ -103,7 +103,7 @@ async fn test_max_restarts_exceeded() {
     let options = SpawnOptions::new().supervision(spec);
 
     let actor_ref = system
-        .spawn_factory("crashing", factory, options)
+        .spawn_named_factory("test/crashing", factory, options)
         .await
         .unwrap();
 

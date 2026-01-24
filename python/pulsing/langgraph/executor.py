@@ -15,7 +15,8 @@ import pickle
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict
 
-from pulsing.actor import Actor, ActorId, ActorRef, SystemConfig, create_actor_system
+from pulsing.actor import Actor, ActorId, ActorRef, ActorSystem, SystemConfig
+from pulsing.actor.remote import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
 
 logger = logging.getLogger("pulsing.langgraph")
 
@@ -288,7 +289,11 @@ async def start_worker(
     config = SystemConfig.with_addr(addr)
     if seeds:
         config = config.with_seeds(seeds)
-    system = await create_actor_system(config)
+    loop = asyncio.get_running_loop()
+    system = await ActorSystem.create(config, loop)
+    # Register PythonActorService for remote actor creation
+    service = PythonActorService(system)
+    await system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
 
     executor_config = ExecutorConfig(
         max_workers=max_workers,
@@ -299,10 +304,9 @@ async def start_worker(
     actor = LangGraphNodeActor(node_name, node_func, executor_config)
     name = actor_name or f"langgraph_node_{node_name}"
 
-    await system.spawn(name, actor, public=True)
+    await system.spawn(actor, name=name, public=True)
     logger.info(
-        f"Worker started: {name} @ {addr} "
-        f"(workers={max_workers}, queue={queue_size})"
+        f"Worker started: {name} @ {addr} (workers={max_workers}, queue={queue_size})"
     )
 
     try:

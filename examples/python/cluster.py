@@ -12,51 +12,47 @@ Usage:
 import argparse
 import asyncio
 
-from pulsing.actor import Actor, ActorId, Message, SystemConfig, create_actor_system
+import pulsing as pul
 
 
-class SharedCounter(Actor):
+class SharedCounter:
     def __init__(self, node_id: str):
         self.count = 0
         self.node_id = node_id
 
-    def on_start(self, actor_id: ActorId):
+    def on_start(self, actor_id):
         print(f"[{actor_id}] Started on {self.node_id}")
 
-    def receive(self, msg: Message) -> Message:
-        if msg.msg_type == "GetCount":
-            return Message.from_json(
-                "CountResponse", {"count": self.count, "from_node": self.node_id}
-            )
-        elif msg.msg_type == "Increment":
-            n = msg.to_json().get("n", 1)
+    async def receive(self, msg):
+        if msg.get("action") == "get":
+            return {"count": self.count, "from_node": self.node_id}
+        elif msg.get("action") == "incr":
+            n = msg.get("n", 1)
             self.count += n
             print(f"[{self.node_id}] +{n} -> {self.count}")
-            return Message.from_json(
-                "CountResponse", {"count": self.count, "from_node": self.node_id}
-            )
-        return Message.empty()
+            return {"count": self.count, "from_node": self.node_id}
+        return {"error": "unknown action"}
 
 
 async def run_node(port: int, seed: str | None):
     print(f"=== Pulsing Cluster - Node {port} ===\n")
 
-    config = SystemConfig.with_addr(f"127.0.0.1:{port}")
+    addr = f"127.0.0.1:{port}"
+    seeds = [seed] if seed else None
+
+    system = await pul.actor_system(addr, seeds=seeds)
+    print(f"✓ Started: {system.node_id} @ {system.addr}")
     if seed:
-        config = config.with_seeds([seed])
-        print(f"Joining via: {seed}")
-
-    system = await create_actor_system(config)
-    print(f"✓ Started: {system.node_id} @ {system.addr}\n")
-
-    path = "services/counter"
+        print(f"  Joined via: {seed}")
+    print()
 
     if seed is None:
         # Node 1: Create actor
-        await system.spawn_named(
-            path, "counter", SharedCounter(str(system.node_id)), public=True
+        await system.spawn(
+            SharedCounter(str(system.node_id)),
+            name="counter",
         )
-        print(f"✓ Created: {path}")
+        print("✓ Created: counter")
         print("Start node 2: python cluster.py --port 8001 --seed 127.0.0.1:8000\n")
 
         try:
@@ -75,7 +71,7 @@ async def run_node(port: int, seed: str | None):
         actor = None
         for _ in range(10):
             try:
-                actor = await system.resolve_named(path)
+                actor = await system.resolve("counter")
                 break
             except Exception:
                 print(".", end="", flush=True)
@@ -87,14 +83,12 @@ async def run_node(port: int, seed: str | None):
 
         print("✓ Resolved\n")
 
-        # Interact
-        resp = (await actor.ask(Message.from_json("GetCount", {}))).to_json()
+        # Interact using simple Python dicts
+        resp = await actor.ask({"action": "get"})
         print(f"Initial: {resp['count']} (from {resp['from_node']})")
 
         for i in range(1, 4):
-            resp = (
-                await actor.ask(Message.from_json("Increment", {"n": i * 10}))
-            ).to_json()
+            resp = await actor.ask({"action": "incr", "n": i * 10})
             print(f"After +{i * 10}: {resp['count']} (from {resp['from_node']})")
 
         print("\n✓ Done!")

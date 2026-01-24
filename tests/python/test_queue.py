@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from pulsing.actor import SystemConfig, create_actor_system
+import pulsing as pul
 from pulsing.queue import (
     BucketStorage,
     Queue,
@@ -42,8 +42,7 @@ from pulsing.queue import (
 @pytest.fixture
 async def actor_system():
     """Create a standalone actor system for testing."""
-    config = SystemConfig.standalone()
-    system = await create_actor_system(config)
+    system = await pul.actor_system()
     yield system
     await system.shutdown()
 
@@ -956,7 +955,7 @@ async def test_bucket_storage_direct(actor_system, temp_storage_path):
     )
 
     # Spawn actor
-    actor_ref = await actor_system.spawn("test_bucket", storage)
+    actor_ref = await actor_system.spawn(storage, name="test_bucket")
 
     from pulsing.actor import Message
 
@@ -1011,10 +1010,10 @@ def test_sync_queue_standalone():
         try:
             # Setup in background loop
             async def setup():
-                from pulsing.actor import SystemConfig, create_actor_system
+                import pulsing as pul
                 from pulsing.queue import write_queue, read_queue
 
-                system = await create_actor_system(SystemConfig.standalone())
+                system = await pul.actor_system()
                 writer = await write_queue(
                     system,
                     "sync_test",
@@ -1078,10 +1077,10 @@ def test_sync_writer_reader_standalone():
         try:
 
             async def setup():
-                from pulsing.actor import SystemConfig, create_actor_system
+                import pulsing as pul
                 from pulsing.queue import write_queue, read_queue
 
-                system = await create_actor_system(SystemConfig.standalone())
+                system = await pul.actor_system()
                 writer = await write_queue(
                     system,
                     "sync_wr",
@@ -1145,10 +1144,10 @@ def test_sync_reader_offset_standalone():
         try:
 
             async def setup():
-                from pulsing.actor import SystemConfig, create_actor_system
+                import pulsing as pul
                 from pulsing.queue import write_queue, read_queue
 
-                system = await create_actor_system(SystemConfig.standalone())
+                system = await pul.actor_system()
                 writer = await write_queue(
                     system,
                     "offset_test",
