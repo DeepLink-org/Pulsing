@@ -78,7 +78,7 @@ reqwest-eventsource = "0.6"
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
 tokio-rustls = { version = "0.26" }
 rcgen = { version = "0.13" }
-aws-lc-rs = { version = "1.8", features = ["bindgen"] }
+aws-lc-rs = { version = "1.8" }
 rustls-pemfile = { version = "2" }
 time = { version = "0.3" }
 
