@@ -177,6 +177,12 @@ ray.init(
     **kwargs
 ) -> None
 
+# 关闭系统
+ray.shutdown() -> None
+
+# 检查是否已初始化
+ray.is_initialized() -> bool
+
 # 装饰器：将类转换为 Actor
 @ray.remote
 class MyActor:
@@ -189,9 +195,21 @@ actor_handle = MyActor.remote(...) -> _ActorHandle
 # 调用方法（返回 ObjectRef）
 result_ref = actor_handle.method.remote(...) -> ObjectRef
 
-# 获取结果（同步接口）
-result = ray.get(result_ref, timeout: float | None = None) -> Any
+# 获取结果（同步接口，支持单个或列表）
+result = ray.get(
+    refs: ObjectRef | list[ObjectRef],
+    *,
+    timeout: float | None = None
+) -> Any | list[Any]
 
-# 关闭系统
-ray.shutdown() -> None
+# 将值包装为 ObjectRef（用于 API 兼容）
+ref = ray.put(value: Any) -> ObjectRef
+
+# 等待多个 ObjectRef 完成
+ready, remaining = ray.wait(
+    refs: list[ObjectRef],
+    *,
+    num_returns: int = 1,
+    timeout: float | None = None
+) -> tuple[list[ObjectRef], list[ObjectRef]]
 ```
