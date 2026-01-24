@@ -1028,6 +1028,9 @@ impl ActorSystem {
     /// 2. Waits for the actor to finish (with 30s timeout)
     /// 3. If timeout, forcefully aborts the actor task
     /// 4. Handles lifecycle cleanup (watch notifications, cluster broadcast, etc.)
+    ///
+    /// Note: If the name doesn't contain a "/" and no actor is found with the exact name,
+    /// it will try with the "actors/" prefix (for Python compatibility).
     pub async fn stop_with_reason(
         &self,
         name: impl AsRef<str>,
@@ -1035,8 +1038,23 @@ impl ActorSystem {
     ) -> anyhow::Result<()> {
         let name = name.as_ref();
 
+        // Try exact name first, then normalized name with "actors/" prefix
+        let actual_name = if self.actor_names.contains_key(name) {
+            name.to_string()
+        } else if !name.contains('/') {
+            // Try with "actors/" prefix (Python API compatibility)
+            let prefixed = format!("actors/{}", name);
+            if self.actor_names.contains_key(&prefixed) {
+                prefixed
+            } else {
+                name.to_string()
+            }
+        } else {
+            name.to_string()
+        };
+
         // Get local_id from actor_names, then remove from local_actors
-        if let Some((_, local_id)) = self.actor_names.remove(name) {
+        if let Some((_, local_id)) = self.actor_names.remove(&actual_name) {
             if let Some((_, handle)) = self.local_actors.remove(&local_id) {
                 // 1. Signal the actor to stop gracefully
                 handle.cancel_token.cancel();
@@ -1045,13 +1063,13 @@ impl ActorSystem {
                 match tokio::time::timeout(Self::GRACEFUL_STOP_TIMEOUT, handle.join_handle).await {
                     Ok(_) => {
                         // Actor stopped gracefully
-                        tracing::debug!(actor = %name, "Actor stopped gracefully");
+                        tracing::debug!(actor = %actual_name, "Actor stopped gracefully");
                     }
                     Err(_) => {
                         // Timeout - actor didn't respond to cancel signal
                         // This shouldn't happen normally, but we log a warning
                         tracing::warn!(
-                            actor = %name,
+                            actor = %actual_name,
                             "Actor didn't stop gracefully within timeout, already aborted by tokio"
                         );
                     }
@@ -1063,7 +1081,7 @@ impl ActorSystem {
                 self.lifecycle
                     .handle_termination(
                         &handle.actor_id,
-                        name,
+                        &actual_name,
                         handle.named_path.clone(),
                         reason,
                         &self.named_actor_paths,

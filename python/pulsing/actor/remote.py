@@ -403,11 +403,12 @@ class _WrappedActor(_ActorBase):
             # Regular method or not marked as async call
             try:
                 result = func(*args, **kwargs)
-                if asyncio.iscoroutine(result):
-                    result = await result
-                # Check if result is a generator (sync or async)
+                # Check if result is a generator (sync or async) FIRST
+                # This must come before the coroutine check to avoid awaiting generators
                 if inspect.isgenerator(result) or inspect.isasyncgen(result):
                     return self._handle_generator_result(result)
+                if asyncio.iscoroutine(result):
+                    result = await result
                 return {"__result__": result}
             except Exception as e:
                 return {"__error__": str(e)}
