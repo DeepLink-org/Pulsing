@@ -16,6 +16,7 @@ class ResearcherAgent:
             f"Research point 2 about {topic}",
         ]
 
+
 # Analyst Agent
 @agent(role="Analyst", goal="Analyze research results")
 class AnalystAgent:
@@ -23,11 +24,13 @@ class AnalystAgent:
         combined = " ".join(points)
         return f"Analysis: {combined[:50]}..."
 
+
 # Reporter Agent
 @agent(role="Reporter", goal="Write final report")
 class ReporterAgent:
     async def write(self, summary: str) -> str:
         return f"Final Report:\n{summary}"
+
 
 # Workflow
 async def run_workflow():

@@ -1,4 +1,4 @@
-//! Core Actor traits and types
+//! Core actor traits and types.
 
 use async_trait::async_trait;
 use futures::Stream;
@@ -10,32 +10,23 @@ use std::pin::Pin;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-// ============================================================================
-// Identifiers
-// ============================================================================
-
-/// Node identifier in the cluster (0 = local)
+/// Node identifier in the cluster (0 = local).
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Serialize, Deserialize, Default)]
 pub struct NodeId(pub u64);
 
 impl NodeId {
-    /// Local node id (0)
     pub const LOCAL: NodeId = NodeId(0);
 
-    /// Generate a new unique NodeId using UUID
     pub fn generate() -> Self {
         let uuid = uuid::Uuid::new_v4();
-        // Use the lower 64 bits of UUID, ensure non-zero (0 is reserved for LOCAL)
         let id = uuid.as_u128() as u64;
         Self(if id == 0 { 1 } else { id })
     }
 
-    /// Create from u64
     pub fn new(id: u64) -> Self {
         Self(id)
     }
 
-    /// Check if this is the local node
     pub fn is_local(&self) -> bool {
         self.0 == 0
     }
@@ -48,28 +39,23 @@ impl fmt::Display for NodeId {
     }
 }
 
-/// Actor identifier (globally unique)
-/// High 64 bits = node id, Low 64 bits = local actor id
+/// Actor identifier (globally unique).
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Serialize, Deserialize, Default)]
 pub struct ActorId(pub u128);
 
 impl ActorId {
-    /// Create a new ActorId from node id and local id
     pub fn new(node: NodeId, local_id: u64) -> Self {
         Self(((node.0 as u128) << 64) | (local_id as u128))
     }
 
-    /// Create a local actor id
     pub fn local(local_id: u64) -> Self {
         Self::new(NodeId::LOCAL, local_id)
     }
 
-    /// Get the node id
     pub fn node(&self) -> NodeId {
         NodeId((self.0 >> 64) as u64)
     }
 
-    /// Get the local actor id
     pub fn local_id(&self) -> u64 {
         self.0 as u64
     }
@@ -82,58 +68,35 @@ impl fmt::Display for ActorId {
     }
 }
 
-// ============================================================================
-// Lifecycle
-// ============================================================================
-
-/// Reason why an actor stopped
+/// Reason why an actor stopped.
 #[derive(Clone, Debug, Error, Serialize, Deserialize)]
 pub enum StopReason {
-    /// Normal shutdown (graceful stop)
     #[error("Normal")]
     Normal,
-    /// Actor panicked or encountered an unrecoverable error
     #[error("Failed: {0}")]
     Failed(String),
-    /// Actor was killed/aborted
     #[error("Killed")]
     Killed,
-    /// System is shutting down
     #[error("SystemShutdown")]
     SystemShutdown,
 }
 
-// ============================================================================
-// Messaging
-// ============================================================================
-
-/// Message stream type (stream of Single messages)
+/// Message stream type (stream of Single messages).
 pub type MessageStream = Pin<Box<dyn Stream<Item = anyhow::Result<Message>> + Send>>;
 
-/// Unified message type for both requests and responses
-///
-/// Message is an enum with two variants:
-/// - `Single`: for traditional request-response with a single data payload
-/// - `Stream`: for streaming scenarios composed of Single messages
+/// Unified message type for both requests and responses.
 pub enum Message {
-    /// Single data message
     Single {
-        /// Message type identifier (empty for responses)
         msg_type: String,
-        /// Message data
         data: Vec<u8>,
     },
-    /// Streaming data message (stream of Single messages)
     Stream {
-        /// Default message type (used if chunk doesn't specify one)
         default_msg_type: String,
-        /// Stream of Single messages
         stream: MessageStream,
     },
 }
 
 impl Message {
-    /// Create a single message with type and data
     pub fn single(msg_type: impl Into<String>, data: impl Into<Vec<u8>>) -> Self {
         Message::Single {
             msg_type: msg_type.into(),
@@ -141,9 +104,6 @@ impl Message {
         }
     }
 
-    /// Pack a serializable value into a message
-    ///
-    /// Uses `std::any::type_name` to automatically generate the message type.
     pub fn pack<M: Serialize + 'static>(msg: &M) -> anyhow::Result<Self> {
         Ok(Message::Single {
             msg_type: std::any::type_name::<M>().to_string(),
@@ -151,7 +111,6 @@ impl Message {
         })
     }
 
-    /// Unpack (deserialize) the message data into a specific type
     pub fn unpack<M: DeserializeOwned>(self) -> anyhow::Result<M> {
         match self {
             Message::Single { data, .. } => Ok(bincode::deserialize(&data)?),
@@ -159,7 +118,6 @@ impl Message {
         }
     }
 
-    /// Create a streaming message from a channel receiver
     pub fn from_channel(
         default_msg_type: impl Into<String>,
         rx: mpsc::Receiver<anyhow::Result<Message>>,
@@ -171,7 +129,6 @@ impl Message {
         }
     }
 
-    /// Create a streaming message from a stream
     pub fn stream<S>(default_msg_type: impl Into<String>, stream: S) -> Self
     where
         S: Stream<Item = anyhow::Result<Message>> + Send + 'static,
@@ -182,7 +139,6 @@ impl Message {
         }
     }
 
-    /// Get message type (for Single) or default message type (for Stream)
     pub fn msg_type(&self) -> &str {
         match self {
             Message::Single { msg_type, .. } => msg_type,
@@ -192,12 +148,10 @@ impl Message {
         }
     }
 
-    /// Check if this is a single message
     pub fn is_single(&self) -> bool {
         matches!(self, Message::Single { .. })
     }
 
-    /// Check if this is a streaming message
     pub fn is_stream(&self) -> bool {
         matches!(self, Message::Stream { .. })
     }

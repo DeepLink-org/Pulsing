@@ -1,6 +1,4 @@
-//! Gossip backend implementation
-//!
-//! Wraps the existing GossipCluster to implement the NamingBackend trait.
+//! Gossip backend implementation.
 
 use crate::actor::{ActorId, ActorPath, NodeId, StopReason};
 use crate::cluster::NamingBackend;
@@ -15,16 +13,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-/// Gossip-based naming backend
-///
-/// This wraps the existing GossipCluster implementation to provide
-/// the NamingBackend trait interface.
+/// Gossip-based naming backend.
 pub struct GossipBackend {
     cluster: Arc<GossipCluster>,
 }
 
 impl GossipBackend {
-    /// Create a new GossipBackend
     pub fn new(
         local_node: NodeId,
         local_addr: SocketAddr,
@@ -37,9 +31,7 @@ impl GossipBackend {
         }
     }
 
-    /// Get a reference to the inner GossipCluster
-    ///
-    /// This is needed for SystemMessageHandler to access handle_gossip method.
+    /// Get a reference to the inner GossipCluster.
     pub fn inner(&self) -> &GossipCluster {
         &self.cluster
     }
@@ -47,10 +39,6 @@ impl GossipBackend {
 
 #[async_trait]
 impl NamingBackend for GossipBackend {
-    // ========================================================================
-    // Node Management
-    // ========================================================================
-
     async fn join(&self, seeds: Vec<SocketAddr>) -> anyhow::Result<()> {
         self.cluster.join(seeds).await
     }
@@ -70,10 +58,6 @@ impl NamingBackend for GossipBackend {
     async fn get_member(&self, node_id: &NodeId) -> Option<MemberInfo> {
         self.cluster.get_member(node_id).await
     }
-
-    // ========================================================================
-    // Named Actor Registration
-    // ========================================================================
 
     async fn register_named_actor(&self, path: ActorPath) {
         self.cluster.register_named_actor(path).await
@@ -100,10 +84,6 @@ impl NamingBackend for GossipBackend {
             .await
     }
 
-    // ========================================================================
-    // Named Actor Queries
-    // ========================================================================
-
     async fn lookup_named_actor(&self, path: &ActorPath) -> Option<NamedActorInfo> {
         self.cluster.lookup_named_actor(path).await
     }
@@ -127,10 +107,6 @@ impl NamingBackend for GossipBackend {
         self.cluster.all_named_actors().await
     }
 
-    // ========================================================================
-    // Actor Registration
-    // ========================================================================
-
     async fn register_actor(&self, actor_id: ActorId) {
         self.cluster.register_actor(actor_id).await
     }
@@ -142,10 +118,6 @@ impl NamingBackend for GossipBackend {
     async fn lookup_actor(&self, actor_id: &ActorId) -> Option<MemberInfo> {
         self.cluster.lookup_actor(actor_id).await
     }
-
-    // ========================================================================
-    // Lifecycle Management
-    // ========================================================================
 
     fn start(&self, cancel: CancellationToken) {
         self.cluster.start(cancel)

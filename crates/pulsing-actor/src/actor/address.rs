@@ -1,13 +1,4 @@
-//! Actor addressing - URI-based actor addressing scheme
-//!
-//! This module implements the actor addressing scheme as defined in the design document.
-//!
-//! ## Address Types
-//!
-//! 1. Named Actor Service Address: `actor:///namespace/path/name`
-//! 2. Named Actor Instance Address: `actor:///namespace/path/name@node_id`
-//! 3. Global Actor Address: `actor://node_id/actor_id`
-//! 4. Local Reference: `actor://0/actor_id` (node_id=0 means local)
+//! Actor addressing (URI-based).
 
 use super::traits::NodeId;
 use serde::{Deserialize, Serialize};
@@ -65,14 +56,7 @@ impl fmt::Display for AddressParseError {
 
 impl std::error::Error for AddressParseError {}
 
-/// Actor path for named actors (namespace + hierarchical path + name)
-///
-/// A path must have at least two segments: namespace and name.
-/// Additional segments can be used for logical grouping.
-///
-/// Examples:
-/// - `services/llm/router` (namespace: services, name: router)
-/// - `workers/inference/pool` (namespace: workers, name: pool)
+/// Actor path for named actors (namespace + path + name).
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ActorPath {
     /// Path segments, e.g., ["services", "llm", "router"]
@@ -88,6 +72,46 @@ impl ActorPath {
 
     /// Maximum single segment length
     pub const MAX_SEGMENT_LENGTH: usize = 64;
+
+    /// Validate and parse path components (shared by `new()` and `new_system()`).
+    fn validate_path_components(path: &str) -> Result<Vec<String>, AddressParseError> {
+        let path = path.trim_matches('/');
+
+        if path.len() > Self::MAX_PATH_LENGTH {
+            return Err(AddressParseError::PathTooLong);
+        }
+
+        if path.is_empty() {
+            return Err(AddressParseError::MissingNamespace);
+        }
+
+        let segments: Vec<String> = path.split('/').map(|s| s.trim().to_string()).collect();
+
+        for segment in &segments {
+            if segment.is_empty() {
+                return Err(AddressParseError::EmptySegment);
+            }
+            if segment.len() > Self::MAX_SEGMENT_LENGTH {
+                return Err(AddressParseError::SegmentTooLong);
+            }
+            if !Self::is_valid_segment(segment) {
+                return Err(AddressParseError::InvalidCharacter);
+            }
+        }
+
+        if segments.len() < 2 {
+            return Err(AddressParseError::MissingNamespace);
+        }
+
+        Ok(segments)
+    }
+
+    /// Check if a segment contains only valid characters
+    fn is_valid_segment(s: &str) -> bool {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    }
 
     /// Create a new actor path from a string
     ///
@@ -114,36 +138,7 @@ impl ActorPath {
     /// // ActorPath::new("a".repeat(300)).unwrap();   // Too long
     /// ```
     pub fn new(path: impl AsRef<str>) -> Result<Self, AddressParseError> {
-        let path = path.as_ref().trim_matches('/');
-
-        // Check total path length
-        if path.len() > Self::MAX_PATH_LENGTH {
-            return Err(AddressParseError::PathTooLong);
-        }
-
-        if path.is_empty() {
-            return Err(AddressParseError::MissingNamespace);
-        }
-
-        let segments: Vec<String> = path.split('/').map(|s| s.trim().to_string()).collect();
-
-        // Validate segments
-        for segment in &segments {
-            if segment.is_empty() {
-                return Err(AddressParseError::EmptySegment);
-            }
-            if segment.len() > Self::MAX_SEGMENT_LENGTH {
-                return Err(AddressParseError::SegmentTooLong);
-            }
-            if !Self::is_valid_segment(segment) {
-                return Err(AddressParseError::InvalidCharacter);
-            }
-        }
-
-        // Must have at least namespace/name
-        if segments.len() < 2 {
-            return Err(AddressParseError::MissingNamespace);
-        }
+        let segments = Self::validate_path_components(path.as_ref())?;
 
         // Check for reserved system namespaces (user code cannot use these)
         if Self::SYSTEM_NAMESPACES.contains(&segments[0].as_str()) {
@@ -164,45 +159,8 @@ impl ActorPath {
     /// - Python bindings for `PythonActorService` at `system/python_actor_service`
     #[doc(hidden)]
     pub fn new_system(path: impl AsRef<str>) -> Result<Self, AddressParseError> {
-        let path = path.as_ref().trim_matches('/');
-
-        // Check total path length
-        if path.len() > Self::MAX_PATH_LENGTH {
-            return Err(AddressParseError::PathTooLong);
-        }
-
-        if path.is_empty() {
-            return Err(AddressParseError::MissingNamespace);
-        }
-
-        let segments: Vec<String> = path.split('/').map(|s| s.trim().to_string()).collect();
-
-        // Validate segments
-        for segment in &segments {
-            if segment.is_empty() {
-                return Err(AddressParseError::EmptySegment);
-            }
-            if segment.len() > Self::MAX_SEGMENT_LENGTH {
-                return Err(AddressParseError::SegmentTooLong);
-            }
-            if !Self::is_valid_segment(segment) {
-                return Err(AddressParseError::InvalidCharacter);
-            }
-        }
-
-        // Must have at least namespace/name
-        if segments.len() < 2 {
-            return Err(AddressParseError::MissingNamespace);
-        }
-
+        let segments = Self::validate_path_components(path.as_ref())?;
         Ok(Self { segments })
-    }
-
-    /// Check if a segment contains only valid characters
-    fn is_valid_segment(s: &str) -> bool {
-        !s.is_empty()
-            && s.chars()
-                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
     }
 
     /// Get the namespace (first segment)

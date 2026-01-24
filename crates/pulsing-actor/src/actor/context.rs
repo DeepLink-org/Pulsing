@@ -1,4 +1,4 @@
-//! Actor execution context
+//! Actor execution context.
 
 use super::mailbox::Envelope;
 use super::reference::ActorRef;
@@ -10,58 +10,38 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-/// Context provided to actors during message handling
-///
-/// Provides access to:
-/// - `id()` - The actor's assigned ID
-/// - `actor_ref()` - Get references to other actors
-/// - `watch()`/`unwatch()` - Monitor other actors
-/// - `schedule_self()` - Schedule a delayed message to self
-/// - `is_cancelled()` - Check if shutdown was requested
+/// Context provided to actors during message handling.
 pub struct ActorContext {
-    /// The actor's own ID
     actor_id: ActorId,
 
-    /// Local node ID
     node_id: Option<NodeId>,
 
-    /// Cancellation token for graceful shutdown
     cancel_token: CancellationToken,
 
-    /// Cached actor references
     actor_refs: HashMap<ActorId, ActorRef>,
 
-    /// System reference for spawning new actors
     system: Option<Arc<dyn ActorSystemRef>>,
 
-    /// Self mailbox sender for schedule_self
     self_sender: Option<mpsc::Sender<Envelope>>,
 
-    /// Named path (if this is a named actor)
     named_path: Option<String>,
 }
 
-/// Trait for system reference (to avoid circular dependency)
+/// Trait for system reference.
 #[async_trait::async_trait]
 pub trait ActorSystemRef: Send + Sync {
-    /// Get an actor reference by ID
     async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef>;
 
-    /// Get the local node ID
     fn node_id(&self) -> NodeId;
 
-    /// Watch an actor - will receive a termination message (ActorId, StopReason) when the watched actor stops
     async fn watch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()>;
 
-    /// Stop watching an actor
     async fn unwatch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()>;
 
-    /// Get a local actor reference by name (for behavior-based actors)
     fn local_actor_ref_by_name(&self, name: &str) -> Option<ActorRef>;
 }
 
 impl ActorContext {
-    /// Create a new context (for testing)
     pub fn new(actor_id: ActorId) -> Self {
         Self {
             actor_id,
@@ -74,7 +54,6 @@ impl ActorContext {
         }
     }
 
-    /// Create context with system reference
     pub fn with_system(
         actor_id: ActorId,
         system: Arc<dyn ActorSystemRef>,
@@ -93,7 +72,6 @@ impl ActorContext {
         }
     }
 
-    /// Create context with system reference and named path
     pub fn with_system_and_name(
         actor_id: ActorId,
         system: Arc<dyn ActorSystemRef>,
@@ -113,44 +91,35 @@ impl ActorContext {
         }
     }
 
-    /// Get the named path (if this is a named actor)
     pub fn named_path(&self) -> Option<&str> {
         self.named_path.as_deref()
     }
 
-    /// Get a reference to the actor system (if available)
     pub fn system(&self) -> Option<Arc<dyn ActorSystemRef>> {
         self.system.clone()
     }
 
-    /// Get the actor's ID
     pub fn id(&self) -> &ActorId {
         &self.actor_id
     }
 
-    /// Get the local node ID
     pub fn node_id(&self) -> Option<&NodeId> {
         self.node_id.as_ref()
     }
 
-    /// Get the cancellation token
     pub fn cancel_token(&self) -> &CancellationToken {
         &self.cancel_token
     }
 
-    /// Check if shutdown was requested
     pub fn is_cancelled(&self) -> bool {
         self.cancel_token.is_cancelled()
     }
 
-    /// Get an actor reference
     pub async fn actor_ref(&mut self, id: &ActorId) -> anyhow::Result<ActorRef> {
-        // Check cache first
         if let Some(r) = self.actor_refs.get(id) {
             return Ok(r.clone());
         }
 
-        // Get from system
         if let Some(ref system) = self.system {
             let r = system.actor_ref(id).await?;
             self.actor_refs.insert(*id, r.clone());
@@ -160,18 +129,7 @@ impl ActorContext {
         Err(anyhow::anyhow!("No system reference available"))
     }
 
-    /// Schedule a delayed message to self
-    ///
-    /// Sends a message to this actor after the specified delay.
-    /// The message is serialized and sent as a fire-and-forget (tell pattern).
-    ///
-    /// # Example
-    /// ```ignore
-    /// ctx.schedule_self(MyMessage { value: 42 }, Duration::from_secs(5));
-    /// ```
-    ///
-    /// # Panics
-    /// Returns an error if the actor context doesn't have a self sender (e.g., in tests).
+    /// Schedule a delayed message to self.
     pub fn schedule_self<M: Serialize + Send + 'static>(
         &self,
         msg: M,
@@ -181,10 +139,8 @@ impl ActorContext {
             anyhow::anyhow!("No self sender available (context not fully initialized)")
         })?;
 
-        // Serialize the message
         let message = Message::pack(&msg)?;
 
-        // Spawn a task that waits for the delay and then sends the message
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
             let envelope = Envelope::tell(message);
@@ -196,7 +152,7 @@ impl ActorContext {
         Ok(())
     }
 
-    /// Watch another actor - will receive a termination message (ActorId, StopReason) when it stops
+    /// Watch another actor.
     pub async fn watch(&self, target: &ActorId) -> anyhow::Result<()> {
         if let Some(ref system) = self.system {
             system.watch(&self.actor_id, target).await
@@ -205,7 +161,7 @@ impl ActorContext {
         }
     }
 
-    /// Stop watching another actor
+    /// Stop watching another actor.
     pub async fn unwatch(&self, target: &ActorId) -> anyhow::Result<()> {
         if let Some(ref system) = self.system {
             system.unwatch(&self.actor_id, target).await

@@ -1,4 +1,4 @@
-//! Actor reference - location-transparent handle to an actor
+//! Actor reference - location-transparent handle to an actor.
 
 use super::address::ActorPath;
 use super::mailbox::Envelope;
@@ -8,83 +8,56 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-/// Actor reference - handle for sending messages to an actor
-///
-/// ActorRef supports two resolution modes:
-/// - **Direct**: Uses a fixed connection (for local actors or known remote actors)
-/// - **Lazy**: Re-resolves the actor on each operation (for named actors that may migrate)
+/// Actor reference - handle for sending messages to an actor.
 #[derive(Clone)]
 pub struct ActorRef {
-    /// The target actor's ID (may be placeholder for lazy refs)
     pub(crate) actor_id: ActorId,
 
-    /// Inner implementation
     pub(crate) inner: ActorRefInner,
 }
 
-/// Inner actor reference - direct or lazy resolution
+/// Inner actor reference.
 #[derive(Clone)]
 pub enum ActorRefInner {
-    /// Local actor - direct channel access
     Local(mpsc::Sender<Envelope>),
 
-    /// Remote actor - via network transport
     Remote(Arc<RemoteActorRef>),
 
-    /// Lazy resolution - re-resolve on each call (for named actors)
     Lazy(Arc<LazyActorRef>),
 }
 
-/// Remote actor reference
+/// Remote actor reference.
 pub struct RemoteActorRef {
-    /// Remote node address
     pub node_addr: SocketAddr,
 
-    /// Transport client
     pub transport: Arc<dyn RemoteTransport>,
 }
 
-/// Lazy actor reference - resolves actor path on each operation
-///
-/// This ensures the reference is always up-to-date, even if the actor
-/// migrates to a different node.
-///
-/// Uses double-checked locking pattern to avoid resolution storms
-/// when multiple concurrent requests find the cache expired.
+/// Lazy actor reference.
 pub struct LazyActorRef {
-    /// The named actor path (e.g., "services/echo")
     pub path: ActorPath,
 
-    /// Resolver function
     pub resolver: Arc<dyn ActorResolver>,
 
-    /// Cached ActorRef (with version for staleness check)
     cache: RwLock<Option<CachedRef>>,
 
-    /// Lock to ensure only one thread refreshes the cache at a time
-    /// Prevents resolution storms under high concurrency
     refresh_lock: tokio::sync::Mutex<()>,
 }
 
-/// Cached reference with version for staleness detection
 struct CachedRef {
     actor_ref: ActorRef,
-    /// Cache timestamp for TTL-based invalidation
     cached_at: std::time::Instant,
 }
 
-/// Cache TTL - references older than this are re-resolved
 const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Trait for resolving actor paths to ActorRefs
+/// Trait for resolving actor paths to ActorRefs.
 #[async_trait::async_trait]
 pub trait ActorResolver: Send + Sync {
-    /// Resolve a named actor path to an ActorRef
     async fn resolve_path(&self, path: &ActorPath) -> anyhow::Result<ActorRef>;
 }
 
 impl LazyActorRef {
-    /// Create a new lazy actor reference
     pub fn new(path: ActorPath, resolver: Arc<dyn ActorResolver>) -> Self {
         Self {
             path,
@@ -94,13 +67,7 @@ impl LazyActorRef {
         }
     }
 
-    /// Get the underlying ActorRef, resolving if necessary
-    ///
-    /// Uses double-checked locking to prevent resolution storms:
-    /// 1. Fast path: check cache with read lock
-    /// 2. Slow path: acquire refresh lock, check again, then resolve
     async fn get(&self) -> anyhow::Result<ActorRef> {
-        // Fast path: check cache with read lock
         {
             let cache = self.cache.read().await;
             if let Some(ref cached) = *cache {
@@ -110,10 +77,8 @@ impl LazyActorRef {
             }
         }
 
-        // Slow path: acquire refresh lock to prevent concurrent resolution
         let _refresh_guard = self.refresh_lock.lock().await;
 
-        // Double-check: another thread may have refreshed while we waited
         {
             let cache = self.cache.read().await;
             if let Some(ref cached) = *cache {
@@ -123,7 +88,6 @@ impl LazyActorRef {
             }
         }
 
-        // Now we're the only thread refreshing - safe to resolve
         let resolved = self.resolver.resolve_path(&self.path).await?;
         {
             let mut cache = self.cache.write().await;
@@ -135,17 +99,15 @@ impl LazyActorRef {
         Ok(resolved)
     }
 
-    /// Invalidate the cache (call when actor is known to have moved)
     pub async fn invalidate(&self) {
         let mut cache = self.cache.write().await;
         *cache = None;
     }
 }
 
-/// Trait for remote transport (HTTP/2, TCP, etc.)
+/// Trait for remote transport (HTTP/2, TCP, etc.).
 #[async_trait::async_trait]
 pub trait RemoteTransport: Send + Sync {
-    /// Send a request and wait for response (low-level)
     async fn request(
         &self,
         actor_id: &ActorId,
@@ -153,7 +115,6 @@ pub trait RemoteTransport: Send + Sync {
         payload: Vec<u8>,
     ) -> anyhow::Result<Vec<u8>>;
 
-    /// Send a one-way message (low-level)
     async fn send(
         &self,
         actor_id: &ActorId,
@@ -161,10 +122,7 @@ pub trait RemoteTransport: Send + Sync {
         payload: Vec<u8>,
     ) -> anyhow::Result<()>;
 
-    /// Send a message and receive response (unified interface)
-    ///
-    /// This is the primary method for communication. It automatically handles
-    /// both single and stream responses based on the server's response type.
+    /// Send a message and receive response (unified interface).
     async fn send_message(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
         let Message::Single { msg_type, data } = msg else {
             return Err(anyhow::anyhow!("Streaming requests not yet supported"));
@@ -173,7 +131,6 @@ pub trait RemoteTransport: Send + Sync {
         Ok(Message::single("", response))
     }
 
-    /// Send a one-way message (unified interface)
     async fn send_oneway(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<()> {
         let Message::Single { msg_type, data } = msg else {
             return Err(anyhow::anyhow!(
@@ -185,7 +142,6 @@ pub trait RemoteTransport: Send + Sync {
 }
 
 impl ActorRef {
-    /// Create a local actor reference
     pub fn local(actor_id: ActorId, sender: mpsc::Sender<Envelope>) -> Self {
         Self {
             actor_id,
@@ -193,7 +149,6 @@ impl ActorRef {
         }
     }
 
-    /// Create a remote actor reference
     pub fn remote(
         actor_id: ActorId,
         node_addr: SocketAddr,

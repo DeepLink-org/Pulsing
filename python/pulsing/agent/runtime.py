@@ -1,4 +1,4 @@
-"""Actor system lifecycle management"""
+"""Actor system lifecycle management."""
 
 from __future__ import annotations
 
@@ -14,20 +14,7 @@ async def runtime(
     seeds: list[str] | None = None,
     passphrase: str | None = None,
 ):
-    """
-    Actor system runtime context manager.
-
-    Example:
-        from pulsing.agent import runtime
-
-        async with runtime():
-            agent = await MyAgent.spawn(name="agent")
-            result = await agent.run()
-
-        # Distributed mode
-        async with runtime(addr="0.0.0.0:8001", seeds=["node1:8001"]):
-            ...
-    """
+    """Actor system runtime context manager."""
     await init(addr=addr, seeds=seeds, passphrase=passphrase)
     try:
         yield get_system()

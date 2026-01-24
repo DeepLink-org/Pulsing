@@ -1,7 +1,4 @@
-//! HTTP/2 Server implementation
-//!
-//! Supports h2c (HTTP/2 over cleartext) with optional HTTP/1.1 fallback.
-//! When `tls` feature is enabled, supports TLS with passphrase-derived certificates.
+//! HTTP/2 server implementation.
 
 use super::config::Http2Config;
 use super::stream::{BinaryFrameParser, StreamFrame};
@@ -24,18 +21,11 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-/// Handler trait for HTTP/2 server
+/// Handler trait for HTTP/2 server.
 #[async_trait::async_trait]
 pub trait Http2ServerHandler: Send + Sync + 'static {
-    /// Unified message handler - accepts and returns Message (Single or Stream)
-    ///
-    /// This is the primary method that should be implemented. It handles both:
-    /// - Single requests: `Message::Single` with payload
-    /// - Streaming requests: `Message::Stream` with async stream of chunks
-    ///
-    /// The default implementation delegates to `handle_message_simple` for backward compatibility.
+    /// Unified message handler.
     async fn handle_message_full(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
-        // Default: extract single message and delegate to simple handler
         match msg {
             Message::Single { msg_type, data } => {
                 self.handle_message_simple(path, &msg_type, data).await
@@ -46,9 +36,7 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
         }
     }
 
-    /// Simple message handler for backward compatibility
-    ///
-    /// Implement this if you only need to handle single (non-streaming) requests.
+    /// Simple message handler.
     async fn handle_message_simple(
         &self,
         path: &str,
@@ -59,49 +47,42 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
         Err(anyhow::anyhow!("Not implemented"))
     }
 
-    /// Handle tell (fire-and-forget) message
+    /// Handle tell (fire-and-forget) message.
     async fn handle_tell(&self, path: &str, msg_type: &str, payload: Vec<u8>)
         -> anyhow::Result<()>;
 
-    /// Handle gossip message
+    /// Handle gossip message.
     async fn handle_gossip(
         &self,
         payload: Vec<u8>,
         peer_addr: SocketAddr,
     ) -> anyhow::Result<Option<Vec<u8>>>;
 
-    /// Get health status
+    /// Get health status.
     async fn health_check(&self) -> serde_json::Value {
         serde_json::json!({"status": "ok"})
     }
 
-    /// Get Prometheus metrics (text format)
-    ///
-    /// Default implementation returns empty metrics.
-    /// Override this to provide system metrics.
+    /// Get Prometheus metrics (text format).
     async fn prometheus_metrics(&self) -> String {
         String::new()
     }
 
-    /// Get cluster members list (for CLI tools)
-    ///
-    /// Returns JSON array of member information.
+    /// Get cluster members list.
     async fn cluster_members(&self) -> serde_json::Value {
         serde_json::json!([])
     }
 
-    /// Get actors list on this node (for CLI tools)
-    ///
-    /// Returns JSON array of actor information.
+    /// Get actors list on this node.
     async fn actors_list(&self, include_internal: bool) -> serde_json::Value {
         let _ = include_internal;
         serde_json::json!([])
     }
 
-    /// Get as Any for downcasting
+    /// Get as Any for downcasting.
     fn as_any(&self) -> &dyn std::any::Any;
 
-    /// Handle head node API requests (optional, returns None if not supported)
+    /// Handle head node API requests.
     async fn handle_head_api(
         &self,
         _path: &str,
@@ -112,14 +93,13 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
     }
 }
 
-/// HTTP/2 Server
+/// HTTP/2 Server.
 pub struct Http2Server {
     local_addr: SocketAddr,
     cancel: CancellationToken,
 }
 
 impl Http2Server {
-    /// Create and start a new HTTP/2 server
     pub async fn new(
         bind_addr: SocketAddr,
         handler: Arc<dyn Http2ServerHandler>,
@@ -131,7 +111,6 @@ impl Http2Server {
 
         tracing::info!(addr = %local_addr, "Starting HTTP/2 server");
 
-        // Spawn the server task
         let server_cancel = cancel.clone();
         tokio::spawn(async move {
             Self::run_server(listener, handler, config, server_cancel).await;
@@ -140,17 +119,14 @@ impl Http2Server {
         Ok(Self { local_addr, cancel })
     }
 
-    /// Get the local address the server is bound to
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
-    /// Shutdown the server
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
-    /// Run the server loop
     async fn run_server(
         listener: TcpListener,
         handler: Arc<dyn Http2ServerHandler>,

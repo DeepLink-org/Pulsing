@@ -147,7 +147,7 @@ print(await counter.get())  # 100
 ### 异步方法支持
 
 ```python
-@remote
+@pul.remote
 class AsyncWorker:
     async def fetch_data(self, url):
         async with aiohttp.ClientSession() as session:
@@ -199,7 +199,7 @@ counter.increment(5)              # 同步调用，返回 15
 ### 1. 方法设计
 
 ```python
-@remote
+@pul.remote
 class GoodDesign:
     # ✓ 返回完整状态
     def get_state(self):

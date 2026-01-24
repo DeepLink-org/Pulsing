@@ -12,9 +12,13 @@ sync:
 	uv sync --all-extras
 
 serve:
+	@echo "Installing Pulsing in development mode..."
+	cd .. && uv run maturin develop
 	uv run mkdocs serve
 
 build:
+	@echo "Installing Pulsing in development mode..."
+	cd .. && uv run maturin develop
 	uv run mkdocs build
 
 clean:

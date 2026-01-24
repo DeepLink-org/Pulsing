@@ -1,4 +1,4 @@
-//! Cluster member types
+//! Cluster member types.
 
 use crate::actor::{ActorId, ActorPath, NodeId};
 use serde::{Deserialize, Serialize};
@@ -6,23 +6,13 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::Instant;
 
-// ============================================================================
-// New Gossip Protocol (Redis Cluster style)
-// ============================================================================
-
-/// Node status in the new gossip protocol (Redis Cluster style)
+/// Node status in the new gossip protocol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum NodeStatus {
-    /// Node is online and healthy
     Online = 0,
-    /// Node is possibly failed (local detection, not confirmed)
     PFail = 1,
-    /// Node is confirmed failed (majority of nodes agree)
     Fail = 2,
-    /// Node is in handshake (new node joining)
     Handshake = 3,
-    /// Node is tombstoned (failed + grace period expired)
-    /// Named actors are cleared but node info is retained for recovery
     Tombstone = 4,
 }
 
@@ -44,18 +34,13 @@ impl NodeStatus {
     }
 }
 
-/// Cluster node information (new format)
+/// Cluster node information.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterNode {
-    /// Node identifier
     pub node_id: NodeId,
-    /// Network address
     pub addr: SocketAddr,
-    /// Current status
     pub status: NodeStatus,
-    /// Configuration epoch (for conflict resolution)
     pub epoch: u64,
-    /// Last seen timestamp (milliseconds since epoch)
     pub last_seen: u64,
 }
 
@@ -73,44 +58,29 @@ impl ClusterNode {
         }
     }
 
-    /// Check if this node info supersedes another (based on epoch)
     pub fn supersedes(&self, other: &ClusterNode) -> bool {
-        // Higher epoch always wins
         if self.epoch != other.epoch {
             return self.epoch > other.epoch;
         }
-        // Same epoch: Fail > PFail > Online
         self.status > other.status
     }
 }
 
-/// Failure information to propagate via gossip
+/// Failure information to propagate via gossip.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FailureInfo {
-    /// Node that failed
     pub node_id: NodeId,
-    /// Failure status (PFail or Fail)
     pub status: NodeStatus,
-    /// Epoch when failure was detected
     pub epoch: u64,
-    /// Node that reported the failure
     pub reported_by: NodeId,
 }
 
-// ============================================================================
-// Legacy types (kept for backward compatibility)
-// ============================================================================
-
-/// Member status in the cluster
+/// Member status in the cluster.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemberStatus {
-    /// Member is alive and healthy
     Alive,
-    /// Member is suspected to be down (not responding to pings)
     Suspect,
-    /// Member is confirmed dead
     Dead,
-    /// Member is leaving the cluster gracefully
     Leaving,
 }
 
@@ -124,32 +94,19 @@ impl MemberStatus {
     }
 }
 
-/// Information about a cluster member
+/// Information about a cluster member.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MemberInfo {
-    /// Node identifier
     pub node_id: NodeId,
-
-    /// Network address (for TCP communication)
     pub addr: SocketAddr,
-
-    /// Gossip address (for UDP gossip)
     pub gossip_addr: SocketAddr,
-
-    /// Current status
     pub status: MemberStatus,
-
-    /// Incarnation number (for conflict resolution)
-    /// Higher incarnation wins in case of conflicting information
     pub incarnation: u64,
-
-    /// Timestamp of last update (not serialized, local only)
     #[serde(skip)]
     pub last_update: Option<Instant>,
 }
 
 impl MemberInfo {
-    /// Create a new member info
     pub fn new(node_id: NodeId, addr: SocketAddr, gossip_addr: SocketAddr) -> Self {
         Self {
             node_id,
@@ -161,14 +118,12 @@ impl MemberInfo {
         }
     }
 
-    /// Update incarnation number (used when refuting suspicion)
     pub fn refute(&mut self) {
         self.incarnation += 1;
         self.status = MemberStatus::Alive;
         self.last_update = Some(Instant::now());
     }
 
-    /// Mark as suspect
     pub fn suspect(&mut self) {
         if self.status == MemberStatus::Alive {
             self.status = MemberStatus::Suspect;
@@ -176,20 +131,15 @@ impl MemberInfo {
         }
     }
 
-    /// Mark as dead
     pub fn mark_dead(&mut self) {
         self.status = MemberStatus::Dead;
         self.last_update = Some(Instant::now());
     }
 
-    /// Check if this info supersedes another (based on incarnation)
     pub fn supersedes(&self, other: &MemberInfo) -> bool {
-        // Higher incarnation always wins
         if self.incarnation != other.incarnation {
             return self.incarnation > other.incarnation;
         }
-
-        // Same incarnation: Dead > Suspect > Alive
         matches!(
             (&self.status, &other.status),
             (MemberStatus::Dead, _) | (MemberStatus::Suspect, MemberStatus::Alive)

@@ -1,61 +1,4 @@
-//! HTTP/2 Transport Layer
-//!
-//! Provides HTTP/2 (h2c - cleartext) transport for actor communication with
-//! bidirectional streaming support using a high-performance binary protocol.
-//!
-//! ## Features
-//!
-//! - HTTP/2 over cleartext (h2c) - no TLS required
-//! - **Bidirectional streaming** - both requests and responses can be streams
-//! - **Binary frame protocol** - ~56% smaller than JSON, zero-copy friendly
-//! - Connection multiplexing with advanced pooling
-//! - Retry strategies with exponential backoff
-//! - Timeout management at multiple levels
-//! - Built-in flow control (backpressure)
-//!
-//! ## Protocol
-//!
-//! ### Message Modes
-//!
-//! - `ask`: Request-response pattern (single or stream)
-//! - `tell`: Fire-and-forget pattern (single only)
-//! - `stream`: Explicit streaming response request
-//!
-//! ### Request Types
-//!
-//! - `single`: Regular request body
-//! - `stream`: Length-prefixed binary frames
-//!
-//! ### Headers
-//!
-//! - `x-message-mode`: ask | tell | stream
-//! - `x-message-type`: Message type identifier
-//! - `x-request-type`: single | stream
-//! - `x-response-type`: single | stream
-//! - `x-request-id`: Optional request ID for tracing
-//!
-//! ## Example
-//!
-//! ```rust,ignore
-//! use pulsing_actor::transport::http2::{Http2Client, Http2ClientBuilder, Http2Config};
-//! use std::time::Duration;
-//!
-//! // Create client with custom configuration
-//! let client = Http2ClientBuilder::new()
-//!     .max_retries(3)
-//!     .connect_timeout(Duration::from_secs(5))
-//!     .request_timeout(Duration::from_secs(30))
-//!     .build();
-//!
-//! // Send request
-//! let response = client.ask(addr, "/actors/my_actor", "Ping", payload).await?;
-//!
-//! // Streaming request
-//! let stream = client.ask_stream(addr, "/actors/my_actor", "StreamingRequest", payload).await?;
-//! while let Some(frame) = stream.next().await {
-//!     // Process streaming frames
-//! }
-//! ```
+//! HTTP/2 transport layer.
 
 mod client;
 mod config;
@@ -83,10 +26,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-/// High-level HTTP/2 Transport
-///
-/// Combines Http2Server and Http2Client into a single component
-/// used by ActorSystem and GossipCluster.
+/// High-level HTTP/2 transport.
 pub struct Http2Transport {
     local_addr: SocketAddr,
     client: Arc<Http2Client>,
@@ -95,18 +35,15 @@ pub struct Http2Transport {
 }
 
 impl Http2Transport {
-    /// Create a new HTTP/2 transport and start the server
     pub async fn new(
         bind_addr: SocketAddr,
         handler: Arc<dyn Http2ServerHandler>,
         config: Http2Config,
         cancel: CancellationToken,
     ) -> anyhow::Result<(Arc<Self>, SocketAddr)> {
-        // Build HTTP/2 client
         let client = Arc::new(Http2Client::new(config.clone()));
         client.start_background_tasks();
 
-        // Start HTTP/2 server
         let server = Http2Server::new(bind_addr, handler, config.clone(), cancel.clone()).await?;
         let local_addr = server.local_addr();
 
@@ -120,12 +57,10 @@ impl Http2Transport {
         Ok((transport, local_addr))
     }
 
-    /// Create a client-only transport (no server)
     pub fn new_client(config: Http2Config) -> Arc<Self> {
         let client = Arc::new(Http2Client::new(config.clone()));
         client.start_background_tasks();
 
-        // Default address for client-only mode (no server binding)
         const CLIENT_ONLY_ADDR: SocketAddr =
             SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)), 0);
 
@@ -137,16 +72,11 @@ impl Http2Transport {
         })
     }
 
-    /// Get local address
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
-    /// Send a request to an actor and wait for response
-    ///
-    /// Supports both single and streaming requests:
-    /// - `Message::Single`: Sent as regular request body
-    /// - `Message::Stream`: Sent as binary frames
+    /// Send a request to an actor and wait for response.
     pub async fn ask(
         &self,
         addr: SocketAddr,
@@ -157,11 +87,7 @@ impl Http2Transport {
         self.client.send_message_full(addr, &path, msg).await
     }
 
-    /// Send a request to a named actor and wait for response
-    ///
-    /// Supports both single and streaming requests:
-    /// - `Message::Single`: Sent as regular request body
-    /// - `Message::Stream`: Sent as binary frames
+    /// Send a request to a named actor and wait for response.
     pub async fn ask_named(
         &self,
         addr: SocketAddr,
@@ -172,7 +98,6 @@ impl Http2Transport {
         self.client.send_message_full(addr, &url_path, msg).await
     }
 
-    /// Send a fire-and-forget message
     pub async fn tell(
         &self,
         addr: SocketAddr,
@@ -187,7 +112,6 @@ impl Http2Transport {
         self.client.tell(addr, &path, &msg_type, data).await
     }
 
-    /// Send a fire-and-forget message to a named actor
     pub async fn tell_named(
         &self,
         addr: SocketAddr,

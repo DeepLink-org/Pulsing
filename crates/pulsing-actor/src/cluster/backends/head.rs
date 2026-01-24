@@ -1,8 +1,4 @@
-//! Head node backend implementation
-//!
-//! Implements a centralized naming backend where:
-//! - Head node: Maintains global registry of nodes and named actors
-//! - Worker nodes: Sync with head node via HTTP/2
+//! Head node backend implementation.
 
 use crate::actor::{ActorId, ActorPath, NodeId, StopReason};
 use crate::cluster::{
@@ -19,18 +15,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-/// Configuration for head node backend
+/// Configuration for head node backend.
 #[derive(Clone, Debug)]
 pub struct HeadNodeConfig {
-    /// Sync interval for worker nodes (default: 5s)
     pub sync_interval: Duration,
-    /// Heartbeat interval for worker nodes (default: 10s)
     pub heartbeat_interval: Duration,
-    /// Heartbeat timeout for head node (default: 30s)
     pub heartbeat_timeout: Duration,
 }
 
@@ -44,23 +33,12 @@ impl Default for HeadNodeConfig {
     }
 }
 
-// ============================================================================
-// Node Mode
-// ============================================================================
-
 #[derive(Clone, Debug)]
 enum NodeMode {
-    /// Head node mode
     Head,
-    /// Worker node mode with head node address
     Worker { head_addr: SocketAddr },
 }
 
-// ============================================================================
-// Head Node State
-// ============================================================================
-
-/// Node registration information
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct NodeRegistration {
     node_id: NodeId,
@@ -68,13 +46,9 @@ struct NodeRegistration {
     last_heartbeat: u64, // milliseconds since epoch
 }
 
-/// Head node state (only used in head mode)
 struct HeadNodeState {
-    /// Registered nodes
     nodes: HashMap<NodeId, NodeRegistration>,
-    /// Named actors registry
     named_actors: HashMap<String, NamedActorInfo>,
-    /// Actor registry
     actors: HashMap<ActorId, NodeId>,
 }
 
@@ -87,7 +61,6 @@ impl HeadNodeState {
         }
     }
 
-    /// Register or update a node
     fn register_node(&mut self, node_id: NodeId, addr: SocketAddr) {
         let now = HeadNodeBackend::now_millis();
         self.nodes.insert(
@@ -100,7 +73,6 @@ impl HeadNodeState {
         );
     }
 
-    /// Update node heartbeat
     fn update_heartbeat(&mut self, node_id: &NodeId) -> bool {
         if let Some(reg) = self.nodes.get_mut(node_id) {
             reg.last_heartbeat = HeadNodeBackend::now_millis();
@@ -110,7 +82,6 @@ impl HeadNodeState {
         }
     }
 
-    /// Remove stale nodes (heartbeat timeout)
     fn remove_stale_nodes(&mut self, timeout_ms: u64) -> Vec<NodeId> {
         let now = HeadNodeBackend::now_millis();
         let mut removed = Vec::new();
@@ -124,7 +95,6 @@ impl HeadNodeState {
             }
         });
 
-        // Clean up named actors and actors for removed nodes
         for node_id in &removed {
             self.named_actors.values_mut().for_each(|info| {
                 info.remove_instance(node_id);
@@ -136,7 +106,6 @@ impl HeadNodeState {
         removed
     }
 
-    /// Register a named actor
     fn register_named_actor(
         &mut self,
         path: ActorPath,
@@ -159,7 +128,6 @@ impl HeadNodeState {
         }
     }
 
-    /// Unregister a named actor
     fn unregister_named_actor(&mut self, path: &ActorPath, node_id: &NodeId) {
         let key = path.as_str().to_string();
         if let Some(info) = self.named_actors.get_mut(&key) {
@@ -170,17 +138,14 @@ impl HeadNodeState {
         }
     }
 
-    /// Register an actor
     fn register_actor(&mut self, actor_id: ActorId, node_id: NodeId) {
         self.actors.insert(actor_id, node_id);
     }
 
-    /// Unregister an actor
     fn unregister_actor(&mut self, actor_id: &ActorId) {
         self.actors.remove(actor_id);
     }
 
-    /// Get all members as MemberInfo
     fn all_members(&self) -> Vec<MemberInfo> {
         self.nodes
             .values()
@@ -195,7 +160,6 @@ impl HeadNodeState {
             .collect()
     }
 
-    /// Get all named actors
     fn all_named_actors(&self) -> Vec<NamedActorInfo> {
         self.named_actors.values().cloned().collect()
     }

@@ -2,59 +2,25 @@
 //!
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 //!
-//! A lightweight, zero-external-dependency distributed actor framework.
-//!
-//! ## Features
-//!
-//! - **Zero external dependencies**: No etcd, nats, or redis required
-//! - **Gossip-based discovery**: Automatic cluster membership using SWIM protocol
-//! - **Location-transparent ActorRef**: Same API for local and remote actors
-//! - **Async/await native**: Built on tokio
-//!
-//! ## Architecture
-//!
-//! ```text
-//! ┌─────────────────────────────────────────────────────────────────┐
-//! │                         ActorSystem                              │
-//! │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-//! │  │  Actor 1    │  │  Actor 2    │  │      Cluster Module      │  │
-//! │  │  ┌───────┐  │  │  ┌───────┐  │  │  ┌───────────────────┐  │  │
-//! │  │  │Mailbox│  │  │  │Mailbox│  │  │  │  Gossip Protocol  │  │  │
-//! │  │  └───────┘  │  │  └───────┘  │  │  │  (SWIM-like)      │  │  │
-//! │  └─────────────┘  └─────────────┘  │  └───────────────────┘  │  │
-//! │         ↑               ↑          │           ↑              │  │
-//! │         └───────┬───────┘          │           │              │  │
-//! │                 │                  │           │              │  │
-//! │        ┌────────┴────────┐         │  ┌────────┴────────┐    │  │
-//! │        │  Actor Registry │←────────┼──│  Member Registry │    │  │
-//! │        └─────────────────┘         │  └─────────────────┘    │  │
-//! │                                    └─────────────────────────┘  │
-//! │                          ↕ TCP Transport                         │
-//! └─────────────────────────────────────────────────────────────────┘
-//! ```
+//! Lightweight distributed actor framework (gossip discovery, HTTP/2 transport).
 //!
 //! ## Quick Start
 //!
 //! ```rust,ignore
 //! use pulsing_actor::prelude::*;
 //!
-//! // Define messages
 //! #[derive(Serialize, Deserialize)]
 //! struct Ping { value: i32 }
-//!
 //! #[derive(Serialize, Deserialize)]
 //! struct Pong { result: i32 }
 //!
-//! // Define an actor - no boilerplate!
 //! struct Counter { count: i32 }
 //!
 //! #[async_trait]
 //! impl Actor for Counter {
-//!     async fn receive(
-//!         &mut self,
-//!         msg: Message,
-//!         ctx: &mut ActorContext,
-//!     ) -> anyhow::Result<Message> {
+//!     async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext)
+//!         -> anyhow::Result<Message>
+//!     {
 //!         if msg.msg_type().ends_with("Ping") {
 //!             let ping: Ping = msg.unpack()?;
 //!             self.count += ping.value;
@@ -66,47 +32,20 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     let system = ActorSystem::new(SystemConfig::standalone()).await?;
-//!
-//!     // Spawn with a name - system assigns the ID
-//!     let actor_ref = system.spawn("counter", Counter { count: 0 }).await?;
-//!
-//!     // Send message and get response
+//!     let system = ActorSystem::builder().build().await?;
+//!     let actor_ref = system.spawn_named("services/counter", Counter { count: 0 }).await?;
 //!     let pong: Pong = actor_ref.ask(Ping { value: 42 }).await?;
 //!     println!("Result: {}", pong.result);
-//!
 //!     system.shutdown().await?;
 //!     Ok(())
 //! }
-//! ```
-//!
-//! ## Cluster Mode
-//!
-//! ```rust,ignore
-//! // Node 1 - Start first node
-//! let config = SystemConfig::with_addrs(
-//!     "0.0.0.0:8000".parse()?,  // TCP
-//!     "0.0.0.0:7000".parse()?,  // Gossip
-//! );
-//! let system1 = ActorSystem::new(config).await?;
-//!
-//! // Node 2 - Join existing cluster
-//! let config = SystemConfig::with_addrs(
-//!     "0.0.0.0:8001".parse()?,
-//!     "0.0.0.0:7001".parse()?,
-//! ).with_seeds(vec!["192.168.1.100:7000".parse()?]);
-//!
-//! let system2 = ActorSystem::new(config).await?;
-//!
-//! // Get reference to actor on another node
-//! let remote_ref = system2.actor_ref(&actor_id).await?;
-//! let result: Pong = remote_ref.ask(Ping { value: 10 }).await?;
 //! ```
 
 pub mod actor;
 pub mod behavior;
 pub mod circuit_breaker;
 pub mod cluster;
+pub mod error;
 pub mod metrics;
 pub mod policies;
 pub mod supervision;
@@ -115,6 +54,28 @@ pub mod system_actor;
 pub mod tracing;
 pub mod transport;
 pub mod watch;
+
+/// Test helpers and macros for writing actor system tests
+///
+/// This module provides reusable test infrastructure including:
+/// - Common test messages (TestPing, TestPong, etc.)
+/// - Common test actors (TestEchoActor, TestAccumulatorActor)
+/// - Helper functions for test setup
+/// - Macros for standardized test patterns
+///
+/// # Example
+/// ```rust,ignore
+/// use pulsing_actor::test_helper::*;
+/// use pulsing_actor::actor_test;
+///
+/// actor_test!(test_echo, system, {
+///     let echo = spawn_echo_actor(&system, "test/echo").await;
+///     let response: TestPong = echo.ask(TestPing { value: 21 }).await.unwrap();
+///     assert_eq!(response.result, 42);
+/// });
+/// ```
+#[cfg(any(test, feature = "test-helper"))]
+pub mod test_helper;
 
 /// Prelude - commonly used types
 ///

@@ -1,4 +1,4 @@
-//! Naming backend implementations
+//! Naming backend implementations.
 
 mod gossip;
 mod head;

@@ -99,7 +99,7 @@ async def main():
 Distributing work across multiple workers:
 
 ```python
-@remote
+@pul.remote
 class Worker:
     def __init__(self, worker_id: int):
         self.worker_id = worker_id
@@ -122,7 +122,7 @@ class Worker:
         }
 
 
-@remote
+@pul.remote
 class WorkerPool:
     def __init__(self):
         self.workers = []
@@ -156,7 +156,7 @@ class WorkerPool:
 ### Simple LLM Service
 
 ```python
-@remote
+@pul.remote
 class LLMService:
     def __init__(self, model_name: str):
         self.model_name = model_name
@@ -199,7 +199,7 @@ class LLMService:
 ### Load-Balanced LLM Cluster
 
 ```python
-@remote
+@pul.remote
 class LLMRouter:
     """Routes requests to LLM workers with load balancing."""
 

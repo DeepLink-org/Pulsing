@@ -114,15 +114,24 @@ plugins:
             Load Sync: 负载同步
             AS Actor Decorator: AS Actor 装饰器
             API Reference: API 参考
+            Overview: 概述
+            Python API: Python API
+            Overview: API 概述
+            Python API: Python API
   - mkdocstrings:
       handlers:
         python:
+          paths: ["../python"]
           options:
-            docstring_style: numpy
+            docstring_style: google
             docstring_options:
               ignore_init_summary: yes
             merge_init_into_class: yes
             show_submodules: no
+            show_category_heading: yes
+            show_labels: yes
+            show_symbol_type_heading: yes
+            show_symbol_type_toc: yes
 
 nav:
   - Home: index.md
@@ -159,7 +168,10 @@ nav:
     - HTTP2 Transport: design/http2-transport.md
     - Load Sync: design/load_sync.md
     - AS Actor Decorator: design/as-actor-decorator.md
-  - API Reference: api_reference.md
+  - API Reference:
+    - Overview: api/overview.md
+    - Python: api/python.md
+    - Rust: api/rust.md
 
 extra:
   generator: false

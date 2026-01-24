@@ -1,29 +1,4 @@
-"""
-@remote decorator - Ray-like distributed object wrapper
-
-Usage:
-    from pulsing.actor import init, shutdown, remote
-
-    @remote
-    class Counter:
-        def __init__(self, init_value=0):
-            self.value = init_value
-
-        def increment(self, n=1):
-            self.value += n
-            return self.value
-
-    async def main():
-        await init()
-
-        # Create actor
-        counter = await Counter.spawn(init_value=10)
-
-        # Call methods (automatically converted to actor messages)
-        result = await counter.increment(5)  # Returns 15
-
-        await shutdown()
-"""
+"""Ray-like distributed object wrapper."""
 
 import asyncio
 import inspect
@@ -39,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class _ActorBase(ABC):
-    """Actor base class (avoids circular imports)"""
+    """Actor base class."""
 
     def on_start(self, actor_id) -> None:
         pass
@@ -52,21 +27,19 @@ class _ActorBase(ABC):
 
     @abstractmethod
     async def receive(self, msg) -> Any:
-        """Handle incoming message. Can receive and return any Python object."""
+        """Handle incoming message."""
         pass
 
 
 T = TypeVar("T")
 
-# Global class registry
 _actor_class_registry: dict[str, type] = {}
 
-# Actor instance metadata registry (actor_name -> metadata)
 _actor_metadata_registry: dict[str, dict[str, str]] = {}
 
 
 def _register_actor_metadata(name: str, cls: type):
-    """Register actor metadata for later retrieval"""
+    """Register actor metadata for later retrieval."""
     import inspect
 
     metadata = {
@@ -74,7 +47,6 @@ def _register_actor_metadata(name: str, cls: type):
         "python_module": cls.__module__,
     }
 
-    # Try to get source file
     try:
         source_file = inspect.getfile(cls)
         metadata["python_file"] = source_file
@@ -85,21 +57,15 @@ def _register_actor_metadata(name: str, cls: type):
 
 
 def get_actor_metadata(name: str) -> dict[str, str] | None:
-    """Get metadata for an actor by name"""
+    """Get metadata for an actor by name."""
     return _actor_metadata_registry.get(name)
 
 
-# Python actor service name (different from Rust SystemActor "system/core")
 PYTHON_ACTOR_SERVICE_NAME = "system/python_actor_service"
 
 
 class ActorProxy:
-    """Actor proxy: automatically converts method calls to ask messages
-
-    Supports two method types:
-    - Regular methods: synchronous ask/response
-    - Async methods: streaming response, non-blocking actor
-    """
+    """Actor proxy."""
 
     def __init__(
         self,
@@ -114,7 +80,6 @@ class ActorProxy:
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(f"Cannot access private attribute: {name}")
-        # If no method list, allow arbitrary method calls (dynamic mode)
         if self._method_names is not None and name not in self._method_names:
             raise AttributeError(f"No method '{name}'")
         is_async = name in self._async_methods
@@ -122,7 +87,7 @@ class ActorProxy:
 
     @property
     def ref(self) -> ActorRef:
-        """Get underlying ActorRef"""
+        """Get underlying ActorRef."""
         return self._ref
 
     @classmethod
@@ -132,34 +97,12 @@ class ActorProxy:
         methods: list[str] | None = None,
         async_methods: set[str] | None = None,
     ) -> "ActorProxy":
-        """Create ActorProxy from ActorRef
-
-        Args:
-            actor_ref: Underlying actor reference
-            methods: Optional list of method names. If not provided, allows calling any method (dynamic mode)
-            async_methods: Set of async method names, these methods use streaming response
-
-        Example:
-            # Dynamic mode - allows calling any method
-            ref = await system.resolve_named("my_counter")
-            proxy = ActorProxy.from_ref(ref)
-            await proxy.increment(5)  # Can call any method
-
-            # Static mode - only allows specified methods
-            proxy = ActorProxy.from_ref(ref, methods=["increment", "get_value"])
-
-            # With async method marking
-            proxy = ActorProxy.from_ref(
-                ref,
-                methods=["get", "generate"],
-                async_methods={"generate"}
-            )
-        """
+        """Create ActorProxy from ActorRef."""
         return cls(actor_ref, methods, async_methods)
 
 
 class _MethodCaller:
-    """Method caller: executes remote method calls"""
+    """Method caller."""
 
     def __init__(self, actor_ref: ActorRef, method_name: str, is_async: bool = False):
         self._ref = actor_ref
@@ -168,14 +111,12 @@ class _MethodCaller:
 
     def __call__(self, *args, **kwargs):
         if self._is_async:
-            # Return an object that can be awaited or async iterated
             return _AsyncMethodCall(self._ref, self._method, args, kwargs)
         else:
-            # Return a coroutine for synchronous methods
             return self._sync_call(*args, **kwargs)
 
     async def _sync_call(self, *args, **kwargs) -> Any:
-        """Synchronous method call"""
+        """Synchronous method call."""
         call_msg = {
             "__call__": self._method,
             "args": args,
@@ -184,16 +125,13 @@ class _MethodCaller:
         }
         resp = await self._ref.ask(call_msg)
 
-        # Handle normal response
         if isinstance(resp, dict):
             if "__error__" in resp:
                 raise RuntimeError(resp["__error__"])
             return resp.get("__result__")
         elif isinstance(resp, Message):
-            # Check if it's a stream message (generator returned)
             if resp.is_stream:
                 return _SyncGeneratorStreamReader(resp)
-            # Fallback for Rust actor communication
             data = resp.to_json()
             if resp.msg_type == "Error":
                 raise RuntimeError(data.get("error", "Remote call failed"))

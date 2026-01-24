@@ -69,30 +69,52 @@ Pulsing Actor 框架的完整 API 文档。
 创建新的 Actor System 实例。
 
 ```python
+import asyncio
 import pulsing as pul
 
-system = await pul.actor_system(
-    addr: str | None = None,        # 绑定地址，None 为单机模式
-    *,
-    seeds: list[str] | None = None, # 集群种子节点
-    passphrase: str | None = None,  # TLS 密码短语
-) -> ActorSystem
+async def example():
+    # 函数签名: actor_system(addr=None, *, seeds=None, passphrase=None) -> ActorSystem
+    system = await pul.actor_system(
+        addr=None,               # 绑定地址（str 或 None 表示单机模式）
+#        # 关键字参数开始                       # 关键字参数开始
+        seeds=None,              # 集群种子节点（list[str] 或 None）
+        passphrase=None,         # TLS 密码短语（str 或 None）
+    )
+    return system
+
+# 使用示例
+if __name__ == "__main__":
+    # 运行示例
+    # system = asyncio.run(example())
+    pass
 ```
+
+**返回:** `ActorSystem` 实例
 
 **示例：**
 
 ```python
-# 单机模式
-system = await pul.actor_system()
+import asyncio
+import pulsing as pul
 
-# 集群模式
-system = await pul.actor_system(addr="0.0.0.0:8000")
+async def main():
+    # 单机模式
+    system = await pul.actor_system()
+    await system.shutdown()
 
-# 加入现有集群
-system = await pul.actor_system(addr="0.0.0.0:8001", seeds=["127.0.0.1:8000"])
+    # 集群模式
+    system = await pul.actor_system(addr="0.0.0.0:8000")
+    await system.shutdown()
 
-# 关闭
-await system.shutdown()
+    # 加入现有集群
+    system = await pul.actor_system(
+        addr="0.0.0.0:8001",
+        seeds=["127.0.0.1:8000"]
+    )
+    await system.shutdown()
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ### pul.init / pul.shutdown
@@ -100,18 +122,32 @@ await system.shutdown()
 全局系统初始化（Ray 风格异步 API）。
 
 ```python
+import asyncio
 import pulsing as pul
 
-# 初始化全局系统
-await pul.init(addr=None, seeds=None, passphrase=None)
+class MyActor:
+    async def receive(self, msg):
+        return f"echo: {msg}"
 
-# 使用全局系统
-actor = await pul.spawn(MyActor())
-ref = await pul.resolve("actor_name")
+async def main():
+    # 初始化全局系统
+    await pul.init(addr=None, seeds=None, passphrase=None)
 
-# 关闭
-await pul.shutdown()
+    # 使用全局系统
+    actor = await pul.spawn(MyActor())
+    ref = await pul.resolve("actor_name")
+
+    # 关闭
+    await pul.shutdown()
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
+
+**参数:**
+- `addr`: 绑定地址（str 或 None 表示单机模式）
+- `seeds`: 加入集群的种子节点（list[str] 或 None）
+- `passphrase`: TLS 密码短语（str 或 None）
 
 ## 核心类
 
@@ -123,15 +159,15 @@ Actor 系统的主入口点。
 class ActorSystem:
     async def spawn(
         self,
-        actor: Actor,
-        *,
-        name: str | None = None,
+        actor,                # Actor 实例
+#        # 关键字参数开始                    # 关键字参数开始
+        name=None,           # Actor 名称（str 或 None）
         # public 参数已废弃：所有命名 actor 自动可被 resolve
-        restart_policy: str = "never",
-        max_restarts: int = 3,
-        min_backoff: float = 0.1,
-        max_backoff: float = 30.0
-    ) -> ActorRef:
+        restart_policy="never",  # 重启策略（"never" | "always" | "on-failure"）
+        max_restarts=3,      # 最大重启次数
+        min_backoff=0.1,     # 最小退避时间（秒）
+        max_backoff=30.0     # 最大退避时间（秒）
+    ):
         """
         生成新的 actor。
 
@@ -140,15 +176,30 @@ class ActorSystem:
         """
         pass
 
-    async def refer(self, actorid: ActorId | str) -> ActorRef:
-        """通过 ActorId 获取 ActorRef。"""
+    async def refer(self, actorid):
+        """
+        通过 ActorId 获取 ActorRef。
+
+        **参数:**
+        - `actorid`: Actor ID（ActorId 实例或字符串格式 "node_id:local_id"）
+
+        **返回:** 对应 actor 的 ActorRef
+        """
         pass
 
-    async def resolve(self, name: str, *, node_id: int | None = None) -> ActorRef:
-        """通过名称解析 actor。"""
+    async def resolve(self, name, *, node_id=None):
+        """
+        通过名称解析 actor。
+
+        **参数:**
+        - `name`: Actor 名称（str）
+        - `node_id`: 目标节点 ID（int 或 None）
+
+        **返回:** 对应 actor 的 ActorRef
+        """
         pass
 
-    async def shutdown(self) -> None:
+    async def shutdown(self):
         """关闭 actor 系统。"""
         pass
 ```
@@ -160,15 +211,22 @@ Actor 的底层引用。使用 `ask()` 和 `tell()` 进行通信。
 ```python
 class ActorRef:
     @property
-    def actor_id(self) -> ActorId:
+    def actor_id(self):
         """获取 actor 的 ID。"""
         pass
 
-    async def ask(self, msg: Any) -> Any:
-        """发送消息并等待响应。"""
+    async def ask(self, msg):
+        """
+        发送消息并等待响应。
+
+        **参数:**
+        - `msg`: 任意消息对象（Any）
+
+        **返回:** 响应消息（Any）
+        """
         pass
 
-    async def tell(self, msg: Any) -> None:
+    async def tell(self, msg):
         """发送消息但不等待响应（fire-and-forget）。"""
         pass
 ```
@@ -180,7 +238,7 @@ class ActorRef:
 ```python
 class ActorProxy:
     @property
-    def ref(self) -> ActorRef:
+    def ref(self):
         """获取底层 ActorRef。"""
         pass
 
@@ -203,12 +261,12 @@ class Counter:
         self.value = init_value
 
     # 同步方法 - 顺序执行
-    def incr(self) -> int:
+    def incr(self):
         self.value += 1
         return self.value
 
     # 异步方法 - await 期间可并发执行
-    async def fetch_and_add(self, url: str) -> int:
+    async def fetch_and_add(self, url):
         data = await http_get(url)
         self.value += data
         return self.value

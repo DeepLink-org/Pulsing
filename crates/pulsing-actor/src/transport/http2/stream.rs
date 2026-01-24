@@ -1,27 +1,4 @@
-//! Streaming support for HTTP/2 transport
-//!
-//! Uses a high-performance binary frame format for streaming requests and responses.
-//!
-//! ## Binary Frame Format
-//!
-//! ```text
-//! +--------+--------+----------+----------+---------+-----------+
-//! | length | flags  | msg_type | data_len |  data   | [error]   |
-//! | 4B BE  | 1byte  | 2B+UTF8  | 4B BE    | N bytes | [2B+UTF8] |
-//! +--------+--------+----------+----------+---------+-----------+
-//! ```
-//!
-//! - **length**: Total frame length (excluding this field), big-endian u32
-//! - **flags**: bit 0 = END, bit 1 = ERROR
-//! - **msg_type**: 2-byte length prefix + UTF-8 string
-//! - **data_len**: 4-byte length prefix + raw binary payload
-//! - **error**: Optional error message (only present if ERROR flag is set)
-//!
-//! ## Features
-//!
-//! - **Compact**: Raw binary, no encoding overhead
-//! - **Fast parsing**: O(1) frame boundary detection via length prefix
-//! - **Zero-copy friendly**: Direct binary data passthrough
+//! Streaming support for HTTP/2 transport.
 
 use crate::actor::Message;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -30,30 +7,23 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_util::sync::CancellationToken;
 
-/// Frame flags
+/// Frame flags.
 pub const FLAG_END: u8 = 0x01;
 pub const FLAG_ERROR: u8 = 0x02;
 
-/// A frame in a streaming message
-///
-/// Serialized using a length-prefixed binary format for efficient transmission.
+/// A frame in a streaming message.
 #[derive(Debug, Clone)]
 pub struct StreamFrame {
-    /// Message type identifier
     pub msg_type: String,
 
-    /// Raw binary payload
     pub data: Vec<u8>,
 
-    /// Whether this is the final frame
     pub end: bool,
 
-    /// Error message (if any)
     pub error: Option<String>,
 }
 
 impl StreamFrame {
-    /// Create a new data frame
     pub fn data(msg_type: impl Into<String>, payload: &[u8]) -> Self {
         Self {
             msg_type: msg_type.into(),
@@ -63,7 +33,6 @@ impl StreamFrame {
         }
     }
 
-    /// Create an end frame (no data)
     pub fn end() -> Self {
         Self {
             msg_type: String::new(),
@@ -73,7 +42,6 @@ impl StreamFrame {
         }
     }
 
-    /// Create an error frame
     pub fn error(error: impl Into<String>) -> Self {
         Self {
             msg_type: String::new(),
@@ -83,19 +51,16 @@ impl StreamFrame {
         }
     }
 
-    /// Get the data payload
     #[inline]
     pub fn get_data(&self) -> &[u8] {
         &self.data
     }
 
-    /// Check if this frame contains an error
     #[inline]
     pub fn is_error(&self) -> bool {
         self.error.is_some()
     }
 
-    /// Create a StreamFrame from a Message::Single
     pub fn from_message(msg: &Message, default_msg_type: &str) -> Self {
         match msg {
             Message::Single { msg_type, data } => {
@@ -110,7 +75,6 @@ impl StreamFrame {
         }
     }
 
-    /// Convert this frame to a Message::Single
     pub fn to_message(&self) -> anyhow::Result<Option<Message>> {
         if let Some(ref error) = self.error {
             return Err(anyhow::anyhow!("{}", error));
@@ -121,14 +85,11 @@ impl StreamFrame {
         Ok(Some(Message::single(&self.msg_type, self.data.clone())))
     }
 
-    /// Serialize to binary format
-    ///
-    /// Format: `[4B len][1B flags][2B msg_type_len][msg_type][4B data_len][data][opt: 2B err_len][err]`
+    /// Serialize to binary format.
     pub fn to_binary(&self) -> Bytes {
         let msg_type_bytes = self.msg_type.as_bytes();
         let error_bytes = self.error.as_ref().map(|e| e.as_bytes());
 
-        // Calculate total length (excluding the length field itself)
         let mut content_len = 1 + 2 + msg_type_bytes.len() + 4 + self.data.len();
         if let Some(err) = &error_bytes {
             content_len += 2 + err.len();
@@ -136,10 +97,8 @@ impl StreamFrame {
 
         let mut buf = BytesMut::with_capacity(4 + content_len);
 
-        // Length prefix
         buf.put_u32(content_len as u32);
 
-        // Flags
         let mut flags = 0u8;
         if self.end {
             flags |= FLAG_END;
@@ -149,15 +108,12 @@ impl StreamFrame {
         }
         buf.put_u8(flags);
 
-        // Message type
         buf.put_u16(msg_type_bytes.len() as u16);
         buf.put_slice(msg_type_bytes);
 
-        // Data
         buf.put_u32(self.data.len() as u32);
         buf.put_slice(&self.data);
 
-        // Error message (if any)
         if let Some(err) = error_bytes {
             buf.put_u16(err.len() as u16);
             buf.put_slice(err);
@@ -166,7 +122,6 @@ impl StreamFrame {
         buf.freeze()
     }
 
-    /// Parse from binary format
     pub fn from_binary(mut buf: &[u8]) -> anyhow::Result<Self> {
         if buf.remaining() < 4 {
             return Err(anyhow::anyhow!("Buffer too short for length"));
@@ -180,12 +135,10 @@ impl StreamFrame {
             ));
         }
 
-        // Flags
         let flags = buf.get_u8();
         let end = (flags & FLAG_END) != 0;
         let has_error = (flags & FLAG_ERROR) != 0;
 
-        // Message type
         let msg_type_len = buf.get_u16() as usize;
         if buf.remaining() < msg_type_len {
             return Err(anyhow::anyhow!("Invalid msg_type length"));
@@ -194,7 +147,6 @@ impl StreamFrame {
             .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in msg_type: {}", e))?;
         buf.advance(msg_type_len);
 
-        // Data
         if buf.remaining() < 4 {
             return Err(anyhow::anyhow!("Missing data length"));
         }

@@ -1,4 +1,4 @@
-//! Actor module - core actor abstractions
+//! Actor module - core abstractions.
 
 mod address;
 mod context;

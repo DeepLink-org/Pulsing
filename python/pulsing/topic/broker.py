@@ -1,8 +1,4 @@
-"""TopicBroker - Lightweight Pub/Sub Broker Actor (internal implementation)
-
-TopicBroker lifecycle is managed by StorageManager in queue/manager.py,
-uses consistent hashing to ensure only one broker per topic in the cluster.
-"""
+"""Topic broker (internal)."""
 
 from __future__ import annotations
 
@@ -19,37 +15,28 @@ from pulsing.actor import Actor, ActorId, Message
 
 logger = logging.getLogger(__name__)
 
-# Subscriber lifecycle management configuration
-MAX_CONSECUTIVE_FAILURES = 3  # Consecutive failure threshold, evict after exceeding
-REF_TTL_SECONDS = 60.0  # ActorRef cache TTL, re-resolve after expiration
-
-# Timeout configuration (approach 2+3: timeout + idempotency)
-DEFAULT_FANOUT_TIMEOUT = 30.0  # Default timeout for wait_any_ack / wait_all_acks
+MAX_CONSECUTIVE_FAILURES = 3
+REF_TTL_SECONDS = 60.0
+DEFAULT_FANOUT_TIMEOUT = 30.0
 
 
 @dataclass
 class _Subscriber:
-    """Subscriber information (internal use)"""
+    """Subscriber information."""
 
     subscriber_id: str
     actor_name: str
     node_id: int | None = None
     subscribed_at: float = field(default_factory=time.time)
     _ref: "ActorRef | None" = field(default=None, repr=False)
-    _ref_resolved_at: float = 0  # ActorRef resolution time, for TTL judgment
+    _ref_resolved_at: float = 0
     messages_delivered: int = 0
     messages_failed: int = 0
-    consecutive_failures: int = 0  # Consecutive failures, for eviction judgment
+    consecutive_failures: int = 0
 
 
 class TopicBroker(Actor):
-    """Topic Broker Actor (internal implementation)
-
-    Each topic corresponds to one broker, responsible for:
-    1. Managing subscriber list
-    2. Receiving publish requests and distributing to subscribers
-    3. Deciding whether to wait for ack based on publish mode
-    """
+    """Topic broker actor."""
 
     def __init__(self, topic: str, system: "ActorSystem"):
         self.topic = topic
@@ -133,20 +120,11 @@ class TopicBroker(Actor):
             return Message.from_json("UnsubscribeResult", {"success": False})
 
     async def _resolve(self, sub: _Subscriber) -> "ActorRef | None":
-        """Resolve subscriber ActorRef (with TTL cache)
-
-        Cache strategy:
-        - Cache ActorRef after first resolution
-        - Re-resolve after TTL expiration to detect node failures
-        - Clear cache on resolution failure, retry next time
-        """
         now = time.time()
 
-        # Check if cache is valid (exists and not expired)
         if sub._ref is not None and (now - sub._ref_resolved_at) < REF_TTL_SECONDS:
             return sub._ref
 
-        # TTL expired or no cache, re-resolve
         try:
             sub._ref = await self.system.resolve_named(
                 sub.actor_name, node_id=sub.node_id
@@ -155,7 +133,7 @@ class TopicBroker(Actor):
             return sub._ref
         except Exception as e:
             logger.warning(f"Failed to resolve {sub.subscriber_id}: {e}")
-            sub._ref = None  # Clear invalid cache
+            sub._ref = None
             sub._ref_resolved_at = 0
             return None
 
@@ -191,22 +169,15 @@ class TopicBroker(Actor):
             return Message.from_json("Error", {"error": f"Unknown mode: {mode}"})
 
     def _record_success(self, sub: _Subscriber) -> None:
-        """Record delivery success, reset consecutive failure count"""
         sub.messages_delivered += 1
         sub.consecutive_failures = 0
 
     def _record_failure(self, sub: _Subscriber) -> bool:
-        """Record delivery failure, return whether should evict
-
-        Returns:
-            True if consecutive failures exceed threshold, should evict
-        """
         sub.messages_failed += 1
         sub.consecutive_failures += 1
         return sub.consecutive_failures >= MAX_CONSECUTIVE_FAILURES
 
     async def _evict_zombies(self, zombie_ids: list[str]) -> None:
-        """Evict zombie subscribers"""
         if not zombie_ids:
             return
         async with self._lock:
@@ -218,7 +189,6 @@ class TopicBroker(Actor):
                     )
 
     async def _fanout_tell(self, envelope: dict, sender_id: str | None) -> Message:
-        """Fire-and-forget: tell without waiting for response"""
         sent = 0
         failed = 0
         zombies: list[str] = []
@@ -241,7 +211,6 @@ class TopicBroker(Actor):
                 if self._record_failure(sub):
                     zombies.append(sub_id)
 
-        # Evict zombie subscribers
         await self._evict_zombies(zombies)
 
         self._total_delivered += sent
@@ -264,23 +233,10 @@ class TopicBroker(Actor):
         wait_all: bool,
         timeout: float = DEFAULT_FANOUT_TIMEOUT,
     ) -> Message:
-        """Wait for ack mode
-
-        Args:
-            envelope: Message envelope
-            sender_id: Sender ID (to exclude self)
-            wait_all: True=wait for all responses, False=wait for any response (wait_any_ack)
-            timeout: Timeout in seconds. Local task will be cancelled after timeout,
-                     remote handler may still be executing (relies on HTTP/2 RST_STREAM propagation).
-
-        Note (cancellation semantics - approach 2+3):
-        - Local cancellation: via asyncio.wait timeout or task.cancel()
-        - Remote cancellation: relies on HTTP/2 RST_STREAM auto-propagation (triggered when body read is interrupted)
-        - Idempotency: Handler should implement idempotent operations to ensure repeated requests don't produce side effects
-        """
+        """Wait for ack mode."""
         tasks = []
         sub_ids = []
-        resolve_failed: list[str] = []  # Subscribers that failed to resolve
+        resolve_failed: list[str] = []
 
         for sub_id, sub in list(self._subscribers.items()):
             if sender_id and sub_id == sender_id:
@@ -290,7 +246,6 @@ class TopicBroker(Actor):
                 tasks.append(ref.ask(envelope))
                 sub_ids.append(sub_id)
             else:
-                # Resolve failures also count as failures
                 if self._record_failure(sub):
                     resolve_failed.append(sub_id)
 

@@ -69,30 +69,51 @@ Note: error *type information and remote stack traces* are not guaranteed to be 
 Create a new Actor System instance.
 
 ```python
+import asyncio
 import pulsing as pul
 
-system = await pul.actor_system(
-    addr: str | None = None,        # Bind address, None for standalone
-    *,
-    seeds: list[str] | None = None, # Seed nodes for cluster
-    passphrase: str | None = None,  # TLS passphrase
-) -> ActorSystem
+async def example():
+    system = await pul.actor_system(
+        addr=None,               # Bind address, None for standalone
+        # Keyword-only arguments follow
+        seeds=None,             # Seed nodes for cluster (list[str] or None)
+        passphrase=None,        # TLS passphrase (str or None)
+    )
+    return system
+
+# Usage example
+if __name__ == "__main__":
+    # To run the example
+    # system = asyncio.run(example())
+    pass
 ```
+
+**Returns:** `ActorSystem` instance
 
 **Example:**
 
 ```python
-# Standalone mode
-system = await pul.actor_system()
+import asyncio
+import pulsing as pul
 
-# Cluster mode
-system = await pul.actor_system(addr="0.0.0.0:8000")
+async def main():
+    # Standalone mode
+    system = await pul.actor_system()
+    await system.shutdown()
 
-# Join existing cluster
-system = await pul.actor_system(addr="0.0.0.0:8001", seeds=["127.0.0.1:8000"])
+    # Cluster mode
+    system = await pul.actor_system(addr="0.0.0.0:8000")
+    await system.shutdown()
 
-# Shutdown
-await system.shutdown()
+    # Join existing cluster
+    system = await pul.actor_system(
+        addr="0.0.0.0:8001",
+        seeds=["127.0.0.1:8000"]
+    )
+    await system.shutdown()
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ### pul.init / pul.shutdown
@@ -100,18 +121,32 @@ await system.shutdown()
 Global system initialization (Ray-style async API).
 
 ```python
+import asyncio
 import pulsing as pul
 
-# Initialize global system
-await pul.init(addr=None, seeds=None, passphrase=None)
+class MyActor:
+    async def receive(self, msg):
+        return f"echo: {msg}"
 
-# Use global system
-actor = await pul.spawn(MyActor())
-ref = await pul.resolve("actor_name")
+async def main():
+    # Initialize global system
+    await pul.init(addr=None, seeds=None, passphrase=None)
 
-# Shutdown
-await pul.shutdown()
+    # Use global system
+    actor = await pul.spawn(MyActor())
+    ref = await pul.resolve("actor_name")
+
+    # Shutdown
+    await pul.shutdown()
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
+
+**Parameters:**
+- `addr`: Bind address (str or None for standalone)
+- `seeds`: Seed nodes to join cluster (list[str] or None)
+- `passphrase`: TLS passphrase (str or None)
 
 ## Core Classes
 
@@ -123,15 +158,15 @@ Main entry point for the actor system.
 class ActorSystem:
     async def spawn(
         self,
-        actor: Actor,
-        *,
-        name: str | None = None,
+        actor,                # Actor instance
+        # Keyword-only arguments follow
+        name=None,           # Actor name (str or None)
         # public parameter is deprecated: all named actors are resolvable
-        restart_policy: str = "never",
-        max_restarts: int = 3,
-        min_backoff: float = 0.1,
-        max_backoff: float = 30.0
-    ) -> ActorRef:
+        restart_policy="never",  # Restart policy ("never", "always", "on-failure")
+        max_restarts=3,      # Maximum restart attempts
+        min_backoff=0.1,     # Minimum backoff seconds
+        max_backoff=30.0     # Maximum backoff seconds
+    ):
         """
         Spawn a new actor.
 
@@ -140,15 +175,15 @@ class ActorSystem:
         """
         pass
 
-    async def refer(self, actorid: ActorId | str) -> ActorRef:
+    async def refer(self, actorid):
         """Get ActorRef by ActorId."""
         pass
 
-    async def resolve(self, name: str, *, node_id: int | None = None) -> ActorRef:
+    async def resolve(self, name, *, node_id=None):
         """Resolve actor by name."""
         pass
 
-    async def shutdown(self) -> None:
+    async def shutdown(self):
         """Shutdown the actor system."""
         pass
 ```
@@ -160,15 +195,15 @@ Low-level reference to an actor. Use `ask()` and `tell()` to communicate.
 ```python
 class ActorRef:
     @property
-    def actor_id(self) -> ActorId:
+    def actor_id(self):
         """Get the actor's ID."""
         pass
 
-    async def ask(self, msg: Any) -> Any:
+    async def ask(self, msg):
         """Send a message and wait for response."""
         pass
 
-    async def tell(self, msg: Any) -> None:
+    async def tell(self, msg):
         """Send a message without waiting for response (fire-and-forget)."""
         pass
 ```
@@ -180,7 +215,7 @@ High-level proxy for `@remote` classes. Call methods directly.
 ```python
 class ActorProxy:
     @property
-    def ref(self) -> ActorRef:
+    def ref(self):
         """Get underlying ActorRef."""
         pass
 
@@ -203,12 +238,12 @@ class Counter:
         self.value = init_value
 
     # Sync method - sequential execution
-    def incr(self) -> int:
+    def incr(self):
         self.value += 1
         return self.value
 
     # Async method - concurrent execution during await
-    async def fetch_and_add(self, url: str) -> int:
+    async def fetch_and_add(self, url):
         data = await http_get(url)
         self.value += data
         return self.value

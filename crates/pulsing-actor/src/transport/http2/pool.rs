@@ -1,11 +1,4 @@
-//! Advanced connection pool management for HTTP/2 transport
-//!
-//! Features:
-//! - Connection health checking
-//! - Connection expiration/eviction
-//! - Connection reuse optimization
-//! - Pool statistics
-//! - TLS support (when `tls` feature is enabled)
+//! Connection pool management for HTTP/2 transport.
 
 use super::config::Http2Config;
 use bytes::Bytes;
@@ -20,25 +13,18 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 
-/// Connection pool statistics
+/// Connection pool statistics.
 #[derive(Debug, Default)]
 pub struct PoolStats {
-    /// Total connections created
     pub connections_created: AtomicU64,
-    /// Total connections closed
     pub connections_closed: AtomicU64,
-    /// Total connections reused
     pub connections_reused: AtomicU64,
-    /// Total connection errors
     pub connection_errors: AtomicU64,
-    /// Current active connections
     pub active_connections: AtomicUsize,
-    /// Current idle connections
     pub idle_connections: AtomicUsize,
 }
 
 impl PoolStats {
-    /// Get stats as JSON
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "connections_created": self.connections_created.load(Ordering::Relaxed),
@@ -51,30 +37,21 @@ impl PoolStats {
     }
 }
 
-/// Connection state
+/// Connection state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
-    /// Connection is available
     Idle,
-    /// Connection is in use
     Active,
-    /// Connection is unhealthy
     Unhealthy,
-    /// Connection has expired
     Expired,
 }
 
-/// A pooled HTTP/2 connection
+/// A pooled HTTP/2 connection.
 pub struct PooledConnection {
-    /// The HTTP/2 sender
     pub sender: http2::SendRequest<Full<Bytes>>,
-    /// When the connection was created
     pub created_at: Instant,
-    /// When the connection was last used
     pub last_used: Instant,
-    /// Number of requests made on this connection
     pub request_count: u64,
-    /// Current state
     pub state: ConnectionState,
 }
 
@@ -90,28 +67,23 @@ impl PooledConnection {
         }
     }
 
-    /// Check if the connection is healthy
     pub fn is_healthy(&self, config: &PoolConfig) -> bool {
-        // Check if connection is ready
         if !self.sender.is_ready() {
             return false;
         }
 
-        // Check max age
         if let Some(max_age) = config.max_connection_age {
             if self.created_at.elapsed() > max_age {
                 return false;
             }
         }
 
-        // Check max idle time
         if let Some(max_idle) = config.max_idle_time {
             if self.last_used.elapsed() > max_idle {
                 return false;
             }
         }
 
-        // Check max requests per connection
         if let Some(max_requests) = config.max_requests_per_connection {
             if self.request_count >= max_requests {
                 return false;
@@ -121,47 +93,36 @@ impl PooledConnection {
         true
     }
 
-    /// Mark the connection as used
     pub fn mark_used(&mut self) {
         self.last_used = Instant::now();
         self.request_count += 1;
         self.state = ConnectionState::Active;
     }
 
-    /// Mark the connection as idle
     pub fn mark_idle(&mut self) {
         self.state = ConnectionState::Idle;
     }
 }
 
-/// Pool configuration
+/// Pool configuration.
 #[derive(Debug, Clone)]
 pub struct PoolConfig {
-    /// Maximum connections per host
     pub max_connections_per_host: usize,
 
-    /// Minimum idle connections per host
     pub min_idle_per_host: usize,
 
-    /// Maximum total connections
     pub max_total_connections: usize,
 
-    /// Connection timeout
     pub connect_timeout: Duration,
 
-    /// Maximum connection age (None = no limit)
     pub max_connection_age: Option<Duration>,
 
-    /// Maximum idle time (None = no limit)
     pub max_idle_time: Option<Duration>,
 
-    /// Maximum requests per connection (None = no limit)
     pub max_requests_per_connection: Option<u64>,
 
-    /// How often to run cleanup
     pub cleanup_interval: Duration,
 
-    /// Whether to enable connection warming
     pub enable_warming: bool,
 }
 
@@ -172,8 +133,8 @@ impl Default for PoolConfig {
             min_idle_per_host: 1,
             max_total_connections: 100,
             connect_timeout: Duration::from_secs(5),
-            max_connection_age: Some(Duration::from_secs(300)), // 5 minutes
-            max_idle_time: Some(Duration::from_secs(60)),       // 1 minute
+            max_connection_age: Some(Duration::from_secs(300)),
+            max_idle_time: Some(Duration::from_secs(60)),
             max_requests_per_connection: Some(1000),
             cleanup_interval: Duration::from_secs(30),
             enable_warming: false,

@@ -12,6 +12,7 @@ class PingPongAgent:
     async def ping(self, message: str) -> str:
         return f"pong: {message}"
 
+
 # Run
 async def main():
     async with runtime():

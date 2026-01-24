@@ -1,16 +1,15 @@
-//! Actor mailbox - message envelope and queue
+//! Actor mailbox - message envelope and queue.
 
 use super::traits::Message;
 use tokio::sync::{mpsc, oneshot};
 
-/// Response channel type
+/// Response channel type.
 pub type ResponseChannel = oneshot::Sender<anyhow::Result<Message>>;
 
-/// Responder - sends response back to caller (no-op for tell pattern)
+/// Responder - sends response back to caller (no-op for tell pattern).
 pub struct Responder(Option<ResponseChannel>);
 
 impl Responder {
-    /// Send response (no-op if this was a tell)
     pub fn send(self, result: anyhow::Result<Message>) {
         if let Some(tx) = self.0 {
             let _ = tx.send(result);
@@ -18,14 +17,13 @@ impl Responder {
     }
 }
 
-/// Message envelope with optional response channel
+/// Message envelope with optional response channel.
 pub struct Envelope {
     message: Message,
     respond_to: Option<ResponseChannel>,
 }
 
 impl Envelope {
-    /// Create envelope for fire-and-forget (tell pattern)
     pub fn tell(message: Message) -> Self {
         Self {
             message,
@@ -33,7 +31,6 @@ impl Envelope {
         }
     }
 
-    /// Create envelope for request-response (ask pattern)
     pub fn ask(message: Message, respond_to: ResponseChannel) -> Self {
         Self {
             message,
@@ -41,17 +38,14 @@ impl Envelope {
         }
     }
 
-    /// Get the message type
     pub fn msg_type(&self) -> &str {
         self.message.msg_type()
     }
 
-    /// Decompose into message and responder
     pub fn into_parts(self) -> (Message, Responder) {
         (self.message, Responder(self.respond_to))
     }
 
-    /// Check if this envelope expects a response
     pub fn expects_response(&self) -> bool {
         self.respond_to.is_some()
     }
@@ -66,42 +60,35 @@ impl std::fmt::Debug for Envelope {
     }
 }
 
-/// Mailbox capacity
+/// Mailbox capacity.
 pub const DEFAULT_MAILBOX_SIZE: usize = 256;
 
-/// Actor mailbox
+/// Actor mailbox.
 pub struct Mailbox {
-    /// Sender half (cloneable)
     sender: mpsc::Sender<Envelope>,
 
-    /// Receiver half
     receiver: mpsc::Receiver<Envelope>,
 }
 
 impl Mailbox {
-    /// Create a new mailbox with default capacity
     pub fn new() -> Self {
         Self::with_capacity(DEFAULT_MAILBOX_SIZE)
     }
 
-    /// Create a new mailbox with specified capacity
     pub fn with_capacity(capacity: usize) -> Self {
         let (sender, receiver) = mpsc::channel(capacity);
         Self { sender, receiver }
     }
 
-    /// Get a clone of the sender
     pub fn sender(&self) -> mpsc::Sender<Envelope> {
         self.sender.clone()
     }
 
-    /// Take the receiver (consumes it)
     pub fn take_receiver(&mut self) -> mpsc::Receiver<Envelope> {
         let (_, new_rx) = mpsc::channel(1);
         std::mem::replace(&mut self.receiver, new_rx)
     }
 
-    /// Split into sender and receiver
     pub fn split(self) -> (mpsc::Sender<Envelope>, mpsc::Receiver<Envelope>) {
         (self.sender, self.receiver)
     }
@@ -113,7 +100,7 @@ impl Default for Mailbox {
     }
 }
 
-/// Mailbox sender wrapper with backpressure handling
+/// Mailbox sender wrapper with backpressure handling.
 #[derive(Clone)]
 pub struct MailboxSender {
     inner: mpsc::Sender<Envelope>,
@@ -124,7 +111,6 @@ impl MailboxSender {
         Self { inner: sender }
     }
 
-    /// Send a message (blocking if full)
     pub async fn send(&self, envelope: Envelope) -> anyhow::Result<()> {
         self.inner
             .send(envelope)
@@ -132,14 +118,12 @@ impl MailboxSender {
             .map_err(|_| anyhow::anyhow!("Mailbox closed"))
     }
 
-    /// Try to send without blocking
     pub fn try_send(&self, envelope: Envelope) -> anyhow::Result<()> {
         self.inner
             .try_send(envelope)
             .map_err(|e| anyhow::anyhow!("Mailbox send failed: {}", e))
     }
 
-    /// Check if mailbox is closed
     pub fn is_closed(&self) -> bool {
         self.inner.is_closed()
     }

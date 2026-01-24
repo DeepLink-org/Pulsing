@@ -99,7 +99,7 @@ async def main():
 将工作分配给多个工作器：
 
 ```python
-@remote
+@pul.remote
 class Worker:
     def __init__(self, worker_id: int):
         self.worker_id = worker_id
@@ -122,7 +122,7 @@ class Worker:
         }
 
 
-@remote
+@pul.remote
 class WorkerPool:
     def __init__(self):
         self.workers = []
@@ -150,7 +150,7 @@ class WorkerPool:
 ### 简单 LLM 服务
 
 ```python
-@remote
+@pul.remote
 class LLMService:
     def __init__(self, model_name: str):
         self.model_name = model_name

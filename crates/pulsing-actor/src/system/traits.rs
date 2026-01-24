@@ -1,9 +1,4 @@
-//! Actor System Extension Traits
-//!
-//! This module defines the public API surface for ActorSystem through traits:
-//! - [`ActorSystemCoreExt`] - Core spawn and resolve operations (primary API)
-//! - [`ActorSystemAdvancedExt`] - Factory-based spawning for supervision/restart
-//! - [`ActorSystemOpsExt`] - Operations, introspection, and lifecycle management
+//! ActorSystem extension traits.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -20,49 +15,7 @@ use crate::policies::LoadBalancingPolicy;
 
 use tokio_util::sync::CancellationToken;
 
-// =============================================================================
-// Core Trait: Spawn + Resolve (Primary API)
-// =============================================================================
-
 /// Core API for spawning and resolving actors.
-///
-/// This trait defines the primary interface for creating and locating actors.
-/// It is automatically implemented for `Arc<ActorSystem>` and re-exported in prelude.
-///
-/// # Spawn Methods
-/// - [`spawn`](Self::spawn) - Spawn an anonymous actor (not resolvable by name)
-/// - [`spawn_named`](Self::spawn_named) - Spawn a named actor (resolvable by name)
-/// - [`spawning`](Self::spawning) - Get a builder for advanced spawn options
-///
-/// # Resolve Methods
-/// - [`actor_ref`](Self::actor_ref) - Get ActorRef by ActorId
-/// - [`resolve`](Self::resolve) - Resolve a named actor by name
-/// - [`resolve_with_options`](Self::resolve_with_options) - Resolve with load balancing/filtering
-/// - [`resolve_lazy`](Self::resolve_lazy) - Lazy resolution with auto-refresh
-///
-/// # Example
-/// ```rust,ignore
-/// use pulsing_actor::prelude::*;
-///
-/// let system = ActorSystem::builder().build().await?;
-///
-/// // Spawn an anonymous actor (only accessible via ActorRef)
-/// let worker = system.spawn(Worker::new()).await?;
-///
-/// // Spawn a named actor (resolvable by name)
-/// let echo = system.spawn_named("services/echo", EchoService).await?;
-///
-/// // Spawn with builder for advanced options
-/// let counter = system.spawning()
-///     .name("services/counter")
-///     .supervision(SupervisionSpec::on_failure().max_restarts(3))
-///     .mailbox_capacity(256)
-///     .spawn(Counter::new())
-///     .await?;
-///
-/// // Resolve by name
-/// let echo_ref = system.resolve("services/echo").await?;
-/// ```
 #[async_trait::async_trait]
 pub trait ActorSystemCoreExt: Sized {
     /// Spawn an anonymous actor (not resolvable by name, only accessible via ActorRef)
@@ -93,27 +46,13 @@ pub trait ActorSystemCoreExt: Sized {
     where
         A: IntoActor;
 
-    /// Get a builder for spawning actors with advanced options
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// let actor = system.spawning()
-    ///     .name("services/worker")
-    ///     .supervision(SupervisionSpec::on_failure().max_restarts(3))
-    ///     .mailbox_capacity(1024)
-    ///     .spawn(Worker::new())
-    ///     .await?;
-    /// ```
+    /// Get a builder for spawning actors with advanced options.
     fn spawning(&self) -> SpawnBuilder<'_>;
 
     /// Get ActorRef for a local or remote actor by ID
     async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef>;
 
-    /// Resolve a named actor by name
-    ///
-    /// Returns an ActorRef that points to the current location of the named actor.
-    /// Note: If the actor migrates, this reference may become stale.
-    /// For actors that may migrate, consider using [`resolve_lazy`](Self::resolve_lazy).
+    /// Resolve a named actor by name.
     async fn resolve<P>(&self, name: P) -> anyhow::Result<ActorRef>
     where
         P: IntoActorPath + Send;
@@ -125,48 +64,11 @@ pub trait ActorSystemCoreExt: Sized {
         options: ResolveOptions,
     ) -> anyhow::Result<ActorRef>;
 
-    /// Get a builder for resolving actors with advanced options
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// // With load balancing
-    /// let actor = system.resolving()
-    ///     .policy(RoundRobinPolicy::new())
-    ///     .resolve("services/worker").await?;
-    ///
-    /// // List all instances
-    /// let actors = system.resolving()
-    ///     .list("services/worker").await?;
-    ///
-    /// // Lazy resolve
-    /// let actor = system.resolving()
-    ///     .lazy("services/worker")?;
-    /// ```
+    /// Get a builder for resolving actors with advanced options.
     fn resolving(&self) -> ResolveBuilder<'_>;
 }
 
-// =============================================================================
-// SpawnBuilder: Fluent API for spawning actors
-// =============================================================================
-
 /// Builder for spawning actors with advanced options.
-///
-/// # Example
-/// ```rust,ignore
-/// // Anonymous actor with supervision
-/// let worker = system.spawning()
-///     .supervision(SupervisionSpec::on_failure().max_restarts(3))
-///     .spawn(Worker::new())
-///     .await?;
-///
-/// // Named actor with full options
-/// let service = system.spawning()
-///     .name("services/counter")
-///     .supervision(SupervisionSpec::on_failure().max_restarts(5))
-///     .mailbox_capacity(512)
-///     .spawn(CounterService::new())
-///     .await?;
-/// ```
 pub struct SpawnBuilder<'a> {
     system: &'a Arc<ActorSystem>,
     name: Option<String>,
@@ -239,30 +141,7 @@ impl<'a> SpawnBuilder<'a> {
     }
 }
 
-// =============================================================================
-// ResolveBuilder: Fluent API for resolving actors
-// =============================================================================
-
 /// Builder for resolving actors with advanced options.
-///
-/// # Example
-/// ```rust,ignore
-/// // Simple resolve
-/// let actor = system.resolve("services/counter").await?;
-///
-/// // With load balancing policy
-/// let actor = system.resolving()
-///     .policy(RoundRobinPolicy::new())
-///     .resolve("services/counter").await?;
-///
-/// // Get all instances
-/// let actors = system.resolving()
-///     .list("services/counter").await?;
-///
-/// // Lazy resolve (auto re-resolves on stale)
-/// let actor = system.resolving()
-///     .lazy("services/counter")?;
-/// ```
 pub struct ResolveBuilder<'a> {
     system: &'a Arc<ActorSystem>,
     node_id: Option<NodeId>,
@@ -353,20 +232,7 @@ impl<'a> ResolveBuilder<'a> {
 /// cannot be restarted. Use `spawn_named_factory` if you need supervision with
 /// restart capability. Anonymous actors do not support supervision.
 ///
-/// # Example
-/// ```rust,ignore
-/// use pulsing_actor::prelude::*;
 ///
-/// let system = ActorSystem::builder().build().await?;
-///
-/// let options = SpawnOptions::new()
-///     .supervision(SupervisionSpec::new()
-///         .restart_policy(RestartPolicy::OnFailure)
-///         .max_restarts(3));
-///
-/// // Spawn named actor with factory (only named actors support supervision)
-/// let named = system.spawn_named_factory("services/worker", || Ok(Worker::new()), options).await?;
-/// ```
 #[async_trait::async_trait]
 pub trait ActorSystemAdvancedExt {
     /// Spawn a named actor using a factory function (enables supervision restarts)
@@ -385,36 +251,7 @@ pub trait ActorSystemAdvancedExt {
         A: Actor;
 }
 
-// =============================================================================
-// Ops Trait: Operations, Introspection, Lifecycle
-// =============================================================================
-
 /// Operations, introspection, and lifecycle management API.
-///
-/// This trait provides:
-/// - System information (node_id, addr, etc.)
-/// - Actor listing and lookup
-/// - Cluster membership information
-/// - Actor stop and system shutdown
-///
-/// # Example
-/// ```rust,ignore
-/// use pulsing_actor::prelude::*;
-///
-/// let system = ActorSystem::builder().build().await?;
-///
-/// // Get system info
-/// println!("Node ID: {}", system.node_id());
-/// println!("Address: {}", system.addr());
-///
-/// // List cluster members
-/// for member in system.members().await {
-///     println!("Member: {} at {}", member.node_id, member.addr);
-/// }
-///
-/// // Shutdown
-/// system.shutdown().await?;
-/// ```
 #[async_trait::async_trait]
 pub trait ActorSystemOpsExt {
     /// Get SystemActor reference

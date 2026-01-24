@@ -1,10 +1,4 @@
-//! Gossip protocol for cluster membership and actor discovery
-//!
-//! Implements a Redis Cluster-style gossip protocol with:
-//! - MEET/PING/PONG message exchange
-//! - Configuration epoch for conflict resolution
-//! - Partial view propagation to reduce message size
-//! - PFail/Fail failure detection
+//! Gossip protocol for cluster membership and actor discovery.
 
 use super::member::{
     ActorLocation, ClusterNode, FailureInfo, MemberInfo, MemberStatus, NamedActorInfo,
@@ -23,11 +17,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-/// Get current timestamp in milliseconds since UNIX epoch
+/// Get current timestamp in milliseconds since UNIX epoch.
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -35,7 +25,7 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
-/// Fix 0.0.0.0 addresses using peer's actual IP
+/// Fix 0.0.0.0 addresses using peer's actual IP.
 fn fix_addr(addr: SocketAddr, peer_ip: std::net::IpAddr) -> SocketAddr {
     if addr.ip().is_unspecified() {
         SocketAddr::new(peer_ip, addr.port())
@@ -44,35 +34,18 @@ fn fix_addr(addr: SocketAddr, peer_ip: std::net::IpAddr) -> SocketAddr {
     }
 }
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-/// Gossip protocol configuration
+/// Gossip protocol configuration.
 #[derive(Clone, Debug)]
 pub struct GossipConfig {
-    /// Interval between gossip rounds
     pub gossip_interval: Duration,
-    /// Number of nodes to gossip with per round (fanout)
     pub fanout: usize,
-    /// Number of times to probe each seed node on startup
     pub seed_probe_count: usize,
-    /// Delay between seed probes
     pub seed_probe_interval: Duration,
-    /// Interval for periodic seed re-probing (None to disable)
     pub seed_rejoin_interval: Option<Duration>,
-    /// Timeout before marking a node as PFail
     pub failure_timeout: Duration,
-    /// Grace period before marking Fail nodes as Tombstone
     pub cleanup_grace_period: Duration,
-    /// Tombstone retention period before final removal
-    /// Tombstoned nodes won't be removed immediately, allowing them to recover
-    /// and rejoin without causing routing churn
     pub tombstone_retention: Duration,
-    /// Observation window: if a Fail node is seen alive within this window,
-    /// it will be recovered instead of tombstoned
     pub recovery_observation_window: Duration,
-    /// SWIM config (for ping interval and suspicion timeout)
     pub swim: SwimConfig,
 }
 
@@ -84,37 +57,24 @@ impl Default for GossipConfig {
             seed_probe_count: 3,
             seed_probe_interval: Duration::from_millis(100),
             seed_rejoin_interval: Some(Duration::from_secs(15)),
-            // Increased from 5s to 15s for better tolerance in high-load scenarios
-            // In large-scale stress tests, gossip messages may be delayed due to high load
             failure_timeout: Duration::from_secs(15),
-            // Grace period before tombstoning (increased for stability)
             cleanup_grace_period: Duration::from_secs(60),
-            // Tombstone retention: 5 minutes before final removal
-            // This allows nodes to recover from longer network partitions
             tombstone_retention: Duration::from_secs(300),
-            // Recovery observation window: 30 seconds
-            // If we see the node alive within this window, recover it
             recovery_observation_window: Duration::from_secs(30),
             swim: SwimConfig::default(),
         }
     }
 }
 
-// ============================================================================
-// Messages
-// ============================================================================
-
-/// Gossip protocol messages
+/// Gossip protocol messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GossipMessage {
-    /// MEET: Invite a new node to join the cluster
     Meet {
         from: NodeId,
         from_addr: SocketAddr,
         current_epoch: u64,
     },
 
-    /// PING: Periodic probe with partial cluster view
     Ping {
         from: NodeId,
         current_epoch: u64,
@@ -123,7 +83,6 @@ pub enum GossipMessage {
         named_actors: Option<Vec<NamedActorInfo>>,
     },
 
-    /// PONG: Response to PING/MEET
     Pong {
         from: NodeId,
         current_epoch: u64,
@@ -132,7 +91,6 @@ pub enum GossipMessage {
         named_actors: Option<Vec<NamedActorInfo>>,
     },
 
-    // Legacy actor messages (kept for compatibility)
     ActorRegistered {
         location: ActorLocation,
     },
@@ -142,10 +100,8 @@ pub enum GossipMessage {
     NamedActorRegistered {
         path: ActorPath,
         node_id: NodeId,
-        /// Actor ID (optional for backward compatibility)
         #[serde(default)]
         actor_id: Option<ActorId>,
-        /// Metadata (e.g., Python class, module, file path)
         #[serde(default)]
         metadata: std::collections::HashMap<String, String>,
     },
@@ -160,11 +116,7 @@ pub enum GossipMessage {
     },
 }
 
-// ============================================================================
-// Shared State
-// ============================================================================
-
-/// Shared cluster state (used by both GossipCluster and background tasks)
+/// Shared cluster state.
 struct ClusterState {
     local_node: NodeId,
     local_addr: SocketAddr,

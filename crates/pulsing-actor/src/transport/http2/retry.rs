@@ -1,26 +1,15 @@
-//! Retry and timeout strategies for HTTP/2 transport
+//! Retry and timeout strategies for HTTP/2 transport.
 
 use std::time::Duration;
 
-/// Retry configuration
+/// Retry configuration.
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
-    /// Maximum number of retry attempts (0 = no retry)
     pub max_retries: u32,
-
-    /// Initial retry delay
     pub initial_delay: Duration,
-
-    /// Maximum retry delay (for exponential backoff)
     pub max_delay: Duration,
-
-    /// Exponential backoff multiplier (e.g., 2.0 doubles each time)
     pub backoff_multiplier: f64,
-
-    /// Whether to add random jitter to delays
     pub use_jitter: bool,
-
-    /// Only retry idempotent operations
     pub idempotent_only: bool,
 }
 
@@ -38,7 +27,6 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
-    /// Create a new retry config with no retries
     pub fn no_retry() -> Self {
         Self {
             max_retries: 0,
@@ -46,7 +34,6 @@ impl RetryConfig {
         }
     }
 
-    /// Create a retry config with specified max retries
     pub fn with_max_retries(max_retries: u32) -> Self {
         Self {
             max_retries,
@@ -54,43 +41,36 @@ impl RetryConfig {
         }
     }
 
-    /// Set the maximum number of retries
     pub fn max_retries(mut self, n: u32) -> Self {
         self.max_retries = n;
         self
     }
 
-    /// Set the initial retry delay
     pub fn initial_delay(mut self, delay: Duration) -> Self {
         self.initial_delay = delay;
         self
     }
 
-    /// Set the maximum retry delay
     pub fn max_delay(mut self, delay: Duration) -> Self {
         self.max_delay = delay;
         self
     }
 
-    /// Set the backoff multiplier
     pub fn backoff_multiplier(mut self, multiplier: f64) -> Self {
         self.backoff_multiplier = multiplier;
         self
     }
 
-    /// Enable or disable jitter
     pub fn use_jitter(mut self, enable: bool) -> Self {
         self.use_jitter = enable;
         self
     }
 
-    /// Allow retrying non-idempotent operations
     pub fn allow_non_idempotent(mut self) -> Self {
         self.idempotent_only = false;
         self
     }
 
-    /// Calculate delay for the given attempt number (0-indexed)
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
         if attempt == 0 {
             return Duration::ZERO;
@@ -104,7 +84,6 @@ impl RetryConfig {
         let capped_delay = base_delay.min(self.max_delay.as_millis() as f64);
 
         let final_delay = if self.use_jitter {
-            // Add jitter: 50% to 150% of the delay
             let jitter = rand_jitter();
             capped_delay * (0.5 + jitter)
         } else {
@@ -115,10 +94,8 @@ impl RetryConfig {
     }
 }
 
-/// Generate random jitter between 0.0 and 1.0
 fn rand_jitter() -> f64 {
     use std::time::SystemTime;
-    // Simple pseudo-random based on time (no external crate needed)
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
@@ -126,32 +103,22 @@ fn rand_jitter() -> f64 {
     (nanos % 1000) as f64 / 1000.0
 }
 
-/// Error classification for retry decisions
+/// Error classification for retry decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryableError {
-    /// Connection error - always retryable
     Connection,
-    /// Timeout - retryable for idempotent operations
     Timeout,
-    /// Server overloaded (503) - retryable
     ServerOverloaded,
-    /// Server error (5xx except 503) - might be retryable
     ServerError,
-    /// Client error (4xx) - not retryable
     ClientError,
-    /// Unknown error - not retryable by default
     Unknown,
 }
 
 impl RetryableError {
-    /// Classify an error from its message
     pub fn classify(error: &anyhow::Error) -> Self {
         let msg = error.to_string().to_lowercase();
 
         if msg.contains("backing off") {
-            // If the pool is backing off, immediate retry is futile.
-            // We should either not retry, or wait longer.
-            // For now, let's treat it as non-retryable to stop the log spam.
             return Self::Unknown;
         }
 
@@ -196,7 +163,6 @@ impl RetryableError {
         Self::Unknown
     }
 
-    /// Check if this error type is retryable
     pub fn is_retryable(&self, idempotent_only: bool, is_idempotent: bool) -> bool {
         match self {
             // Connection errors are always retryable

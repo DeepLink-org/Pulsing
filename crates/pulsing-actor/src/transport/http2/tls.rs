@@ -1,22 +1,4 @@
-//! TLS support for HTTP/2 transport with passphrase-derived certificates
-//!
-//! This module provides TLS encryption using certificates derived from a shared passphrase.
-//! All nodes using the same passphrase will generate identical CA certificates, enabling
-//! automatic mutual TLS authentication.
-//!
-//! ## Security Model
-//!
-//! 1. A passphrase is used to deterministically derive a CA certificate
-//! 2. Each node generates its own certificate signed by the shared CA
-//! 3. Nodes only trust certificates signed by the same CA (same passphrase)
-//!
-//! ## Usage
-//!
-//! ```rust,ignore
-//! use pulsing_actor::transport::http2::tls::TlsConfig;
-//!
-//! let tls = TlsConfig::from_passphrase("my-cluster-secret")?;
-//! ```
+//! TLS support for HTTP/2 transport (passphrase-derived certificates).
 
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa,
@@ -31,10 +13,8 @@ use rustls::server::WebPkiClientVerifier;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use std::sync::OnceLock;
 
-/// Global flag to ensure crypto provider is installed only once
 static CRYPTO_PROVIDER_INSTALLED: OnceLock<()> = OnceLock::new();
 
-/// Install the ring crypto provider for rustls
 fn ensure_crypto_provider() {
     CRYPTO_PROVIDER_INSTALLED.get_or_init(|| {
         let _ = default_provider().install_default();
@@ -43,56 +23,39 @@ fn ensure_crypto_provider() {
 use std::sync::Arc;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-/// Salt used for HKDF key derivation
 const HKDF_SALT: &[u8] = b"pulsing-ca-v1";
 
-/// CA certificate common name
 const CA_COMMON_NAME: &str = "Pulsing Cluster CA";
 
-/// Node certificate common name prefix
 const NODE_CN_PREFIX: &str = "Pulsing Node";
 
-/// Certificate validity period (10 years in seconds)
 const CERT_VALIDITY_SECS: i64 = 10 * 365 * 24 * 60 * 60;
 
-/// TLS configuration for HTTP/2 transport
+/// TLS configuration for HTTP/2 transport.
 #[derive(Clone)]
 pub struct TlsConfig {
-    /// TLS acceptor for server-side connections
     pub acceptor: TlsAcceptor,
-    /// TLS connector for client-side connections
     pub connector: TlsConnector,
-    /// The passphrase hash for debugging
     passphrase_hash: String,
 }
 
 impl TlsConfig {
-    /// Create TLS configuration from a passphrase
-    ///
-    /// The passphrase is used to deterministically derive a CA certificate.
-    /// All nodes using the same passphrase will generate identical CA certificates,
-    /// enabling automatic mutual TLS authentication.
+    /// Create TLS configuration from a passphrase.
     pub fn from_passphrase(passphrase: &str) -> anyhow::Result<Self> {
-        // Ensure the ring crypto provider is installed
         ensure_crypto_provider();
 
-        // Derive CA certificate and key from passphrase
         let (ca_cert, ca_key_pair) = derive_ca_from_passphrase(passphrase)?;
 
-        // Generate node certificate signed by CA
         let (node_cert, node_key_pair) = generate_node_cert(&ca_cert, &ca_key_pair)?;
 
-        // Convert to DER format
         let ca_cert_der = CertificateDer::from(ca_cert.der().to_vec());
         let node_cert_der = CertificateDer::from(node_cert.der().to_vec());
         let node_key_der =
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(node_key_pair.serialize_der()));
 
-        // Build root cert store with our CA
         let mut root_store = RootCertStore::empty();
         root_store.add(ca_cert_der.clone())?;
 
-        // Build server config with client certificate verification
         let client_verifier = WebPkiClientVerifier::builder(Arc::new(root_store.clone()))
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build client verifier: {}", e))?;
@@ -102,13 +65,11 @@ impl TlsConfig {
             .with_single_cert(vec![node_cert_der.clone()], node_key_der.clone_key())
             .map_err(|e| anyhow::anyhow!("Failed to build server config: {}", e))?;
 
-        // Build client config
         let client_config = ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_client_auth_cert(vec![node_cert_der], node_key_der)
             .map_err(|e| anyhow::anyhow!("Failed to build client config: {}", e))?;
 
-        // Calculate passphrase hash for debugging
         let hash = digest(&SHA256, passphrase.as_bytes());
         let passphrase_hash = hex_encode(&hash.as_ref()[..8]);
 
@@ -119,22 +80,16 @@ impl TlsConfig {
         })
     }
 
-    /// Get the passphrase hash (for debugging/logging purposes only)
     pub fn passphrase_hash(&self) -> &str {
         &self.passphrase_hash
     }
 
-    /// Connect to a remote server with TLS
-    ///
-    /// Note: server_name is ignored for mTLS connections within the cluster.
-    /// We use a fixed server name that matches the node certificate's CN pattern.
+    /// Connect to a remote server with TLS.
     pub async fn connect(
         &self,
         stream: tokio::net::TcpStream,
         _server_name: &str,
     ) -> anyhow::Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>> {
-        // Use a fixed server name for internal cluster communication
-        // The actual authentication is done via mutual TLS (client cert verification)
         let server_name = ServerName::try_from("pulsing.internal".to_string())
             .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?;
 
@@ -144,7 +99,6 @@ impl TlsConfig {
             .map_err(|e| anyhow::anyhow!("TLS connect failed: {}", e))
     }
 
-    /// Accept a TLS connection
     pub async fn accept(
         &self,
         stream: tokio::net::TcpStream,
@@ -164,18 +118,12 @@ impl std::fmt::Debug for TlsConfig {
     }
 }
 
-/// Derive CA certificate and key pair from passphrase
-///
-/// This function is deterministic - the same passphrase will always produce
-/// the same CA certificate and key.
+/// Derive CA certificate and key pair from passphrase.
 fn derive_ca_from_passphrase(passphrase: &str) -> anyhow::Result<(Certificate, KeyPair)> {
-    // Derive seed using HKDF
     let seed = derive_seed(passphrase, b"ca-key")?;
 
-    // Generate deterministic Ed25519 key pair from seed
     let key_pair = generate_deterministic_key_pair(&seed)?;
 
-    // Create CA certificate with fixed parameters
     let mut params = CertificateParams::new(vec![CA_COMMON_NAME.to_string()])
         .map_err(|e| anyhow::anyhow!("Failed to create cert params: {}", e))?;
 
@@ -192,8 +140,6 @@ fn derive_ca_from_passphrase(passphrase: &str) -> anyhow::Result<(Certificate, K
         KeyUsagePurpose::DigitalSignature,
     ];
 
-    // Fixed validity period (use a fixed start time for determinism)
-    // We use Unix epoch + 1 year as the start time
     let not_before = time::OffsetDateTime::UNIX_EPOCH + time::Duration::days(365);
     let not_after = not_before + time::Duration::seconds(CERT_VALIDITY_SECS);
     params.not_before = not_before;

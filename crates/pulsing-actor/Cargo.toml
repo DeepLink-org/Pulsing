@@ -16,6 +16,8 @@ integration = []
 otlp = ["opentelemetry-otlp"]
 # Enable TLS support with passphrase-derived certificates
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ring", "dep:rustls-pemfile", "dep:time"]
+# Enable test helpers module for testing in downstream crates
+test-helper = []
 
 [dependencies]
 # Async runtime

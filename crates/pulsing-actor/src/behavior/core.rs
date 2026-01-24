@@ -1,5 +1,3 @@
-//! Behavior definitions and combinators
-
 use super::context::BehaviorContext;
 use super::reference::TypedRef;
 use crate::actor::ActorSystemRef;
@@ -11,44 +9,32 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Action returned by a behavior after processing a message
+/// Action returned by a behavior after processing a message.
 pub enum BehaviorAction<M> {
-    /// Keep the current behavior
     Same,
-    /// Switch to a new behavior (state machine transition)
     Become(Behavior<M>),
-    /// Stop the actor gracefully with optional reason
     Stop(Option<String>),
-    /// Actor is already stopped (internal use)
-    /// This is returned when messages arrive after Stop
     AlreadyStopped,
 }
 
 impl<M> BehaviorAction<M> {
-    /// Create a Stop action without reason
     pub fn stop() -> Self {
         Self::Stop(None)
     }
 
-    /// Create a Stop action with reason
     pub fn stop_with_reason(reason: impl Into<String>) -> Self {
         Self::Stop(Some(reason.into()))
     }
 
-    /// Check if this action indicates the actor should stop
     pub fn is_stop(&self) -> bool {
         matches!(self, Self::Stop(_) | Self::AlreadyStopped)
     }
 }
 
-/// The core behavior function type
 pub type BehaviorFn<M> =
     Box<dyn FnMut(M, &mut BehaviorContext<M>) -> BoxFuture<'_, BehaviorAction<M>> + Send>;
 
-/// A behavior wraps a message-handling function
-///
-/// Behaviors are the fundamental building block of this actor model.
-/// An actor is simply a behavior that processes messages.
+/// A behavior wraps a message-handling function.
 pub struct Behavior<M> {
     inner: BehaviorFn<M>,
     _marker: PhantomData<M>,
@@ -58,7 +44,6 @@ impl<M> Behavior<M>
 where
     M: Send + 'static,
 {
-    /// Create a new behavior from a function
     pub fn new<F>(f: F) -> Self
     where
         F: FnMut(M, &mut BehaviorContext<M>) -> BoxFuture<'_, BehaviorAction<M>> + Send + 'static,
@@ -69,19 +54,12 @@ where
         }
     }
 
-    /// Process a message with this behavior
     pub async fn receive(&mut self, msg: M, ctx: &mut BehaviorContext<M>) -> BehaviorAction<M> {
         (self.inner)(msg, ctx).await
     }
 }
 
-/// IntoActor implementation for Behavior<M>
-///
-/// This allows Behavior to be passed directly to `spawn` and `spawn_named`:
-/// ```rust,ignore
-/// let counter = system.spawn(counter(0)).await?;
-/// let counter = system.spawn_named("counter", counter(0)).await?;
-/// ```
+/// IntoActor implementation for Behavior<M>.
 impl<M> IntoActor for Behavior<M>
 where
     M: Serialize + DeserializeOwned + Send + Sync + 'static,
@@ -93,25 +71,7 @@ where
     }
 }
 
-/// A wrapper that allows Behavior<M> to be used as an Actor
-///
-/// This wrapper implements the Actor trait, allowing behaviors to be spawned
-/// using the standard `system.spawn()` and `system.spawn_named()` methods.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// fn counter(init: i32) -> Behavior<i32> {
-///     stateful(init, |count, n, _ctx| {
-///         *count += n;
-///         BehaviorAction::Same
-///     })
-/// }
-///
-/// // Use as Actor via IntoActor trait
-/// let counter = system.spawn(counter(0)).await?;
-/// let counter = system.spawn_named("counter", counter(0)).await?;
-/// ```
+/// Wrapper that allows Behavior<M> to be used as an Actor.
 pub struct BehaviorWrapper<M>
 where
     M: Serialize + DeserializeOwned + Send + 'static,
@@ -125,7 +85,6 @@ impl<M> BehaviorWrapper<M>
 where
     M: Serialize + DeserializeOwned + Send + 'static,
 {
-    /// Create a new BehaviorWrapper from a Behavior
     pub fn new(behavior: Behavior<M>) -> Self {
         Self {
             behavior: Mutex::new(behavior),
@@ -150,10 +109,8 @@ where
     M: Serialize + DeserializeOwned + Send + Sync + 'static,
 {
     async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
-        // Deserialize the incoming message
         let typed_msg: M = msg.unpack()?;
 
-        // Get mutable access to behavior and context
         let mut behavior = self.behavior.lock().await;
         let mut ctx_guard = self.behavior_ctx.lock().await;
 
@@ -161,10 +118,8 @@ where
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("BehaviorContext not initialized"))?;
 
-        // Process the message
         let action = behavior.receive(typed_msg, ctx).await;
 
-        // Handle the action
         match action {
             BehaviorAction::Same => Message::pack(&()),
             BehaviorAction::Become(new_behavior) => {

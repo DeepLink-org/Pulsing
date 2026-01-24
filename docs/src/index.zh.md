@@ -122,6 +122,6 @@ asyncio.run(main())
 
 ## 社区
 
-- [GitHub 仓库](https://github.com/reiase/pulsing)
-- [Issue 追踪](https://github.com/reiase/pulsing/issues)
-- [讨论区](https://github.com/reiase/pulsing/discussions)
+- [GitHub 仓库](https://github.com/DeepLink-org/pulsing)
+- [Issue 追踪](https://github.com/DeepLink-org/pulsing/issues)
+- [讨论区](https://github.com/DeepLink-org/pulsing/discussions)

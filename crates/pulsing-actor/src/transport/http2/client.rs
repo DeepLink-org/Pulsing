@@ -1,11 +1,4 @@
-//! HTTP/2 Client implementation
-//!
-//! Supports h2c (HTTP/2 over cleartext) with:
-//! - Advanced connection pooling
-//! - Retry strategies with exponential backoff
-//! - Timeout management
-//! - Streaming support
-//! - Distributed tracing (W3C Trace Context)
+//! HTTP/2 client implementation.
 
 use super::config::Http2Config;
 use super::pool::{ConnectionPool, PoolConfig};
@@ -26,20 +19,15 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-/// HTTP/2 Client with connection pooling, retry, and timeout support
+/// HTTP/2 client with connection pooling, retry, and timeout support.
 pub struct Http2Client {
-    /// Connection pool
     pool: Arc<ConnectionPool>,
-    /// HTTP/2 configuration
     config: Http2Config,
-    /// Retry configuration
     retry_config: RetryConfig,
-    /// Global cancellation token
     cancel: CancellationToken,
 }
 
 impl Http2Client {
-    /// Create a new HTTP/2 client with default configuration
     pub fn new(config: Http2Config) -> Self {
         Self {
             pool: Arc::new(ConnectionPool::new(config.clone())),
@@ -49,7 +37,6 @@ impl Http2Client {
         }
     }
 
-    /// Create a new HTTP/2 client with custom configurations
     pub fn with_configs(
         http2_config: Http2Config,
         pool_config: PoolConfig,
@@ -66,33 +53,27 @@ impl Http2Client {
         }
     }
 
-    /// Create client with retry configuration
     pub fn with_retry(mut self, retry_config: RetryConfig) -> Self {
         self.retry_config = retry_config;
         self
     }
 
-    /// Get the connection pool (for diagnostics)
     pub fn pool(&self) -> &Arc<ConnectionPool> {
         &self.pool
     }
 
-    /// Get pool statistics
     pub fn stats(&self) -> &Arc<super::pool::PoolStats> {
         self.pool.stats()
     }
 
-    /// Start background maintenance tasks
     pub fn start_background_tasks(&self) {
         self.pool.start_cleanup_task(self.cancel.clone());
     }
 
-    /// Shutdown the client
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
-    /// Send an ask (request-response) message with retry
     pub async fn ask(
         &self,
         addr: SocketAddr,
@@ -102,8 +83,6 @@ impl Http2Client {
     ) -> anyhow::Result<Vec<u8>> {
         let executor = RetryExecutor::new(self.retry_config.clone());
 
-        // ask is idempotent if the message handler is idempotent
-        // We treat read operations as idempotent by default
         executor
             .execute(true, || {
                 self.ask_once(addr, path, msg_type, payload.clone())
@@ -111,7 +90,6 @@ impl Http2Client {
             .await
     }
 
-    /// Send an ask without retry
     async fn ask_once(
         &self,
         addr: SocketAddr,
@@ -125,7 +103,6 @@ impl Http2Client {
 
         let status = response.status();
 
-        // Read response body with timeout
         let body = tokio::time::timeout(self.config.request_timeout, response.collect())
             .await
             .map_err(|_| anyhow::anyhow!("Response body read timeout"))?
@@ -144,7 +121,6 @@ impl Http2Client {
         Ok(body.to_vec())
     }
 
-    /// Send a tell (fire-and-forget) message with retry
     pub async fn tell(
         &self,
         addr: SocketAddr,
@@ -154,7 +130,6 @@ impl Http2Client {
     ) -> anyhow::Result<()> {
         let executor = RetryExecutor::new(self.retry_config.clone());
 
-        // tell is NOT idempotent by default (could have side effects)
         executor
             .execute(false, || {
                 self.tell_once(addr, path, msg_type, payload.clone())
@@ -162,7 +137,6 @@ impl Http2Client {
             .await
     }
 
-    /// Send a tell without retry
     async fn tell_once(
         &self,
         addr: SocketAddr,
@@ -190,9 +164,7 @@ impl Http2Client {
         Ok(())
     }
 
-    /// Send a stream request and receive streaming response as StreamFrame
-    ///
-    /// Note: Streaming requests are NOT retried (they are not idempotent)
+    /// Send a stream request and receive streaming response as StreamFrame.
     pub async fn ask_stream(
         &self,
         addr: SocketAddr,

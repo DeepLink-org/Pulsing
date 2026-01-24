@@ -1,7 +1,4 @@
-//! SWIM failure detection protocol
-//!
-//! Implements the SWIM (Scalable Weakly-consistent Infection-style Membership) protocol
-//! for detecting failed nodes in the cluster.
+//! SWIM failure detection protocol.
 
 use crate::actor::NodeId;
 use serde::{Deserialize, Serialize};
@@ -11,19 +8,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-/// SWIM configuration
+/// SWIM configuration.
 #[derive(Clone, Debug)]
 pub struct SwimConfig {
-    /// Ping interval
     pub ping_interval: Duration,
-
-    /// Ping timeout before indirect probe
     pub ping_timeout: Duration,
-
-    /// Number of indirect probes
     pub indirect_probes: usize,
-
-    /// Suspicion timeout before marking dead
     pub suspicion_timeout: Duration,
 }
 
@@ -33,31 +23,28 @@ impl Default for SwimConfig {
             ping_interval: Duration::from_millis(500),
             ping_timeout: Duration::from_secs(2),
             indirect_probes: 3,
-            // Increased from 5s to 15s for better tolerance in high-load scenarios
-            // This gives nodes more time to respond before being marked as failed
             suspicion_timeout: Duration::from_secs(15),
         }
     }
 }
 
-/// SWIM protocol messages
+/// SWIM protocol messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SwimMessage {
-    /// Direct ping
-    Ping { seq: u64, from: NodeId },
-
-    /// Ping acknowledgment
-    Ack { seq: u64, from: NodeId },
-
-    /// Indirect ping request
+    Ping {
+        seq: u64,
+        from: NodeId,
+    },
+    Ack {
+        seq: u64,
+        from: NodeId,
+    },
     PingReq {
         seq: u64,
         from: NodeId,
         target: NodeId,
         target_addr: SocketAddr,
     },
-
-    /// Indirect ping acknowledgment
     PingReqAck {
         seq: u64,
         from: NodeId,
@@ -65,13 +52,12 @@ pub enum SwimMessage {
     },
 }
 
-/// Pending ping state
 struct PendingPing {
     target: NodeId,
     sent_at: Instant,
 }
 
-/// SWIM failure detector
+/// SWIM failure detector.
 pub struct SwimDetector {
     local_node: NodeId,
     config: SwimConfig,
@@ -91,7 +77,6 @@ impl Clone for SwimDetector {
 }
 
 impl SwimDetector {
-    /// Create a new SWIM detector
     pub fn new(local_node: NodeId, config: SwimConfig) -> Self {
         Self {
             local_node,
@@ -101,12 +86,10 @@ impl SwimDetector {
         }
     }
 
-    /// Get ping interval
     pub fn ping_interval(&self) -> Duration {
         self.config.ping_interval
     }
 
-    /// Create a new ping message
     pub fn create_ping(&self) -> (u64, SwimMessage) {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst);
         let ping = SwimMessage::Ping {
@@ -116,7 +99,6 @@ impl SwimDetector {
         (seq, ping)
     }
 
-    /// Create an ack message
     pub fn create_ack(&self, seq: u64) -> SwimMessage {
         SwimMessage::Ack {
             seq,
@@ -124,7 +106,6 @@ impl SwimDetector {
         }
     }
 
-    /// Record that a ping was sent
     pub async fn ping_sent(&self, seq: u64, target: NodeId) {
         let mut pending = self.pending_pings.write().await;
         pending.insert(
@@ -136,14 +117,12 @@ impl SwimDetector {
         );
     }
 
-    /// Record that an ack was received
     pub async fn ack_received(&self, seq: u64) {
         let mut pending = self.pending_pings.write().await;
         pending.remove(&seq);
     }
 
-    /// Check for ping timeouts
-    /// Returns (node_id, should_suspect)
+    /// Check for ping timeouts.
     pub async fn check_timeouts(&self) -> Vec<(NodeId, bool)> {
         let mut pending = self.pending_pings.write().await;
         let now = Instant::now();

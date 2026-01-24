@@ -120,7 +120,7 @@ ray.shutdown()
 result = await calc.add(10)
 ```
 
-### Tell (Fire-and-Forget)
+### Tell (Fire-and-forget)
 
 ```python
 await actor_ref.tell({"event": "notify", "data": "event_data"})
@@ -131,7 +131,7 @@ await actor_ref.tell({"event": "notify", "data": "event_data"})
 For continuous data flow (e.g., LLM token generation), just return a generator:
 
 ```python
-@remote
+@pul.remote
 class TokenGenerator:
     async def generate(self, prompt: str):
         # Just return an async generator - Pulsing handles streaming automatically
@@ -150,7 +150,7 @@ async for chunk in generator.generate("Hello"):
 Pulsing supports automatic actor restart on failure:
 
 ```python
-@remote(
+@pul.remote(
     restart_policy="on_failure",  # "never" | "on_failure" | "always"
     max_restarts=3,
     min_backoff=1.0,
@@ -172,7 +172,7 @@ class ReliableWorker:
 ### 1. Stateful Actor
 
 ```python
-@remote
+@pul.remote
 class SessionManager:
     def __init__(self):
         self.sessions = {}
@@ -189,7 +189,7 @@ class SessionManager:
 ### 2. Worker Pool (Round-Robin)
 
 ```python
-@remote
+@pul.remote
 class WorkerPool:
     def __init__(self, workers: list):
         self.workers = workers
@@ -204,7 +204,7 @@ class WorkerPool:
 ### 3. Pipeline
 
 ```python
-@remote
+@pul.remote
 class PipelineStage:
     def __init__(self, next_stage=None):
         self.next_stage = next_stage
@@ -219,7 +219,7 @@ class PipelineStage:
 ### 4. LLM Inference Service
 
 ```python
-@remote
+@pul.remote
 class LLMService:
     def __init__(self, model_name: str):
         self.model_name = model_name
@@ -250,7 +250,7 @@ class LLMService:
 ### Error Handling
 
 ```python
-@remote
+@pul.remote
 class ResilientActor:
     async def risky_operation(self, data: dict) -> dict:
         try:
@@ -281,7 +281,7 @@ actor = await system.spawn(MyActor(), name="my_actor")
 # Call method
 result = await actor.ask({"action": "do_something"})
 
-# Using @remote decorator (recommended)
+# Using @pul.remote decorator (recommended)
 @pul.remote
 class MyService:
     def process(self, data): return data

@@ -1,4 +1,10 @@
-//! Configuration types for the Actor System
+//! Configuration types for the Actor System.
+//!
+//! Core types:
+//! - [`SystemConfig`]
+//! - [`ActorSystemBuilder`]
+//! - [`SpawnOptions`]
+//! - [`ResolveOptions`]
 
 use crate::actor::{NodeId, DEFAULT_MAILBOX_SIZE};
 use crate::cluster::{GossipConfig, HeadNodeConfig};
@@ -9,7 +15,22 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+/// Minimum mailbox capacity (prevents performance issues)
+const MIN_MAILBOX_CAPACITY: usize = 16;
+
+/// Maximum mailbox capacity (prevents memory exhaustion)
+const MAX_MAILBOX_CAPACITY: usize = 1_000_000;
+
 /// Actor System configuration
+///
+/// This struct holds all configuration options for the actor system.
+/// Use the builder pattern via [`ActorSystem::builder()`](crate::system::ActorSystem::builder)
+/// for a more ergonomic API.
+///
+/// # Validation
+///
+/// Call [`validate()`](Self::validate) to check configuration validity before use.
+/// The builder automatically validates during `build()`.
 #[derive(Clone, Debug)]
 pub struct SystemConfig {
     /// HTTP/2 address for all communication (actors + gossip)
@@ -117,34 +138,92 @@ impl SystemConfig {
         self.head_node_config = Some(config);
         self
     }
+
+    /// Validate the configuration
+    ///
+    /// Returns a list of validation errors, or an empty list if valid.
+    /// The builder calls this automatically during `build()`.
+    ///
+    /// # Validation Rules
+    /// - Mailbox capacity must be between 16 and 1,000,000
+    /// - Cannot be both head node and have head_addr set
+    /// - Seed nodes should not be empty when head_addr is not set (for cluster mode)
+    pub fn validate(&self) -> Vec<ConfigValidationError> {
+        let mut errors = Vec::new();
+
+        // Validate mailbox capacity
+        if self.default_mailbox_capacity < MIN_MAILBOX_CAPACITY {
+            errors.push(ConfigValidationError::MailboxTooSmall {
+                value: self.default_mailbox_capacity,
+                min: MIN_MAILBOX_CAPACITY,
+            });
+        }
+        if self.default_mailbox_capacity > MAX_MAILBOX_CAPACITY {
+            errors.push(ConfigValidationError::MailboxTooLarge {
+                value: self.default_mailbox_capacity,
+                max: MAX_MAILBOX_CAPACITY,
+            });
+        }
+
+        // Validate head node configuration
+        if self.is_head_node && self.head_addr.is_some() {
+            errors.push(ConfigValidationError::ConflictingHeadNodeConfig);
+        }
+
+        errors
+    }
+
+    /// Check if configuration is valid
+    pub fn is_valid(&self) -> bool {
+        self.validate().is_empty()
+    }
 }
+
+/// Configuration validation error
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigValidationError {
+    /// Mailbox capacity is too small
+    MailboxTooSmall { value: usize, min: usize },
+    /// Mailbox capacity is too large
+    MailboxTooLarge { value: usize, max: usize },
+    /// Conflicting head node configuration (both is_head_node and head_addr set)
+    ConflictingHeadNodeConfig,
+}
+
+impl std::fmt::Display for ConfigValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MailboxTooSmall { value, min } => {
+                write!(
+                    f,
+                    "Mailbox capacity {} is too small (minimum: {})",
+                    value, min
+                )
+            }
+            Self::MailboxTooLarge { value, max } => {
+                write!(
+                    f,
+                    "Mailbox capacity {} is too large (maximum: {})",
+                    value, max
+                )
+            }
+            Self::ConflictingHeadNodeConfig => {
+                write!(
+                    f,
+                    "Cannot set both head_node mode and head_addr (conflicting options)"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConfigValidationError {}
 
 // ============================================================================
 // ActorSystem Builder
 // ============================================================================
 
 /// Builder for creating ActorSystem with fluent API
-///
-/// # Example
-///
-/// ```rust,ignore
-/// // Standalone mode (simplest)
-/// let system = ActorSystem::builder().build().await?;
-///
-/// // With custom address
-/// let system = ActorSystem::builder()
-///     .addr("0.0.0.0:8000")
-///     .build()
-///     .await?;
-///
-/// // Cluster mode with seeds
-/// let system = ActorSystem::builder()
-///     .addr("0.0.0.0:8000")
-///     .seeds(["192.168.1.1:8000", "192.168.1.2:8000"])
-///     .mailbox_capacity(512)
-///     .build()
-///     .await?;
-/// ```
 #[derive(Default)]
 pub struct ActorSystemBuilder {
     /// Bind address (stored as Result for deferred error handling)
@@ -238,40 +317,14 @@ impl ActorSystemBuilder {
 
     /// Build the ActorSystem
     ///
-    /// Returns an error if any address parsing failed.
+    /// Returns an error if any address parsing or validation failed.
     pub async fn build(self) -> anyhow::Result<Arc<crate::system::ActorSystem>> {
-        // Parse bind address (use default if not specified)
-        let addr = match self.addr {
-            Some(Ok(addr)) => addr,
-            Some(Err(invalid)) => {
-                return Err(anyhow::anyhow!("Invalid bind address: {}", invalid));
-            }
-            None => DEFAULT_BIND_ADDR,
-        };
+        let addr =
+            Self::parse_optional_addr("bind address", self.addr)?.unwrap_or(DEFAULT_BIND_ADDR);
 
-        // Parse seed nodes
-        let mut seed_nodes = Vec::with_capacity(self.seeds.len());
-        for (i, seed) in self.seeds.into_iter().enumerate() {
-            match seed {
-                Ok(addr) => seed_nodes.push(addr),
-                Err(invalid) => {
-                    return Err(anyhow::anyhow!(
-                        "Invalid seed address at index {}: {}",
-                        i,
-                        invalid
-                    ));
-                }
-            }
-        }
+        let seed_nodes = Self::parse_addr_list("seed address", self.seeds)?;
 
-        // Parse head node address if specified
-        let head_addr = match self.head_addr {
-            Some(Ok(addr)) => Some(addr),
-            Some(Err(invalid)) => {
-                return Err(anyhow::anyhow!("Invalid head node address: {}", invalid));
-            }
-            None => None,
-        };
+        let head_addr = Self::parse_optional_addr("head node address", self.head_addr)?;
 
         let config = SystemConfig {
             addr,
@@ -284,7 +337,180 @@ impl ActorSystemBuilder {
             head_node_config: self.head_node_config,
         };
 
+        Self::validate_config(&config)?;
+
         crate::system::ActorSystem::new(config).await
+    }
+
+    fn parse_optional_addr(
+        label: &str,
+        input: Option<Result<SocketAddr, String>>,
+    ) -> anyhow::Result<Option<SocketAddr>> {
+        match input {
+            Some(Ok(addr)) => Ok(Some(addr)),
+            Some(Err(invalid)) => Err(anyhow::anyhow!("Invalid {}: {}", label, invalid)),
+            None => Ok(None),
+        }
+    }
+
+    fn parse_addr_list(
+        label: &str,
+        seeds: Vec<Result<SocketAddr, String>>,
+    ) -> anyhow::Result<Vec<SocketAddr>> {
+        let mut addrs = Vec::with_capacity(seeds.len());
+        for (i, seed) in seeds.into_iter().enumerate() {
+            match seed {
+                Ok(addr) => addrs.push(addr),
+                Err(invalid) => {
+                    return Err(anyhow::anyhow!(
+                        "Invalid {} at index {}: {}",
+                        label,
+                        i,
+                        invalid
+                    ));
+                }
+            }
+        }
+        Ok(addrs)
+    }
+
+    fn validate_config(config: &SystemConfig) -> anyhow::Result<()> {
+        let errors = config.validate();
+        if errors.is_empty() {
+            return Ok(());
+        }
+        let error_msgs: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+        Err(anyhow::anyhow!(
+            "Configuration validation failed:\n  - {}",
+            error_msgs.join("\n  - ")
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_system_config_default() {
+        let config = SystemConfig::default();
+        assert!(config.is_valid());
+        assert_eq!(config.default_mailbox_capacity, DEFAULT_MAILBOX_SIZE);
+        assert!(!config.is_head_node);
+        assert!(config.head_addr.is_none());
+    }
+
+    #[test]
+    fn test_system_config_standalone() {
+        let config = SystemConfig::standalone();
+        assert!(config.is_valid());
+    }
+
+    #[test]
+    fn test_system_config_with_addr() {
+        let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
+        let config = SystemConfig::with_addr(addr);
+        assert_eq!(config.addr, addr);
+        assert!(config.is_valid());
+    }
+
+    #[test]
+    fn test_system_config_validation_mailbox_too_small() {
+        let config = SystemConfig {
+            default_mailbox_capacity: 1,
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            ConfigValidationError::MailboxTooSmall { .. }
+        ));
+    }
+
+    #[test]
+    fn test_system_config_validation_mailbox_too_large() {
+        let config = SystemConfig {
+            default_mailbox_capacity: 10_000_000,
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            ConfigValidationError::MailboxTooLarge { .. }
+        ));
+    }
+
+    #[test]
+    fn test_system_config_validation_conflicting_head_node() {
+        let addr: SocketAddr = "127.0.0.1:8000".parse().unwrap();
+        let config = SystemConfig {
+            is_head_node: true,
+            head_addr: Some(addr),
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            ConfigValidationError::ConflictingHeadNodeConfig
+        ));
+    }
+
+    #[test]
+    fn test_system_config_builder_methods() {
+        let config = SystemConfig::standalone()
+            .with_mailbox_capacity(256)
+            .with_head_node();
+
+        assert_eq!(config.default_mailbox_capacity, 256);
+        assert!(config.is_head_node);
+        assert!(config.is_valid());
+    }
+
+    #[test]
+    fn test_spawn_options_default() {
+        let options = SpawnOptions::new();
+        assert!(options.mailbox_capacity.is_none());
+        assert!(options.metadata.is_empty());
+    }
+
+    #[test]
+    fn test_spawn_options_builder() {
+        let options = SpawnOptions::new()
+            .mailbox_capacity(512)
+            .metadata([("key".to_string(), "value".to_string())].into());
+
+        assert_eq!(options.mailbox_capacity, Some(512));
+        assert_eq!(options.metadata.get("key"), Some(&"value".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_options_default() {
+        let options = ResolveOptions::new();
+        assert!(options.node_id.is_none());
+        assert!(options.policy.is_none());
+        assert!(options.filter_alive);
+    }
+
+    #[test]
+    fn test_resolve_options_builder() {
+        let node_id = NodeId::new(123);
+        let options = ResolveOptions::new().node_id(node_id).filter_alive(false);
+
+        assert_eq!(options.node_id, Some(node_id));
+        assert!(!options.filter_alive);
+    }
+
+    #[test]
+    fn test_config_validation_error_display() {
+        let err = ConfigValidationError::MailboxTooSmall { value: 5, min: 16 };
+        assert!(err.to_string().contains("5"));
+        assert!(err.to_string().contains("16"));
+
+        let err = ConfigValidationError::ConflictingHeadNodeConfig;
+        assert!(err.to_string().contains("head_node"));
     }
 }
 

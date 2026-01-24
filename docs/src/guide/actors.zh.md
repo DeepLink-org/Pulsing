@@ -131,7 +131,7 @@ await actor_ref.tell({"event": "notify", "data": "event_data"})
 用于持续数据流（如 LLM token 生成），只需返回 generator：
 
 ```python
-@remote
+@pul.remote
 class TokenGenerator:
     async def generate(self, prompt: str):
         # 直接返回 async generator - Pulsing 自动处理流式传输
@@ -150,7 +150,7 @@ async for chunk in generator.generate("Hello"):
 Pulsing 支持 Actor 失败后自动重启：
 
 ```python
-@remote(
+@pul.remote(
     restart_policy="on_failure",  # "never" | "on_failure" | "always"
     max_restarts=3,
     min_backoff=1.0,
@@ -172,7 +172,7 @@ class ReliableWorker:
 ### 1. 有状态 Actor
 
 ```python
-@remote
+@pul.remote
 class SessionManager:
     def __init__(self):
         self.sessions = {}
@@ -189,7 +189,7 @@ class SessionManager:
 ### 2. Worker 池（轮询）
 
 ```python
-@remote
+@pul.remote
 class WorkerPool:
     def __init__(self, workers: list):
         self.workers = workers
@@ -204,7 +204,7 @@ class WorkerPool:
 ### 3. 流水线
 
 ```python
-@remote
+@pul.remote
 class PipelineStage:
     def __init__(self, next_stage=None):
         self.next_stage = next_stage
@@ -219,7 +219,7 @@ class PipelineStage:
 ### 4. LLM 推理服务
 
 ```python
-@remote
+@pul.remote
 class LLMService:
     def __init__(self, model_name: str):
         self.model_name = model_name
@@ -250,7 +250,7 @@ class LLMService:
 ### 错误处理
 
 ```python
-@remote
+@pul.remote
 class ResilientActor:
     async def risky_operation(self, data: dict) -> dict:
         try:

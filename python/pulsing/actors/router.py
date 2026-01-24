@@ -1,4 +1,4 @@
-"""Router - OpenAI-compatible HTTP API router"""
+"""OpenAI-compatible HTTP API router."""
 
 import asyncio
 import json
@@ -52,7 +52,7 @@ class CompletionRequest:
 
 
 class _OpenAIHandler:
-    """OpenAI-compatible HTTP request handler"""
+    """OpenAI-compatible HTTP request handler."""
 
     def __init__(self, actor_system: ActorSystem, model_name: str, scheduler):
         self._actor_system = actor_system
@@ -69,10 +69,8 @@ class _OpenAIHandler:
         )
 
     async def health_check(self, request: web.Request) -> web.Response:
-        # Compatible with different types of schedulers
         if hasattr(self._scheduler, "get_worker_count"):
             count = self._scheduler.get_worker_count()
-            # If coroutine then await
             if hasattr(count, "__await__"):
                 total_workers = await count
             else:
@@ -83,7 +81,6 @@ class _OpenAIHandler:
         if hasattr(self._scheduler, "get_healthy_worker_count"):
             healthy_workers = await self._scheduler.get_healthy_worker_count()
         elif hasattr(self._scheduler, "get_all_loads"):
-            # StreamLoadScheduler: use get_all_loads to calculate healthy count
             healthy_workers = len(self._scheduler.get_all_loads())
         else:
             healthy_workers = total_workers
