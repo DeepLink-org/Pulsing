@@ -75,10 +75,10 @@ reqwest = { version = "0.12", default-features = false, features = [
 reqwest-eventsource = "0.6"
 
 # TLS
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
 tokio-rustls = { version = "0.26" }
 rcgen = { version = "0.13" }
-ring = { version = "0.17" }
+aws-lc-rs = { version = "1.8", features = ["bindgen"] }
 rustls-pemfile = { version = "2" }
 time = { version = "0.3" }
 
@@ -94,3 +94,7 @@ tabled = "=0.14"
 tokenizers = { version = "0.21", features = ["http"] }
 hf-hub = { version = "0.4", features = ["tokio"] }
 vergen-gitcl = "1.0"
+pkcs8 = { version = "0.10", features = ["alloc"] }
+sha2 = "0.10"
+ed25519-dalek = { version = "2.0", features = ["pkcs8"] }
+der = "0.7"

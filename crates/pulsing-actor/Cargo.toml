@@ -15,7 +15,7 @@ integration = []
 # Enable OTLP exporter for sending traces to Jaeger/Tempo
 otlp = ["opentelemetry-otlp"]
 # Enable TLS support with passphrase-derived certificates
-tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ring", "dep:rustls-pemfile", "dep:time"]
+tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:aws-lc-rs", "dep:rustls-pemfile", "dep:time", "dep:sha2"]
 # Enable test helpers module for testing in downstream crates
 test-helper = []
 
@@ -63,9 +63,10 @@ http-body-util = { workspace = true }
 rustls = { workspace = true, optional = true }
 tokio-rustls = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
-ring = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
 rustls-pemfile = { workspace = true, optional = true }
 time = { workspace = true, optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

@@ -4,10 +4,8 @@ use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose, SerialNumber, PKCS_ED25519,
 };
-use ring::digest::{digest, SHA256};
-use ring::hkdf::{self, HKDF_SHA256};
-use ring::signature::{Ed25519KeyPair, KeyPair as RingKeyPair};
-use rustls::crypto::ring::default_provider;
+use rustls::crypto::aws_lc_rs::default_provider;
+use sha2::{Digest, Sha256};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
@@ -70,8 +68,10 @@ impl TlsConfig {
             .with_client_auth_cert(vec![node_cert_der], node_key_der)
             .map_err(|e| anyhow::anyhow!("Failed to build client config: {}", e))?;
 
-        let hash = digest(&SHA256, passphrase.as_bytes());
-        let passphrase_hash = hex_encode(&hash.as_ref()[..8]);
+        let hash = Sha256::digest(passphrase.as_bytes());
+        let hash_slice = hash.as_slice();
+        let hash_bytes = &hash_slice[..8];
+        let passphrase_hash = hex_encode(hash_bytes);
 
         Ok(Self {
             acceptor: TlsAcceptor::from(Arc::new(server_config)),
@@ -205,109 +205,67 @@ fn generate_node_cert(
     Ok((cert, node_key))
 }
 
-/// Helper struct for HKDF output length
-struct HkdfLen(usize);
 
-impl hkdf::KeyType for HkdfLen {
-    fn len(&self) -> usize {
-        self.0
-    }
-}
-
-/// Derive a 32-byte seed using HKDF
+/// Derive a 32-byte seed using SHA256
 fn derive_seed(passphrase: &str, info: &[u8]) -> anyhow::Result<[u8; 32]> {
-    let salt = hkdf::Salt::new(HKDF_SHA256, HKDF_SALT);
-    let prk = salt.extract(passphrase.as_bytes());
+    let mut hasher = Sha256::new();
+    hasher.update(HKDF_SALT);
+    hasher.update(passphrase.as_bytes());
+    hasher.update(info);
+    let hash = hasher.finalize();
 
     let mut seed = [0u8; 32];
-    prk.expand(&[info], HkdfLen(32))
-        .map_err(|_| anyhow::anyhow!("HKDF expand failed"))?
-        .fill(&mut seed)
-        .map_err(|_| anyhow::anyhow!("HKDF fill failed"))?;
-
+    seed.copy_from_slice(&hash);
     Ok(seed)
 }
 
 /// Generate a deterministic Ed25519 key pair from a seed
 ///
-/// Ed25519 natively supports deterministic key generation from a 32-byte seed.
+/// Manually constructs PKCS#8 DER format for Ed25519 keys per RFC 8410.
 fn generate_deterministic_key_pair(seed: &[u8; 32]) -> anyhow::Result<KeyPair> {
-    // Create Ed25519 key pair from seed using ring
-    let ed25519_key = Ed25519KeyPair::from_seed_unchecked(seed)
-        .map_err(|e| anyhow::anyhow!("Failed to create Ed25519 key from seed: {}", e))?;
+    // Manually construct PKCS#8 DER for Ed25519 (RFC 8410)
+    // PrivateKeyInfo ::= SEQUENCE {
+    //   version INTEGER (0),
+    //   algorithm AlgorithmIdentifier,
+    //   privateKey OCTET STRING (contains OCTET STRING with seed)
+    // }
 
-    // Get the PKCS#8 v2 DER encoding
-    let pkcs8_der = create_ed25519_pkcs8_der(seed, ed25519_key.public_key().as_ref())?;
+    // Inner OCTET STRING containing the 32-byte seed
+    let mut inner_private_key = Vec::new();
+    inner_private_key.push(0x04); // OCTET STRING tag
+    inner_private_key.push(32);   // length
+    inner_private_key.extend_from_slice(seed);
 
-    // Convert to PrivateKeyDer and import into rcgen
-    let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(pkcs8_der));
+    // Outer OCTET STRING containing the inner OCTET STRING
+    let mut outer_private_key = Vec::new();
+    outer_private_key.push(0x04); // OCTET STRING tag
+    outer_private_key.push(inner_private_key.len() as u8);
+    outer_private_key.extend_from_slice(&inner_private_key);
 
-    let key_pair = KeyPair::from_der_and_sign_algo(&private_key_der, &PKCS_ED25519)
-        .map_err(|e| anyhow::anyhow!("Failed to create key pair from DER: {}", e))?;
+    // Algorithm identifier for Ed25519 (OID 1.3.101.112)
+    let algo_id: &[u8] = &[0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70];
+
+    // Build content: version + algorithm + privateKey
+    let mut content = Vec::new();
+    content.extend_from_slice(&[0x02, 0x01, 0x00]); // INTEGER 0 (version)
+    content.extend_from_slice(algo_id);             // AlgorithmIdentifier
+    content.extend_from_slice(&outer_private_key);  // privateKey
+
+    // Wrap in SEQUENCE
+    let mut pkcs8_der = Vec::new();
+    pkcs8_der.push(0x30); // SEQUENCE tag
+    pkcs8_der.push(content.len() as u8);
+    pkcs8_der.extend_from_slice(&content);
+
+    // Create rcgen KeyPair from the DER
+    let private_key_der = rustls::pki_types::PrivatePkcs8KeyDer::try_from(pkcs8_der.as_slice())
+        .map_err(|e| anyhow::anyhow!("Failed to parse PKCS#8 DER: {:?}", e))?;
+    let key_pair = KeyPair::from_pkcs8_der_and_sign_algo(&private_key_der, &PKCS_ED25519)
+        .map_err(|e| anyhow::anyhow!("Failed to create rcgen KeyPair: {}", e))?;
 
     Ok(key_pair)
 }
 
-/// Create PKCS#8 v1 DER encoding for an Ed25519 private key
-///
-/// RFC 8410 defines the format for Ed25519 keys:
-/// - privateKey contains CurvePrivateKey which is an OCTET STRING
-/// - The 32-byte seed needs to be wrapped in an OCTET STRING
-fn create_ed25519_pkcs8_der(seed: &[u8; 32], _public_key: &[u8]) -> anyhow::Result<Vec<u8>> {
-    // OID for Ed25519: 1.3.101.112
-    let ed25519_oid: &[u8] = &[0x06, 0x03, 0x2b, 0x65, 0x70];
-
-    // Build algorithm identifier: SEQUENCE { OID ed25519 }
-    let algo_seq = wrap_in_sequence(ed25519_oid);
-
-    // CurvePrivateKey ::= OCTET STRING (the 32-byte seed)
-    // This needs to be wrapped in OCTET STRING for the privateKey field
-    let inner_private_key = wrap_in_octet_string(seed);
-    let private_key_octet = wrap_in_octet_string(&inner_private_key);
-
-    // Build PKCS#8 structure (version 0)
-    let mut pkcs8_content = Vec::new();
-    // Version INTEGER 0
-    pkcs8_content.extend_from_slice(&[0x02, 0x01, 0x00]);
-    // Algorithm identifier
-    pkcs8_content.extend_from_slice(&algo_seq);
-    // Private key (double-wrapped OCTET STRING)
-    pkcs8_content.extend_from_slice(&private_key_octet);
-
-    Ok(wrap_in_sequence(&pkcs8_content))
-}
-
-/// Wrap data in an ASN.1 SEQUENCE
-fn wrap_in_sequence(data: &[u8]) -> Vec<u8> {
-    let mut result = Vec::new();
-    result.push(0x30); // SEQUENCE tag
-    write_length(&mut result, data.len());
-    result.extend_from_slice(data);
-    result
-}
-
-/// Wrap data in an ASN.1 OCTET STRING
-fn wrap_in_octet_string(data: &[u8]) -> Vec<u8> {
-    let mut result = Vec::new();
-    result.push(0x04); // OCTET STRING tag
-    write_length(&mut result, data.len());
-    result.extend_from_slice(data);
-    result
-}
-
-/// Write ASN.1 DER length encoding
-fn write_length(output: &mut Vec<u8>, len: usize) {
-    if len < 128 {
-        output.push(len as u8);
-    } else if len < 256 {
-        output.push(0x81);
-        output.push(len as u8);
-    } else {
-        output.push(0x82);
-        output.push((len >> 8) as u8);
-        output.push(len as u8);
-    }
-}
 
 /// Convert bytes to hex string
 fn hex_encode(bytes: &[u8]) -> String {
