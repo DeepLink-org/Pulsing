@@ -7,7 +7,7 @@
 
 **[中文文档](README.zh.md)**
 
-**Lightweight distributed framework designed for high-performance AI applications.**
+**Pulsing is a distributed actor framework that provides a communication backbone for building distributed systems, with specialized support for AI applications.**
 
 🚀 **Zero Dependencies** — Pure Rust + Tokio, no NATS/etcd/Redis
 

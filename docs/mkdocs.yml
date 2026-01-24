@@ -1,5 +1,5 @@
 site_name: Pulsing
-site_description: A lightweight distributed Actor framework for building scalable systems
+site_description: Pulsing is a distributed actor framework that provides a communication backbone for building distributed systems, with specialized support for AI applications.
 # Docs may be hosted elsewhere, but repo is the canonical entry point.
 site_url: https://github.com/DeepLink-org/pulsing
 docs_dir: src
@@ -64,7 +64,8 @@ markdown_extensions:
       permalink: true
 
 plugins:
-  - search
+  - search:
+      separator: '[\s\u200b\-_,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
   - i18n:
       docs_structure: suffix
       fallback_to_default: true
@@ -82,28 +83,31 @@ plugins:
           site_name: "Pulsing 文档"
           nav_translations:
             Home: 首页
-            Getting Started: 快速开始
+            Home: 首页
+            Getting Started: 开始使用
+            Overview: 概述
             LLM Inference: LLM 推理
             Distributed Agents: 分布式 Agent
             Migrate from Ray: 从 Ray 迁移
-            Guide: 用户指南
+            User Guide: 用户指南
+            Guide: 指南
             Actors: Actor 指南
             Remote Actors: 远程 Actor
-            Security: 安全
-            Reliability: 可靠性
             Operations: CLI 运维
-            Distributed Queue: 分布式内存队列
-            Python API Contract: Python API 契约
+            Reliability: 可靠性
+            Security: 安全
+            Distributed Queue: 分布式队列
             Semantics: 语义与保证
             Style Guide: 术语与风格
-            Agent: Agent 框架
-            Overview: 概述
-            Pulsing Native: Pulsing 原生
-            AutoGen: AutoGen
-            LangGraph: LangGraph
+            Agent Framework: Agent 框架
             Examples: 示例
             Ping-Pong: Ping-Pong
             Distributed Counter: 分布式计数器
+            API Reference: API 参考
+            Overview: API 概述
+            Python: Python API
+            Rust: Rust API
+            FAQ: 常见问题
             Design: 设计文档
             Architecture: 架构概览
             Actor System: Actor 系统
@@ -113,11 +117,6 @@ plugins:
             HTTP2 Transport: HTTP2 传输
             Load Sync: 负载同步
             AS Actor Decorator: AS Actor 装饰器
-            API Reference: API 参考
-            Overview: 概述
-            Python API: Python API
-            Overview: API 概述
-            Python API: Python API
   - mkdocstrings:
       handlers:
         python:
@@ -136,12 +135,12 @@ plugins:
 nav:
   - Home: index.md
   - Getting Started:
-    - quickstart/index.md
+    - Overview: quickstart/index.md
     - LLM Inference: quickstart/llm_inference.md
     - Distributed Agents: quickstart/agent.md
     - Migrate from Ray: quickstart/migrate_from_ray.md
-  - Guide:
-    - guide/index.md
+  - User Guide:
+    - Guide: guide/index.md
     - Actors: guide/actors.md
     - Remote Actors: guide/remote_actors.md
     - Operations: guide/operations.md
@@ -150,15 +149,20 @@ nav:
     - Distributed Queue: guide/queue.md
     - Semantics: guide/semantics.md
     - Style Guide: guide/style.md
-  - Agent:
-    - agent/index.md
-    - Pulsing Native: agent/native.md
-    - AutoGen: agent/autogen.md
-    - LangGraph: agent/langgraph.md
-  - Examples:
-    - examples/index.md
-    - Ping-Pong: examples/ping_pong.md
-    - Distributed Counter: examples/distributed_counter.md
+    - Agent Framework:
+      - Overview: agent/index.md
+      - Pulsing Native: agent/native.md
+      - AutoGen: agent/autogen.md
+      - LangGraph: agent/langgraph.md
+    - Examples:
+      - Overview: examples/index.md
+      - Ping-Pong: examples/ping_pong.md
+      - Distributed Counter: examples/distributed_counter.md
+  - API Reference:
+    - Overview: api/overview.md
+    - Python: api/python.md
+    - Rust: api/rust.md
+  - FAQ: faq.md
   - Design:
     - Architecture: design/architecture.md
     - Actor System: design/actor-system.md
@@ -168,10 +172,6 @@ nav:
     - HTTP2 Transport: design/http2-transport.md
     - Load Sync: design/load_sync.md
     - AS Actor Decorator: design/as-actor-decorator.md
-  - API Reference:
-    - Overview: api/overview.md
-    - Python: api/python.md
-    - Rust: api/rust.md
 
 extra:
   generator: false

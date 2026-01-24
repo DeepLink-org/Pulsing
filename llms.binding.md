@@ -2,7 +2,7 @@
 
 ## Overview
 
-`Pulsing`是一款分布式系统通信框架，可以作为任意分布式系统的通信骨架，以方便快速搭建分布式系统和应用。
+`Pulsing` is a distributed actor framework that provides a communication backbone for building distributed systems, with specialized support for AI applications.
 
 ## Python 接口
 

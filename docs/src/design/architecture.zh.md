@@ -4,30 +4,34 @@ Pulsing Actor 系统架构概览。
 
 ## 系统组件
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        ActorSystem                              │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │   Actor A   │  │   Actor B   │  │   Actor C   │   Local      │
-│  │  (Mailbox)  │  │  (Mailbox)  │  │  (Mailbox)  │   Actors     │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘              │
-│         │                │                │                      │
-│         └────────────────┼────────────────┘                      │
-│                          │                                       │
-│  ┌───────────────────────┴───────────────────────┐              │
-│  │              HTTP Transport                    │              │
-│  │  POST /actor/{name}  - Actor Messages         │              │
-│  │  POST /cluster/gossip - Cluster Protocol      │              │
-│  └───────────────────────┬───────────────────────┘              │
-│                          │                                       │
-│  ┌───────────────────────┴───────────────────────┐              │
-│  │              GossipCluster                     │              │
-│  │  - 成员发现 (Membership)                       │              │
-│  │  - Actor 位置 (Actor Registry)                │              │
-│  │  - 故障检测 (SWIM)                            │              │
-│  └───────────────────────────────────────────────┘              │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph ActorSystem["ActorSystem"]
+        subgraph LocalActors["Local Actors"]
+            A["Actor A<br/>(Mailbox)"]
+            B["Actor B<br/>(Mailbox)"]
+            C["Actor C<br/>(Mailbox)"]
+        end
+
+        subgraph Transport["HTTP Transport"]
+            T1["POST /actor/{name}<br/>Actor Messages"]
+            T2["POST /cluster/gossip<br/>Cluster Protocol"]
+        end
+
+        subgraph Cluster["GossipCluster"]
+            M["成员发现<br/>(Membership)"]
+            R["Actor 位置<br/>(Actor Registry)"]
+            S["故障检测<br/>(SWIM)"]
+        end
+    end
+
+    A & B & C --> Transport
+    Transport --> Cluster
+
+    style ActorSystem fill:#f5f5f5,stroke:#333,stroke-width:2px
+    style LocalActors fill:#e3f2fd,stroke:#1976d2
+    style Transport fill:#fff3e0,stroke:#f57c00
+    style Cluster fill:#e8f5e9,stroke:#388e3c
 ```
 
 ## 核心概念
@@ -64,30 +68,36 @@ ActorRef 提供位置透明性：
 
 ### 本地消息
 
-```
-Sender                    Mailbox                   Actor
-  │                          │                        │
-  │── ask(Ping) ────────────→│                        │
-  │                          │── recv() ─────────────→│
-  │                          │                        │── handle()
-  │                          │←─ respond(Pong) ───────│
-  │←─ Pong ──────────────────│                        │
+```mermaid
+sequenceDiagram
+    participant S as Sender
+    participant M as Mailbox
+    participant A as Actor
+
+    S->>M: ask(Ping)
+    M->>A: recv()
+    A->>A: handle()
+    A-->>M: respond(Pong)
+    M-->>S: Pong
 ```
 
 ### 远程消息
 
-```
-Node A                           Network                         Node B
-  │                                 │                               │
-  │                                 │                               │
-Sender ─→ ActorRef(Remote)          │                            Actor
-  │            │                    │                               │
-  │            │── HTTP POST ──────→│── /actor/{name} ─────────────→│
-  │            │   {msg_type,       │   Envelope                    │
-  │            │    payload}        │                               │── handle()
-  │            │                    │                               │
-  │            │←─ HTTP Response ───│←─ {result} ──────────────────│
-  │←─ Pong ────│                    │                               │
+```mermaid
+sequenceDiagram
+    participant S as Sender
+    participant R as ActorRef(Remote)
+    participant N as Network
+    participant A as Actor (Node B)
+
+    S->>R: ask(Ping)
+    R->>N: HTTP POST /actor/{name}
+    Note over R,N: {msg_type, payload}
+    N->>A: Envelope
+    A->>A: handle()
+    A-->>N: {result}
+    N-->>R: HTTP Response
+    R-->>S: Pong
 ```
 
 ## 设计原则

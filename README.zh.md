@@ -7,7 +7,7 @@
 
 **[English](README.md)**
 
-**轻量级分布式框架，专为高性能 AI 应用设计。**
+**Pulsing 是一个分布式 actor 框架，为构建分布式系统提供通信骨干，并为 AI 应用提供专门支持。**
 
 🚀 **零外部依赖** — 纯 Rust + Tokio，无需 NATS/etcd/Redis
 

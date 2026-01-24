@@ -1,7 +1,7 @@
 ---
 template: home.html
 title: Pulsing - 轻量级分布式 Actor 框架
-description: 基于 Rust 和 Tokio 构建的轻量级分布式 Actor 框架，专为 AI 系统设计。零外部依赖，内置服务发现，Python 优先。
+description: Pulsing 是一个分布式 actor 框架，为构建分布式系统提供通信骨干，并为 AI 应用提供专门支持。
 hide: toc
 ---
 
@@ -9,7 +9,7 @@ hide: toc
 
 # Pulsing
 
-基于 Rust 和 Tokio 构建的**轻量级分布式 Actor 框架**。
+一个**分布式 actor 框架**，为构建分布式系统提供通信骨干，并为 AI 应用提供专门支持。
 
 ## 为什么选择 Pulsing？
 

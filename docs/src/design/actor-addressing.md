@@ -156,20 +156,20 @@ actor:///workers/inference/gpu/pool    # 3 级
 
 ### 概念模型
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                                                                          │
-│   具名 Actor: actor:///services/api                                      │
-│                                                                          │
-│   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐          │
-│   │    Instance     │  │    Instance     │  │    Instance     │          │
-│   │    @node_a      │  │    @node_b      │  │    @node_c      │          │
-│   └─────────────────┘  └─────────────────┘  └─────────────────┘          │
-│                                                                          │
-│   访问 actor:///services/api 时自动负载均衡选择实例                      │
-│   访问 actor:///services/api@node_b 时直接路由到 node_b                  │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph NamedActor["具名 Actor: actor:///services/api"]
+        subgraph Instances["实例"]
+            I1["Instance<br/>@node_a"]
+            I2["Instance<br/>@node_b"]
+            I3["Instance<br/>@node_c"]
+        end
+    end
+
+    Note["访问 actor:///services/api 时自动负载均衡选择实例<br/>访问 actor:///services/api@node_b 时直接路由到 node_b"]
+
+    style NamedActor fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style Instances fill:#fff3e0,stroke:#f57c00
 ```
 
 ### 实例注册
@@ -207,42 +207,28 @@ let resp = system.ask(&addr, request).await?;  // 可能路由到 A、B 或 C
 
 ### 解析流程
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          Address Resolution                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  actor:///services/api                                                      │
-│       │                                                                     │
-│       ├──→ 查询 Gossip Registry                                             │
-│       │         │                                                           │
-│       │         ↓                                                           │
-│       │    instances: [node_a, node_b, node_c]                              │
-│       │         │                                                           │
-│       │         ↓ (负载均衡选择)                                            │
-│       │    selected: node_b                                                 │
-│       │         │                                                           │
-│       └────────→ http://node_b_ip:port/named/services/api                   │
-│                                                                             │
-│  actor:///services/api@node_a                                               │
-│       │                                                                     │
-│       ├──→ 查询 node_a 地址                                                 │
-│       │         │                                                           │
-│       └────────→ http://node_a_ip:port/named/services/api                   │
-│                                                                             │
-│  actor://node_a/worker_123                                                  │
-│       │                                                                     │
-│       ├──→ 查询 node_a 地址                                                 │
-│       │         │                                                           │
-│       └────────→ http://node_a_ip:port/actors/worker_123                    │
-│                                                                             │
-│  actor://localhost/worker_123                                               │
-│       │                                                                     │
-│       ├──→ 替换 localhost → current_node_id                                 │
-│       │         │                                                           │
-│       └────────→ 本地直接调用（不走网络）                                   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A["actor:///services/api"] --> B["查询 Gossip Registry"]
+    B --> C["instances: [node_a, node_b, node_c]"]
+    C --> D["负载均衡选择"]
+    D --> E["selected: node_b"]
+    E --> F["http://node_b_ip:port/named/services/api"]
+
+    G["actor:///services/api@node_a"] --> H["查询 node_a 地址"]
+    H --> I["http://node_a_ip:port/named/services/api"]
+
+    J["actor://node_a/worker_123"] --> K["查询 node_a 地址"]
+    K --> L["http://node_a_ip:port/actors/worker_123"]
+
+    M["actor://localhost/worker_123"] --> N["替换 localhost → current_node_id"]
+    N --> O["本地直接调用（不走网络）"]
+
+    style A fill:#e3f2fd,stroke:#1976d2
+    style F fill:#c8e6c9,stroke:#388e3c
+    style I fill:#c8e6c9,stroke:#388e3c
+    style L fill:#c8e6c9,stroke:#388e3c
+    style O fill:#fff3e0,stroke:#f57c00
 ```
 
 ### HTTP 映射

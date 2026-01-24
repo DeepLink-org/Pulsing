@@ -1,7 +1,7 @@
 ---
 template: home.html
-title: Pulsing - Lightweight Distributed Actor Framework
-description: A lightweight distributed Actor framework for building scalable AI systems. Zero external dependencies, SWIM protocol discovery, Python-first design.
+title: Pulsing - Lightweight Distributed Actor Framework for AI
+description: Pulsing is a distributed actor framework that provides a communication backbone for building distributed systems, with specialized support for AI applications.
 hide: toc
 ---
 
@@ -9,7 +9,7 @@ hide: toc
 
 # Pulsing
 
-A **lightweight distributed Actor framework** built with Rust and Tokio.
+A **distributed actor framework** that provides a communication backbone for building distributed systems, with specialized support for AI applications.
 
 ## Why Pulsing?
 
@@ -116,7 +116,7 @@ asyncio.run(main())
 | Build a cluster | [Guide: Remote Actors](guide/remote_actors.md) |
 | Operate your system | [Guide: CLI Operations](guide/operations.md) |
 | Deep dive into design | [Design Documents](design/architecture.md) |
-| API details | [API Reference](api_reference.md) |
+| API details | [API Reference](api/overview.md) |
 
 ---
 
