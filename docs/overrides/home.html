@@ -607,9 +607,9 @@ uv pip install -e .</code></pre>
           <div class="step-content">
             <h3>{% if config.theme.language == "zh" %}创建你的第一个 Actor{% else %}Create Your First Actor{% endif %}</h3>
             <div class="code-block">
-              <pre><code class="language-python">from pulsing.actor import init, shutdown, remote
+              <pre><code class="language-python">import pulsing as pul
 
-@remote
+@pul.remote
 class Calculator:
     def __init__(self, initial: int = 0):
         self.value = initial
@@ -631,7 +631,7 @@ class Calculator:
               <pre><code class="language-python">import asyncio
 
 async def main():
-    await init()
+    await pul.init()
 
     calc = await Calculator.spawn(initial=100)
 
@@ -640,7 +640,7 @@ async def main():
     value = await calc.get()      # 175
 
     print(f"Final value: {value}")
-    await shutdown()
+    await pul.shutdown()
 
 asyncio.run(main())</code></pre>
             </div>

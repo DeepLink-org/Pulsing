@@ -17,11 +17,11 @@ Pulsing provides a lightweight native agent toolkit for building multi-agent app
 The `@agent` decorator is equivalent to `@remote`, but attaches metadata for visualization and debugging:
 
 ```python
-from pulsing.actor import remote, resolve
+import pulsing as pul
 from pulsing.agent import agent, runtime, llm, get_agent_meta, list_agents
 
-# @remote: Basic Actor
-@remote
+# @pul.remote: Basic Actor
+@pul.remote
 class Worker:
     async def work(self):
         return "done"
@@ -52,10 +52,10 @@ async with runtime():
         print(f"{name}: {meta.role}")
 ```
 
-### `@remote` vs `@agent`
+### `@pul.remote` vs `@agent`
 
-| Feature | `@remote` | `@agent` |
-|---------|-----------|----------|
+| Feature | `@pul.remote` | `@agent` |
+|---------|---------------|----------|
 | Function | Actor wrapper | Actor wrapper + metadata |
 | Use case | General purpose | Visualization / debugging |
 | Metadata | None | `role`, `goal`, `backstory`, `tags` |
@@ -84,7 +84,7 @@ async with runtime(addr="0.0.0.0:8001"):
 
 # Node B (auto-discovers Node A)
 async with runtime(addr="0.0.0.0:8002", seeds=["node_a:8001"]):
-    judge = await resolve("judge")  # Cross-node transparent call
+    judge = await JudgeActor.resolve("judge")  # Cross-node transparent call
     await judge.submit(idea)
 ```
 
@@ -124,12 +124,12 @@ value = extract_field(response, "answer", default="unknown")
 
 ```python
 import asyncio
-from pulsing.actor import remote, resolve
-from pulsing.agent import agent, runtime, llm, parse_json, get_agent_meta
+import pulsing as pul
+from pulsing.agent import agent, runtime, llm, parse_json, get_agent_meta, list_agents
 
-@remote
+@pul.remote
 class Moderator:
-    """Coordinator using @remote (basic Actor)"""
+    """Coordinator using @pul.remote (basic Actor)"""
 
     def __init__(self, topic: str):
         self.topic = topic
@@ -160,7 +160,7 @@ class Analyst:
             opinion = resp.content
 
         # Submit to moderator
-        moderator = await resolve(self.moderator_name)
+        moderator = await Moderator.resolve(self.moderator_name)
         await moderator.collect_opinion(self.name, opinion)
         return opinion
 
@@ -186,7 +186,7 @@ async def main():
 
         # Run analysis
         for i in range(3):
-            analyst = await resolve(f"analyst_{i}")
+            analyst = await Analyst.resolve(f"analyst_{i}")
             await analyst.analyze("AI Trends")
 
         # Get summary

@@ -103,9 +103,9 @@ class _WrappedActor:
 ### 基本用法
 
 ```python
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
-@remote
+@pul.remote
 class Counter:
     def __init__(self, init_value=0):
         self.value = init_value
@@ -118,7 +118,7 @@ class Counter:
         return self.value
 
 async def main():
-    await init()
+    await pul.init()
 
     # 创建 Actor
     counter = await Counter.spawn(init_value=10)

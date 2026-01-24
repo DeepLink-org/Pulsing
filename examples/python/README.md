@@ -42,15 +42,15 @@ python examples/python/cluster.py          # Multi-node (see --help)
 
 | API | 风格 | 适用场景 |
 |-----|------|----------|
-| `pulsing.actor` | 异步 (`async/await`) | 新项目，高性能需求 |
-| `pulsing.compat.ray` | 同步 (Ray 风格) | Ray 迁移，快速上手 |
+| `import pulsing as pul` | 异步 (`async/await`) | 新项目，高性能需求 |
+| `from pulsing.compat import ray` | 同步 (Ray 风格) | Ray 迁移，快速上手 |
 
 ### 原生 API 示例
 
 ```python
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
-@remote
+@pul.remote
 class Counter:
     def __init__(self, value=0):
         self.value = value
@@ -59,10 +59,10 @@ class Counter:
         return self.value
 
 async def main():
-    await init()
+    await pul.init()
     counter = await Counter.spawn(value=0)
     print(await counter.inc())  # 1
-    await shutdown()
+    await pul.shutdown()
 ```
 
 ### Ray 兼容 API 示例

@@ -2,307 +2,20 @@
 
 Pulsing Actor 框架的完整 API 文档。
 
-## 核心类
+## 核心函数
 
-### Actor
+### pul.actor_system
 
-所有 actor 的基类。
-
-```python
-class Actor:
-    async def receive(self, msg: Message) -> Message:
-        """处理传入消息。"""
-        pass
-```
-
-### Message
-
-Actor 通信的消息包装器。
-
-```python
-class Message:
-    @property
-    def msg_type(self) -> str:
-        """获取消息类型。"""
-        pass
-
-    @property
-    def payload(self) -> bytes:
-        """获取原始负载字节。"""
-        pass
-
-    @property
-    def is_stream(self) -> bool:
-        """检查是否为流式消息。"""
-        pass
-
-    @staticmethod
-    def single(msg_type: str, payload: bytes) -> Message:
-        """创建带原始字节的单条消息。"""
-        pass
-
-    def to_json(self) -> Any:
-        """将负载反序列化为 JSON。"""
-        pass
-
-    def to_object(self) -> Any:
-        """将负载反序列化为 Python 对象（pickle）。"""
-        pass
-
-    def stream_reader(self) -> StreamReader:
-        """获取流式消息的 StreamReader。"""
-        pass
-```
-
-### StreamMessage
-
-创建流式响应的工厂类。
-
-```python
-class StreamMessage:
-    @staticmethod
-    def create(
-        msg_type: str = "",
-        buffer_size: int = 32
-    ) -> tuple[Message, StreamWriter]:
-        """
-        创建流式消息及其写入器。
-
-        参数：
-            msg_type: 流块的默认消息类型
-            buffer_size: 有界通道缓冲区大小（背压控制）
-
-        返回：
-            (Message, StreamWriter) 元组
-        """
-        pass
-```
-
-### StreamWriter
-
-流式响应的写入器。支持自动 Python 对象序列化。
-
-```python
-class StreamWriter:
-    async def write(self, obj: Any) -> None:
-        """
-        将 Python 对象写入流。
-
-        对象会自动使用 pickle 序列化，
-        使 Python 到 Python 的流式传输完全透明。
-
-        参数：
-            obj: 任何可 pickle 的 Python 对象（dict、list、str 等）
-        """
-        pass
-
-    async def close(self) -> None:
-        """正常关闭流。"""
-        pass
-
-    async def error(self, message: str) -> None:
-        """带错误关闭流。"""
-        pass
-```
-
-### StreamReader
-
-流式响应的读取器。自动反序列化 Python 对象。
-
-```python
-class StreamReader:
-    async def __anext__(self) -> Any:
-        """
-        从流中获取下一个元素。
-
-        直接返回 Python 对象（自动反序列化）。
-        流结束时抛出 StopAsyncIteration。
-        """
-        pass
-
-    def __aiter__(self) -> StreamReader:
-        """返回自身作为异步迭代器。"""
-        pass
-```
-
-### SystemConfig
-
-Actor System 的配置。
-
-```python
-class SystemConfig:
-    @staticmethod
-    def standalone() -> SystemConfig:
-        """创建单机（非集群）配置。"""
-        pass
-
-    @staticmethod
-    def with_addr(addr: str) -> SystemConfig:
-        """创建带地址的配置。"""
-        pass
-
-    def with_seeds(self, seeds: List[str]) -> SystemConfig:
-        """添加用于集群发现的种子节点。"""
-        pass
-```
-
-### ActorSystem
-
-Actor 系统的主入口点。
-
-```python
-class ActorSystem:
-    async def spawn(
-        self,
-        actor: Actor,
-        name: str,
-        public: bool = False
-    ) -> ActorRef:
-        """生成新的 actor。"""
-        pass
-
-    async def find(self, name: str) -> Optional[ActorRef]:
-        """在集群中按名称查找 actor。"""
-        pass
-
-    async def has_actor(self, name: str) -> bool:
-        """检查 actor 是否存在。"""
-        pass
-
-    async def shutdown(self) -> None:
-        """关闭 actor 系统。"""
-        pass
-```
-
-### ActorRef
-
-Actor 的底层引用（本地或远程）。通常不需要直接使用，推荐使用 `ActorProxy`。
-
-```python
-class ActorRef:
-    async def ask(self, msg: Message) -> Message:
-        """发送消息并等待响应。"""
-        pass
-
-    async def tell(self, msg: Message) -> None:
-        """发送消息但不等待响应。"""
-        pass
-
-    async def ask_stream(self, msg: Message) -> AsyncIterator[Message]:
-        """发送流式消息。"""
-        pass
-```
-
-### ActorProxy
-
-对 Actor 的高级代理封装，由 `@remote` 装饰器的 `spawn()` 和 `resolve()` 返回。
-**推荐直接使用 ActorProxy 调用方法**，无需手动构造 `Message`。
-
-```python
-class ActorProxy:
-    @property
-    def ref(self) -> ActorRef:
-        """获取底层 ActorRef（需要低级 ask/tell 时使用）"""
-        pass
-
-    # 可直接调用 actor 上的方法，例如：
-    # result = await proxy.my_method(arg1, arg2)
-```
-
-**ActorProxy vs ActorRef 对比**：
-
-| 场景 | 推荐 |
-|------|------|
-| 调用 `@remote` 类的方法 | `ActorProxy`：`await proxy.method()` |
-| 需要底层 ask/tell | `ActorRef`：`await proxy.ref.ask(msg)` |
-| 需要 actor_id | `ActorRef`：`proxy.ref.actor_id` |
-
-## 装饰器
-
-### @remote
-
-自动将类转换为 Actor。
-
-```python
-from pulsing.actor import init, shutdown, remote
-
-@remote
-class MyActor:
-    def __init__(self, value: int):
-        self.value = value
-
-    def get(self) -> int:
-        return self.value
-
-    async def process(self, data: str) -> dict:
-        return {"result": data.upper()}
-
-async def main():
-    await init()
-    actor = await MyActor.spawn(value=10)
-    print(await actor.get())  # 10
-    await shutdown()
-```
-
-#### 监督（actor 级别重启）
-
-`@remote` 支持通过可选参数配置 **actor 级别重启**：
-
-- `restart_policy`：`"never"`（默认）、`"always"`、`"on-failure"`
-- `max_restarts`：最大重启次数（默认 `3`）
-- `min_backoff` / `max_backoff`：退避时间下限/上限（单位秒）
-
-示例：
-
-```python
-from pulsing.actor import remote
-
-@remote(restart_policy="on-failure", max_restarts=5, min_backoff=0.2, max_backoff=10.0)
-class Worker:
-    def work(self, x: int) -> int:
-        return 100 // x
-```
-
-说明：
-
-- 这**不是** supervision tree。
-- 重启也**不等于** exactly-once；业务逻辑需要幂等与去重。
-
-## 辅助函数
-
-### ask_with_timeout
-
-为 `ActorRef.ask()` 提供一个带超时的便捷封装：
-
-```python
-from pulsing.actor import ask_with_timeout
-
-result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
-```
-
-
-装饰后，类提供：
-
-- `spawn(**kwargs) -> ActorProxy`: 创建 actor 并返回代理（使用 `init()` 初始化的全局系统）
-- `local(system, **kwargs) -> ActorProxy`: 在指定 system 上创建 actor
-- `resolve(name) -> ActorProxy`: 按名称解析已存在的 actor
-
-**推荐**：直接使用返回的 `ActorProxy` 调用方法；如需底层 `ask/tell`，使用 `proxy.ref`
-
-## 函数
-
-### pul.actor_system（推荐）
-
-使用简单参数创建新的 Actor System 实例。
+创建新的 Actor System 实例。
 
 ```python
 import pulsing as pul
 
 system = await pul.actor_system(
-    addr: str | None = None,      # 绑定地址，None 为单机模式
+    addr: str | None = None,        # 绑定地址，None 为单机模式
     *,
-    seeds: list[str] | None = None,  # 集群种子节点
-    passphrase: str | None = None,   # TLS 密码短语
+    seeds: list[str] | None = None, # 集群种子节点
+    passphrase: str | None = None,  # TLS 密码短语
 ) -> ActorSystem
 ```
 
@@ -317,16 +30,224 @@ system = await pul.actor_system(addr="0.0.0.0:8000")
 
 # 加入现有集群
 system = await pul.actor_system(addr="0.0.0.0:8001", seeds=["127.0.0.1:8000"])
+
+# 关闭
+await system.shutdown()
 ```
 
-### create_actor_system（底层）
+### pul.init / pul.shutdown
 
-使用 SystemConfig 创建新的 Actor System 实例。
+全局系统初始化（Ray 风格异步 API）。
 
 ```python
-async def create_actor_system(config: SystemConfig) -> ActorSystem:
-    """创建并启动 actor 系统。"""
-    pass
+import pulsing as pul
+
+# 初始化全局系统
+await pul.init(addr=None, seeds=None, passphrase=None)
+
+# 使用全局系统
+actor = await pul.spawn(MyActor())
+ref = await pul.resolve("actor_name")
+
+# 关闭
+await pul.shutdown()
+```
+
+## 核心类
+
+### ActorSystem
+
+Actor 系统的主入口点。
+
+```python
+class ActorSystem:
+    async def spawn(
+        self,
+        actor: Actor,
+        *,
+        name: str | None = None,
+        public: bool = False,
+        restart_policy: str = "never",
+        max_restarts: int = 3,
+        min_backoff: float = 0.1,
+        max_backoff: float = 30.0
+    ) -> ActorRef:
+        """生成新的 actor。"""
+        pass
+
+    async def refer(self, actorid: ActorId | str) -> ActorRef:
+        """通过 ActorId 获取 ActorRef。"""
+        pass
+
+    async def resolve(self, name: str, *, node_id: int | None = None) -> ActorRef:
+        """通过名称解析 actor。"""
+        pass
+
+    async def shutdown(self) -> None:
+        """关闭 actor 系统。"""
+        pass
+```
+
+### ActorRef
+
+Actor 的底层引用。使用 `ask()` 和 `tell()` 进行通信。
+
+```python
+class ActorRef:
+    @property
+    def actor_id(self) -> ActorId:
+        """获取 actor 的 ID。"""
+        pass
+
+    async def ask(self, msg: Any) -> Any:
+        """发送消息并等待响应。"""
+        pass
+
+    async def tell(self, msg: Any) -> None:
+        """发送消息但不等待响应（fire-and-forget）。"""
+        pass
+```
+
+### ActorProxy
+
+`@remote` 类的高级代理。可直接调用方法。
+
+```python
+class ActorProxy:
+    @property
+    def ref(self) -> ActorRef:
+        """获取底层 ActorRef。"""
+        pass
+
+    # 直接调用方法：
+    # result = await proxy.my_method(arg1, arg2)
+```
+
+## 装饰器
+
+### @remote / @pul.remote
+
+将类转换为分布式 Actor。
+
+```python
+import pulsing as pul
+
+@pul.remote
+class Counter:
+    def __init__(self, init_value: int = 0):
+        self.value = init_value
+
+    # 同步方法 - 顺序执行
+    def incr(self) -> int:
+        self.value += 1
+        return self.value
+
+    # 异步方法 - await 期间可并发执行
+    async def fetch_and_add(self, url: str) -> int:
+        data = await http_get(url)
+        self.value += data
+        return self.value
+
+    # Generator - 自动流式传输
+    async def stream(self):
+        for i in range(10):
+            yield {"count": i}
+
+# 创建 actor
+counter = await Counter.spawn(name="counter")
+
+# 直接调用方法
+result = await counter.incr()
+
+# 流式传输
+async for chunk in counter.stream():
+    print(chunk)
+
+# 解析已有 actor
+proxy = await Counter.resolve("counter")
+```
+
+**监督参数：**
+
+```python
+@pul.remote(
+    restart_policy="on_failure",  # "never" | "on_failure" | "always"
+    max_restarts=3,
+    min_backoff=0.1,
+    max_backoff=30.0,
+)
+class ResilientWorker:
+    def work(self, data): ...
+```
+
+## 基础 Actor
+
+需要底层控制时，可使用基础 Actor 类。
+
+```python
+class MyActor:
+    def __init__(self):
+        self.value = 0
+
+    def on_start(self, actor_id):
+        """Actor 启动时调用。"""
+        print(f"Started: {actor_id}")
+
+    async def receive(self, msg):
+        """处理传入消息。"""
+        if msg.get("action") == "add":
+            self.value += msg.get("n", 1)
+            return {"value": self.value}
+        return {"error": "unknown action"}
+
+# 生成
+system = await pul.actor_system()
+actor = await system.spawn(MyActor(), name="my_actor")
+
+# 通过 ask/tell 通信
+response = await actor.ask({"action": "add", "n": 10})
+```
+
+## 队列 API
+
+用于数据管道的分布式队列。
+
+```python
+# 写入
+writer = await system.queue.write(
+    topic="my_queue",
+    bucket_column="user_id",
+    num_buckets=4,
+)
+await writer.put({"user_id": "u1", "data": "hello"})
+await writer.flush()
+
+# 读取
+reader = await system.queue.read("my_queue")
+records = await reader.get(limit=100)
+```
+
+## Ray 兼容
+
+Ray 的直接替换。
+
+```python
+from pulsing.compat import ray
+
+ray.init()
+
+@ray.remote
+class Counter:
+    def __init__(self):
+        self.value = 0
+    def incr(self):
+        self.value += 1
+        return self.value
+
+counter = Counter.remote()
+result = ray.get(counter.incr.remote())
+
+ray.shutdown()
 ```
 
 ## 示例

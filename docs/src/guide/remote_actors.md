@@ -7,22 +7,23 @@ Guide to using actors across a cluster with location transparency.
 ### Starting a Seed Node
 
 ```python
-from pulsing.actor import SystemConfig, create_actor_system
+import pulsing as pul
 
 # Node 1: Start seed node
-config = SystemConfig.with_addr("0.0.0.0:8000")
-system = await create_actor_system(config)
+system = await pul.actor_system(addr="0.0.0.0:8000")
 
 # Spawn a public actor
-await system.spawn(WorkerActor(), "worker", public=True)
+await system.spawn(WorkerActor(), name="worker", public=True)
 ```
 
 ### Joining a Cluster
 
 ```python
 # Node 2: Join cluster
-config = SystemConfig.with_addr("0.0.0.0:8001").with_seeds(["192.168.1.1:8000"])
-system = await create_actor_system(config)
+system = await pul.actor_system(
+    addr="0.0.0.0:8001",
+    seeds=["192.168.1.1:8000"]
+)
 
 # Wait for cluster sync
 await asyncio.sleep(1.0)
@@ -30,23 +31,24 @@ await asyncio.sleep(1.0)
 
 ## Finding Remote Actors
 
-### Using system.find()
+### Using system.resolve()
 
 ```python
 # Find actor by name (searches entire cluster)
-remote_ref = await system.find("worker")
-
-if remote_ref:
-    response = await remote_ref.ask(Message.single("request", b"data"))
+remote_ref = await system.resolve("worker")
+response = await remote_ref.ask({"action": "process", "data": "hello"})
 ```
 
-### Checking Actor Existence
+### Using @remote Class.resolve()
 
 ```python
-# Check if actor exists in cluster
-if await system.has_actor("worker"):
-    ref = await system.find("worker")
-    # Use ref...
+@pul.remote
+class Worker:
+    def process(self, data): return f"processed: {data}"
+
+# Resolve with type info - returns ActorProxy with methods
+worker = await Worker.resolve("worker")
+result = await worker.process("hello")  # Direct method call
 ```
 
 ## Public vs Private Actors
@@ -57,7 +59,7 @@ Public actors are visible to all nodes in the cluster:
 
 ```python
 # Public actor - can be found by other nodes
-await system.spawn(WorkerActor(), "worker", public=True)
+await system.spawn(WorkerActor(), name="worker", public=True)
 ```
 
 ### Private Actors
@@ -66,7 +68,7 @@ Private actors are only accessible locally:
 
 ```python
 # Private actor - local only
-await system.spawn(WorkerActor(), "local-worker", public=False)
+await system.spawn(WorkerActor(), name="local-worker", public=False)
 ```
 
 ## Location Transparency
@@ -75,10 +77,10 @@ The same API works for both local and remote actors:
 
 ```python
 # Local actor
-local_ref = await system.spawn(MyActor(), "local")
+local_ref = await system.spawn(MyActor(), name="local")
 
 # Remote actor (found via cluster)
-remote_ref = await system.find("remote-worker")
+remote_ref = await system.resolve("remote-worker")
 
 # Same API for both
 response1 = await local_ref.ask(msg)
@@ -91,11 +93,8 @@ Remote actor calls can fail due to network issues:
 
 ```python
 try:
-    remote_ref = await system.find("worker")
-    if remote_ref:
-        response = await remote_ref.ask(msg)
-    else:
-        print("Actor not found")
+    remote_ref = await system.resolve("worker")
+    response = await remote_ref.ask(msg)
 except Exception as e:
     print(f"Remote call failed: {e}")
 ```
@@ -103,15 +102,17 @@ except Exception as e:
 ## Best Practices
 
 1. **Wait for cluster sync**: Add a small delay after joining a cluster
-2. **Handle missing actors**: Always check if `find()` returns None
+2. **Handle errors gracefully**: Wrap remote calls in try-except blocks
 3. **Use public actors for cluster communication**: Set `public=True` for actors that need remote access
-4. **Handle network errors**: Wrap remote calls in try-except blocks
+4. **Use @remote with resolve()**: Get typed proxies for better API experience
 5. **Use timeouts**: Consider adding timeouts for remote calls
 
 ## Example: Distributed Counter
 
 ```python
-@remote
+import pulsing as pul
+
+@pul.remote
 class DistributedCounter:
     def __init__(self, init_value: int = 0):
         self.value = init_value
@@ -123,22 +124,18 @@ class DistributedCounter:
         self.value += n
         return self.value
 
-# Node 1
-system1 = await create_actor_system(SystemConfig.with_addr("0.0.0.0:8000"))
-counter1 = await DistributedCounter.local(system1, init_value=0)
-await system1.spawn(counter1, "counter", public=True)
+# Node 1: Create counter
+system1 = await pul.actor_system(addr="0.0.0.0:8000")
+counter = await DistributedCounter.local(system1, init_value=0)
 
-# Node 2
-system2 = await create_actor_system(
-    SystemConfig.with_addr("0.0.0.0:8001").with_seeds(["127.0.0.1:8000"])
-)
+# Node 2: Access remote counter
+system2 = await pul.actor_system(addr="0.0.0.0:8001", seeds=["127.0.0.1:8000"])
 await asyncio.sleep(1.0)
 
-# Access remote counter from Node 2
-remote_counter = await system2.find("counter")
-if remote_counter:
-    value = await remote_counter.get()  # 0
-    value = await remote_counter.increment(5)  # 5
+# Resolve and use the remote counter
+remote_counter = await DistributedCounter.resolve("counter")
+value = await remote_counter.get()  # 0
+value = await remote_counter.increment(5)  # 5
 ```
 
 ## Next Steps

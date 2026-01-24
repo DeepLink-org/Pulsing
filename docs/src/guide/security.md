@@ -28,11 +28,10 @@ Pulsing supports **passphrase-based mTLS (Mutual TLS)** for secure cluster commu
 By default, Pulsing uses cleartext HTTP/2 (h2c) for easy debugging:
 
 ```python
-from pulsing.actor import SystemConfig, create_actor_system
+import pulsing as pul
 
 # No passphrase - uses cleartext HTTP/2
-config = SystemConfig.with_addr("0.0.0.0:8000")
-system = await create_actor_system(config)
+system = await pul.actor_system(addr="0.0.0.0:8000")
 ```
 
 ### Production Mode (mTLS)
@@ -41,8 +40,10 @@ To enable TLS encryption, simply set a passphrase:
 
 ```python
 # Set passphrase - automatically enables mTLS
-config = SystemConfig.with_addr("0.0.0.0:8000").with_passphrase("my-cluster-secret")
-system = await create_actor_system(config)
+system = await pul.actor_system(
+    addr="0.0.0.0:8000",
+    passphrase="my-cluster-secret"
+)
 ```
 
 ## Multi-Node Cluster with TLS
@@ -51,16 +52,17 @@ All nodes in a cluster must use the **same passphrase** to communicate:
 
 ```python
 # Node 1: Seed node with TLS
-config1 = SystemConfig.with_addr("0.0.0.0:8000").with_passphrase("shared-secret")
-system1 = await create_actor_system(config1)
+system1 = await pul.actor_system(
+    addr="0.0.0.0:8000",
+    passphrase="shared-secret"
+)
 
 # Node 2: Join cluster with same passphrase
-config2 = (
-    SystemConfig.with_addr("0.0.0.0:8001")
-    .with_seeds(["192.168.1.1:8000"])
-    .with_passphrase("shared-secret")  # Must match!
+system2 = await pul.actor_system(
+    addr="0.0.0.0:8001",
+    seeds=["192.168.1.1:8000"],
+    passphrase="shared-secret"  # Must match!
 )
-system2 = await create_actor_system(config2)
 ```
 
 !!! warning "Passphrase Mismatch"
@@ -72,12 +74,12 @@ Different passphrases create completely isolated clusters:
 
 ```python
 # Cluster A
-cluster_a = SystemConfig.with_addr("0.0.0.0:8000").with_passphrase("secret-a")
+system_a = await pul.actor_system(addr="0.0.0.0:8000", passphrase="secret-a")
 
 # Cluster B (different passphrase)
-cluster_b = SystemConfig.with_addr("0.0.0.0:9000").with_passphrase("secret-b")
+system_b = await pul.actor_system(addr="0.0.0.0:9000", passphrase="secret-b")
 
-# cluster_a and cluster_b cannot communicate
+# system_a and system_b cannot communicate
 ```
 
 ## How It Works
@@ -135,13 +137,15 @@ Store passphrases in environment variables, not code:
 
 ```python
 import os
+import pulsing as pul
 
 passphrase = os.environ.get("PULSING_PASSPHRASE")
-if passphrase:
-    config = SystemConfig.with_addr("0.0.0.0:8000").with_passphrase(passphrase)
-else:
-    # Development mode - no TLS
-    config = SystemConfig.with_addr("0.0.0.0:8000")
+
+# Create system with optional TLS
+system = await pul.actor_system(
+    addr="0.0.0.0:8000",
+    passphrase=passphrase  # None = no TLS (dev mode)
+)
 ```
 
 ### 3. Rotate Passphrases
@@ -184,12 +188,12 @@ Even with TLS, use network-level security:
 
 ```python
 import os
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
 # Get passphrase from environment
 PASSPHRASE = os.environ.get("PULSING_SECRET", None)
 
-@remote
+@pul.remote
 class SecureCounter:
     def __init__(self, init_value: int = 0):
         self.value = init_value
@@ -202,19 +206,19 @@ class SecureCounter:
         return self.value
 
 async def main():
-    # Create config with optional TLS
-    config = SystemConfig.with_addr("0.0.0.0:8000")
-    if PASSPHRASE:
-        config = config.with_passphrase(PASSPHRASE)
-
-    system = await create_actor_system(config)
+    # Create system with optional TLS
+    system = await pul.actor_system(
+        addr="0.0.0.0:8000",
+        passphrase=PASSPHRASE
+    )
 
     # Spawn secure counter
     counter = await SecureCounter.local(system, init_value=0)
-    await system.spawn(counter, "secure-counter", public=True)
 
     print("Secure counter running...")
     print(f"TLS enabled: {PASSPHRASE is not None}")
+
+    await system.shutdown()
 ```
 
 ## Next Steps

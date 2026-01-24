@@ -31,10 +31,10 @@ pip install pulsing
 
 ```python
 import asyncio
-from pulsing.actor import remote, resolve
+import pulsing as pul
 from pulsing.agent import runtime
 
-@remote
+@pul.remote
 class Greeter:
     def __init__(self, display_name: str):
         self.display_name = display_name
@@ -43,7 +43,8 @@ class Greeter:
         return f"[{self.display_name}] Received: {message}"
 
     async def chat_with(self, peer_name: str, message: str) -> str:
-        peer = await resolve(peer_name)
+        # Use Greeter.resolve() to get a typed proxy
+        peer = await Greeter.resolve(peer_name)
         return await peer.greet(f"From {self.display_name}: {message}")
 
 async def main():
@@ -59,7 +60,7 @@ async def main():
 asyncio.run(main())
 ```
 
-**That's it!** `@remote` turns a regular class into a distributed Actor, and `resolve()` enables agents to discover and communicate with each other.
+**That's it!** `@pul.remote` turns a regular class into a distributed Actor, and `Greeter.resolve()` enables agents to discover and communicate with each other.
 
 ## 💡 I want to...
 

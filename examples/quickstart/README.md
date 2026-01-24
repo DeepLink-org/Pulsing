@@ -122,7 +122,7 @@ python examples/quickstart/chaos_proof.py
 
 **核心代码**：
 ```python
-@remote(restart_policy="on-failure", max_restarts=50)
+@remote(restart_policy="on_failure", max_restarts=50)
 class FlakyWorker:
     def work(self, x: int) -> int:
         if random.random() < 0.3:  # 30% 概率崩溃
@@ -137,11 +137,11 @@ class FlakyWorker:
 ## 核心概念（10秒理解）
 
 ```python
-from pulsing.actor import remote, resolve
+import pulsing as pul
 from pulsing.agent import runtime
 
-# 1. @remote 让类变成可分布式部署的 Agent
-@remote
+# 1. @pul.remote 让类变成可分布式部署的 Agent
+@pul.remote
 class MyAgent:
     def hello(self):
         return "Hello!"
@@ -154,8 +154,8 @@ async with runtime():
     # 4. 直接调用方法（自动变成远程调用）
     result = await agent.hello()
 
-    # 5. resolve() 通过名字找到其他 Agent
-    same_agent = await resolve("my_agent")
+    # 5. MyAgent.resolve() 通过名字找到已有 Agent
+    same_agent = await MyAgent.resolve("my_agent")
 ```
 
 ## 下一步
@@ -196,7 +196,7 @@ async with runtime(addr="0.0.0.0:8001"):
 
 # 节点 2（自动发现节点 1）
 async with runtime(addr="0.0.0.0:8002", seeds=["node1:8001"]):
-    agent = await resolve("agent")  # 跨节点调用
+    agent = await MyAgent.resolve("agent")  # 跨节点调用
 ```
 
 ### Q: @remote vs @agent 有什么区别？

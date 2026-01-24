@@ -5,11 +5,11 @@
 ## 核心 API
 
 ```python
-from pulsing.actor import remote, resolve
+import pulsing as pul
 from pulsing.agent import agent, runtime, llm, parse_json, get_agent_meta
 
-# @remote: 基础 Actor 装饰器
-@remote
+# @pul.remote: 基础 Actor 装饰器
+@pul.remote
 class MyActor:
     async def work(self): ...
 
@@ -24,19 +24,19 @@ async with runtime():
     result = await actor.work()
 
     # 通过名称获取其他 Actor
-    peer = await resolve("actor")
+    peer = await MyActor.resolve("actor")
 ```
 
 ## 示例列表
 
 ### 1. MBTI 人格讨论 (`mbti_discussion.py`)
 
-基于 MBTI 人格类型的多智能体讨论与投票，演示 `@remote` 与 `@agent` 的区别。
+基于 MBTI 人格类型的多智能体讨论与投票，演示 `@pul.remote` 与 `@agent` 的区别。
 
 ```
          ┌─────────────────────────────────────┐
          │         ModeratorActor              │
-         │      (使用 @remote，协调流程)         │
+         │      (使用 @pul.remote，协调流程)    │
          └──────────────┬──────────────────────┘
                         │ resolve()
     ┌───────────────────┼───────────────────────┐
@@ -49,7 +49,7 @@ async with runtime():
 ```
 
 **特点：**
-- `ModeratorActor` 使用 `@remote`（普通 Actor）
+- `ModeratorActor` 使用 `@pul.remote`（普通 Actor）
 - `MBTIAgent` 使用 `@agent`（附带元信息）
 - 可通过 `get_agent_meta()` 和 `list_agents()` 获取元信息
 
@@ -82,7 +82,7 @@ python mbti_discussion.py --topic "AI是否应该有情感"
 
 **特点：**
 - 完全异步并行执行
-- Agent 间可通过 `resolve()` 协作
+- Agent 间可通过 `ClassName.resolve()` 协作
 - 竞争性提交 + 截止时间机制
 
 ```bash
@@ -104,18 +104,18 @@ pip install -e .
 pip install langchain-openai
 ```
 
-## `@remote` vs `@agent`
+## `@pul.remote` vs `@agent`
 
-| 特性 | `@remote` | `@agent` |
-|------|-----------|----------|
+| 特性 | `@pul.remote` | `@agent` |
+|------|---------------|----------|
 | 功能 | Actor 化 | Actor 化 + 元信息 |
 | 用途 | 通用 | 需要可视化/调试时 |
 | 元信息 | 无 | `role`, `goal`, `backstory`, `tags` |
 | 性能开销 | 无 | 几乎无 |
 
 ```python
-# @remote: 直接使用
-@remote
+# @pul.remote: 直接使用
+@pul.remote
 class Worker:
     async def work(self): ...
 
@@ -143,6 +143,6 @@ async with runtime(addr="0.0.0.0:8001"):
 
 # 节点 B（自动发现节点 A）
 async with runtime(addr="0.0.0.0:8002", seeds=["node_a:8001"]):
-    judge = await resolve("judge")  # 跨节点透明调用
+    judge = await JudgeActor.resolve("judge")  # 跨节点透明调用
     await judge.submit(idea)
 ```

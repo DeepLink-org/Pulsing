@@ -29,12 +29,12 @@ Recommended pattern:
 
 ## Actor-level restart (supervision)
 
-You can configure restart policy on Python actors created via `@remote`:
+You can configure restart policy on Python actors created via `@pul.remote`:
 
 ```python
-from pulsing.actor import remote
+import pulsing as pul
 
-@remote(restart_policy="on-failure", max_restarts=5, min_backoff=0.2, max_backoff=10.0)
+@pul.remote(restart_policy="on_failure", max_restarts=5, min_backoff=0.2, max_backoff=10.0)
 class Worker:
     def work(self, x: int) -> int:
         return 100 // x
