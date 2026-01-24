@@ -18,7 +18,7 @@ pub use traits::{ActorSystemAdvancedExt, ActorSystemCoreExt, ActorSystemOpsExt};
 
 use crate::actor::{
     Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorResolver, ActorSystemRef,
-    IntoActor, IntoActorPath, Mailbox, NodeId, StopReason,
+    Envelope, IntoActor, IntoActorPath, Mailbox, NodeId, StopReason,
 };
 use crate::cluster::{
     GossipBackend, HeadNodeBackend, MemberInfo, MemberStatus, NamedActorInfo, NamingBackend,
@@ -35,6 +35,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -180,8 +181,11 @@ pub struct ActorSystem {
     /// Default mailbox capacity for actors
     default_mailbox_capacity: usize,
 
-    /// Local actors (actor_name -> handle)
-    local_actors: Arc<DashMap<String, LocalActorHandle>>,
+    /// Local actors indexed by local_id (O(1) lookup by ActorId)
+    local_actors: Arc<DashMap<u64, LocalActorHandle>>,
+
+    /// Actor name to local_id mapping (for name-based lookups)
+    actor_names: Arc<DashMap<String, u64>>,
 
     /// Named actor path to local actor name mapping (path_string -> actor_name)
     named_actor_paths: Arc<DashMap<String, String>>,
@@ -224,7 +228,8 @@ impl ActorSystem {
     pub async fn new(config: SystemConfig) -> anyhow::Result<Arc<Self>> {
         let cancel_token = CancellationToken::new();
         let node_id = NodeId::generate();
-        let local_actors: Arc<DashMap<String, LocalActorHandle>> = Arc::new(DashMap::new());
+        let local_actors: Arc<DashMap<u64, LocalActorHandle>> = Arc::new(DashMap::new());
+        let actor_names: Arc<DashMap<String, u64>> = Arc::new(DashMap::new());
         let named_actor_paths: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
         let cluster_holder: Arc<RwLock<Option<Arc<dyn NamingBackend>>>> =
             Arc::new(RwLock::new(None));
@@ -234,6 +239,7 @@ impl ActorSystem {
         let handler = SystemMessageHandler::new(
             node_id,
             local_actors.clone(),
+            actor_names.clone(),
             named_actor_paths.clone(),
             cluster_holder.clone(),
         );
@@ -295,6 +301,7 @@ impl ActorSystem {
             addr: actual_addr,
             default_mailbox_capacity: config.default_mailbox_capacity,
             local_actors: local_actors.clone(),
+            actor_names: actor_names.clone(),
             named_actor_paths: named_actor_paths.clone(),
             cluster: cluster_holder,
             transport,
@@ -307,7 +314,7 @@ impl ActorSystem {
 
         // Start the builtin SystemActor with path "system"
         system
-            .start_system_actor(local_actors, named_actor_paths)
+            .start_system_actor(actor_names, named_actor_paths)
             .await?;
 
         tracing::info!(
@@ -322,18 +329,28 @@ impl ActorSystem {
     /// Start the builtin SystemActor
     async fn start_system_actor(
         self: &Arc<Self>,
-        local_actors: Arc<DashMap<String, LocalActorHandle>>,
+        actor_names: Arc<DashMap<String, u64>>,
         named_actor_paths: Arc<DashMap<String, String>>,
     ) -> anyhow::Result<()> {
         // Create SystemRef for SystemActor
+        // Note: SystemRef uses a simplified DashMap<String, Sender> for sending messages
+        let local_actors_ref = self.local_actors.clone();
+
+        // Build a name -> sender mapping for SystemRef
+        let local_actor_senders: Arc<DashMap<String, mpsc::Sender<Envelope>>> =
+            Arc::new(DashMap::new());
+        for entry in actor_names.iter() {
+            let name = entry.key().clone();
+            let local_id = *entry.value();
+            if let Some(handle) = local_actors_ref.get(&local_id) {
+                local_actor_senders.insert(name, handle.sender.clone());
+            }
+        }
+
         let system_ref = Arc::new(SystemRef {
             node_id: self.node_id,
             addr: self.addr,
-            local_actors: local_actors
-                .iter()
-                .map(|e| (e.key().clone(), e.sender.clone()))
-                .collect::<DashMap<_, _>>()
-                .into(),
+            local_actors: local_actor_senders,
             named_actor_paths,
         });
 
@@ -343,6 +360,10 @@ impl ActorSystem {
         // Spawn as named actor with path "system" (use new_system to bypass namespace check)
         let system_path = ActorPath::new_system(SYSTEM_ACTOR_PATH)?;
         self.spawn_named(system_path, system_actor).await?;
+
+        // Note: The local_actors_ref and actor_names_ref are used internally,
+        // SystemRef snapshot may become stale for new actors but that's acceptable
+        // since SystemActor doesn't need real-time actor list
 
         tracing::debug!(path = SYSTEM_ACTOR_PATH, "SystemActor started");
         Ok(())
@@ -354,7 +375,7 @@ impl ActorSystem {
         factory: BoxedActorFactory,
     ) -> anyhow::Result<()> {
         // Check if already started
-        if self.local_actors.contains_key(SYSTEM_ACTOR_PATH) {
+        if self.actor_names.contains_key(SYSTEM_ACTOR_PATH) {
             return Err(anyhow::anyhow!("SystemActor already started"));
         }
 
@@ -398,16 +419,19 @@ impl ActorSystem {
 
     /// Get list of local actor names
     pub fn local_actor_names(&self) -> Vec<String> {
-        self.local_actors.iter().map(|e| e.key().clone()).collect()
+        self.actor_names.iter().map(|e| e.key().clone()).collect()
     }
 
     /// Get a local actor reference by name
     ///
-    /// Returns None if the actor doesn't exist locally
+    /// Returns None if the actor doesn't exist locally.
+    /// This is an O(1) operation.
     pub fn local_actor_ref_by_name(&self, name: &str) -> Option<ActorRef> {
-        self.local_actors
-            .get(name)
-            .map(|handle| ActorRef::local(handle.actor_id, handle.sender.clone()))
+        self.actor_names.get(name).and_then(|local_id| {
+            self.local_actors
+                .get(local_id.value())
+                .map(|handle| ActorRef::local(handle.actor_id, handle.sender.clone()))
+        })
     }
 
     /// Generate a new unique local actor ID
@@ -488,7 +512,8 @@ impl ActorSystem {
             tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Anonymous actor stopped");
         });
 
-        // Register using actor_id as key (not user-visible)
+        // Register using local_id as key (O(1) lookup by ActorId)
+        let local_id = actor_id.local_id();
         let handle = LocalActorHandle {
             sender: sender.clone(),
             join_handle,
@@ -499,8 +524,10 @@ impl ActorSystem {
             actor_id,
         };
 
-        // Use actor_id string as internal key
-        self.local_actors.insert(actor_id.to_string(), handle);
+        // Use local_id as primary key
+        self.local_actors.insert(local_id, handle);
+        // Anonymous actors use their local_id as "name" for internal tracking
+        self.actor_names.insert(actor_id.to_string(), local_id);
 
         Ok(ActorRef::local(actor_id, sender))
     }
@@ -558,7 +585,7 @@ impl ActorSystem {
         let name_str = path.as_str();
 
         // Check for duplicate name
-        if self.local_actors.contains_key(&name_str.to_string()) {
+        if self.actor_names.contains_key(&name_str.to_string()) {
             return Err(anyhow::anyhow!("Actor already exists: {}", name_str));
         }
 
@@ -571,6 +598,7 @@ impl ActorSystem {
         }
 
         let actor_id = self.next_actor_id();
+        let local_id = actor_id.local_id();
 
         // Use configured mailbox capacity
         let capacity = options
@@ -607,7 +635,7 @@ impl ActorSystem {
             tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Actor stopped");
         });
 
-        // Register actor
+        // Register actor using local_id as primary key
         let handle = LocalActorHandle {
             sender: sender.clone(),
             join_handle,
@@ -618,7 +646,8 @@ impl ActorSystem {
             actor_id,
         };
 
-        self.local_actors.insert(name_str.to_string(), handle);
+        self.local_actors.insert(local_id, handle);
+        self.actor_names.insert(name_str.to_string(), local_id);
         self.named_actor_paths
             .insert(name_str.to_string(), name_str.to_string());
 
@@ -640,20 +669,17 @@ impl ActorSystem {
     // ========== Resolve Methods ==========
 
     /// Get ActorRef for a local or remote actor by ID
+    ///
+    /// This is an O(1) operation for local actors using local_id indexing.
     pub async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef> {
         // Check if local
         if id.node() == self.node_id || id.node().is_local() {
-            let target_local_id = id.local_id();
-            for entry in self.local_actors.iter() {
-                let entry_local_id = entry.value().actor_id.local_id();
-                if entry_local_id == target_local_id {
-                    return Ok(ActorRef::local(
-                        entry.value().actor_id,
-                        entry.value().sender.clone(),
-                    ));
-                }
-            }
-            return Err(anyhow::anyhow!("Local actor not found: {}", id));
+            // O(1) lookup by local_id
+            let handle = self
+                .local_actors
+                .get(&id.local_id())
+                .ok_or_else(|| anyhow::anyhow!("Local actor not found: {}", id))?;
+            return Ok(ActorRef::local(handle.actor_id, handle.sender.clone()));
         }
 
         // Remote actor - get address from cluster
@@ -787,10 +813,16 @@ impl ActorSystem {
                 .ok_or_else(|| anyhow::anyhow!("Named actor not found locally"))?
                 .clone();
 
-            let handle = self
-                .local_actors
+            // Look up local_id from actor_names, then get handle
+            let local_id = self
+                .actor_names
                 .get(&actor_name)
                 .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
+
+            let handle = self
+                .local_actors
+                .get(local_id.value())
+                .ok_or_else(|| anyhow::anyhow!("Actor handle not found: {}", actor_name))?;
 
             return Ok(ActorRef::local(handle.actor_id, handle.sender.clone()));
         }
@@ -1003,39 +1035,47 @@ impl ActorSystem {
     ) -> anyhow::Result<()> {
         let name = name.as_ref();
 
-        if let Some((_, handle)) = self.local_actors.remove(name) {
-            // 1. Signal the actor to stop gracefully
-            handle.cancel_token.cancel();
+        // Get local_id from actor_names, then remove from local_actors
+        if let Some((_, local_id)) = self.actor_names.remove(name) {
+            if let Some((_, handle)) = self.local_actors.remove(&local_id) {
+                // 1. Signal the actor to stop gracefully
+                handle.cancel_token.cancel();
 
-            // 2. Wait for the actor to finish with timeout
-            match tokio::time::timeout(Self::GRACEFUL_STOP_TIMEOUT, handle.join_handle).await {
-                Ok(_) => {
-                    // Actor stopped gracefully
-                    tracing::debug!(actor = %name, "Actor stopped gracefully");
+                // 2. Wait for the actor to finish with timeout
+                match tokio::time::timeout(Self::GRACEFUL_STOP_TIMEOUT, handle.join_handle).await {
+                    Ok(_) => {
+                        // Actor stopped gracefully
+                        tracing::debug!(actor = %name, "Actor stopped gracefully");
+                    }
+                    Err(_) => {
+                        // Timeout - actor didn't respond to cancel signal
+                        // This shouldn't happen normally, but we log a warning
+                        tracing::warn!(
+                            actor = %name,
+                            "Actor didn't stop gracefully within timeout, already aborted by tokio"
+                        );
+                    }
                 }
-                Err(_) => {
-                    // Timeout - actor didn't respond to cancel signal
-                    // This shouldn't happen normally, but we log a warning
-                    tracing::warn!(
-                        actor = %name,
-                        "Actor didn't stop gracefully within timeout, already aborted by tokio"
-                    );
-                }
+
+                // 3. Handle lifecycle cleanup
+                let actor_names = self.actor_names.clone();
+                let local_actors = self.local_actors.clone();
+                self.lifecycle
+                    .handle_termination(
+                        &handle.actor_id,
+                        name,
+                        handle.named_path.clone(),
+                        reason,
+                        &self.named_actor_paths,
+                        &self.cluster,
+                        |n| {
+                            actor_names.get(n).and_then(|id| {
+                                local_actors.get(id.value()).map(|h| h.sender.clone())
+                            })
+                        },
+                    )
+                    .await;
             }
-
-            // 3. Handle lifecycle cleanup
-            let local_actors = self.local_actors.clone();
-            self.lifecycle
-                .handle_termination(
-                    &handle.actor_id,
-                    name,
-                    handle.named_path.clone(),
-                    reason,
-                    &self.named_actor_paths,
-                    &self.cluster,
-                    |n| local_actors.get(n).map(|h| h.sender.clone()),
-                )
-                .await;
         }
 
         Ok(())
@@ -1059,37 +1099,47 @@ impl ActorSystem {
             let actor_name = actor_name_ref.clone();
             drop(actor_name_ref);
 
-            if let Some((_, handle)) = self.local_actors.remove(&actor_name) {
-                // 1. Signal the actor to stop gracefully
-                handle.cancel_token.cancel();
+            // Get local_id from actor_names, then remove from local_actors
+            if let Some((_, local_id)) = self.actor_names.remove(&actor_name) {
+                if let Some((_, handle)) = self.local_actors.remove(&local_id) {
+                    // 1. Signal the actor to stop gracefully
+                    handle.cancel_token.cancel();
 
-                // 2. Wait for the actor to finish with timeout
-                match tokio::time::timeout(Self::GRACEFUL_STOP_TIMEOUT, handle.join_handle).await {
-                    Ok(_) => {
-                        tracing::debug!(actor = %actor_name, path = %path_key, "Actor stopped gracefully");
+                    // 2. Wait for the actor to finish with timeout
+                    match tokio::time::timeout(Self::GRACEFUL_STOP_TIMEOUT, handle.join_handle)
+                        .await
+                    {
+                        Ok(_) => {
+                            tracing::debug!(actor = %actor_name, path = %path_key, "Actor stopped gracefully");
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                actor = %actor_name,
+                                path = %path_key,
+                                "Actor didn't stop gracefully within timeout"
+                            );
+                        }
                     }
-                    Err(_) => {
-                        tracing::warn!(
-                            actor = %actor_name,
-                            path = %path_key,
-                            "Actor didn't stop gracefully within timeout"
-                        );
-                    }
+
+                    // 3. Handle lifecycle cleanup
+                    let actor_names = self.actor_names.clone();
+                    let local_actors = self.local_actors.clone();
+                    self.lifecycle
+                        .handle_termination(
+                            &handle.actor_id,
+                            &actor_name,
+                            Some(path.clone()),
+                            reason,
+                            &self.named_actor_paths,
+                            &self.cluster,
+                            |name| {
+                                actor_names.get(name).and_then(|id| {
+                                    local_actors.get(id.value()).map(|h| h.sender.clone())
+                                })
+                            },
+                        )
+                        .await;
                 }
-
-                // 3. Handle lifecycle cleanup
-                let local_actors = self.local_actors.clone();
-                self.lifecycle
-                    .handle_termination(
-                        &handle.actor_id,
-                        &actor_name,
-                        Some(path.clone()),
-                        reason,
-                        &self.named_actor_paths,
-                        &self.cluster,
-                        |name| local_actors.get(name).map(|h| h.sender.clone()),
-                    )
-                    .await;
             }
         }
 
@@ -1117,24 +1167,32 @@ impl ActorSystem {
         // Since all actors share the same parent token, they should all start stopping
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // Collect all actor info and remove them from the map
-        // Using drain pattern to take ownership of handles
+        // Collect all actor info (local_id, actor_id, name, named_path)
         let actor_entries: Vec<_> = self
             .local_actors
             .iter()
             .map(|entry| {
-                (
-                    entry.key().clone(),
-                    entry.actor_id,
-                    entry.named_path.clone(),
-                )
+                let local_id = *entry.key();
+                let actor_id = entry.actor_id;
+                let named_path = entry.named_path.clone();
+                // Find name from actor_names (reverse lookup)
+                let name = self
+                    .actor_names
+                    .iter()
+                    .find(|e| *e.value() == local_id)
+                    .map(|e| e.key().clone())
+                    .unwrap_or_else(|| actor_id.to_string());
+                (local_id, actor_id, name, named_path)
             })
             .collect();
 
         // Process each actor's termination
-        for (actor_name, actor_id, named_path) in actor_entries {
+        for (local_id, actor_id, actor_name, named_path) in actor_entries {
+            // Remove from actor_names first
+            self.actor_names.remove(&actor_name);
+
             // Remove and get ownership of the handle
-            if let Some((_, handle)) = self.local_actors.remove(&actor_name) {
+            if let Some((_, handle)) = self.local_actors.remove(&local_id) {
                 // Wait briefly for graceful shutdown (actor should already be stopping due to parent cancel)
                 // Use a shorter timeout since we already signaled cancellation
                 match tokio::time::timeout(Duration::from_secs(5), handle.join_handle).await {
@@ -1151,6 +1209,7 @@ impl ActorSystem {
                 }
 
                 // Trigger lifecycle cleanup (watch notifications, cluster broadcast, routing cleanup)
+                let actor_names = self.actor_names.clone();
                 let local_actors = self.local_actors.clone();
                 self.lifecycle
                     .handle_termination(
@@ -1160,7 +1219,11 @@ impl ActorSystem {
                         StopReason::SystemShutdown,
                         &self.named_actor_paths,
                         &self.cluster,
-                        |name| local_actors.get(name).map(|h| h.sender.clone()),
+                        |name| {
+                            actor_names.get(name).and_then(|id| {
+                                local_actors.get(id.value()).map(|h| h.sender.clone())
+                            })
+                        },
                     )
                     .await;
             }
@@ -1168,6 +1231,7 @@ impl ActorSystem {
 
         // Clear all actors (should already be empty, but just in case)
         self.local_actors.clear();
+        self.actor_names.clear();
 
         // Clear node load trackers
         self.node_load.clear();

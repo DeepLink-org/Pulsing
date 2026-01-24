@@ -17,7 +17,10 @@ use tokio::sync::{mpsc, RwLock};
 /// Unified message handler for HTTP/2 transport
 pub(crate) struct SystemMessageHandler {
     node_id: NodeId,
-    local_actors: Arc<DashMap<String, LocalActorHandle>>,
+    /// Local actors indexed by local_id
+    local_actors: Arc<DashMap<u64, LocalActorHandle>>,
+    /// Actor name to local_id mapping
+    actor_names: Arc<DashMap<String, u64>>,
     named_actor_paths: Arc<DashMap<String, String>>,
     cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
 }
@@ -25,34 +28,33 @@ pub(crate) struct SystemMessageHandler {
 impl SystemMessageHandler {
     pub fn new(
         node_id: NodeId,
-        local_actors: Arc<DashMap<String, LocalActorHandle>>,
+        local_actors: Arc<DashMap<u64, LocalActorHandle>>,
+        actor_names: Arc<DashMap<String, u64>>,
         named_actor_paths: Arc<DashMap<String, String>>,
         cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
     ) -> Self {
         Self {
             node_id,
             local_actors,
+            actor_names,
             named_actor_paths,
             cluster,
         }
     }
 
-    /// Find actor sender by name or local_id
+    /// Find actor sender by name or local_id (O(1) lookup)
     fn find_actor_sender(&self, actor_name: &str) -> anyhow::Result<mpsc::Sender<Envelope>> {
-        // First try by name
-        if let Some(handle) = self.local_actors.get(actor_name) {
-            return Ok(handle.sender.clone());
+        // First try by name -> local_id -> handle
+        if let Some(local_id) = self.actor_names.get(actor_name) {
+            if let Some(handle) = self.local_actors.get(local_id.value()) {
+                return Ok(handle.sender.clone());
+            }
         }
 
-        // Then try by local_id
+        // Then try parsing as local_id directly (O(1))
         if let Ok(local_id) = actor_name.parse::<u64>() {
-            if let Some(sender) = self
-                .local_actors
-                .iter()
-                .find(|entry| entry.value().actor_id.local_id() == local_id)
-                .map(|entry| entry.value().sender.clone())
-            {
-                return Ok(sender);
+            if let Some(handle) = self.local_actors.get(&local_id) {
+                return Ok(handle.sender.clone());
             }
         }
 
@@ -185,11 +187,20 @@ impl Http2ServerHandler for SystemMessageHandler {
         // Collect local actors info
         let mut actors = Vec::new();
         for entry in self.local_actors.iter() {
-            let name = entry.key().clone();
+            let local_id = *entry.key();
             let handle = entry.value();
+
+            // Find name from actor_names (reverse lookup)
+            let name = self
+                .actor_names
+                .iter()
+                .find(|e| *e.value() == local_id)
+                .map(|e| e.key().clone())
+                .unwrap_or_else(|| handle.actor_id.to_string());
 
             let mut actor_info = serde_json::json!({
                 "name": name,
+                "local_id": local_id,
                 "stats": handle.stats.to_json(),
                 "metadata": handle.metadata,
             });

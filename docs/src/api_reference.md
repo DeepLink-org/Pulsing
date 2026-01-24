@@ -134,7 +134,7 @@ class ActorSystem:
     ) -> ActorRef:
         """
         Spawn a new actor.
-        
+
         - With name: named actor, discoverable via resolve()
         - Without name: anonymous actor, only accessible via returned ActorRef
         """

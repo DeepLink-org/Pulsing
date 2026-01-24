@@ -474,7 +474,10 @@ pub trait ActorSystemOpsExt {
     fn tracked_node_count(&self) -> usize;
 
     /// Resolve an actor address and get an ActorRef
-    async fn resolve_address(&self, address: &crate::actor::ActorAddress) -> anyhow::Result<ActorRef>;
+    async fn resolve_address(
+        &self,
+        address: &crate::actor::ActorAddress,
+    ) -> anyhow::Result<ActorRef>;
 
     /// Get all instances of a named actor across the cluster
     async fn get_named_instances(&self, path: &ActorPath) -> Vec<MemberInfo>;
@@ -662,7 +665,10 @@ impl ActorSystemOpsExt for Arc<ActorSystem> {
         ActorSystem::tracked_node_count(self.as_ref())
     }
 
-    async fn resolve_address(&self, address: &crate::actor::ActorAddress) -> anyhow::Result<ActorRef> {
+    async fn resolve_address(
+        &self,
+        address: &crate::actor::ActorAddress,
+    ) -> anyhow::Result<ActorRef> {
         ActorSystem::resolve(self.as_ref(), address).await
     }
 

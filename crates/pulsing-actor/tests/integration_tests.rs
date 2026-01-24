@@ -593,7 +593,9 @@ mod addressing_tests {
 
         // Resolve by address
         let addr = ActorAddress::parse("actor:///services/api/handler").unwrap();
-        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr).await.unwrap();
+        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr)
+            .await
+            .unwrap();
 
         // Send message via resolved ref
         let response: Pong = resolved_ref.ask(Ping { value: 10 }).await.unwrap();
@@ -622,7 +624,9 @@ mod addressing_tests {
         let addr = ActorAddress::local(actor_ref.id().local_id());
 
         // Resolve
-        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr).await.unwrap();
+        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr)
+            .await
+            .unwrap();
         let response: Pong = resolved_ref.ask(Ping { value: 5 }).await.unwrap();
         assert_eq!(response.result, 10);
 
@@ -650,7 +654,9 @@ mod addressing_tests {
             ActorAddress::parse(&format!("actor://0/{}", actor_ref.id().local_id())).unwrap();
         assert!(addr.is_local());
 
-        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr).await.unwrap();
+        let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr)
+            .await
+            .unwrap();
         let response: Pong = resolved_ref.ask(Ping { value: 7 }).await.unwrap();
         assert_eq!(response.result, 14);
 

@@ -134,7 +134,7 @@ class ActorSystem:
     ) -> ActorRef:
         """
         生成新的 actor。
-        
+
         - 有 name: 命名 actor，可通过 resolve() 发现
         - 无 name: 匿名 actor，仅通过返回的 ActorRef 访问
         """
