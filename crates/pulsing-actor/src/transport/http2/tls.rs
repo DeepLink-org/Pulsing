@@ -5,10 +5,10 @@ use rcgen::{
     KeyPair, KeyUsagePurpose, SerialNumber, PKCS_ED25519,
 };
 use rustls::crypto::aws_lc_rs::default_provider;
-use sha2::{Digest, Sha256};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
+use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
 static CRYPTO_PROVIDER_INSTALLED: OnceLock<()> = OnceLock::new();
@@ -205,7 +205,6 @@ fn generate_node_cert(
     Ok((cert, node_key))
 }
 
-
 /// Derive a 32-byte seed using SHA256
 fn derive_seed(passphrase: &str, info: &[u8]) -> anyhow::Result<[u8; 32]> {
     let mut hasher = Sha256::new();
@@ -233,7 +232,7 @@ fn generate_deterministic_key_pair(seed: &[u8; 32]) -> anyhow::Result<KeyPair> {
     // Inner OCTET STRING containing the 32-byte seed
     let mut inner_private_key = Vec::new();
     inner_private_key.push(0x04); // OCTET STRING tag
-    inner_private_key.push(32);   // length
+    inner_private_key.push(32); // length
     inner_private_key.extend_from_slice(seed);
 
     // Outer OCTET STRING containing the inner OCTET STRING
@@ -248,8 +247,8 @@ fn generate_deterministic_key_pair(seed: &[u8; 32]) -> anyhow::Result<KeyPair> {
     // Build content: version + algorithm + privateKey
     let mut content = Vec::new();
     content.extend_from_slice(&[0x02, 0x01, 0x00]); // INTEGER 0 (version)
-    content.extend_from_slice(algo_id);             // AlgorithmIdentifier
-    content.extend_from_slice(&outer_private_key);  // privateKey
+    content.extend_from_slice(algo_id); // AlgorithmIdentifier
+    content.extend_from_slice(&outer_private_key); // privateKey
 
     // Wrap in SEQUENCE
     let mut pkcs8_der = Vec::new();
@@ -265,7 +264,6 @@ fn generate_deterministic_key_pair(seed: &[u8; 32]) -> anyhow::Result<KeyPair> {
 
     Ok(key_pair)
 }
-
 
 /// Convert bytes to hex string
 fn hex_encode(bytes: &[u8]) -> String {
