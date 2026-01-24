@@ -49,12 +49,14 @@ runs:
         restore-keys: |
           ${{ runner.os }}-cargo-${{ inputs.rust-toolchain }}-
           ${{ runner.os }}-cargo-
-
+    - uses: cargo-bins/cargo-binstall@main
+      with:
+        version: "1.2.3" # optional; defaults to latest
     - name: Install cargo tools
       if: inputs.install-cargo-tools == 'true'
       shell: bash
       run: |
-        test -e ~/.cargo/bin/cargo-nextest || cargo install cargo-nextest
+        test -e ~/.cargo/bin/cargo-nextest || cargo binstall cargo-nextest --secure
         test -e ~/.cargo/bin/cargo-llvm-cov || cargo install cargo-llvm-cov
 
     - name: Create and activate virtual environment
