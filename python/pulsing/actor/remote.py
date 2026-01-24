@@ -674,7 +674,9 @@ class ActorClass:
         if public is None:
             public = name is not None
 
-        return await self.local(_global_system, *args, name=name, public=public, **kwargs)
+        return await self.local(
+            _global_system, *args, name=name, public=public, **kwargs
+        )
 
     async def local(
         self,

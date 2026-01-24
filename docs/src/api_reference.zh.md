@@ -310,6 +310,55 @@ result = ray.get(counter.incr.remote())
 ray.shutdown()
 ```
 
+## Rust API
+
+Rust API 通过三层 trait 组织（均在 `pulsing_actor::prelude::*` 中 re-export）：
+
+### ActorSystemCoreExt（主路径）
+
+核心 spawn 与 resolve 操作：
+
+```rust
+// Spawn actors
+system.spawn("name", actor).await?;
+system.spawn_with_options("name", actor, options).await?;
+system.spawn_named("path", "local_name", actor).await?;
+system.spawn_named_with_options("path", "local_name", actor, options).await?;
+
+// Resolve actors
+system.actor_ref(&actor_id).await?;
+system.resolve_named("path", node_id_opt).await?;
+system.resolve_named_with_options(&path, options).await?;
+system.resolve_named_lazy("path")?;  // 懒解析，约 5s 后自动刷新
+```
+
+### ActorSystemAdvancedExt（高级：监督/重启）
+
+基于 factory 的 spawn，支持失败重启：
+
+```rust
+let options = SpawnOptions::new()
+    .supervision(SupervisionSpec::new()
+        .restart_policy(RestartPolicy::OnFailure)
+        .max_restarts(3));
+
+system.spawn_factory("name", || Ok(MyActor::new()), options).await?;
+system.spawn_named_factory("path", "name", || Ok(MyActor::new()), options).await?;
+```
+
+### ActorSystemOpsExt（运维/诊断）
+
+系统信息、集群成员、生命周期控制：
+
+```rust
+system.node_id();
+system.addr();
+system.members().await;
+system.all_named_actors().await;
+system.stop("name").await?;
+system.shutdown().await?;
+```
+
 ## 示例
 
 查看[快速开始指南](quickstart/index.zh.md)了解使用示例。

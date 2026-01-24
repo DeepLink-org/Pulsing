@@ -10,9 +10,11 @@ mod config;
 mod handle;
 mod handler;
 mod runtime;
+mod traits;
 
 pub use config::{ActorSystemBuilder, ResolveOptions, SpawnOptions, SystemConfig};
 pub use handle::ActorStats;
+pub use traits::{ActorSystemAdvancedExt, ActorSystemCoreExt, ActorSystemOpsExt};
 
 use crate::actor::{
     Actor, ActorAddress, ActorContext, ActorId, ActorPath, ActorRef, ActorResolver, ActorSystemRef,
@@ -530,7 +532,8 @@ impl ActorSystem {
         let join_handle = tokio::spawn(async move {
             let mut receiver = receiver;
             let mut ctx = ctx;
-            let reason = run_actor_instance(actor, &mut receiver, &mut ctx, cancel, stats_clone).await;
+            let reason =
+                run_actor_instance(actor, &mut receiver, &mut ctx, cancel, stats_clone).await;
             tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Anonymous actor stopped");
         });
 

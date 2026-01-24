@@ -1254,9 +1254,9 @@ impl PyActorSystem {
                                 // Clone PyObjects inside GIL
                                 let event_loop = event_loop.clone_ref(py);
                                 // Call factory to get instance
-                                let instance = actor
-                                    .call0(py)
-                                    .map_err(|e| anyhow::anyhow!("Python factory error: {:?}", e))?;
+                                let instance = actor.call0(py).map_err(|e| {
+                                    anyhow::anyhow!("Python factory error: {:?}", e)
+                                })?;
                                 Ok(PythonActorWrapper::new(instance, event_loop))
                             })
                         };

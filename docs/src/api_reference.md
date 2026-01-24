@@ -310,6 +310,55 @@ result = ray.get(counter.incr.remote())
 ray.shutdown()
 ```
 
+## Rust API
+
+The Rust API is organized into three trait layers (all re-exported in `pulsing_actor::prelude::*`):
+
+### ActorSystemCoreExt (Primary API)
+
+Core spawn and resolve operations:
+
+```rust
+// Spawn actors
+system.spawn("name", actor).await?;
+system.spawn_with_options("name", actor, options).await?;
+system.spawn_named("path", "local_name", actor).await?;
+system.spawn_named_with_options("path", "local_name", actor, options).await?;
+
+// Resolve actors
+system.actor_ref(&actor_id).await?;
+system.resolve_named("path", node_id_opt).await?;
+system.resolve_named_with_options(&path, options).await?;
+system.resolve_named_lazy("path")?;  // Auto-refresh after ~5s
+```
+
+### ActorSystemAdvancedExt (Supervision/Restart)
+
+Factory-based spawning for restartable actors:
+
+```rust
+let options = SpawnOptions::new()
+    .supervision(SupervisionSpec::new()
+        .restart_policy(RestartPolicy::OnFailure)
+        .max_restarts(3));
+
+system.spawn_factory("name", || Ok(MyActor::new()), options).await?;
+system.spawn_named_factory("path", "name", || Ok(MyActor::new()), options).await?;
+```
+
+### ActorSystemOpsExt (Operations/Diagnostics)
+
+System info, cluster membership, lifecycle:
+
+```rust
+system.node_id();
+system.addr();
+system.members().await;
+system.all_named_actors().await;
+system.stop("name").await?;
+system.shutdown().await?;
+```
+
 ## Examples
 
 See the [Quick Start Guide](quickstart/index.md) for usage examples.

@@ -53,7 +53,7 @@ class Counter:
     # 同步处理函数
     def incr(self):
         ...
-    
+
     # 异步处理函数
     async def desc(self):
         ...
@@ -145,11 +145,11 @@ proxy = Counter.resolve(name)
 @pul.remote
 class Counter:
     def __init__(self, init=0): self.value = init
-    
+
     # 同步处理函数
     def incr(self):
         ...
-    
+
     # 异步处理函数
     async def desc(self):
         ...
@@ -223,11 +223,11 @@ from pulsing.actor import Actor
 
 class EchoActor(Actor):
     """receive 方法 - 同步或异步均可，框架自动检测"""
-    
+
     # 方式1：同步方法
     def receive(self, msg):
         return msg
-    
+
     # 方式2：异步方法（需要 await 时使用）
     async def receive(self, msg):
         result = await some_async_operation()
@@ -252,20 +252,20 @@ import pulsing as pul
 class Counter:
     def __init__(self, init=0):
         self.value = init
-    
+
     # 同步方法 - 阻塞处理，请求按顺序执行
     # 适合：快速计算、状态修改
     def incr(self):
         self.value += 1
         return self.value
-    
+
     # 异步方法 - 非阻塞，可并发处理多个请求
     # 适合：IO 密集型操作（网络请求、数据库查询）
     async def fetch_and_add(self, url):
         data = await http_get(url)  # 等待期间可处理其他请求
         self.value += data
         return self.value
-    
+
     # 无返回值方法 - 适合 tell() 调用
     def reset(self):
         self.value = 0
@@ -299,15 +299,15 @@ class MyActor(Actor):
     def on_start(self, actor_id: ActorId):
         """Actor 启动时调用"""
         print(f"Started: {actor_id}")
-    
+
     def on_stop(self):
         """Actor 停止时调用"""
         print("Stopping...")
-    
+
     def metadata(self) -> dict[str, str]:
         """返回 Actor 元数据（用于诊断）"""
         return {"type": "worker", "version": "1.0"}
-    
+
     async def receive(self, msg):
         return msg
 ```
@@ -336,7 +336,7 @@ class StreamingService:
     async def generate_stream(self, n):
         for i in range(n):
             yield f"chunk_{i}"
-    
+
     # 同步 generator 也支持
     def sync_stream(self, n):
         for i in range(n):
@@ -351,3 +351,97 @@ async for chunk in service.generate_stream(10):
 ```
 
 **注意：** 对于 `@pul.remote` 类，直接返回 generator（同步或异步）即可，Pulsing 会自动检测并按流式响应处理。
+
+## Rust 接口
+
+Rust API 通过 trait 定义契约，分为三层：
+
+### 快速入门
+
+```rust
+use pulsing_actor::prelude::*;
+
+#[derive(Serialize, Deserialize)]
+struct Ping(i32);
+
+#[derive(Serialize, Deserialize)]
+struct Pong(i32);
+
+struct Echo;
+
+#[async_trait]
+impl Actor for Echo {
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+        let Ping(x) = msg.unpack()?;
+        Message::pack(&Pong(x))
+    }
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let system = ActorSystem::builder().build().await?;
+    let actor = system.spawn("echo", Echo).await?;
+    let Pong(x): Pong = actor.ask(Ping(1)).await?;
+    system.shutdown().await?;
+    Ok(())
+}
+```
+
+### Trait 分层
+
+#### ActorSystemCoreExt（主路径，prelude 自动导入）
+
+核心 spawn 与 resolve 能力：
+
+```rust
+// Spawn
+system.spawn(name, actor).await?;
+system.spawn_with_options(name, actor, options).await?;
+system.spawn_named(path, local_name, actor).await?;
+system.spawn_named_with_options(path, local_name, actor, options).await?;
+
+// Resolve
+system.actor_ref(&actor_id).await?;
+system.resolve_named(path, node_id_opt).await?;
+system.resolve_named_with_options(&path, options).await?;
+system.resolve_named_lazy(path)?;  // 懒解析，TTL≈5s
+```
+
+#### ActorSystemAdvancedExt（高级：可重启 supervision）
+
+Factory 模式 spawn，支持 supervision 重启：
+
+```rust
+// 只有 factory 才能重启
+system.spawn_factory(name, || Ok(MyActor::new()), options).await?;
+system.spawn_named_factory(path, local_name, || Ok(MyActor::new()), options).await?;
+```
+
+#### ActorSystemOpsExt（运维/诊断/生命周期）
+
+系统信息、集群成员、停止/关闭等：
+
+```rust
+system.node_id();
+system.addr();
+system.members().await;
+system.all_named_actors().await;
+system.stop(name).await?;
+system.shutdown().await?;
+```
+
+### 关键约定
+
+- **消息编码**：`Message::pack(&T)` 使用 bincode + `type_name::<T>()`；跨版本协议建议 `Message::single("TypeV1", bytes)`。
+- **命名解析**：
+  - `spawn_named`：注册可发现 actor
+  - `resolve_named`：一次性解析（迁移后可能 stale）
+  - `resolve_named_lazy`：懒解析 + 自动刷新
+- **流式**：返回 `Message::Stream`，取消语义 best-effort。
+- **监督**：只有 `spawn_factory` / `spawn_named_factory` 支持失败重启。
+
+### Behavior（类型安全，Akka Typed 风格）
+
+- **核心**：`Behavior<M>` + `TypedRef<M>` + `BehaviorAction (Same/Become/Stop)`
+- **启动**：`system.spawn_behavior("name", behavior).await? -> TypedRef<M>`
+- **约定**：`TypedRef<M>` 要求 `M: Serialize + DeserializeOwned + Send + 'static`
