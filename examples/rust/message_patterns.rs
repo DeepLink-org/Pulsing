@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     println!("=== Message Patterns ===\n");
 
     let system = ActorSystem::builder().build().await?;
-    let actor = system.spawn("demo", Demo).await?;
+    let actor = system.spawn_named("test/demo", Demo).await?;
 
     // Pattern 1: RPC
     println!("--- RPC ---");

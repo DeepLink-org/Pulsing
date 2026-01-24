@@ -176,7 +176,9 @@ impl BehaviorSpawner for ActorSystem {
         let name_str = name.as_ref().to_string();
         let actor = BehaviorActor::new(name_str.clone(), self.clone(), behavior);
         let options = SpawnOptions::new().mailbox_capacity(mailbox_capacity);
-        let actor_ref = self.spawn_with_options(&name_str, actor, options).await?;
+        let actor_ref = self
+            .spawn_named_with_options(name_str.clone(), actor, options)
+            .await?;
 
         Ok(TypedRef::new(&name_str, actor_ref))
     }
@@ -206,8 +208,10 @@ mod tests {
             }
         });
 
-        let counter_ref: TypedRef<TestMsg> =
-            system.spawn_behavior("counter", counter).await.unwrap();
+        let counter_ref: TypedRef<TestMsg> = system
+            .spawn_behavior("test/counter", counter)
+            .await
+            .unwrap();
 
         // Type-safe message sending
         counter_ref.tell(TestMsg::Increment(5)).await.unwrap();

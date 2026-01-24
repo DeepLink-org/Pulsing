@@ -380,8 +380,14 @@ impl Actor for Echo {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let system = ActorSystem::builder().build().await?;
-    let actor = system.spawn("echo", Echo).await?;
+
+    // 命名 actor（可通过 resolve 发现）
+    let actor = system.spawn_named("echo", Echo).await?;
     let Pong(x): Pong = actor.ask(Ping(1)).await?;
+
+    // 匿名 actor（仅通过 ActorRef 访问）
+    let worker = system.spawn(Worker::new()).await?;
+
     system.shutdown().await?;
     Ok(())
 }
@@ -394,17 +400,22 @@ async fn main() -> anyhow::Result<()> {
 核心 spawn 与 resolve 能力：
 
 ```rust
-// Spawn
-system.spawn(name, actor).await?;
-system.spawn_with_options(name, actor, options).await?;
-system.spawn_named(path, local_name, actor).await?;
-system.spawn_named_with_options(path, local_name, actor, options).await?;
+// Spawn - 简洁 API
+system.spawn(actor).await?;                    // 匿名 actor（不可 resolve）
+system.spawn_named(name, actor).await?;        // 命名 actor（可 resolve）
+
+// Spawn - Builder 模式（高级配置）
+system.spawning()
+    .name("services/counter")                  // 可选：有 name = 可 resolve
+    .supervision(SupervisionSpec::on_failure().max_restarts(3))
+    .mailbox_capacity(256)
+    .spawn(actor).await?;
 
 // Resolve
-system.actor_ref(&actor_id).await?;
-system.resolve_named(path, node_id_opt).await?;
-system.resolve_named_with_options(&path, options).await?;
-system.resolve_named_lazy(path)?;  // 懒解析，TTL≈5s
+system.actor_ref(&actor_id).await?;            // 按 ActorId 获取
+system.resolve(name).await?;                   // 按名称解析
+system.resolve_with_options(&path, options).await?;  // 带负载均衡选项
+system.resolve_lazy(name)?;                    // 懒解析，TTL≈5s
 ```
 
 #### ActorSystemAdvancedExt（高级：可重启 supervision）
@@ -412,9 +423,11 @@ system.resolve_named_lazy(path)?;  // 懒解析，TTL≈5s
 Factory 模式 spawn，支持 supervision 重启：
 
 ```rust
-// 只有 factory 才能重启
-system.spawn_factory(name, || Ok(MyActor::new()), options).await?;
-system.spawn_named_factory(path, local_name, || Ok(MyActor::new()), options).await?;
+// 匿名 actor + factory（可重启）
+system.spawn_anonymous_factory(|| Ok(Worker::new()), options).await?;
+
+// 命名 actor + factory（可重启 + 可 resolve）
+system.spawn_named_factory(name, || Ok(Service::new()), options).await?;
 ```
 
 #### ActorSystemOpsExt（运维/诊断/生命周期）
@@ -433,12 +446,12 @@ system.shutdown().await?;
 ### 关键约定
 
 - **消息编码**：`Message::pack(&T)` 使用 bincode + `type_name::<T>()`；跨版本协议建议 `Message::single("TypeV1", bytes)`。
-- **命名解析**：
-  - `spawn_named`：注册可发现 actor
-  - `resolve_named`：一次性解析（迁移后可能 stale）
-  - `resolve_named_lazy`：懒解析 + 自动刷新
+- **命名与解析**：
+  - `spawn_named(name, actor)`：创建可发现 actor，name 即为解析路径
+  - `resolve(name)`：一次性解析（迁移后可能 stale）
+  - `resolve_lazy(name)`：懒解析 + 自动刷新（~5s TTL）
 - **流式**：返回 `Message::Stream`，取消语义 best-effort。
-- **监督**：只有 `spawn_factory` / `spawn_named_factory` 支持失败重启。
+- **监督**：只有 `spawn_anonymous_factory` / `spawn_named_factory` 支持失败重启。
 
 ### Behavior（类型安全，Akka Typed 风格）
 

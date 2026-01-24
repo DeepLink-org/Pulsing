@@ -1213,67 +1213,65 @@ impl PyActorSystem {
             meta
         });
 
+        // Note: 'public' parameter is now ignored - all named actors are resolvable
+        let _ = public;
+
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let options = pulsing_actor::system::SpawnOptions::new()
-                .public(public)
                 .supervision(supervision)
                 .metadata(metadata);
 
             let actor_ref = match name {
-                // Anonymous actor - no name provided
+                // Anonymous actor - no name provided (not resolvable)
                 None => {
-                    // Anonymous actors cannot have supervision (no factory to restart from)
-                    let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
-                    system
-                        .spawn_anonymous_with_options(actor_wrapper, options)
-                        .await
-                        .map_err(to_pyerr)?
-                }
-                // Named actor
-                Some(name) => {
                     if matches!(policy, RestartPolicy::Never) {
                         // actor is the instance
                         let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
-                        if public {
-                            let path =
-                                ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
-                            system
-                                .spawn_named_with_options(path, &name, actor_wrapper, options)
-                                .await
-                                .map_err(to_pyerr)?
-                        } else {
-                            system
-                                .spawn_with_options(&name, actor_wrapper, options)
-                                .await
-                                .map_err(to_pyerr)?
-                        }
+                        system
+                            .spawn_anonymous_with_options(actor_wrapper, options)
+                            .await
+                            .map_err(to_pyerr)?
                     } else {
-                        // actor is a factory
+                        // actor is a factory - anonymous actor with supervision
                         let factory = move || {
                             Python::with_gil(|py| -> anyhow::Result<PythonActorWrapper> {
-                                // Clone PyObjects inside GIL
                                 let event_loop = event_loop.clone_ref(py);
-                                // Call factory to get instance
                                 let instance = actor.call0(py).map_err(|e| {
                                     anyhow::anyhow!("Python factory error: {:?}", e)
                                 })?;
                                 Ok(PythonActorWrapper::new(instance, event_loop))
                             })
                         };
-
-                        if public {
-                            let path =
-                                ActorPath::new(format!("actors/{}", name)).map_err(to_pyerr)?;
-                            system
-                                .spawn_named_factory(path, &name, factory, options)
-                                .await
-                                .map_err(to_pyerr)?
-                        } else {
-                            system
-                                .spawn_factory(&name, factory, options)
-                                .await
-                                .map_err(to_pyerr)?
-                        }
+                        system
+                            .spawn_anonymous_factory(factory, options)
+                            .await
+                            .map_err(to_pyerr)?
+                    }
+                }
+                // Named actor (resolvable by name)
+                Some(name) => {
+                    if matches!(policy, RestartPolicy::Never) {
+                        // actor is the instance
+                        let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
+                        system
+                            .spawn_named_with_options(name, actor_wrapper, options)
+                            .await
+                            .map_err(to_pyerr)?
+                    } else {
+                        // actor is a factory - named actor with supervision
+                        let factory = move || {
+                            Python::with_gil(|py| -> anyhow::Result<PythonActorWrapper> {
+                                let event_loop = event_loop.clone_ref(py);
+                                let instance = actor.call0(py).map_err(|e| {
+                                    anyhow::anyhow!("Python factory error: {:?}", e)
+                                })?;
+                                Ok(PythonActorWrapper::new(instance, event_loop))
+                            })
+                        };
+                        system
+                            .spawn_named_factory(name, factory, options)
+                            .await
+                            .map_err(to_pyerr)?
                     }
                 }
             };

@@ -114,7 +114,10 @@ mod basic_tests {
     #[tokio::test]
     async fn test_actor_spawn() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
-        let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
+        let actor_ref = system
+            .spawn_named("test/counter", Counter { count: 0 })
+            .await
+            .unwrap();
         // ActorId now uses u128 (node_id:local_id), verify it's a local actor
         assert!(actor_ref.is_local());
         let _ = system.shutdown().await;
@@ -123,7 +126,10 @@ mod basic_tests {
     #[tokio::test]
     async fn test_actor_ask() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
-        let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
+        let actor_ref = system
+            .spawn_named("test/counter", Counter { count: 0 })
+            .await
+            .unwrap();
 
         let response: Pong = actor_ref.ask(Ping { value: 5 }).await.unwrap();
         assert_eq!(response.result, 5);
@@ -137,7 +143,10 @@ mod basic_tests {
     #[tokio::test]
     async fn test_actor_tell() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
-        let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
+        let actor_ref = system
+            .spawn_named("test/counter", Counter { count: 0 })
+            .await
+            .unwrap();
 
         actor_ref.tell(Ping { value: 5 }).await.unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -151,7 +160,10 @@ mod basic_tests {
     #[tokio::test]
     async fn test_actor_multiple_messages() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
-        let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
+        let actor_ref = system
+            .spawn_named("test/counter", Counter { count: 0 })
+            .await
+            .unwrap();
 
         for i in 1..=10 {
             let response: Pong = actor_ref.ask(Ping { value: i }).await.unwrap();
@@ -177,7 +189,7 @@ mod lifecycle_tests {
             start_count: start_count.clone(),
             stop_count: stop_count.clone(),
         };
-        let _actor_ref = system.spawn("lifecycle", actor).await.unwrap();
+        let _actor_ref = system.spawn_named("test/lifecycle", actor).await.unwrap();
 
         // Give some time for on_start to be called
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -199,7 +211,7 @@ mod lifecycle_tests {
             start_count: start_count.clone(),
             stop_count: stop_count.clone(),
         };
-        let _actor_ref = system.spawn("lifecycle", actor).await.unwrap();
+        let _actor_ref = system.spawn_named("test/lifecycle", actor).await.unwrap();
 
         // Wait for startup
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -227,7 +239,10 @@ mod lifecycle_tests {
                 start_count: start_count.clone(),
                 stop_count: _stop_count.clone(),
             };
-            let _actor_ref = system.spawn(format!("actor-{}", i), actor).await.unwrap();
+            let _actor_ref = system
+                .spawn_named(format!("test/actor-{}", i), actor)
+                .await
+                .unwrap();
         }
 
         // Wait for all starts
@@ -249,7 +264,10 @@ mod error_tests {
         let config = SystemConfig::standalone();
         let system = ActorSystem::new(config).await.unwrap();
 
-        let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
+        let actor_ref = system
+            .spawn_named("test/counter", Counter { count: 0 })
+            .await
+            .unwrap();
 
         let result: Result<StateResponse, _> = actor_ref.ask(ErrorMessage).await;
         assert!(result.is_err());
@@ -269,7 +287,10 @@ mod error_tests {
         let config = SystemConfig::standalone();
         let system = ActorSystem::new(config).await.unwrap();
 
-        let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
+        let actor_ref = system
+            .spawn_named("test/counter", Counter { count: 0 })
+            .await
+            .unwrap();
 
         // Send message with unknown type using the unified Message
         let msg = Message::single("UnknownType", vec![]);
@@ -288,7 +309,10 @@ mod concurrent_tests {
         let config = SystemConfig::standalone();
         let system = ActorSystem::new(config).await.unwrap();
 
-        let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
+        let actor_ref = system
+            .spawn_named("test/counter", Counter { count: 0 })
+            .await
+            .unwrap();
 
         let mut handles = Vec::new();
         for i in 0..10 {
@@ -315,7 +339,10 @@ mod concurrent_tests {
         let config = SystemConfig::standalone();
         let system = ActorSystem::new(config).await.unwrap();
 
-        let actor_ref = system.spawn("counter", Counter { count: 0 }).await.unwrap();
+        let actor_ref = system
+            .spawn_named("test/counter", Counter { count: 0 })
+            .await
+            .unwrap();
 
         let start = std::time::Instant::now();
         let _response: StateResponse = actor_ref.ask(SlowMessage { delay_ms: 100 }).await.unwrap();
@@ -339,7 +366,7 @@ mod spawn_tests {
         for i in 0..5 {
             refs.push(
                 system
-                    .spawn(format!("counter-{}", i), Counter { count: 0 })
+                    .spawn_named(format!("test/counter-{}", i), Counter { count: 0 })
                     .await
                     .unwrap(),
             );
@@ -364,11 +391,11 @@ mod spawn_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         let ref1 = system
-            .spawn("counter1", Counter { count: 0 })
+            .spawn_named("test/counter1", Counter { count: 0 })
             .await
             .unwrap();
         let ref2 = system
-            .spawn("counter2", Counter { count: 0 })
+            .spawn_named("test/counter2", Counter { count: 0 })
             .await
             .unwrap();
 

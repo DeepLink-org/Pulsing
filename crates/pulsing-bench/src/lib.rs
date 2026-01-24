@@ -186,7 +186,7 @@ pub async fn run_benchmark(args: BenchmarkArgs) -> anyhow::Result<BenchmarkRepor
         .with_num_workers(args.num_workers)
         .with_token_counter(token_counter);
 
-    let coordinator_ref = system.spawn("coordinator", coordinator).await?;
+    let coordinator_ref = system.spawn_named("coordinator", coordinator).await?;
 
     // Build benchmark config
     let config = BenchmarkConfig {

@@ -112,11 +112,9 @@ mod integration_tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-        let path = ActorPath::new("services/test/actor").unwrap();
         let actor_ref = system
             .spawn_named(
-                path.clone(),
-                "test_actor",
+                "services/test/actor",
                 IdentityActor {
                     node_name: "local".into(),
                     call_count: counter.clone(),
@@ -145,8 +143,8 @@ mod integration_tests {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
         let actor_ref = system
-            .spawn(
-                "my_actor",
+            .spawn_named(
+                "test/my_actor",
                 IdentityActor {
                     node_name: "local".into(),
                     call_count: counter.clone(),
@@ -172,13 +170,11 @@ mod integration_tests {
     #[tokio::test]
     async fn test_duplicate_path_registration() {
         let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
-        let path = ActorPath::new("services/unique").unwrap();
 
         let counter1 = Arc::new(AtomicUsize::new(0));
         let result1 = system
             .spawn_named(
-                path.clone(),
-                "actor1",
+                "services/unique",
                 IdentityActor {
                     node_name: "local".into(),
                     call_count: counter1,
@@ -188,10 +184,10 @@ mod integration_tests {
         assert!(result1.is_ok());
 
         let counter2 = Arc::new(AtomicUsize::new(0));
+        // Trying to spawn with the same name should fail
         let result2 = system
             .spawn_named(
-                path.clone(),
-                "actor2",
+                "services/unique",
                 IdentityActor {
                     node_name: "local".into(),
                     call_count: counter2,

@@ -33,7 +33,6 @@ use dashmap::DashMap;
 use handle::LocalActorHandle;
 use handler::SystemMessageHandler;
 use runtime::{run_actor_instance, run_supervision_loop};
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -304,9 +303,7 @@ impl ActorSystem {
         let system_actor = SystemActor::with_default_factory(system_ref);
 
         // Spawn as named actor with path "system"
-        let path = ActorPath::new(SYSTEM_ACTOR_PATH)?;
-        self.spawn_named(path, SYSTEM_ACTOR_LOCAL_NAME, system_actor)
-            .await?;
+        self.spawn_named(SYSTEM_ACTOR_PATH, system_actor).await?;
 
         tracing::debug!(path = SYSTEM_ACTOR_PATH, "SystemActor started");
         Ok(())
@@ -334,9 +331,7 @@ impl ActorSystem {
         let system_actor = SystemActor::new(system_ref, factory);
 
         // Spawn as named actor
-        let path = ActorPath::new(SYSTEM_ACTOR_PATH)?;
-        self.spawn_named(path, SYSTEM_ACTOR_LOCAL_NAME, system_actor)
-            .await?;
+        self.spawn_named(SYSTEM_ACTOR_PATH, system_actor).await?;
 
         tracing::debug!(
             path = SYSTEM_ACTOR_PATH,
@@ -393,37 +388,9 @@ impl ActorSystem {
         }
     }
 
-    /// Spawn an actor with a local name (uses system default mailbox capacity)
-    pub async fn spawn<A>(
+    /// Spawn an anonymous actor using a factory function (enables supervision restarts)
+    pub async fn spawn_anonymous_factory<F, A>(
         self: &Arc<Self>,
-        name: impl AsRef<str>,
-        actor: A,
-    ) -> anyhow::Result<ActorRef>
-    where
-        A: Actor,
-    {
-        self.spawn_factory(name, Self::once_factory(actor), SpawnOptions::default())
-            .await
-    }
-
-    /// Spawn an actor with custom options
-    pub async fn spawn_with_options<A>(
-        self: &Arc<Self>,
-        name: impl AsRef<str>,
-        actor: A,
-        options: SpawnOptions,
-    ) -> anyhow::Result<ActorRef>
-    where
-        A: Actor,
-    {
-        self.spawn_factory(name, Self::once_factory(actor), options)
-            .await
-    }
-
-    /// Spawn an actor using a factory function (enables supervision restarts)
-    pub async fn spawn_factory<F, A>(
-        self: &Arc<Self>,
-        name: impl AsRef<str>,
         factory: F,
         options: SpawnOptions,
     ) -> anyhow::Result<ActorRef>
@@ -431,13 +398,6 @@ impl ActorSystem {
         F: FnMut() -> anyhow::Result<A> + Send + 'static,
         A: Actor,
     {
-        let name = name.as_ref();
-
-        // Check for duplicate
-        if self.local_actors.contains_key(name) {
-            return Err(anyhow::anyhow!("Actor already exists: {}", name));
-        }
-
         let actor_id = self.next_actor_id();
 
         // Use configured mailbox capacity
@@ -448,7 +408,7 @@ impl ActorSystem {
         let (sender, receiver) = mailbox.split();
 
         let stats = Arc::new(ActorStats::default());
-        let metadata = HashMap::new();
+        let metadata = options.metadata.clone();
 
         // Create context with system reference for actor_ref/watch/schedule_self
         let ctx = ActorContext::with_system(
@@ -458,7 +418,7 @@ impl ActorSystem {
             sender.clone(),
         );
 
-        // Spawn actor loop
+        // Spawn actor loop with supervision
         let stats_clone = stats.clone();
         let cancel = self.cancel_token.clone();
         let actor_id_for_log = actor_id;
@@ -468,10 +428,10 @@ impl ActorSystem {
             let reason =
                 run_supervision_loop(factory, receiver, ctx, cancel, stats_clone, supervision)
                     .await;
-            tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Actor stopped");
+            tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Anonymous actor stopped");
         });
 
-        // Register actor
+        // Register actor using actor_id as key
         let handle = LocalActorHandle {
             sender: sender.clone(),
             join_handle,
@@ -481,7 +441,7 @@ impl ActorSystem {
             actor_id,
         };
 
-        self.local_actors.insert(name.to_string(), handle);
+        self.local_actors.insert(actor_id.to_string(), handle);
 
         // Create ActorRef
         Ok(ActorRef::local(actor_id, sender))
@@ -553,38 +513,27 @@ impl ActorSystem {
         Ok(ActorRef::local(actor_id, sender))
     }
 
-    /// Spawn a named actor (publicly accessible via named path)
+    /// Spawn a named actor (resolvable by name across the cluster)
     ///
     /// # Example
     /// ```rust,ignore
-    /// // Path can be &str, String, or ActorPath
-    /// system.spawn_named("services/echo", "echo", MyActor).await?;
+    /// // Name is used as both path (for resolution) and local name
+    /// system.spawn_named("services/echo", MyActor).await?;
     /// ```
-    pub async fn spawn_named<P, A>(
-        self: &Arc<Self>,
-        path: P,
-        local_name: impl AsRef<str>,
-        actor: A,
-    ) -> anyhow::Result<ActorRef>
+    pub async fn spawn_named<P, A>(self: &Arc<Self>, name: P, actor: A) -> anyhow::Result<ActorRef>
     where
         P: IntoActorPath,
         A: Actor,
     {
-        let path = path.into_actor_path()?;
-        self.spawn_named_factory(
-            path,
-            local_name,
-            Self::once_factory(actor),
-            SpawnOptions::default(),
-        )
-        .await
+        let path = name.into_actor_path()?;
+        self.spawn_named_factory(path, Self::once_factory(actor), SpawnOptions::default())
+            .await
     }
 
     /// Spawn a named actor with custom options
     pub async fn spawn_named_with_options<P, A>(
         self: &Arc<Self>,
-        path: P,
-        local_name: impl AsRef<str>,
+        name: P,
         actor: A,
         options: SpawnOptions,
     ) -> anyhow::Result<ActorRef>
@@ -592,16 +541,15 @@ impl ActorSystem {
         P: IntoActorPath,
         A: Actor,
     {
-        let path = path.into_actor_path()?;
-        self.spawn_named_factory(path, local_name, Self::once_factory(actor), options)
+        let path = name.into_actor_path()?;
+        self.spawn_named_factory(path, Self::once_factory(actor), options)
             .await
     }
 
     /// Spawn a named actor using a factory function
     pub async fn spawn_named_factory<P, F, A>(
         self: &Arc<Self>,
-        path: P,
-        local_name: impl AsRef<str>,
+        name: P,
         factory: F,
         options: SpawnOptions,
     ) -> anyhow::Result<ActorRef>
@@ -610,22 +558,19 @@ impl ActorSystem {
         F: FnMut() -> anyhow::Result<A> + Send + 'static,
         A: Actor,
     {
-        let path = path.into_actor_path()?;
-        let local_name = local_name.as_ref();
+        let path = name.into_actor_path()?;
+        let name_str = path.as_str();
 
-        // Check for duplicate local name
-        if self.local_actors.contains_key(local_name) {
-            return Err(anyhow::anyhow!("Actor already exists: {}", local_name));
+        // Check for duplicate name
+        if self.local_actors.contains_key(&name_str.to_string()) {
+            return Err(anyhow::anyhow!("Actor already exists: {}", name_str));
         }
 
         // Check for duplicate named path
-        if self
-            .named_actor_paths
-            .contains_key(&path.as_str().to_string())
-        {
+        if self.named_actor_paths.contains_key(&name_str.to_string()) {
             return Err(anyhow::anyhow!(
                 "Named path already registered: {}",
-                path.as_str()
+                name_str
             ));
         }
 
@@ -672,9 +617,9 @@ impl ActorSystem {
             actor_id,
         };
 
-        self.local_actors.insert(local_name.to_string(), handle);
+        self.local_actors.insert(name_str.to_string(), handle);
         self.named_actor_paths
-            .insert(path.as_str().to_string(), local_name.to_string());
+            .insert(name_str.to_string(), name_str.to_string());
 
         // Register in cluster with full details
         if let Some(cluster) = self.cluster.read().await.as_ref() {

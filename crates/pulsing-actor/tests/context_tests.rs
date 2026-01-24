@@ -41,10 +41,10 @@ impl Actor for Forwarder {
 async fn actor_context_can_resolve_actor_ref() {
     let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
-    let target_ref = system.spawn("target", Target).await.unwrap();
+    let target_ref = system.spawn_named("test/target", Target).await.unwrap();
     let forwarder_ref = system
-        .spawn(
-            "forwarder",
+        .spawn_named(
+            "test/forwarder",
             Forwarder {
                 target: *target_ref.id(),
             },
@@ -61,13 +61,13 @@ async fn shutdown_clears_all_actors() {
     let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
 
     // Spawn some actors
-    let _a1 = system.spawn("actor1", Target).await.unwrap();
-    let _a2 = system.spawn("actor2", Target).await.unwrap();
+    let _a1 = system.spawn_named("test/actor1", Target).await.unwrap();
+    let _a2 = system.spawn_named("test/actor2", Target).await.unwrap();
 
     // Verify actors exist
     let names = system.local_actor_names();
-    assert!(names.contains(&"actor1".to_string()));
-    assert!(names.contains(&"actor2".to_string()));
+    assert!(names.contains(&"test/actor1".to_string()));
+    assert!(names.contains(&"test/actor2".to_string()));
 
     // Shutdown
     system.shutdown().await.unwrap();

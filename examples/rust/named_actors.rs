@@ -21,8 +21,8 @@ impl Actor for Echo {
 async fn main() -> anyhow::Result<()> {
     let system = ActorSystem::builder().build().await?;
 
-    // Spawn named actor - path can be &str directly
-    system.spawn_named("services/echo", "echo", Echo).await?;
+    // Spawn named actor - name is now the full path
+    system.spawn_named("services/echo", Echo).await?;
 
     // Resolve by path string and send message
     let actor = system.resolve_named("services/echo", None).await?;

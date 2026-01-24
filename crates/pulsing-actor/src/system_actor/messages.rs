@@ -144,7 +144,7 @@ pub enum SystemResponse {
 /// Actor info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActorInfo {
-    /// Actor name
+    /// Actor name (also used as path for resolution)
     pub name: String,
     /// Actor ID (local ID)
     pub actor_id: u64,
@@ -152,8 +152,6 @@ pub struct ActorInfo {
     pub actor_type: String,
     /// Uptime in seconds
     pub uptime_secs: u64,
-    /// Whether public
-    pub public: bool,
     /// Actor metadata (e.g., Python class info)
     #[serde(default)]
     pub metadata: std::collections::HashMap<String, String>,
