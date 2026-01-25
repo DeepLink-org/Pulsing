@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Ray Stress Test Script - Single Process Version (Correct Ray Usage)
+Ray Stress Test Script - Single Process Version (Correct Ray Usage with Generators)
 
 Ray is designed as a single driver process + multiple Actors, should not use torchrun multi-process mode.
 This script creates multiple Actors within a single process, simulating equivalent load to Pulsing.
+
+This version uses Ray Generators for streaming, providing fair comparison with Pulsing's streaming.
 
 Usage:
     python benchmarks/large_scale_stress_test_ray_single.py \
@@ -150,20 +152,17 @@ class ComputeWorker:
 
 @ray.remote
 class StreamWorker:
-    """Stream Worker - Streamed response"""
+    """Stream Worker - Streamed response using Ray Generators"""
 
-    async def generate_stream(self, count: int, delay: float) -> list[dict]:
-        result = []
+    async def generate_stream(self, count: int, delay: float):
+        """Generate stream using yield (Ray Generator)"""
         for i in range(count):
-            result.append(
-                {
-                    "index": i,
-                    "value": f"item_{i}",
-                    "timestamp": time.time(),
-                }
-            )
             await asyncio.sleep(delay)
-        return result
+            yield {
+                "index": i,
+                "value": f"item_{i}",
+                "timestamp": time.time(),
+            }
 
 
 @ray.remote
@@ -268,7 +267,7 @@ class StressTestClient:
             return False
 
     async def send_stream_request(self) -> bool:
-        """Send a stream request"""
+        """Send a stream request using Ray Generators (async for)"""
         if "stream" not in self.workers or not self.workers["stream"]:
             return False
 
@@ -276,14 +275,17 @@ class StressTestClient:
         start_time = time.time()
 
         try:
-            count = random.randint(5, 20)
-            delay = random.uniform(0.01, 0.05)
+            count = random.randint(5, 15)
+            delay = 0.01
 
-            stream_items = await worker.generate_stream.remote(count, delay)
-
+            # Use async for to stream results from Ray Generator
+            # This is the correct way to consume Ray Generators in asyncio
             chunk_count = 0
-            for _ in stream_items:
+            async for ref in worker.generate_stream.remote(count, delay):
+                # await the ObjectRef to get the actual value
+                item = await ref
                 chunk_count += 1
+                # Process item if needed (currently just counting)
 
             latency_ms = (time.time() - start_time) * 1000
             self.stats.add_stream(True, latency_ms)
