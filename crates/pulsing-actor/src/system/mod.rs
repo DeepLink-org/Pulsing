@@ -318,16 +318,12 @@ impl ActorSystemRef for ActorSystem {
             ));
         }
 
-        let watcher_key = watcher.to_string();
-        let target_key = target.to_string();
-        self.lifecycle.watch(&watcher_key, &target_key).await;
+        self.lifecycle.watch(watcher, target).await;
         Ok(())
     }
 
     async fn unwatch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()> {
-        let watcher_key = watcher.to_string();
-        let target_key = target.to_string();
-        self.lifecycle.unwatch(&watcher_key, &target_key).await;
+        self.lifecycle.unwatch(watcher, target).await;
         Ok(())
     }
 

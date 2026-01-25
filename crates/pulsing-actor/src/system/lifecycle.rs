@@ -201,20 +201,18 @@ impl ActorSystem {
         }
 
         // 3. Handle lifecycle cleanup
-        let actor_names = self.actor_names.clone();
         let local_actors = self.local_actors.clone();
         self.lifecycle
             .handle_termination(
                 &handle.actor_id,
-                actor_name,
                 named_path,
                 reason,
                 &self.named_actor_paths,
                 &self.cluster,
-                |name| {
-                    actor_names
-                        .get(name)
-                        .and_then(|id| local_actors.get(id.value()).map(|h| h.sender.clone()))
+                |actor_id| {
+                    // Directly get local_id from ActorId and lookup in local_actors
+                    let local_id = actor_id.local_id();
+                    local_actors.get(&local_id).map(|h| h.sender.clone())
                 },
             )
             .await;

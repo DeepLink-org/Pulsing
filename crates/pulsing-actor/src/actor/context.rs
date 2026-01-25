@@ -13,17 +13,10 @@ use tokio_util::sync::CancellationToken;
 /// Context provided to actors during message handling.
 pub struct ActorContext {
     actor_id: ActorId,
-
-    node_id: Option<NodeId>,
-
     cancel_token: CancellationToken,
-
     actor_refs: HashMap<ActorId, ActorRef>,
-
-    system: Option<Arc<dyn ActorSystemRef>>,
-
-    self_sender: Option<mpsc::Sender<Envelope>>,
-
+    system: Arc<dyn ActorSystemRef>,
+    self_sender: mpsc::Sender<Envelope>,
     named_path: Option<String>,
 }
 
@@ -42,36 +35,37 @@ pub trait ActorSystemRef: Send + Sync {
 }
 
 impl ActorContext {
-    pub fn new(actor_id: ActorId) -> Self {
+    /// Create a new ActorContext with all required fields.
+    ///
+    /// This is the main constructor for runtime use. All fields are required.
+    pub fn new(
+        actor_id: ActorId,
+        system: Arc<dyn ActorSystemRef>,
+        cancel_token: CancellationToken,
+        self_sender: mpsc::Sender<Envelope>,
+        named_path: Option<String>,
+    ) -> Self {
         Self {
             actor_id,
-            node_id: None,
-            cancel_token: CancellationToken::new(),
+            cancel_token,
             actor_refs: HashMap::new(),
-            system: None,
-            self_sender: None,
-            named_path: None,
+            system,
+            self_sender,
+            named_path,
         }
     }
 
+    /// Create a context with system but without a named path.
     pub fn with_system(
         actor_id: ActorId,
         system: Arc<dyn ActorSystemRef>,
         cancel_token: CancellationToken,
         self_sender: mpsc::Sender<Envelope>,
     ) -> Self {
-        let node_id = Some(system.node_id());
-        Self {
-            actor_id,
-            node_id,
-            cancel_token,
-            actor_refs: HashMap::new(),
-            system: Some(system),
-            self_sender: Some(self_sender),
-            named_path: None,
-        }
+        Self::new(actor_id, system, cancel_token, self_sender, None)
     }
 
+    /// Create a context with system and optional named path.
     pub fn with_system_and_name(
         actor_id: ActorId,
         system: Arc<dyn ActorSystemRef>,
@@ -79,23 +73,14 @@ impl ActorContext {
         self_sender: mpsc::Sender<Envelope>,
         named_path: Option<String>,
     ) -> Self {
-        let node_id = Some(system.node_id());
-        Self {
-            actor_id,
-            node_id,
-            cancel_token,
-            actor_refs: HashMap::new(),
-            system: Some(system),
-            self_sender: Some(self_sender),
-            named_path,
-        }
+        Self::new(actor_id, system, cancel_token, self_sender, named_path)
     }
 
     pub fn named_path(&self) -> Option<&str> {
         self.named_path.as_deref()
     }
 
-    pub fn system(&self) -> Option<Arc<dyn ActorSystemRef>> {
+    pub fn system(&self) -> Arc<dyn ActorSystemRef> {
         self.system.clone()
     }
 
@@ -103,8 +88,9 @@ impl ActorContext {
         &self.actor_id
     }
 
-    pub fn node_id(&self) -> Option<&NodeId> {
-        self.node_id.as_ref()
+    /// Get the node ID from the system reference.
+    pub fn node_id(&self) -> NodeId {
+        self.system.node_id()
     }
 
     pub fn cancel_token(&self) -> &CancellationToken {
@@ -120,13 +106,9 @@ impl ActorContext {
             return Ok(r.clone());
         }
 
-        if let Some(ref system) = self.system {
-            let r = system.actor_ref(id).await?;
-            self.actor_refs.insert(*id, r.clone());
-            return Ok(r);
-        }
-
-        Err(anyhow::anyhow!("No system reference available"))
+        let r = self.system.actor_ref(id).await?;
+        self.actor_refs.insert(*id, r.clone());
+        Ok(r)
     }
 
     /// Schedule a delayed message to self.
@@ -135,10 +117,7 @@ impl ActorContext {
         msg: M,
         delay: Duration,
     ) -> anyhow::Result<()> {
-        let sender = self.self_sender.clone().ok_or_else(|| {
-            anyhow::anyhow!("No self sender available (context not fully initialized)")
-        })?;
-
+        let sender = self.self_sender.clone();
         let message = Message::pack(&msg)?;
 
         tokio::spawn(async move {
@@ -154,62 +133,64 @@ impl ActorContext {
 
     /// Watch another actor.
     pub async fn watch(&self, target: &ActorId) -> anyhow::Result<()> {
-        if let Some(ref system) = self.system {
-            system.watch(&self.actor_id, target).await
-        } else {
-            Err(anyhow::anyhow!("No system reference available"))
-        }
+        self.system.watch(&self.actor_id, target).await
     }
 
     /// Stop watching another actor.
     pub async fn unwatch(&self, target: &ActorId) -> anyhow::Result<()> {
-        if let Some(ref system) = self.system {
-            system.unwatch(&self.actor_id, target).await
-        } else {
-            Err(anyhow::anyhow!("No system reference available"))
-        }
+        self.system.unwatch(&self.actor_id, target).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::system::{ActorSystem, SystemConfig};
 
-    #[test]
-    fn test_context_creation() {
-        let ctx = ActorContext::new(ActorId::local(1));
+    async fn create_test_context(actor_id: ActorId) -> (ActorContext, Arc<ActorSystem>) {
+        let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
+        let cancel_token = CancellationToken::new();
+        let (tx, _rx) = mpsc::channel(1);
+        let system_ref = system.clone() as Arc<dyn ActorSystemRef>;
+        let ctx = ActorContext::new(actor_id, system_ref, cancel_token, tx, None);
+        (ctx, system)
+    }
+
+    #[tokio::test]
+    async fn test_context_creation() {
+        let (ctx, _system) = create_test_context(ActorId::local(1)).await;
         assert_eq!(ctx.id().local_id(), 1);
         assert!(!ctx.is_cancelled());
     }
 
-    #[test]
-    fn test_context_cancellation() {
-        let ctx = ActorContext::new(ActorId::local(1));
+    #[tokio::test]
+    async fn test_context_cancellation() {
+        let (ctx, _system) = create_test_context(ActorId::local(1)).await;
         assert!(!ctx.is_cancelled());
         ctx.cancel_token().cancel();
         assert!(ctx.is_cancelled());
     }
 
-    #[test]
-    fn test_context_node_id_none() {
-        let ctx = ActorContext::new(ActorId::local(1));
-        assert!(ctx.node_id().is_none());
+    #[tokio::test]
+    async fn test_context_node_id() {
+        let (ctx, system) = create_test_context(ActorId::local(1)).await;
+        assert_eq!(ctx.node_id(), *system.node_id());
     }
 
-    #[test]
-    fn test_context_multiple_actors() {
-        let ctx1 = ActorContext::new(ActorId::local(1));
-        let ctx2 = ActorContext::new(ActorId::local(2));
-        let ctx3 = ActorContext::new(ActorId::local(3));
+    #[tokio::test]
+    async fn test_context_multiple_actors() {
+        let (ctx1, _system1) = create_test_context(ActorId::local(1)).await;
+        let (ctx2, _system2) = create_test_context(ActorId::local(2)).await;
+        let (ctx3, _system3) = create_test_context(ActorId::local(3)).await;
 
         assert_eq!(ctx1.id().local_id(), 1);
         assert_eq!(ctx2.id().local_id(), 2);
         assert_eq!(ctx3.id().local_id(), 3);
     }
 
-    #[test]
-    fn test_context_cancel_token_clone() {
-        let ctx = ActorContext::new(ActorId::local(1));
+    #[tokio::test]
+    async fn test_context_cancel_token_clone() {
+        let (ctx, _system) = create_test_context(ActorId::local(1)).await;
         let token = ctx.cancel_token().clone();
 
         assert!(!ctx.is_cancelled());
@@ -222,41 +203,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_context_actor_ref_no_system() {
-        let mut ctx = ActorContext::new(ActorId::local(1));
+    async fn test_context_actor_ref() {
+        let (mut ctx, _system) = create_test_context(ActorId::local(1)).await;
         let target_id = ActorId::local(2);
 
+        // actor_ref should fail for non-existent actor
         let result = ctx.actor_ref(&target_id).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No system reference"));
     }
 
     #[tokio::test]
-    async fn test_context_watch_no_system() {
-        let ctx = ActorContext::new(ActorId::local(1));
+    async fn test_context_watch() {
+        let (ctx, _system) = create_test_context(ActorId::local(1)).await;
         let target_id = ActorId::local(2);
 
+        // watch should work with real system
         let result = ctx.watch(&target_id).await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No system reference"));
+        // May fail if target doesn't exist, but should not panic
+        let _ = result;
     }
 
     #[tokio::test]
-    async fn test_context_unwatch_no_system() {
-        let ctx = ActorContext::new(ActorId::local(1));
+    async fn test_context_unwatch() {
+        let (ctx, _system) = create_test_context(ActorId::local(1)).await;
         let target_id = ActorId::local(2);
 
+        // unwatch should work with real system
         let result = ctx.unwatch(&target_id).await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No system reference"));
+        // May fail if target doesn't exist, but should not panic
+        let _ = result;
     }
 }

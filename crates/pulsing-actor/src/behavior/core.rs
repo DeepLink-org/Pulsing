@@ -1,12 +1,10 @@
 use super::context::BehaviorContext;
 use super::reference::TypedRef;
-use crate::actor::ActorSystemRef;
 use crate::actor::{Actor, ActorContext, IntoActor, Message};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use serde::{de::DeserializeOwned, Serialize};
 use std::marker::PhantomData;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Action returned by a behavior after processing a message.
@@ -164,11 +162,8 @@ where
         // Store name for logging
         *self.name.lock().await = Some(actor_name.clone());
 
-        // We need a system reference - get it from the context
-        // Note: This requires ActorContext to provide system access
-        let system: Arc<dyn ActorSystemRef> = ctx
-            .system()
-            .ok_or_else(|| anyhow::anyhow!("No system reference available in context"))?;
+        // Get system reference from the context (always available now)
+        let system = ctx.system();
 
         // Initialize the behavior context
         let actor_id = *ctx.id();
