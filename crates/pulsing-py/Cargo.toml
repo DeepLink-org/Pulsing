@@ -27,6 +27,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 reqwest = { workspace = true }
 pythonize = "0.23"
+uuid = { workspace = true }
 
 [dependencies.pyo3]
 version = "0.23.4"

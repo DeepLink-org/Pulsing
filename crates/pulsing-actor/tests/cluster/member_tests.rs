@@ -244,7 +244,7 @@ fn test_member_info_hash() {
 
 #[test]
 fn test_actor_location() {
-    let actor_id = ActorId::local(1);
+    let actor_id = ActorId::generate();
     let node_id = NodeId::generate();
 
     let location = ActorLocation::new(actor_id, node_id);
@@ -282,7 +282,7 @@ fn test_failure_info() {
 #[test]
 fn test_named_actor_instance_new() {
     let node_id = NodeId::generate();
-    let actor_id = ActorId::local(42);
+    let actor_id = ActorId::generate();
 
     let instance = NamedActorInstance::new(node_id, actor_id);
 
@@ -294,7 +294,7 @@ fn test_named_actor_instance_new() {
 #[test]
 fn test_named_actor_instance_with_metadata() {
     let node_id = NodeId::generate();
-    let actor_id = ActorId::local(42);
+    let actor_id = ActorId::generate();
     let mut metadata = HashMap::new();
     metadata.insert("class".to_string(), "Counter".to_string());
     metadata.insert("module".to_string(), "__main__".to_string());
@@ -348,7 +348,7 @@ fn test_named_actor_info_with_instance() {
 fn test_named_actor_info_with_full_instance() {
     let path = ActorPath::new("actors/counter").unwrap();
     let node_id = NodeId::generate();
-    let actor_id = ActorId::local(42);
+    let actor_id = ActorId::generate();
     let mut metadata = HashMap::new();
     metadata.insert("class".to_string(), "Counter".to_string());
 
@@ -400,8 +400,8 @@ fn test_named_actor_info_add_full_instance() {
     let path = ActorPath::new("actors/counter").unwrap();
     let node1 = NodeId::generate();
     let node2 = NodeId::generate();
-    let actor_id1 = ActorId::local(1);
-    let actor_id2 = ActorId::local(2);
+    let actor_id1 = ActorId::generate();
+    let actor_id2 = ActorId::generate();
 
     let mut info = NamedActorInfo::new(path);
 
@@ -471,8 +471,8 @@ fn test_named_actor_info_merge_with_full_instances() {
     let path = ActorPath::new("actors/counter").unwrap();
     let node1 = NodeId::generate();
     let node2 = NodeId::generate();
-    let actor_id1 = ActorId::local(1);
-    let actor_id2 = ActorId::local(2);
+    let actor_id1 = ActorId::generate();
+    let actor_id2 = ActorId::generate();
 
     let mut metadata1 = HashMap::new();
     metadata1.insert("class".to_string(), "Counter".to_string());

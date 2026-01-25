@@ -396,7 +396,7 @@ async fn test_http2_remote_transport_ask() {
     // Use the RemoteTransport trait
     use pulsing_actor::actor::RemoteTransport;
 
-    let actor_id = ActorId::local(1);
+    let actor_id = ActorId::generate();
     let response = transport
         .request(&actor_id, "TestType", b"payload".to_vec())
         .await
@@ -436,7 +436,7 @@ async fn test_http2_remote_transport_tell() {
     // Use the RemoteTransport trait
     use pulsing_actor::actor::RemoteTransport;
 
-    let actor_id = ActorId::local(2);
+    let actor_id = ActorId::generate();
     transport
         .send(&actor_id, "FireMsg", b"data".to_vec())
         .await
@@ -478,7 +478,7 @@ async fn test_http2_remote_transport_named_path() {
     // Use the RemoteTransport trait
     use pulsing_actor::actor::RemoteTransport;
 
-    let actor_id = ActorId::local(3);
+    let actor_id = ActorId::generate();
     let response = transport
         .request(&actor_id, "Inference", b"prompt".to_vec())
         .await

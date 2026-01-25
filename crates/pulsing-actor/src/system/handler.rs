@@ -17,10 +17,10 @@ use tokio::sync::{mpsc, RwLock};
 /// Unified message handler for HTTP/2 transport
 pub(crate) struct SystemMessageHandler {
     node_id: NodeId,
-    /// Local actors indexed by local_id
-    local_actors: Arc<DashMap<u64, LocalActorHandle>>,
-    /// Actor name to local_id mapping
-    actor_names: Arc<DashMap<String, u64>>,
+    /// Local actors indexed by ActorId
+    local_actors: Arc<DashMap<ActorId, LocalActorHandle>>,
+    /// Actor name to ActorId mapping
+    actor_names: Arc<DashMap<String, ActorId>>,
     named_actor_paths: Arc<DashMap<String, String>>,
     cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
 }
@@ -28,8 +28,8 @@ pub(crate) struct SystemMessageHandler {
 impl SystemMessageHandler {
     pub fn new(
         node_id: NodeId,
-        local_actors: Arc<DashMap<u64, LocalActorHandle>>,
-        actor_names: Arc<DashMap<String, u64>>,
+        local_actors: Arc<DashMap<ActorId, LocalActorHandle>>,
+        actor_names: Arc<DashMap<String, ActorId>>,
         named_actor_paths: Arc<DashMap<String, String>>,
         cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
     ) -> Self {
@@ -42,18 +42,19 @@ impl SystemMessageHandler {
         }
     }
 
-    /// Find actor sender by name or local_id (O(1) lookup)
+    /// Find actor sender by name or ActorId (O(1) lookup)
     fn find_actor_sender(&self, actor_name: &str) -> anyhow::Result<mpsc::Sender<Envelope>> {
-        // First try by name -> local_id -> handle
-        if let Some(local_id) = self.actor_names.get(actor_name) {
-            if let Some(handle) = self.local_actors.get(local_id.value()) {
+        // First try by name -> ActorId -> handle
+        if let Some(actor_id) = self.actor_names.get(actor_name) {
+            if let Some(handle) = self.local_actors.get(actor_id.value()) {
                 return Ok(handle.sender.clone());
             }
         }
 
-        // Then try parsing as local_id directly (O(1))
-        if let Ok(local_id) = actor_name.parse::<u64>() {
-            if let Some(handle) = self.local_actors.get(&local_id) {
+        // Then try parsing as ActorId (UUID format)
+        if let Ok(uuid) = uuid::Uuid::parse_str(actor_name) {
+            let actor_id = ActorId::new(uuid.as_u128());
+            if let Some(handle) = self.local_actors.get(&actor_id) {
                 return Ok(handle.sender.clone());
             }
         }

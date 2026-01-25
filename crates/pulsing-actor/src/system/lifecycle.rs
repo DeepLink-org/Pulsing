@@ -210,9 +210,8 @@ impl ActorSystem {
                 &self.named_actor_paths,
                 &self.cluster,
                 |actor_id| {
-                    // Directly get local_id from ActorId and lookup in local_actors
-                    let local_id = actor_id.local_id();
-                    local_actors.get(&local_id).map(|h| h.sender.clone())
+                    // Directly lookup by ActorId
+                    local_actors.get(actor_id).map(|h| h.sender.clone())
                 },
             )
             .await;

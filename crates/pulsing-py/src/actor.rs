@@ -38,10 +38,39 @@ impl PyNodeId {
         }
     }
 
+    /// Create a new NodeId from a u128 value or string UUID
     #[new]
-    fn new(id: u64) -> Self {
-        Self {
-            inner: NodeId::new(id),
+    #[pyo3(signature = (id=None))]
+    fn new(id: Option<&Bound<'_, pyo3::PyAny>>) -> PyResult<Self> {
+        match id {
+            None => Ok(Self {
+                inner: NodeId::generate(),
+            }),
+            Some(py_id) => {
+                // Try to extract as string first (UUID format)
+                if let Ok(s) = py_id.extract::<String>() {
+                    if let Ok(uuid) = uuid::Uuid::parse_str(&s) {
+                        return Ok(Self {
+                            inner: NodeId::new(uuid.as_u128()),
+                        });
+                    }
+                }
+                // Try as integer
+                if let Ok(n) = py_id.extract::<u128>() {
+                    return Ok(Self {
+                        inner: NodeId::new(n),
+                    });
+                }
+                // Try as smaller integer
+                if let Ok(n) = py_id.extract::<u64>() {
+                    return Ok(Self {
+                        inner: NodeId::new(n as u128),
+                    });
+                }
+                Err(PyValueError::new_err(
+                    "NodeId must be a UUID string or integer",
+                ))
+            }
         }
     }
 
@@ -52,9 +81,15 @@ impl PyNodeId {
         }
     }
 
+    /// Get the raw u128 value
     #[getter]
-    fn id(&self) -> u64 {
+    fn id(&self) -> u128 {
         self.inner.0
+    }
+
+    /// Get the UUID string representation
+    fn uuid(&self) -> String {
+        self.inner.to_string()
     }
 
     fn is_local(&self) -> bool {
@@ -79,33 +114,59 @@ pub struct PyActorId {
 
 #[pymethods]
 impl PyActorId {
+    /// Create a new ActorId from a u128 value, string UUID, or generate a new one
     #[new]
-    #[pyo3(signature = (local_id, node=None))]
-    fn new(local_id: u64, node: Option<PyNodeId>) -> Self {
-        let inner = match node {
-            Some(n) => ActorId::new(n.inner, local_id),
-            None => ActorId::local(local_id),
-        };
-        Self { inner }
+    #[pyo3(signature = (id=None))]
+    fn new(id: Option<&Bound<'_, pyo3::PyAny>>) -> PyResult<Self> {
+        match id {
+            None => Ok(Self {
+                inner: ActorId::generate(),
+            }),
+            Some(py_id) => {
+                // Try to extract as string first (UUID format)
+                if let Ok(s) = py_id.extract::<String>() {
+                    if let Ok(uuid) = uuid::Uuid::parse_str(&s) {
+                        return Ok(Self {
+                            inner: ActorId::new(uuid.as_u128()),
+                        });
+                    }
+                }
+                // Try as integer
+                if let Ok(n) = py_id.extract::<u128>() {
+                    return Ok(Self {
+                        inner: ActorId::new(n),
+                    });
+                }
+                // Try as smaller integer
+                if let Ok(n) = py_id.extract::<u64>() {
+                    return Ok(Self {
+                        inner: ActorId::new(n as u128),
+                    });
+                }
+                Err(PyValueError::new_err(
+                    "ActorId must be a UUID string or integer",
+                ))
+            }
+        }
     }
 
+    /// Generate a new random ActorId
     #[staticmethod]
-    fn local(local_id: u64) -> Self {
+    fn generate() -> Self {
         Self {
-            inner: ActorId::local(local_id),
+            inner: ActorId::generate(),
         }
     }
 
+    /// Get the raw u128 value
     #[getter]
-    fn local_id(&self) -> u64 {
-        self.inner.local_id()
+    fn id(&self) -> u128 {
+        self.inner.0
     }
 
-    #[getter]
-    fn node(&self) -> PyNodeId {
-        PyNodeId {
-            inner: self.inner.node(),
-        }
+    /// Get the UUID string representation
+    fn uuid(&self) -> String {
+        self.inner.to_string()
     }
 
     fn __str__(&self) -> String {
@@ -113,11 +174,7 @@ impl PyActorId {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "ActorId(local_id={}, node={})",
-            self.inner.local_id(),
-            self.inner.node()
-        )
+        format!("ActorId({})", self.inner.0)
     }
 
     fn __hash__(&self) -> u64 {
@@ -131,31 +188,25 @@ impl PyActorId {
         self.inner == other.inner
     }
 
-    /// Parse ActorId from string format "node_id:local_id"
+    /// Parse ActorId from string (UUID format)
     #[staticmethod]
     fn from_str(s: &str) -> PyResult<Self> {
-        let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() != 2 {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid ActorId format: '{}'. Expected 'node_id:local_id'",
-                s
-            )));
+        // Try to parse as UUID
+        if let Ok(uuid) = uuid::Uuid::parse_str(s) {
+            return Ok(Self {
+                inner: ActorId::new(uuid.as_u128()),
+            });
         }
-        let node_id: u64 = parts[0].parse().map_err(|_| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid node_id in ActorId: '{}'",
-                parts[0]
-            ))
-        })?;
-        let local_id: u64 = parts[1].parse().map_err(|_| {
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "Invalid local_id in ActorId: '{}'",
-                parts[1]
-            ))
-        })?;
-        Ok(Self {
-            inner: ActorId::new(NodeId::new(node_id), local_id),
-        })
+        // Try to parse as simple integer
+        if let Ok(n) = s.parse::<u128>() {
+            return Ok(Self {
+                inner: ActorId::new(n),
+            });
+        }
+        Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid ActorId format: '{}'. Expected UUID string or integer",
+            s
+        )))
     }
 }
 
@@ -1314,11 +1365,13 @@ impl PyActorSystem {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let members = system.members().await;
+            // Return all fields as strings for safe JSON serialization
             let result: Vec<std::collections::HashMap<String, String>> = members
                 .into_iter()
                 .map(|m| {
                     let mut map = std::collections::HashMap::new();
-                    map.insert("node_id".to_string(), m.node_id.to_string());
+                    // Use string representation to avoid JSON integer overflow
+                    map.insert("node_id".to_string(), m.node_id.0.to_string());
                     map.insert("addr".to_string(), m.addr.to_string());
                     map.insert("status".to_string(), format!("{:?}", m.status));
                     map
@@ -1470,7 +1523,7 @@ impl PyActorSystem {
         &self,
         py: Python<'py>,
         name: String,
-        node_id: Option<u64>,
+        node_id: Option<u128>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let system = self.inner.clone();
 
@@ -1502,7 +1555,7 @@ impl PyActorSystem {
         &self,
         py: Python<'py>,
         name: String,
-        node_id: Option<u64>,
+        node_id: Option<u128>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.resolve_named(py, name, node_id)
     }
@@ -1536,7 +1589,7 @@ impl PyActorSystem {
     }
 
     /// Get remote SystemActor reference (for remote nodes)
-    fn remote_system<'py>(&self, py: Python<'py>, node_id: u64) -> PyResult<Bound<'py, PyAny>> {
+    fn remote_system<'py>(&self, py: Python<'py>, node_id: u128) -> PyResult<Bound<'py, PyAny>> {
         let system = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {

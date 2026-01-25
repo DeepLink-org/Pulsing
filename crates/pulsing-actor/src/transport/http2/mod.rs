@@ -274,7 +274,7 @@ impl Http2RemoteTransport {
         Self {
             client,
             remote_addr,
-            path: format!("/actors/{}", actor_id.local_id()),
+            path: format!("/actors/{}", actor_id),
             circuit_breaker: CircuitBreaker::new(),
         }
     }
@@ -514,10 +514,12 @@ mod tests {
     fn test_http2_remote_transport_new_by_id() {
         let client = Arc::new(Http2Client::new(Http2Config::default()));
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
-        let actor_id = ActorId::local(42);
+        let actor_id = ActorId::generate();
 
         let transport = Http2RemoteTransport::new_by_id(client, addr, actor_id);
-        assert_eq!(transport.path(), "/actors/42");
+        // Path should be /actors/{uuid} where uuid is 32 hex chars
+        assert!(transport.path().starts_with("/actors/"));
+        assert_eq!(transport.path().len(), 8 + 32); // "/actors/" + 32 hex chars
         assert_eq!(transport.remote_addr(), addr);
     }
 

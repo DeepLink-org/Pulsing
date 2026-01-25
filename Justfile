@@ -163,7 +163,10 @@ ci-setup-macos: ensure-rust ensure-uv
 ci-setup-fedora python_version="3.12": ensure-uv
     #!/usr/bin/env bash
     export PATH="$HOME/.local/bin:$PATH"
-    dnf install -y python{{python_version}}
+    # Install build dependencies
+    dnf install -y gcc gcc-c++ openssl-devel
+    # Use uv to install Python (consistent with manylinux setup)
+    uv python install {{python_version}}
     uv tool install pytest
     echo "==> Setup complete!"
 
@@ -193,8 +196,24 @@ ci-build manylinux="":
 ci-test:
     #!/usr/bin/env bash
     export PATH="$HOME/.local/bin:$PATH"
-    pip install dist/*.whl pytest pytest-asyncio 2>/dev/null || uv pip install --system dist/*.whl pytest pytest-asyncio
-    python3 -m pytest tests/python -v
+    # Install wheel and dependencies using uv (preferred) or pip
+    if command -v uv &> /dev/null; then
+        uv pip install --system dist/*.whl pytest pytest-asyncio
+        # Use uv run pytest (uses uv-managed Python environment)
+        uv run pytest tests/python -v
+    else
+        # Fallback to pip if uv not available
+        pip install dist/*.whl pytest pytest-asyncio
+        # Try to find python executable
+        for py in python3 python3.12 python3.11 python3.10 python; do
+            if command -v $py &> /dev/null; then
+                $py -m pytest tests/python -v
+                exit 0
+            fi
+        done
+        echo "Error: No Python interpreter found"
+        exit 1
+    fi
 
 # =============================================================================
 # 本地模拟 CI 流水线 (Action 命令)

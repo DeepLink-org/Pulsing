@@ -169,8 +169,8 @@ impl ActorRef {
     /// The reference will automatically re-resolve after CACHE_TTL (5 seconds).
     pub fn lazy(path: ActorPath, resolver: Arc<dyn ActorResolver>) -> Self {
         Self {
-            // Use a placeholder ID for lazy refs
-            actor_id: ActorId::local(0),
+            // Use a placeholder ID for lazy refs (all zeros)
+            actor_id: ActorId::new(0),
             inner: ActorRefInner::Lazy(Arc::new(LazyActorRef::new(path, resolver))),
         }
     }
@@ -294,7 +294,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_actor_ref_tell() {
         let (tx, mut rx) = mpsc::channel(16);
-        let actor_id = ActorId::local(1);
+        let actor_id = ActorId::generate();
         let actor_ref = ActorRef::local(actor_id, tx);
 
         actor_ref.tell(TestMsg { value: 42 }).await.unwrap();
@@ -307,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn test_local_actor_ref_send_oneway() {
         let (tx, mut rx) = mpsc::channel(16);
-        let actor_id = ActorId::local(1);
+        let actor_id = ActorId::generate();
         let actor_ref = ActorRef::local(actor_id, tx);
 
         let msg = Message::single("TestMsg", b"hello");

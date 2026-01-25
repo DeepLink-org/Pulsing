@@ -321,7 +321,7 @@ impl Default for MetricsRegistry {
 /// System-level metrics collected from SystemActor
 #[derive(Debug, Clone, Default)]
 pub struct SystemMetrics {
-    pub node_id: u64,
+    pub node_id: u128,
     pub actors_count: usize,
     pub messages_total: u64,
     pub actors_created: u64,

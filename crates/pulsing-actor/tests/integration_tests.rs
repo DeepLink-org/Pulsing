@@ -542,6 +542,7 @@ mod lifecycle_tests {
 
 mod addressing_tests {
     use super::*;
+    use pulsing_actor::actor::ActorId;
 
     #[tokio::test]
     async fn test_spawn_named_actor() {
@@ -621,7 +622,7 @@ mod addressing_tests {
             .unwrap();
 
         // Get the full address using the actual actor id
-        let addr = ActorAddress::local(actor_ref.id().local_id());
+        let addr = ActorAddress::local(*actor_ref.id());
 
         // Resolve
         let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr)
@@ -649,10 +650,8 @@ mod addressing_tests {
             .await
             .unwrap();
 
-        // Resolve using local address (node_id = 0) with actual actor id
-        let addr =
-            ActorAddress::parse(&format!("actor://0/{}", actor_ref.id().local_id())).unwrap();
-        assert!(addr.is_local());
+        // Resolve using global address with actual actor id
+        let addr = ActorAddress::global(*actor_ref.id());
 
         let resolved_ref = ActorSystemOpsExt::resolve_address(&system, &addr)
             .await
@@ -722,19 +721,17 @@ mod addressing_tests {
         assert_eq!(addr.path().unwrap().namespace(), "services");
         assert_eq!(addr.path().unwrap().name(), "api");
 
-        // Named instance (node_id is now u64)
+        // Named instance (uses u128 node_id)
         let addr = ActorAddress::parse("actor:///services/api@123").unwrap();
         assert!(addr.is_named());
         assert_eq!(addr.node_id().map(|n| n.0), Some(123));
 
-        // Global (node_id and actor_id are now u64)
-        let addr = ActorAddress::parse("actor://456/789").unwrap();
+        // Global address with UUID format
+        let actor_id = ActorId::generate();
+        let addr_str = format!("actor://{}", actor_id);
+        let addr = ActorAddress::parse(&addr_str).unwrap();
         assert!(addr.is_global());
-        assert_eq!(addr.actor_id(), Some(789));
-
-        // Local (node_id = 0)
-        let addr = ActorAddress::parse("actor://0/100").unwrap();
-        assert!(addr.is_local());
+        assert_eq!(addr.actor_id(), Some(actor_id));
     }
 
     #[tokio::test]

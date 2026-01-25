@@ -74,39 +74,40 @@ async fn test_system_with_specific_addr() {
 
 #[test]
 fn test_actor_id_creation() {
-    let node_id = NodeId::generate();
-    let actor_id = ActorId::new(node_id, 123);
+    // Test generating a new ActorId
+    let actor_id = ActorId::generate();
+    assert_ne!(actor_id.0, 0);
 
-    assert_eq!(actor_id.node(), node_id);
-    assert_eq!(actor_id.local_id(), 123);
+    // Test creating from specific value
+    let actor_id2 = ActorId::new(12345);
+    assert_eq!(actor_id2.0, 12345);
 }
 
 #[test]
-fn test_actor_id_local() {
-    let actor_id = ActorId::local(456);
+fn test_actor_id_uniqueness() {
+    // UUID-based IDs should be unique
+    let id1 = ActorId::generate();
+    let id2 = ActorId::generate();
 
-    assert!(actor_id.node().is_local());
-    assert_eq!(actor_id.local_id(), 456);
+    assert_ne!(id1, id2);
 }
 
 #[test]
 fn test_actor_id_equality() {
-    let node_id = NodeId::generate();
-    let id1 = ActorId::new(node_id, 1);
-    let id2 = ActorId::new(node_id, 1);
+    // Same value should be equal
+    let id1 = ActorId::new(12345);
+    let id2 = ActorId::new(12345);
 
     assert_eq!(id1, id2);
 }
 
 #[test]
 fn test_actor_id_display() {
-    let node_id = NodeId::generate();
-    let actor_id = ActorId::new(node_id, 42);
+    let actor_id = ActorId::generate();
     let display = format!("{}", actor_id);
 
-    // Display format is "node_id:local_id"
-    assert!(display.contains("42"));
-    assert!(display.contains(&node_id.0.to_string()));
+    // Display format is UUID (32 hex characters)
+    assert_eq!(display.len(), 32);
 }
 
 // ============================================================================

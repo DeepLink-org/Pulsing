@@ -11,7 +11,6 @@ use crate::system::config::SpawnOptions;
 use crate::system::handle::{ActorStats, LocalActorHandle};
 use crate::system::runtime::run_supervision_loop;
 use crate::system::ActorSystem;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 impl ActorSystem {
@@ -42,7 +41,6 @@ impl ActorSystem {
         }
 
         let actor_id = self.next_actor_id();
-        let local_id = actor_id.local_id();
 
         let mailbox = Mailbox::with_capacity(self.mailbox_capacity(&options));
         let (sender, receiver) = mailbox.split();
@@ -76,11 +74,11 @@ impl ActorSystem {
             actor_id,
         };
 
-        self.local_actors.insert(local_id, handle);
+        self.local_actors.insert(actor_id, handle);
 
         // Register in name maps
         if let Some(ref name) = name_str {
-            self.actor_names.insert(name.clone(), local_id);
+            self.actor_names.insert(name.clone(), actor_id);
             self.named_actor_paths.insert(name.clone(), name.clone());
 
             // Register with cluster if available
@@ -97,16 +95,15 @@ impl ActorSystem {
             }
         } else {
             // Anonymous actor: use actor_id as key
-            self.actor_names.insert(actor_id.to_string(), local_id);
+            self.actor_names.insert(actor_id.to_string(), actor_id);
         }
 
         Ok(ActorRef::local(actor_id, sender))
     }
 
-    /// Generate a new unique local actor ID
+    /// Generate a new unique actor ID using UUID
     pub(crate) fn next_actor_id(&self) -> ActorId {
-        let local_id = self.actor_id_counter.fetch_add(1, Ordering::Relaxed);
-        ActorId::new(self.node_id, local_id)
+        ActorId::generate()
     }
 
     fn mailbox_capacity(&self, options: &SpawnOptions) -> usize {

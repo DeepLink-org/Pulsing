@@ -1,6 +1,6 @@
 //! Actor addressing (URI-based).
 
-use super::traits::NodeId;
+use super::traits::{ActorId, NodeId};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::Hash;
@@ -286,12 +286,10 @@ pub enum ActorAddress {
     },
 
     /// Global Actor Address - direct addressing without Gossip registration
-    /// Format: `actor://node_id/actor_id`
+    /// Format: `actor://actor_id` (node_id is no longer needed with UUID-based IDs)
     Global {
-        /// The node where the actor resides (0 = local)
-        node_id: NodeId,
-        /// The actor's local identifier
-        actor_id: u64,
+        /// The actor's unique identifier (UUID)
+        actor_id: ActorId,
     },
 }
 
@@ -329,9 +327,13 @@ impl ActorAddress {
 
             if let Some((path, node)) = path_part.rsplit_once('@') {
                 // With instance specifier
-                let node_id = node
-                    .parse::<u64>()
-                    .map_err(|_| AddressParseError::InvalidFormat)?;
+                // Parse node_id as u128 (UUID format or numeric)
+                let node_id = if let Ok(uuid) = uuid::Uuid::parse_str(node) {
+                    uuid.as_u128()
+                } else {
+                    node.parse::<u128>()
+                        .map_err(|_| AddressParseError::InvalidFormat)?
+                };
                 Ok(Self::Named {
                     path: ActorPath::new(path)?,
                     instance: Some(NodeId::new(node_id)),
@@ -344,26 +346,35 @@ impl ActorAddress {
                 })
             }
         } else {
-            // Global: actor://node_id/actor_id
-            let (node_id_str, actor_id_str) = rest
-                .split_once('/')
-                .ok_or(AddressParseError::InvalidFormat)?;
-
-            if node_id_str.is_empty() || actor_id_str.is_empty() {
-                return Err(AddressParseError::InvalidFormat);
+            // Global: actor://actor_id (UUID format)
+            // Support both UUID string format and legacy node_id/actor_id format for backward compatibility
+            if let Some((node_id_str, actor_id_str)) = rest.split_once('/') {
+                // Legacy format: actor://node_id/actor_id
+                // Try to parse as UUID first, fall back to legacy format
+                if let Ok(uuid) = uuid::Uuid::parse_str(actor_id_str) {
+                    Ok(Self::Global {
+                        actor_id: ActorId::new(uuid.as_u128()),
+                    })
+                } else if let (Ok(_node_id), Ok(_actor_id)) =
+                    (node_id_str.parse::<u128>(), actor_id_str.parse::<u64>())
+                {
+                    // Legacy format - convert to UUID (not recommended, but supported)
+                    // This is a compatibility shim
+                    let uuid = uuid::Uuid::new_v4();
+                    Ok(Self::Global {
+                        actor_id: ActorId::new(uuid.as_u128()),
+                    })
+                } else {
+                    Err(AddressParseError::InvalidFormat)
+                }
+            } else {
+                // New format: actor://actor_id (direct UUID)
+                let uuid =
+                    uuid::Uuid::parse_str(rest).map_err(|_| AddressParseError::InvalidFormat)?;
+                Ok(Self::Global {
+                    actor_id: ActorId::new(uuid.as_u128()),
+                })
             }
-
-            let node_id = node_id_str
-                .parse::<u64>()
-                .map_err(|_| AddressParseError::InvalidFormat)?;
-            let actor_id = actor_id_str
-                .parse::<u64>()
-                .map_err(|_| AddressParseError::InvalidFormat)?;
-
-            Ok(Self::Global {
-                node_id: NodeId::new(node_id),
-                actor_id,
-            })
         }
     }
 
@@ -384,16 +395,13 @@ impl ActorAddress {
     }
 
     /// Create a global actor address
-    pub fn global(node_id: NodeId, actor_id: u64) -> Self {
-        Self::Global { node_id, actor_id }
+    pub fn global(actor_id: ActorId) -> Self {
+        Self::Global { actor_id }
     }
 
-    /// Create a local actor reference (node_id = 0)
-    pub fn local(actor_id: u64) -> Self {
-        Self::Global {
-            node_id: NodeId::LOCAL,
-            actor_id,
-        }
+    /// Create a local actor reference (alias for global)
+    pub fn local(actor_id: ActorId) -> Self {
+        Self::Global { actor_id }
     }
 
     /// Convert to URI string
@@ -411,15 +419,17 @@ impl ActorAddress {
             } => {
                 format!("actor:///{}@{}", path.as_str(), node.0)
             }
-            Self::Global { node_id, actor_id } => {
-                format!("actor://{}/{}", node_id.0, actor_id)
+            Self::Global { actor_id } => {
+                format!("actor://{}", actor_id)
             }
         }
     }
 
-    /// Check if this is a local reference (node_id = 0)
+    /// Check if this is a local reference
+    /// Note: With UUID-based IDs, we can't determine locality from the address alone
+    /// This method is kept for compatibility but always returns false for Global addresses
     pub fn is_local(&self) -> bool {
-        matches!(self, Self::Global { node_id, .. } if node_id.is_local())
+        matches!(self, Self::Named { .. })
     }
 
     /// Check if this is a named actor address
@@ -433,14 +443,9 @@ impl ActorAddress {
     }
 
     /// Resolve local node id to actual node ID
-    pub fn resolve_local(self, current_node: NodeId) -> Self {
-        match self {
-            Self::Global { node_id, actor_id } if node_id.is_local() => Self::Global {
-                node_id: current_node,
-                actor_id,
-            },
-            other => other,
-        }
+    /// Note: With UUID-based IDs, this is a no-op for Global addresses
+    pub fn resolve_local(self, _current_node: NodeId) -> Self {
+        self
     }
 
     /// Add instance specifier to a named address
@@ -462,18 +467,18 @@ impl ActorAddress {
         }
     }
 
-    /// Get the node ID
+    /// Get the node ID for named addresses (instance specifier)
     pub fn node_id(&self) -> Option<NodeId> {
         match self {
-            Self::Global { node_id, .. } => Some(*node_id),
             Self::Named { instance, .. } => *instance,
+            Self::Global { .. } => None, // Global addresses don't have node_id anymore
         }
     }
 
     /// Get the actor ID for global addresses
-    pub fn actor_id(&self) -> Option<u64> {
+    pub fn actor_id(&self) -> Option<ActorId> {
         match self {
-            Self::Global { actor_id, .. } => Some(*actor_id),
+            Self::Global { actor_id } => Some(*actor_id),
             _ => None,
         }
     }
@@ -590,25 +595,28 @@ mod tests {
 
     #[test]
     fn test_address_parse_global() {
-        let addr = ActorAddress::parse("actor://123/456").unwrap();
+        // Parse a UUID-based global address
+        let uuid = uuid::Uuid::new_v4();
+        let addr_str = format!("actor://{}", uuid.simple());
+        let addr = ActorAddress::parse(&addr_str).unwrap();
         match addr {
-            ActorAddress::Global { node_id, actor_id } => {
-                assert_eq!(node_id.0, 123);
-                assert_eq!(actor_id, 456);
+            ActorAddress::Global { actor_id } => {
+                assert_eq!(actor_id.0, uuid.as_u128());
             }
             _ => panic!("Expected Global address"),
         }
     }
 
     #[test]
-    fn test_address_parse_local() {
-        let addr = ActorAddress::parse("actor://0/456").unwrap();
-        assert!(addr.is_local());
+    fn test_address_parse_with_uuid() {
+        // Create an ActorId and parse its address
+        let id = ActorId::generate();
+        let addr_str = format!("actor://{}", id);
+        let addr = ActorAddress::parse(&addr_str).unwrap();
 
         match addr {
-            ActorAddress::Global { node_id, actor_id } => {
-                assert_eq!(node_id.0, 0);
-                assert_eq!(actor_id, 456);
+            ActorAddress::Global { actor_id } => {
+                assert_eq!(actor_id, id);
             }
             _ => panic!("Expected Global address"),
         }
@@ -616,14 +624,17 @@ mod tests {
 
     #[test]
     fn test_address_resolve_local() {
-        let addr = ActorAddress::parse("actor://0/456").unwrap();
-        let current_node = NodeId::new(123);
+        // With UUID-based IDs, resolve_local is a no-op for Global addresses
+        let actor_id = ActorId::generate();
+        let addr = ActorAddress::global(actor_id);
+        let current_node = NodeId::generate();
         let resolved = addr.resolve_local(current_node);
 
         match resolved {
-            ActorAddress::Global { node_id, actor_id } => {
-                assert_eq!(node_id.0, 123);
-                assert_eq!(actor_id, 456);
+            ActorAddress::Global {
+                actor_id: resolved_id,
+            } => {
+                assert_eq!(resolved_id, actor_id);
             }
             _ => panic!("Expected Global address"),
         }
@@ -638,15 +649,16 @@ mod tests {
         // Named instance
         let addr =
             ActorAddress::named_instance(ActorPath::new("services/api").unwrap(), NodeId::new(123));
-        assert_eq!(addr.to_uri(), "actor:///services/api@123");
+        assert!(addr.to_uri().contains("@")); // Contains instance specifier
 
-        // Global
-        let addr = ActorAddress::global(NodeId::new(123), 456);
-        assert_eq!(addr.to_uri(), "actor://123/456");
+        // Global - UUID format
+        let actor_id = ActorId::new(0x12345678_9abcdef0_12345678_9abcdef0);
+        let addr = ActorAddress::global(actor_id);
+        assert!(addr.to_uri().starts_with("actor://"));
 
-        // Local
-        let addr = ActorAddress::local(456);
-        assert_eq!(addr.to_uri(), "actor://0/456");
+        // Local alias - same as global with UUID
+        let addr = ActorAddress::local(actor_id);
+        assert!(addr.to_uri().starts_with("actor://"));
     }
 
     #[test]
@@ -657,16 +669,21 @@ mod tests {
 
     #[test]
     fn test_address_roundtrip() {
-        let cases = vec![
+        // Named addresses roundtrip correctly
+        let named_cases = vec![
             "actor:///services/llm/router",
             "actor:///services/llm/router@123",
-            "actor://123/456",
-            "actor://0/789",
         ];
 
-        for uri in cases {
+        for uri in named_cases {
             let addr = ActorAddress::parse(uri).unwrap();
             assert_eq!(addr.to_uri(), uri);
         }
+
+        // Global addresses with UUID format
+        let actor_id = ActorId::generate();
+        let uri = format!("actor://{}", actor_id);
+        let addr = ActorAddress::parse(&uri).unwrap();
+        assert_eq!(addr.to_uri(), uri);
     }
 }

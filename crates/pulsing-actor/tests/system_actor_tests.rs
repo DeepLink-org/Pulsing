@@ -426,7 +426,7 @@ async fn test_system_actor_uptime_increases() {
 #[test]
 fn test_actor_registry() {
     let registry = ActorRegistry::new();
-    let actor_id = ActorId::local(1);
+    let actor_id = ActorId::generate();
 
     registry.register("test", actor_id, "TestActor");
     assert!(registry.contains("test"));
@@ -444,8 +444,8 @@ fn test_actor_registry() {
 fn test_actor_registry_list_all() {
     let registry = ActorRegistry::new();
 
-    registry.register("actor1", ActorId::local(1), "TypeA");
-    registry.register("actor2", ActorId::local(2), "TypeB");
+    registry.register("actor1", ActorId::generate(), "TypeA");
+    registry.register("actor2", ActorId::generate(), "TypeB");
 
     let actors = registry.list_all();
     assert_eq!(actors.len(), 2);

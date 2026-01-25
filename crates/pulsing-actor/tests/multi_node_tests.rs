@@ -464,8 +464,8 @@ mod edge_case_tests {
         let ref1 = system1.spawn_named("test/shared-name", Echo).await.unwrap();
         let ref2 = system2.spawn_named("test/shared-name", Echo).await.unwrap();
 
-        // They should have different full IDs (different node IDs)
-        assert_ne!(ref1.id().node(), ref2.id().node());
+        // With UUID-based IDs, each actor has a unique ID
+        assert_ne!(ref1.id(), ref2.id());
         // Both should be local actors on their respective systems
         assert!(ref1.is_local());
         assert!(ref2.is_local());
@@ -686,12 +686,12 @@ mod addressing_multi_node_tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_global_address_cross_node() {
+    async fn test_resolve_named_actor_cross_node() {
         // Node 1
         let config1 = create_cluster_config(20087);
         let system1 = ActorSystem::new(config1).await.unwrap();
         let gossip1_addr = system1.addr();
-        let node1_id = *system1.node_id();
+        let _node1_id = *system1.node_id();
 
         // Node 2 joins
         let mut config2 = create_cluster_config(20088);
@@ -701,14 +701,16 @@ mod addressing_multi_node_tests {
         // Wait for cluster formation
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Create regular actor on node 1
-        let actor_ref = system1
+        // Create named actor on node 1
+        let _actor_ref = system1
             .spawn_named("test/remote_worker", Echo)
             .await
             .unwrap();
 
-        // Node 2 resolves using global address with retries
-        let addr = ActorAddress::global(node1_id, actor_ref.id().local_id());
+        // Node 2 resolves using named address with retries
+        // Note: With UUID-based ActorIds, we can no longer derive node from ActorId.
+        // Use named resolution instead for cross-node actor lookup.
+        let addr = ActorAddress::named(ActorPath::new("test/remote_worker").unwrap());
         let mut resolved_ref = None;
         for attempt in 1..=15 {
             match ActorSystemOpsExt::resolve_address(&system2, &addr).await {
@@ -720,14 +722,14 @@ mod addressing_multi_node_tests {
                     tokio::time::sleep(Duration::from_millis(200)).await;
                 }
                 Err(e) => {
-                    panic!("Failed to resolve global address after 15 attempts: {}", e);
+                    panic!("Failed to resolve named address after 15 attempts: {}", e);
                 }
             }
         }
 
-        let resolved_ref = resolved_ref.expect("Should resolve global address");
+        let resolved_ref = resolved_ref.expect("Should resolve named address");
 
-        // Should be a remote reference
+        // Should be a remote reference from node 2's perspective
         assert!(!resolved_ref.is_local());
 
         // Call should work

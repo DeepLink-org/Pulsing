@@ -129,7 +129,7 @@ impl ActorRegistry {
             .iter()
             .map(|e| ActorInfo {
                 name: e.key().clone(),
-                actor_id: e.actor_id.local_id(),
+                actor_id: e.actor_id.0,
                 actor_type: e.actor_type.clone(),
                 uptime_secs: e.created_at.elapsed().as_secs(),
                 metadata: std::collections::HashMap::new(), // TODO: get from actor
@@ -140,7 +140,7 @@ impl ActorRegistry {
     pub fn get_info(&self, name: &str) -> Option<ActorInfo> {
         self.actors.get(name).map(|e| ActorInfo {
             name: name.to_string(),
-            actor_id: e.actor_id.local_id(),
+            actor_id: e.actor_id.0,
             actor_type: e.actor_type.clone(),
             uptime_secs: e.created_at.elapsed().as_secs(),
             metadata: std::collections::HashMap::new(), // TODO: get from actor

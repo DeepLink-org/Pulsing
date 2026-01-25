@@ -515,8 +515,9 @@ class PythonActorService(_ActorBase):
             return Message.from_json(
                 "Created",
                 {
-                    "actor_id": actor_ref.actor_id.local_id,
-                    "node_id": self.system.node_id.id,
+                    # actor_id is now a UUID (u128), transmit as string for JSON
+                    "actor_id": str(actor_ref.actor_id.id),
+                    "node_id": str(self.system.node_id.id),
                     "methods": method_names,
                 },
             )
@@ -698,10 +699,11 @@ class ActorClass:
             public = name is not None
 
         members = await system.members()
-        local_id = system.node_id.id
+        # members["node_id"] is string, convert local_id to string for comparison
+        local_id = str(system.node_id.id)
 
-        # Filter out remote nodes
-        remote_nodes = [m for m in members if int(m["node_id"]) != local_id]
+        # Filter out remote nodes (node_id is string)
+        remote_nodes = [m for m in members if m["node_id"] != local_id]
 
         if not remote_nodes:
             # No remote nodes, fallback to local creation
@@ -710,6 +712,7 @@ class ActorClass:
 
         # Randomly select one
         target = random.choice(remote_nodes)
+        # Convert back to int for resolve_named
         target_id = int(target["node_id"])
 
         # Get target node's Python actor creation service
@@ -747,9 +750,13 @@ class ActorClass:
             raise RuntimeError(f"Remote create failed: {data.get('error')}")
 
         # Build remote ActorRef
-        from pulsing._core import ActorId, NodeId
+        from pulsing._core import ActorId
 
-        remote_id = ActorId(data["actor_id"], NodeId(data["node_id"]))
+        # actor_id is now a UUID (u128), may be transmitted as string
+        actor_id = data["actor_id"]
+        if isinstance(actor_id, str):
+            actor_id = int(actor_id)
+        remote_id = ActorId(actor_id)
         actor_ref = await system.actor_ref(remote_id)
 
         return ActorProxy(

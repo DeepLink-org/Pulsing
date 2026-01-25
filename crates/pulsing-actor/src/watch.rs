@@ -284,15 +284,14 @@ impl Default for ActorLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::NodeId;
 
     #[tokio::test]
     async fn test_watch_unwatch() {
         let lifecycle = ActorLifecycle::new();
 
-        let watcher1 = ActorId::new(NodeId::generate(), 1);
-        let watcher2 = ActorId::new(NodeId::generate(), 2);
-        let target1 = ActorId::new(NodeId::generate(), 10);
+        let watcher1 = ActorId::generate();
+        let watcher2 = ActorId::generate();
+        let target1 = ActorId::generate();
 
         // Add watches
         lifecycle.watch(&watcher1, &target1).await;
@@ -313,10 +312,10 @@ mod tests {
     async fn test_remove_actor() {
         let lifecycle = ActorLifecycle::new();
 
-        let watcher1 = ActorId::new(NodeId::generate(), 1);
-        let watcher2 = ActorId::new(NodeId::generate(), 2);
-        let target1 = ActorId::new(NodeId::generate(), 10);
-        let target2 = ActorId::new(NodeId::generate(), 11);
+        let watcher1 = ActorId::generate();
+        let watcher2 = ActorId::generate();
+        let target1 = ActorId::generate();
+        let target2 = ActorId::generate();
 
         // Setup: watcher1 watches target1 and target2
         lifecycle.watch(&watcher1, &target1).await;
@@ -339,10 +338,10 @@ mod tests {
     async fn test_clear() {
         let lifecycle = ActorLifecycle::new();
 
-        let w1 = ActorId::new(NodeId::generate(), 1);
-        let w2 = ActorId::new(NodeId::generate(), 2);
-        let t1 = ActorId::new(NodeId::generate(), 10);
-        let t2 = ActorId::new(NodeId::generate(), 11);
+        let w1 = ActorId::generate();
+        let w2 = ActorId::generate();
+        let t1 = ActorId::generate();
+        let t2 = ActorId::generate();
 
         lifecycle.watch(&w1, &t1).await;
         lifecycle.watch(&w2, &t2).await;
@@ -358,9 +357,9 @@ mod tests {
     async fn test_notify_watchers() {
         let lifecycle = ActorLifecycle::new();
 
-        let watcher1 = ActorId::new(NodeId::generate(), 1);
-        let watcher2 = ActorId::new(NodeId::generate(), 2);
-        let target1 = ActorId::new(NodeId::generate(), 10);
+        let watcher1 = ActorId::generate();
+        let watcher2 = ActorId::generate();
+        let target1 = ActorId::generate();
 
         lifecycle.watch(&watcher1, &target1).await;
         lifecycle.watch(&watcher2, &target1).await;

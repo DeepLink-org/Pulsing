@@ -84,7 +84,9 @@ class TopicBroker(Actor):
     async def _subscribe(self, data: dict) -> Message:
         subscriber_id = data.get("subscriber_id")
         actor_name = data.get("actor_name")
-        node_id = data.get("node_id")
+        node_id_raw = data.get("node_id")
+        # node_id comes as string from JSON, convert to int for resolve_named
+        node_id = int(node_id_raw) if node_id_raw else None
 
         if not subscriber_id or not actor_name:
             return Message.from_json(

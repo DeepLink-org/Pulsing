@@ -83,7 +83,8 @@ async def test_ping_local(system):
     assert result["type"] == "Pong"
     assert "node_id" in result
     assert "timestamp" in result
-    assert result["node_id"] == system.node_id.id
+    # node_id is serialized as string in JSON for u128 precision
+    assert int(result["node_id"]) == system.node_id.id
 
 
 @pytest.mark.asyncio
@@ -95,7 +96,8 @@ async def test_ping_direct_message(system):
     data = resp.to_json()
 
     assert data["type"] == "Pong"
-    assert data["node_id"] == system.node_id.id
+    # node_id is serialized as string in JSON for u128 precision
+    assert int(data["node_id"]) == system.node_id.id
 
 
 # ============================================================================
@@ -137,7 +139,8 @@ async def test_get_node_info(system):
     result = await get_node_info(system)
 
     assert result["type"] == "NodeInfo"
-    assert result["node_id"] == system.node_id.id
+    # node_id is serialized as string in JSON for u128 precision
+    assert int(result["node_id"]) == system.node_id.id
     assert "addr" in result
     assert "uptime_secs" in result
 
@@ -335,7 +338,8 @@ async def test_concurrent_ping_requests(system):
 
     for result in results:
         assert result["type"] == "Pong"
-        assert result["node_id"] == system.node_id.id
+        # node_id is serialized as string in JSON for u128 precision
+        assert int(result["node_id"]) == system.node_id.id
 
 
 @pytest.mark.asyncio

@@ -45,13 +45,14 @@ def _compute_owner(bucket_key: str, nodes: list[dict]) -> int | None:
         node_id = node.get("node_id")
         if node_id is None:
             continue
-        node_id = int(node_id)
+        # node_id is u128 integer, convert to string for consistent hashing
+        node_id_str = str(node_id)
         # Combine key and node_id to calculate hash score
-        combined = f"{bucket_key}:{node_id}"
+        combined = f"{bucket_key}:{node_id_str}"
         score = int(hashlib.md5(combined.encode()).hexdigest(), 16)
         if score > best_score:
             best_score = score
-            best_node_id = node_id
+            best_node_id = node_id  # Keep as integer
 
     return best_node_id
 
@@ -217,9 +218,10 @@ class StorageManager(Actor):
             bucket_key = self._bucket_key(topic, bucket_id)
             members = await self._refresh_members()
             owner_node_id = _compute_owner(bucket_key, members)
-            local_node_id = self.system.node_id.id
+            # node_id.id returns u128, convert to string for comparison with members
+            local_node_id = str(self.system.node_id.id)
 
-            # Determine if belongs to this node
+            # Determine if belongs to this node (string comparison)
             if owner_node_id is None or owner_node_id == local_node_id:
                 # This node is responsible, create/return bucket
                 bucket_ref = await self._get_or_create_bucket(
@@ -231,9 +233,9 @@ class StorageManager(Actor):
                         "_type": "BucketReady",  # Fallback: msg_type may be lost across nodes
                         "topic": topic,
                         "bucket_id": bucket_id,
-                        "actor_id": bucket_ref.actor_id.local_id,
-                        # Use hex string to transmit node_id, avoid JSON big integer precision loss
-                        "node_id_hex": hex(local_node_id),
+                        # Use string for JSON serialization of large u128 integers
+                        "actor_id": str(bucket_ref.actor_id.id),
+                        "node_id": str(local_node_id),
                     },
                 )
             else:
@@ -241,9 +243,8 @@ class StorageManager(Actor):
                 # Find owner node address
                 owner_addr = None
                 for m in members:
-                    # node_id might be string, convert to int for comparison
                     m_node_id = m.get("node_id")
-                    if m_node_id is not None and int(m_node_id) == owner_node_id:
+                    if m_node_id is not None and m_node_id == owner_node_id:
                         owner_addr = m.get("addr")
                         break
 
@@ -253,8 +254,8 @@ class StorageManager(Actor):
                         "_type": "Redirect",  # Fallback: msg_type may be lost across nodes
                         "topic": topic,
                         "bucket_id": bucket_id,
-                        # Use hex string to transmit node_id, avoid JSON big integer precision loss
-                        "owner_node_id_hex": hex(owner_node_id),
+                        # Use string for JSON serialization of large integers
+                        "owner_node_id": str(owner_node_id),
                         "owner_addr": owner_addr,
                     },
                 )
@@ -269,7 +270,8 @@ class StorageManager(Actor):
             topic_key = self._topic_key(topic_name)
             members = await self._refresh_members()
             owner_node_id = _compute_owner(topic_key, members)
-            local_node_id = self.system.node_id.id
+            # node_id.id returns u128, convert to string for comparison with members
+            local_node_id = str(self.system.node_id.id)
 
             if owner_node_id is None or owner_node_id == local_node_id:
                 # This node is responsible, create/return topic broker
@@ -279,8 +281,9 @@ class StorageManager(Actor):
                     {
                         "_type": "TopicReady",
                         "topic": topic_name,
-                        "actor_id": broker_ref.actor_id.local_id,
-                        "node_id_hex": hex(local_node_id),
+                        # Use string for JSON serialization of large u128 integers
+                        "actor_id": str(broker_ref.actor_id.id),
+                        "node_id": str(local_node_id),
                     },
                 )
             else:
@@ -288,7 +291,7 @@ class StorageManager(Actor):
                 owner_addr = None
                 for m in members:
                     m_node_id = m.get("node_id")
-                    if m_node_id is not None and int(m_node_id) == owner_node_id:
+                    if m_node_id is not None and m_node_id == owner_node_id:
                         owner_addr = m.get("addr")
                         break
 
@@ -297,7 +300,8 @@ class StorageManager(Actor):
                     {
                         "_type": "Redirect",
                         "topic": topic_name,
-                        "owner_node_id_hex": hex(owner_node_id),
+                        # Use string for JSON serialization of large integers
+                        "owner_node_id": str(owner_node_id),
                         "owner_addr": owner_addr,
                     },
                 )
@@ -319,7 +323,8 @@ class StorageManager(Actor):
             return Message.from_json(
                 "Stats",
                 {
-                    "node_id": self.system.node_id.id,
+                    # Use string for JSON serialization of large u128 integers
+                    "node_id": str(self.system.node_id.id),
                     "bucket_count": len(self._buckets),
                     "topic_count": len(self._topics),
                     "buckets": [
@@ -435,17 +440,18 @@ async def get_bucket_ref(
         if msg_type == "BucketReady":
             # Successfully got bucket
             actor_id = resp_data["actor_id"]
-            # node_id transmitted as hex string, convert to int
-            node_id = int(resp_data["node_id_hex"], 16)
+            # actor_id is now a UUID (u128), transmitted as string
+            if isinstance(actor_id, str):
+                actor_id = int(actor_id)
 
-            bucket_actor_id = ActorId(actor_id, NodeId(node_id))
+            bucket_actor_id = ActorId(actor_id)
             return await system.actor_ref(bucket_actor_id)
 
         elif msg_type == "Redirect":
             # Need to redirect to other node
-            # owner_node_id transmitted as hex string, convert to int
-            hex_str = resp_data.get("owner_node_id_hex")
-            owner_node_id = int(hex_str, 16)
+            # owner_node_id transmitted as string, convert to int
+            owner_node_id_str = resp_data.get("owner_node_id")
+            owner_node_id = int(owner_node_id_str)
             owner_addr = resp_data.get("owner_addr")
 
             logger.debug(
@@ -517,12 +523,15 @@ async def get_topic_broker(
 
         if msg_type == "TopicReady":
             actor_id = resp_data["actor_id"]
-            node_id = int(resp_data["node_id_hex"], 16)
-            broker_actor_id = ActorId(actor_id, NodeId(node_id))
+            # actor_id is now a UUID (u128), transmitted as string
+            if isinstance(actor_id, str):
+                actor_id = int(actor_id)
+            broker_actor_id = ActorId(actor_id)
             return await system.actor_ref(broker_actor_id)
 
         elif msg_type == "Redirect":
-            owner_node_id = int(resp_data["owner_node_id_hex"], 16)
+            # owner_node_id transmitted as string, convert to int
+            owner_node_id = int(resp_data["owner_node_id"])
 
             logger.debug(f"Redirecting topic {topic} to node {owner_node_id}")
 

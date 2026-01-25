@@ -245,7 +245,8 @@ class TopicReader:
                 {
                     "subscriber_id": self._reader_id,
                     "actor_name": actor_name,
-                    "node_id": self._system.node_id.id,
+                    # Use string for JSON serialization of large u128 integers
+                    "node_id": str(self._system.node_id.id),
                 },
             )
         )

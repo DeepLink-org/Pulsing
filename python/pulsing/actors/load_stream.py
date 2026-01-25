@@ -228,10 +228,9 @@ class StreamLoadScheduler:
             return
         try:
             # Use resolve_named instead of unbound get_actor_ref
-            # node_id needs to be converted from string to int
-            nid_int = int(node_id)
+            # node_id is string from members(), convert to int for resolve_named
             worker_ref = await self._system.resolve_named(
-                self._worker_name, node_id=nid_int
+                self._worker_name, node_id=int(node_id)
             )
             if worker_ref:
                 self._worker_refs[node_id] = worker_ref

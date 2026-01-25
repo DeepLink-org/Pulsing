@@ -1,6 +1,6 @@
 //! Comprehensive tests for the actor addressing system
 
-use pulsing_actor::actor::{ActorId, ActorPath, NodeId};
+use pulsing_actor::actor::{ActorId, ActorPath};
 use pulsing_actor::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -92,11 +92,13 @@ mod actor_address_tests {
 
     #[test]
     fn test_address_parsing() {
-        // Test that addresses can be created and parsed
-        let node = NodeId::generate();
-        let actor_id = ActorId::new(node, 123);
-        assert_eq!(actor_id.local_id(), 123);
-        assert_eq!(actor_id.node(), node);
+        // Test that ActorIds can be created
+        let actor_id = ActorId::generate();
+        assert_ne!(actor_id.0, 0);
+
+        // Test creating from specific value
+        let actor_id2 = ActorId::new(12345);
+        assert_eq!(actor_id2.0, 12345);
     }
 }
 

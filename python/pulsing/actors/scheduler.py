@@ -63,11 +63,10 @@ class Scheduler(ABC):
         workers = await self.get_available_workers()
         return sum(1 for w in workers if w.get("status") == "Alive")
 
-    async def _resolve_worker(self, node_id: str | None = None):
+    async def _resolve_worker(self, node_id: int | None = None):
         try:
-            # node_id is serialized as string in MemberInfo, need to convert back to int to match resolve_named
-            nid_int = int(node_id) if node_id else None
-            return await self._system.resolve_named(self._worker_name, node_id=nid_int)
+            # node_id is now u128 integer from members()
+            return await self._system.resolve_named(self._worker_name, node_id=node_id)
         except Exception:
             return None
 

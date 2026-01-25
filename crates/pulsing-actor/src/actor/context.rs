@@ -158,14 +158,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_creation() {
-        let (ctx, _system) = create_test_context(ActorId::local(1)).await;
-        assert_eq!(ctx.id().local_id(), 1);
+        let (ctx, _system) = create_test_context(ActorId::generate()).await;
+        // UUID-based IDs are non-zero
+        assert_ne!(ctx.id().0, 0);
         assert!(!ctx.is_cancelled());
     }
 
     #[tokio::test]
     async fn test_context_cancellation() {
-        let (ctx, _system) = create_test_context(ActorId::local(1)).await;
+        let (ctx, _system) = create_test_context(ActorId::generate()).await;
         assert!(!ctx.is_cancelled());
         ctx.cancel_token().cancel();
         assert!(ctx.is_cancelled());
@@ -173,24 +174,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_node_id() {
-        let (ctx, system) = create_test_context(ActorId::local(1)).await;
+        let (ctx, system) = create_test_context(ActorId::generate()).await;
         assert_eq!(ctx.node_id(), *system.node_id());
     }
 
     #[tokio::test]
     async fn test_context_multiple_actors() {
-        let (ctx1, _system1) = create_test_context(ActorId::local(1)).await;
-        let (ctx2, _system2) = create_test_context(ActorId::local(2)).await;
-        let (ctx3, _system3) = create_test_context(ActorId::local(3)).await;
+        let (ctx1, _system1) = create_test_context(ActorId::generate()).await;
+        let (ctx2, _system2) = create_test_context(ActorId::generate()).await;
+        let (ctx3, _system3) = create_test_context(ActorId::generate()).await;
 
-        assert_eq!(ctx1.id().local_id(), 1);
-        assert_eq!(ctx2.id().local_id(), 2);
-        assert_eq!(ctx3.id().local_id(), 3);
+        // UUID-based IDs should all be unique
+        assert_ne!(ctx1.id(), ctx2.id());
+        assert_ne!(ctx2.id(), ctx3.id());
+        assert_ne!(ctx1.id(), ctx3.id());
     }
 
     #[tokio::test]
     async fn test_context_cancel_token_clone() {
-        let (ctx, _system) = create_test_context(ActorId::local(1)).await;
+        let (ctx, _system) = create_test_context(ActorId::generate()).await;
         let token = ctx.cancel_token().clone();
 
         assert!(!ctx.is_cancelled());
@@ -204,8 +206,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_actor_ref() {
-        let (mut ctx, _system) = create_test_context(ActorId::local(1)).await;
-        let target_id = ActorId::local(2);
+        let (mut ctx, _system) = create_test_context(ActorId::generate()).await;
+        let target_id = ActorId::generate();
 
         // actor_ref should fail for non-existent actor
         let result = ctx.actor_ref(&target_id).await;
@@ -214,8 +216,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_watch() {
-        let (ctx, _system) = create_test_context(ActorId::local(1)).await;
-        let target_id = ActorId::local(2);
+        let (ctx, _system) = create_test_context(ActorId::generate()).await;
+        let target_id = ActorId::generate();
 
         // watch should work with real system
         let result = ctx.watch(&target_id).await;
@@ -225,8 +227,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_unwatch() {
-        let (ctx, _system) = create_test_context(ActorId::local(1)).await;
-        let target_id = ActorId::local(2);
+        let (ctx, _system) = create_test_context(ActorId::generate()).await;
+        let target_id = ActorId::generate();
 
         // unwatch should work with real system
         let result = ctx.unwatch(&target_id).await;

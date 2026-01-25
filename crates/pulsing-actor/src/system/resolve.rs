@@ -29,30 +29,26 @@ impl ActorSystem {
 
     /// Get ActorRef for a local or remote actor by ID
     ///
-    /// This is an O(1) operation for local actors using local_id indexing.
+    /// This is an O(1) operation for local actors using ActorId indexing.
     pub async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef> {
-        // Check if local
-        if id.node() == self.node_id || id.node().is_local() {
-            // O(1) lookup by local_id
-            let handle = self
-                .local_actors
-                .get(&id.local_id())
-                .ok_or_else(|| anyhow::anyhow!("Local actor not found: {}", id))?;
+        // Try local lookup first (O(1))
+        if let Some(handle) = self.local_actors.get(id) {
             return Ok(ActorRef::local(handle.actor_id, handle.sender.clone()));
         }
 
-        // Remote actor - get address from cluster
+        // Not found locally - try remote lookup via cluster
+        // Note: With UUID-based IDs, we need to check cluster for actor location
         let cluster = self.cluster_or_err().await?;
 
-        let member = cluster
-            .get_member(&id.node())
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Node not found in cluster: {}", id.node()))?;
+        // Lookup actor location in cluster
+        if let Some(member_info) = cluster.lookup_actor(id).await {
+            // Create remote transport using actor id
+            let transport =
+                Http2RemoteTransport::new_by_id(self.transport.client(), member_info.addr, *id);
+            return Ok(ActorRef::remote(*id, member_info.addr, Arc::new(transport)));
+        }
 
-        // Create remote transport using actor id
-        let transport = Http2RemoteTransport::new_by_id(self.transport.client(), member.addr, *id);
-
-        Ok(ActorRef::remote(*id, member.addr, Arc::new(transport)))
+        Err(anyhow::anyhow!("Actor not found: {}", id))
     }
 
     /// Resolve a named actor by path (direct resolution)
@@ -177,7 +173,9 @@ impl ActorSystem {
         let transport =
             Http2RemoteTransport::new_named(self.transport.client(), target.addr, path.clone());
 
-        let actor_id = ActorId::new(target.node_id, 0);
+        // For named actors, we don't have a specific ActorId until we resolve
+        // Use a placeholder ID (this will be replaced when the actor is actually accessed)
+        let actor_id = ActorId::generate();
         Ok(ActorRef::remote(actor_id, target.addr, Arc::new(transport)))
     }
 
@@ -259,9 +257,9 @@ impl ActorSystem {
             ActorAddress::Named { path, instance } => {
                 self.resolve_named(path, instance.as_ref()).await
             }
-            ActorAddress::Global { node_id, actor_id } => {
-                let id = ActorId::new(*node_id, *actor_id);
-                self.actor_ref(&id).await
+            ActorAddress::Global { actor_id, .. } => {
+                // actor_id is already a full ActorId (u128)
+                self.actor_ref(actor_id).await
             }
         }
     }

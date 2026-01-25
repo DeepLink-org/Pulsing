@@ -2,6 +2,26 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Helper module for serializing u128 as string (JSON doesn't support 128-bit integers)
+mod u128_as_string {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u128, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u128, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 /// SystemActor request messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -79,11 +99,13 @@ pub enum SystemResponse {
     /// Actor created successfully
     ActorCreated {
         /// Actor ID
-        actor_id: u64,
+        #[serde(with = "u128_as_string")]
+        actor_id: u128,
         /// Actor name
         name: String,
         /// Node ID
-        node_id: u64,
+        #[serde(with = "u128_as_string")]
+        node_id: u128,
         /// Available methods list (for Python actors)
         #[serde(default)]
         methods: Vec<String>,
@@ -115,7 +137,8 @@ pub enum SystemResponse {
     /// Node info
     NodeInfo {
         /// Node ID
-        node_id: u64,
+        #[serde(with = "u128_as_string")]
+        node_id: u128,
         /// Address
         addr: String,
         /// Uptime in seconds
@@ -135,7 +158,8 @@ pub enum SystemResponse {
     /// Pong response
     Pong {
         /// Node ID
-        node_id: u64,
+        #[serde(with = "u128_as_string")]
+        node_id: u128,
         /// Timestamp
         timestamp: u64,
     },
@@ -146,8 +170,8 @@ pub enum SystemResponse {
 pub struct ActorInfo {
     /// Actor name (also used as path for resolution)
     pub name: String,
-    /// Actor ID (local ID)
-    pub actor_id: u64,
+    /// Actor ID (full UUID)
+    pub actor_id: u128,
     /// Actor type
     pub actor_type: String,
     /// Uptime in seconds
