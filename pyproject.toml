@@ -59,6 +59,7 @@ module-name = "pulsing._core"
 manifest-path = "crates/pulsing-py/Cargo.toml"
 python-packages = ["pulsing"]
 python-source = "python"
+sdist-include = ["LICENSE", "README.md"]
 
 [build-system]
 requires = ["maturin>=1.0,<2.0"]

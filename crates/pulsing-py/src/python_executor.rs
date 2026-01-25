@@ -3,8 +3,8 @@
 //! Avoids GIL contention with Tokio's async runtime by isolating Python
 //! execution to a fixed-size thread pool (default: 4 threads).
 
-use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
+use crossbeam_channel::{unbounded, Sender};
+use std::sync::OnceLock;
 use std::thread::{self, JoinHandle};
 use tokio::sync::oneshot;
 
@@ -16,14 +16,13 @@ type PythonTask = Box<dyn FnOnce() + Send + 'static>;
 
 /// Dedicated thread pool for Python code execution.
 pub struct PythonExecutor {
-    sender: Mutex<Sender<PythonTask>>,
+    sender: Sender<PythonTask>,
     _threads: Vec<JoinHandle<()>>,
 }
 
 impl PythonExecutor {
     pub fn new(num_threads: usize) -> Self {
-        let (sender, receiver) = mpsc::channel::<PythonTask>();
-        let receiver = Arc::new(Mutex::new(receiver));
+        let (sender, receiver) = unbounded::<PythonTask>();
 
         let threads: Vec<_> = (0..num_threads)
             .map(|i| {
@@ -33,11 +32,7 @@ impl PythonExecutor {
                     .spawn(move || {
                         tracing::debug!("Python executor thread {} started", i);
                         loop {
-                            let task = {
-                                let guard = rx.lock().unwrap();
-                                guard.recv()
-                            };
-                            match task {
+                            match rx.recv() {
                                 Ok(task) => task(),
                                 Err(_) => {
                                     tracing::debug!("Python executor thread {} shutting down", i);
@@ -53,7 +48,7 @@ impl PythonExecutor {
         tracing::info!("Python executor initialized with {} threads", num_threads);
 
         Self {
-            sender: Mutex::new(sender),
+            sender,
             _threads: threads,
         }
     }
@@ -71,8 +66,6 @@ impl PythonExecutor {
         });
 
         self.sender
-            .lock()
-            .map_err(|_| ExecutorError::ChannelClosed)?
             .send(task)
             .map_err(|_| ExecutorError::ChannelClosed)?;
 
@@ -105,6 +98,7 @@ pub fn init_python_executor(num_threads: usize) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_executor_basic() {
@@ -124,13 +118,13 @@ mod tests {
             })
             .collect();
 
-        let results: Vec<_> = futures::future::join_all(handles)
+        let results: Vec<i32> = futures::future::join_all(handles)
             .await
             .into_iter()
             .map(|r| r.unwrap())
             .collect();
 
-        let expected: Vec<_> = (0..10).map(|i| i * 2).collect();
+        let expected: Vec<i32> = (0..10).map(|i| i * 2).collect();
         assert_eq!(results, expected);
     }
 }

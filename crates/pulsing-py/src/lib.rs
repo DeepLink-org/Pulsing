@@ -23,14 +23,17 @@ pub use python_executor::{init_python_executor, python_executor, ExecutorError};
 /// - Load balancing policies: Random, RoundRobin, PowerOfTwo, ConsistentHash, CacheAware
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Initialize tracing for logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .try_init()
-        .ok();
+    // Initialize tracing for logging (only if PULSING_INIT_TRACING is set)
+    // This allows applications to control their own tracing configuration
+    if std::env::var("PULSING_INIT_TRACING").is_ok() {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::from_default_env()
+                    .add_directive(tracing::Level::INFO.into()),
+            )
+            .try_init()
+            .ok();
+    }
 
     // Add error classes
     errors::add_to_module(m)?;

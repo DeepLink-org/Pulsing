@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import logging
+import os
 import random
 import uuid
 from abc import ABC, abstractmethod
@@ -10,6 +11,147 @@ from typing import Any, TypeVar
 
 from pulsing._core import ActorRef, ActorSystem, Message, StreamMessage
 from pulsing.exceptions import PulsingActorError, PulsingRuntimeError
+
+# Protocol version configuration
+# Default to v1 for backward compatibility
+_DEFAULT_PROTOCOL_VERSION = int(os.getenv("PULSING_PROTOCOL_VERSION", "1"))
+
+
+def _get_protocol_version() -> int:
+    """Get protocol version from environment or default to v1."""
+    return _DEFAULT_PROTOCOL_VERSION
+
+
+def _detect_protocol_version(msg: dict) -> int:
+    """Auto-detect protocol version from message.
+
+    Returns:
+        1 for v1 protocol, 2 for v2 protocol
+    """
+    if "__pulsing_proto__" in msg:
+        version_str = msg["__pulsing_proto__"]
+        if isinstance(version_str, str) and version_str.startswith("v"):
+            return int(version_str[1:])
+        return int(version_str)
+    # v1 compatibility: check for __call__ field
+    if "__call__" in msg:
+        return 1
+    return 1  # default to v1
+
+
+def _wrap_call_v1(method: str, args: tuple, kwargs: dict, is_async: bool) -> dict:
+    """v1 protocol: legacy format (backward compatible).
+
+    Format:
+        {
+            "__call__": method_name,
+            "args": args,
+            "kwargs": kwargs,
+            "__async__": is_async
+        }
+    """
+    return {
+        "__call__": method,
+        "args": args,
+        "kwargs": kwargs,
+        "__async__": is_async,
+    }
+
+
+def _wrap_call_v2(method: str, args: tuple, kwargs: dict, is_async: bool) -> dict:
+    """v2 protocol: namespace isolation.
+
+    Format:
+        {
+            "__pulsing_proto__": "v2",
+            "__pulsing__": {
+                "call": method_name,
+                "async": is_async
+            },
+            "user_data": {
+                "args": args,
+                "kwargs": kwargs
+            }
+        }
+    """
+    return {
+        "__pulsing_proto__": "v2",
+        "__pulsing__": {
+            "call": method,
+            "async": is_async,
+        },
+        "user_data": {
+            "args": args,
+            "kwargs": kwargs,
+        },
+    }
+
+
+def _unwrap_call(msg: dict) -> tuple[str, tuple, dict, bool]:
+    """Unwrap call message, supporting both v1 and v2 protocols.
+
+    Returns:
+        (method_name, args, kwargs, is_async)
+    """
+    version = _detect_protocol_version(msg)
+
+    if version == 2:
+        pulsing = msg.get("__pulsing__", {})
+        user_data = msg.get("user_data", {})
+        return (
+            pulsing.get("call", ""),
+            tuple(user_data.get("args", ())),
+            dict(user_data.get("kwargs", {})),
+            pulsing.get("async", False),
+        )
+    else:  # v1
+        return (
+            msg.get("__call__", ""),
+            tuple(msg.get("args", ())),
+            dict(msg.get("kwargs", {})),
+            msg.get("__async__", False),
+        )
+
+
+def _wrap_response_v1(result: Any = None, error: str | None = None) -> dict:
+    """v1 protocol response format."""
+    if error:
+        return {"__error__": error}
+    return {"__result__": result}
+
+
+def _wrap_response_v2(result: Any = None, error: str | None = None) -> dict:
+    """v2 protocol response format."""
+    if error:
+        return {
+            "__pulsing_proto__": "v2",
+            "__pulsing__": {"error": error},
+            "user_data": {},
+        }
+    return {
+        "__pulsing_proto__": "v2",
+        "__pulsing__": {"result": result},
+        "user_data": {},
+    }
+
+
+def _unwrap_response(resp: dict) -> tuple[Any, str | None]:
+    """Unwrap response, supporting both v1 and v2 protocols.
+
+    Returns:
+        (result, error) - one of them will be None
+    """
+    version = _detect_protocol_version(resp)
+
+    if version == 2:
+        pulsing = resp.get("__pulsing__", {})
+        if "error" in pulsing:
+            return (None, pulsing["error"])
+        return (pulsing.get("result"), None)
+    else:  # v1
+        if "__error__" in resp:
+            return (None, resp["__error__"])
+        return (resp.get("__result__"), None)
 
 
 def _convert_rust_error(err: RuntimeError) -> Exception:
@@ -188,25 +330,27 @@ class _MethodCaller:
 
     async def _sync_call(self, *args, **kwargs) -> Any:
         """Synchronous method call."""
-        call_msg = {
-            "__call__": self._method,
-            "args": args,
-            "kwargs": kwargs,
-            "__async__": False,
-        }
+        # Use configured protocol version (default v1)
+        protocol_version = _get_protocol_version()
+        if protocol_version == 2:
+            call_msg = _wrap_call_v2(self._method, args, kwargs, False)
+        else:
+            call_msg = _wrap_call_v1(self._method, args, kwargs, False)
+
         resp = await self._ref.ask(call_msg)
 
         if isinstance(resp, dict):
-            if "__error__" in resp:
+            result, error = _unwrap_response(resp)
+            if error:
                 # Actor execution error
                 try:
                     raise PulsingActorError(
-                        resp["__error__"], actor_name=str(self._ref.actor_id.id)
+                        error, actor_name=str(self._ref.actor_id.id)
                     )
                 except RuntimeError as e:
                     # If it's a Rust error, convert it
                     raise _convert_rust_error(e) from e
-            return resp.get("__result__")
+            return result
         elif isinstance(resp, Message):
             if resp.is_stream:
                 return _SyncGeneratorStreamReader(resp)
@@ -247,12 +391,12 @@ class _AsyncMethodCall:
     async def _get_stream(self):
         """Get stream (lazy initialization)"""
         if self._stream_reader is None:
-            call_msg = {
-                "__call__": self._method,
-                "args": self._args,
-                "kwargs": self._kwargs,
-                "__async__": True,
-            }
+            # Use configured protocol version (default v1)
+            protocol_version = _get_protocol_version()
+            if protocol_version == 2:
+                call_msg = _wrap_call_v2(self._method, self._args, self._kwargs, True)
+            else:
+                call_msg = _wrap_call_v1(self._method, self._args, self._kwargs, True)
             resp = await self._ref.ask(call_msg)
 
             # Response may be PyMessage (streaming) or direct Python object
@@ -399,19 +543,24 @@ class _WrappedActor(_ActorBase):
             self._instance.on_stop()
 
     async def receive(self, msg) -> Any:
-        # Handle new dict-based call format (Python-to-Python)
-        if isinstance(msg, dict) and "__call__" in msg:
-            method = msg["__call__"]
-            args = msg.get("args", ())
-            kwargs = msg.get("kwargs", {})
-            is_async_call = msg.get("__async__", False)
+        # Handle dict-based call format (supporting both v1 and v2)
+        if isinstance(msg, dict):
+            # Detect protocol version
+            version = _detect_protocol_version(msg)
+            method, args, kwargs, is_async_call = _unwrap_call(msg)
 
             if not method or method.startswith("_"):
-                return {"__error__": f"Invalid method: {method}"}
+                error_msg = f"Invalid method: {method}"
+                if version == 2:
+                    return _wrap_response_v2(error=error_msg)
+                return _wrap_response_v1(error=error_msg)
 
             func = getattr(self._instance, method, None)
             if func is None or not callable(func):
-                return {"__error__": f"Not found: {method}"}
+                error_msg = f"Not found: {method}"
+                if version == 2:
+                    return _wrap_response_v2(error=error_msg)
+                return _wrap_response_v1(error=error_msg)
 
             # Detect if it's an async method (including async generators)
             is_async_method = (
@@ -439,9 +588,15 @@ class _WrappedActor(_ActorBase):
                     return self._handle_generator_result(result)
                 if asyncio.iscoroutine(result):
                     result = await result
-                return {"__result__": result}
+                # Use same protocol version as request
+                if version == 2:
+                    return _wrap_response_v2(result=result)
+                return _wrap_response_v1(result=result)
             except Exception as e:
-                return {"__error__": str(e)}
+                error_msg = str(e)
+                if version == 2:
+                    return _wrap_response_v2(error=error_msg)
+                return _wrap_response_v1(error=error_msg)
 
         # Handle legacy Message-based call format (for Rust actor compatibility)
         if isinstance(msg, Message):

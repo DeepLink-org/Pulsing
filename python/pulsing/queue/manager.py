@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 STORAGE_MANAGER_NAME = "queue_storage_manager"
 
 
-def _compute_owner(bucket_key: str, nodes: list[dict]) -> int | None:
+def _compute_owner(bucket_key: str, nodes: list[dict]) -> str | None:
     """Compute owner node ID based on bucket key
 
     Uses Rendezvous Hashing (highest random weight hashing) to ensure:
@@ -27,6 +27,9 @@ def _compute_owner(bucket_key: str, nodes: list[dict]) -> int | None:
     3. Natural uniform load distribution
 
     Algorithm: Calculate score for each (key, node) combination, select node with highest score
+
+    Returns:
+        Node ID as string (unified representation for consistent comparison)
     """
     if not nodes:
         return None
@@ -48,14 +51,14 @@ def _compute_owner(bucket_key: str, nodes: list[dict]) -> int | None:
         node_id = node.get("node_id")
         if node_id is None:
             continue
-        # node_id is u128 integer, convert to string for consistent hashing
+        # Normalize node_id to string for consistent hashing and comparison
         node_id_str = str(node_id)
         # Combine key and node_id to calculate hash score
         combined = f"{bucket_key}:{node_id_str}"
         score = int(hashlib.md5(combined.encode()).hexdigest(), 16)
         if score > best_score:
             best_score = score
-            best_node_id = node_id  # Keep as integer
+            best_node_id = node_id_str  # Keep as string for unified comparison
 
     return best_node_id
 
@@ -218,7 +221,7 @@ class StorageManager:
         owner_node_id = _compute_owner(bucket_key, members)
         local_node_id = str(self.system.node_id.id)
 
-        if owner_node_id is None or owner_node_id == local_node_id:
+        if owner_node_id is None or str(owner_node_id) == local_node_id:
             # This node is responsible, create/return bucket
             bucket_ref = await self._get_or_create_bucket(
                 topic, bucket_id, batch_size, storage_path, backend, backend_options
@@ -235,7 +238,7 @@ class StorageManager:
             owner_addr = None
             for m in members:
                 m_node_id = m.get("node_id")
-                if m_node_id is not None and m_node_id == owner_node_id:
+                if m_node_id is not None and str(m_node_id) == str(owner_node_id):
                     owner_addr = m.get("addr")
                     break
 
@@ -260,7 +263,7 @@ class StorageManager:
         owner_node_id = _compute_owner(topic_key, members)
         local_node_id = str(self.system.node_id.id)
 
-        if owner_node_id is None or owner_node_id == local_node_id:
+        if owner_node_id is None or str(owner_node_id) == local_node_id:
             # This node is responsible, create/return topic broker
             broker_ref = await self._get_or_create_topic_broker(topic)
             return {
@@ -274,7 +277,7 @@ class StorageManager:
             owner_addr = None
             for m in members:
                 m_node_id = m.get("node_id")
-                if m_node_id is not None and m_node_id == owner_node_id:
+                if m_node_id is not None and str(m_node_id) == str(owner_node_id):
                     owner_addr = m.get("addr")
                     break
 
@@ -427,42 +430,44 @@ async def get_bucket_ref(
 
         elif msg_type == "Redirect":
             # Need to redirect to other node
-            # owner_node_id transmitted as string, convert to int
-            owner_node_id_str = resp_data.get("owner_node_id")
-            owner_node_id = int(owner_node_id_str)
+            # owner_node_id transmitted as string, keep as string for comparison
+            owner_node_id_str = str(resp_data.get("owner_node_id"))
             owner_addr = resp_data.get("owner_addr")
 
             logger.debug(
-                f"Redirecting bucket {topic}:{bucket_id} to node {owner_node_id} @ {owner_addr}"
+                f"Redirecting bucket {topic}:{bucket_id} to node {owner_node_id_str} @ {owner_addr}"
             )
 
             if redirect_count >= max_redirects:
                 raise RuntimeError(f"Too many redirects for bucket {topic}:{bucket_id}")
 
             # Check if redirecting to self (avoid infinite loop)
-            if owner_node_id == system.node_id.id:
+            # Compare as strings for consistency
+            if str(owner_node_id_str) == str(system.node_id.id):
                 raise RuntimeError(
                     f"Redirect loop detected for bucket {topic}:{bucket_id}"
                 )
 
             # Get owner node's StorageManager (with retry, wait for remote node initialization)
+            # Convert to int for resolve_named which expects int
+            owner_node_id_int = int(owner_node_id_str)
             max_resolve_retries = 10
             for resolve_retry in range(max_resolve_retries):
                 try:
                     manager = await StorageManager.resolve(
-                        STORAGE_MANAGER_NAME, system=system, node_id=owner_node_id
+                        STORAGE_MANAGER_NAME, system=system, node_id=owner_node_id_int
                     )
                     break
                 except Exception as e:
                     if resolve_retry < max_resolve_retries - 1:
                         logger.debug(
-                            f"StorageManager not found on node {owner_node_id}, "
+                            f"StorageManager not found on node {owner_node_id_str}, "
                             f"retry {resolve_retry + 1}/{max_resolve_retries}"
                         )
                         await asyncio.sleep(0.5)
                     else:
                         raise RuntimeError(
-                            f"StorageManager not found on node {owner_node_id} after "
+                            f"StorageManager not found on node {owner_node_id_str} after "
                             f"{max_resolve_retries} retries: {e}"
                         ) from e
 
@@ -502,22 +507,25 @@ async def get_topic_broker(
             return await TopicBroker.resolve(actor_name, system=system)
 
         elif msg_type == "Redirect":
-            # owner_node_id transmitted as string, convert to int
-            owner_node_id = int(resp_data["owner_node_id"])
+            # owner_node_id transmitted as string, keep as string for comparison
+            owner_node_id_str = str(resp_data["owner_node_id"])
 
-            logger.debug(f"Redirecting topic {topic} to node {owner_node_id}")
+            logger.debug(f"Redirecting topic {topic} to node {owner_node_id_str}")
 
             if redirect_count >= max_redirects:
                 raise RuntimeError(f"Too many redirects for topic: {topic}")
 
-            if owner_node_id == system.node_id.id:
+            # Compare as strings for consistency
+            if str(owner_node_id_str) == str(system.node_id.id):
                 raise RuntimeError(f"Redirect loop for topic: {topic}")
 
             # Get owner node's StorageManager via proxy
+            # Convert to int for resolve_named which expects int
+            owner_node_id_int = int(owner_node_id_str)
             for retry in range(10):
                 try:
                     manager = await StorageManager.resolve(
-                        STORAGE_MANAGER_NAME, system=system, node_id=owner_node_id
+                        STORAGE_MANAGER_NAME, system=system, node_id=owner_node_id_int
                     )
                     break
                 except Exception as e:
@@ -525,7 +533,7 @@ async def get_topic_broker(
                         await asyncio.sleep(0.5)
                     else:
                         raise RuntimeError(
-                            f"StorageManager not found on node {owner_node_id}: {e}"
+                            f"StorageManager not found on node {owner_node_id_str}: {e}"
                         ) from e
 
         else:

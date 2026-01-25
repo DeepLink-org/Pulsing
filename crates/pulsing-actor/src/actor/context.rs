@@ -3,8 +3,9 @@
 use super::mailbox::Envelope;
 use super::reference::ActorRef;
 use super::traits::{ActorId, Message, NodeId};
+use lru::LruCache;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -14,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 pub struct ActorContext {
     actor_id: ActorId,
     cancel_token: CancellationToken,
-    actor_refs: HashMap<ActorId, ActorRef>,
+    actor_refs: LruCache<ActorId, ActorRef>,
     system: Arc<dyn ActorSystemRef>,
     self_sender: mpsc::Sender<Envelope>,
     named_path: Option<String>,
@@ -48,7 +49,7 @@ impl ActorContext {
         Self {
             actor_id,
             cancel_token,
-            actor_refs: HashMap::new(),
+            actor_refs: LruCache::new(NonZeroUsize::new(1024).expect("1024 is non-zero")),
             system,
             self_sender,
             named_path,
@@ -107,7 +108,7 @@ impl ActorContext {
         }
 
         let r = self.system.actor_ref(id).await?;
-        self.actor_refs.insert(*id, r.clone());
+        self.actor_refs.put(*id, r.clone());
         Ok(r)
     }
 

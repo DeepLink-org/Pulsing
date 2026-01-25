@@ -37,6 +37,7 @@ futures = { workspace = true }
 
 # Concurrent data structures
 dashmap = { workspace = true }
+lru = "0.12"
 
 # Error handling
 anyhow = { workspace = true }
