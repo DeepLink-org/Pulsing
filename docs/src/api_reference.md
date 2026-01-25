@@ -36,12 +36,68 @@ For a `@pulsing.remote` class, method calls are translated into actor messages.
 - **`ask(msg)`**: request/response. Returns a value (or raises).
 - **`tell(msg)`**: fire-and-forget. No response is awaited.
 
-### Error model (current behavior)
+### Error Model
 
-- Actor-side exceptions are transported back and typically raised as **`RuntimeError(str(e))`** on the caller side.
-- Timeout helpers (where used) raise **`asyncio.TimeoutError`**.
+Pulsing provides a unified error handling system across Rust and Python with clear error categorization:
 
-Note: error *type information and remote stack traces* are not guaranteed to be preserved.
+#### Error Categories
+
+1. **PulsingRuntimeError**: Framework/system-level errors
+   - Actor system errors (NotFound, Stopped, etc.)
+   - Transport errors (ConnectionFailed, etc.)
+   - Cluster errors (NodeNotFound, etc.)
+   - Config errors (InvalidValue, etc.)
+   - I/O errors, Serialization errors
+
+2. **PulsingActorError**: User Actor execution errors
+   - **PulsingBusinessError**: User input errors, business logic errors (recoverable, return to caller)
+   - **PulsingSystemError**: Internal errors, resource errors (may trigger actor restart)
+   - **PulsingTimeoutError**: Operation timeouts (retryable)
+   - **PulsingUnsupportedError**: Unsupported operations
+
+#### Usage Example
+
+```python
+from pulsing.exceptions import (
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingTimeoutError,
+    PulsingRuntimeError,
+)
+
+@pul.remote
+class Service:
+    async def validate(self, data: str) -> bool:
+        if not data:
+            raise PulsingBusinessError(400, "Data cannot be empty")
+        return True
+
+    async def process(self, data: str) -> str:
+        try:
+            return expensive_operation(data)
+        except Exception as e:
+            raise PulsingSystemError(f"Processing failed: {e}", recoverable=True)
+
+# Caller side
+try:
+    result = await service.process("")
+except PulsingBusinessError as e:
+    print(f"Business error [{e.code}]: {e.message}")
+except PulsingSystemError as e:
+    print(f"System error: {e.error}, recoverable: {e.recoverable}")
+except PulsingRuntimeError as e:
+    print(f"Framework error: {e}")
+```
+
+#### Automatic Error Classification
+
+Standard Python exceptions are automatically classified:
+- `ValueError`, `TypeError` → `PulsingBusinessError` (code=400)
+- `TimeoutError` → `PulsingTimeoutError`
+- `RuntimeError`, `SystemError` → `PulsingSystemError` (recoverable=True)
+- Other exceptions → `PulsingSystemError` (recoverable=True)
+
+Note: Error type information is preserved for both local and remote calls. Remote error propagation maintains error categorization.
 
 ### Trust boundary & security notes
 

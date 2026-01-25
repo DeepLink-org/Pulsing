@@ -95,13 +95,69 @@ response2 = await remote_ref.ask(msg)
 
 ## Error Handling
 
-Remote actor calls can fail due to network issues:
+Pulsing provides unified error types for both local and remote actors, ensuring consistent error handling across the cluster.
+
+### Error Types
+
+- **PulsingRuntimeError**: Framework errors (network, cluster, actor system, etc.)
+- **PulsingActorError**: Actor execution errors
+  - **PulsingBusinessError**: Business logic errors (user input validation, etc.)
+  - **PulsingSystemError**: System errors (may trigger actor restart)
+  - **PulsingTimeoutError**: Timeout errors (retryable)
+
+### Example
+
+```python
+from pulsing.exceptions import (
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingRuntimeError,
+)
+
+try:
+    remote_ref = await system.resolve("worker")
+    response = await remote_ref.ask(msg)
+except PulsingBusinessError as e:
+    # Handle business error (user input issue)
+    print(f"Validation failed: {e.message}")
+except PulsingSystemError as e:
+    # Handle system error (may trigger restart)
+    print(f"System error: {e.error}, recoverable: {e.recoverable}")
+except PulsingRuntimeError as e:
+    # Handle framework error (network, cluster, etc.)
+    print(f"Framework error: {e}")
+```
+
+### Network Failures
+
+Network-related errors are raised as `PulsingRuntimeError`:
 
 ```python
 try:
     remote_ref = await system.resolve("worker")
     response = await remote_ref.ask(msg)
-except Exception as e:
+except PulsingRuntimeError as e:
+    # Network failure, cluster issue, or actor not found
+    if "Connection" in str(e) or "timeout" in str(e).lower():
+        # Retry with backoff
+        pass
+    elif "not found" in str(e).lower():
+        # Actor doesn't exist
+        pass
+```
+
+### Timeouts
+
+Use timeouts for remote calls to avoid indefinite waits:
+
+```python
+from pulsing.actor import ask_with_timeout
+
+try:
+    response = await ask_with_timeout(remote_ref, msg, timeout=10.0)
+except asyncio.TimeoutError:
+    print("Request timed out")
+except PulsingRuntimeError as e:
     print(f"Remote call failed: {e}")
 ```
 

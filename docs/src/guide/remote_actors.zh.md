@@ -95,13 +95,69 @@ response2 = await remote_ref.ask(msg)
 
 ## 错误处理
 
-远程 Actor 调用可能因网络问题而失败：
+Pulsing 为本地和远程 Actor 提供了统一的错误类型，确保在集群中一致的错误处理。
+
+### 错误类型
+
+- **PulsingRuntimeError**: 框架错误（网络、集群、Actor 系统等）
+- **PulsingActorError**: Actor 执行错误
+  - **PulsingBusinessError**: 业务逻辑错误（用户输入验证等）
+  - **PulsingSystemError**: 系统错误（可能触发 Actor 重启）
+  - **PulsingTimeoutError**: 超时错误（可重试）
+
+### 示例
+
+```python
+from pulsing.exceptions import (
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingRuntimeError,
+)
+
+try:
+    remote_ref = await system.resolve("worker")
+    response = await remote_ref.ask(msg)
+except PulsingBusinessError as e:
+    # 处理业务错误（用户输入问题）
+    print(f"验证失败: {e.message}")
+except PulsingSystemError as e:
+    # 处理系统错误（可能触发重启）
+    print(f"系统错误: {e.error}, 可恢复: {e.recoverable}")
+except PulsingRuntimeError as e:
+    # 处理框架错误（网络、集群等）
+    print(f"框架错误: {e}")
+```
+
+### 网络故障
+
+网络相关错误会作为 `PulsingRuntimeError` 抛出：
 
 ```python
 try:
     remote_ref = await system.resolve("worker")
     response = await remote_ref.ask(msg)
-except Exception as e:
+except PulsingRuntimeError as e:
+    # 网络故障、集群问题或 Actor 未找到
+    if "Connection" in str(e) or "timeout" in str(e).lower():
+        # 使用退避策略重试
+        pass
+    elif "not found" in str(e).lower():
+        # Actor 不存在
+        pass
+```
+
+### 超时
+
+为远程调用使用超时，避免无限等待：
+
+```python
+from pulsing.actor import ask_with_timeout
+
+try:
+    response = await ask_with_timeout(remote_ref, msg, timeout=10.0)
+except asyncio.TimeoutError:
+    print("请求超时")
+except PulsingRuntimeError as e:
     print(f"远程调用失败: {e}")
 ```
 

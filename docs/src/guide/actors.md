@@ -5,6 +5,9 @@ This guide covers the **Actor model** concepts and patterns for building robust 
 !!! tip "Prerequisite"
     If you haven't completed the [Quickstart](../quickstart/index.md), start there first.
 
+!!! tip "Communication Patterns"
+    Not sure when to use sync vs async vs streaming? See the [Communication Patterns Guide](communication_patterns.md) for detailed guidance.
+
 ---
 
 ## What is an Actor?
@@ -164,6 +167,84 @@ class ReliableWorker:
 
 !!! note
     Restart restores the actor but **not** its in-memory state. See [Reliability Guide](reliability.md) for idempotency patterns.
+
+---
+
+## Error Handling
+
+Pulsing provides a unified error handling system with clear error categorization.
+
+### Throwing Errors
+
+```python
+from pulsing.exceptions import (
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingTimeoutError,
+)
+
+@pul.remote
+class Service:
+    async def validate(self, data: str) -> bool:
+        if not data:
+            raise PulsingBusinessError(400, "Data required")
+        return True
+
+    async def process(self, data: str) -> str:
+        try:
+            return expensive_operation(data)
+        except Exception as e:
+            raise PulsingSystemError(f"Processing failed: {e}", recoverable=True)
+
+    async def fetch_with_timeout(self, url: str) -> str:
+        try:
+            return await asyncio.wait_for(httpx.get(url), timeout=5.0)
+        except asyncio.TimeoutError:
+            raise PulsingTimeoutError("fetch", duration_ms=5000)
+```
+
+### Catching Errors
+
+```python
+from pulsing.exceptions import (
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingRuntimeError,
+)
+
+try:
+    result = await service.process(data)
+except PulsingBusinessError as e:
+    # Handle business logic error
+    print(f"Validation error: {e.message}")
+except PulsingSystemError as e:
+    # Handle system error
+    if e.recoverable:
+        # May retry or wait for actor restart
+        pass
+    else:
+        # Non-recoverable error
+        logger.error(f"Fatal error: {e.error}")
+except PulsingRuntimeError as e:
+    # Handle framework error (network, cluster, etc.)
+    print(f"System error: {e}")
+```
+
+### Automatic Error Classification
+
+Standard Python exceptions are automatically classified:
+
+```python
+@pul.remote
+class Processor:
+    def process(self, data: str) -> str:
+        if not data:
+            # ValueError → PulsingBusinessError (code=400)
+            raise ValueError("Data required")
+
+        # Other exceptions → PulsingSystemError (recoverable=True)
+        return process_data(data)
+```
 
 ---
 

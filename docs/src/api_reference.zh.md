@@ -36,12 +36,68 @@ Pulsing Actor 框架的完整 API 文档。
 - **`ask(msg)`**：请求-响应，返回值或抛异常。
 - **`tell(msg)`**：fire-and-forget，不等待返回。
 
-### 错误模型（当前行为）
+### 错误模型
 
-- actor 内抛出的异常通常会在调用方表现为 **`RuntimeError(str(e))`**。
-- 若使用超时封装（如 `asyncio.wait_for`），超时会抛 **`asyncio.TimeoutError`**。
+Pulsing 提供了跨 Rust 和 Python 的统一错误处理系统，具有清晰的错误分类：
 
-注意：错误类型信息与远端堆栈不保证完整保留。
+#### 错误分类
+
+1. **PulsingRuntimeError**: 框架/系统级错误
+   - Actor 系统错误（NotFound, Stopped 等）
+   - 传输错误（ConnectionFailed 等）
+   - 集群错误（NodeNotFound 等）
+   - 配置错误（InvalidValue 等）
+   - I/O 错误、序列化错误
+
+2. **PulsingActorError**: 用户 Actor 执行错误
+   - **PulsingBusinessError**: 用户输入错误、业务逻辑错误（可恢复，返回给调用者）
+   - **PulsingSystemError**: 内部错误、资源错误（可能触发 Actor 重启）
+   - **PulsingTimeoutError**: 操作超时（可重试）
+   - **PulsingUnsupportedError**: 不支持的操作
+
+#### 使用示例
+
+```python
+from pulsing.exceptions import (
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingTimeoutError,
+    PulsingRuntimeError,
+)
+
+@pul.remote
+class Service:
+    async def validate(self, data: str) -> bool:
+        if not data:
+            raise PulsingBusinessError(400, "数据不能为空")
+        return True
+
+    async def process(self, data: str) -> str:
+        try:
+            return expensive_operation(data)
+        except Exception as e:
+            raise PulsingSystemError(f"处理失败: {e}", recoverable=True)
+
+# 调用方
+try:
+    result = await service.process("")
+except PulsingBusinessError as e:
+    print(f"业务错误 [{e.code}]: {e.message}")
+except PulsingSystemError as e:
+    print(f"系统错误: {e.error}, 可恢复: {e.recoverable}")
+except PulsingRuntimeError as e:
+    print(f"框架错误: {e}")
+```
+
+#### 自动错误分类
+
+标准 Python 异常会自动分类：
+- `ValueError`, `TypeError` → `PulsingBusinessError` (code=400)
+- `TimeoutError` → `PulsingTimeoutError`
+- `RuntimeError`, `SystemError` → `PulsingSystemError` (recoverable=True)
+- 其他异常 → `PulsingSystemError` (recoverable=True)
+
+注意：错误类型信息在本地和远程调用中都会保留。远程错误传播会保持错误分类。
 
 ### 信任边界与安全声明
 

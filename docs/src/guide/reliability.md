@@ -45,6 +45,91 @@ class Worker:
 - **Is**: a crash-recovery mechanism for actor instances (with backoff and restart limits)
 - **Is not**: a supervision tree, and **not** an exactly-once guarantee
 
+## Error Handling
+
+Pulsing distinguishes between framework errors and actor execution errors, enabling appropriate recovery strategies.
+
+### Error Categories
+
+- **Framework errors** (`PulsingRuntimeError`): Network failures, cluster issues, configuration errors, actor system errors
+- **Actor errors** (`PulsingActorError`): Errors from user code
+  - **Business errors** (`PulsingBusinessError`): User input validation failures (recoverable, return to caller)
+  - **System errors** (`PulsingSystemError`): Internal processing failures (may trigger actor restart)
+  - **Timeout errors** (`PulsingTimeoutError`): Operation timeouts (retryable)
+
+### Error Recovery Strategies
+
+1. **Business errors**: Return to caller, don't retry
+   ```python
+   except PulsingBusinessError as e:
+       # User input issue - return error to caller
+       return {"error": e.message, "code": e.code}
+   ```
+
+2. **System errors**: Check `recoverable` flag, may trigger actor restart
+   ```python
+   except PulsingSystemError as e:
+       if e.recoverable:
+           # May retry or wait for actor restart
+           # Actor will restart if restart_policy is configured
+           pass
+       else:
+           # Non-recoverable - log and fail
+           logger.error(f"Non-recoverable error: {e.error}")
+   ```
+
+3. **Timeout errors**: Retry with backoff
+   ```python
+   except PulsingTimeoutError as e:
+       # Retry with exponential backoff
+       await asyncio.sleep(backoff_seconds)
+       return await retry_operation()
+   ```
+
+4. **Framework errors**: Log and handle at application level
+   ```python
+   except PulsingRuntimeError as e:
+       # Network/cluster issue - log and handle at app level
+       logger.error(f"Framework error: {e}")
+       # May need to retry or failover
+   ```
+
+### Example: Comprehensive Error Handling
+
+```python
+from pulsing.exceptions import (
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingTimeoutError,
+    PulsingRuntimeError,
+)
+
+async def process_with_retry(actor, data, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            return await actor.process(data)
+        except PulsingBusinessError as e:
+            # Don't retry business errors
+            raise
+        except PulsingSystemError as e:
+            if not e.recoverable:
+                raise
+            # Wait for actor restart, then retry
+            await asyncio.sleep(2 ** attempt)
+        except PulsingTimeoutError:
+            # Retry timeout errors
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise
+        except PulsingRuntimeError as e:
+            # Framework error - may need failover
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise
+```
+
 ## Streaming resilience
 
 For streaming responses, assume partial streams are possible. Make chunks independently meaningful:

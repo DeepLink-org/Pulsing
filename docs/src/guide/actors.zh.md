@@ -5,6 +5,9 @@
 !!! tip "前置要求"
     如果尚未完成 [快速开始](../quickstart/index.zh.md)，请先阅读。
 
+!!! tip "通信范式"
+    不确定何时使用同步、异步还是流式？请参阅[通信范式指南](communication_patterns.zh.md)获取详细指导。
+
 ---
 
 ## 什么是 Actor？
@@ -164,6 +167,84 @@ class ReliableWorker:
 
 !!! note
     重启恢复 Actor 但**不恢复**内存状态。参阅 [可靠性指南](reliability.zh.md) 了解幂等模式。
+
+---
+
+## 错误处理
+
+Pulsing 提供了统一的错误处理系统，具有清晰的错误分类。
+
+### 抛出错误
+
+```python
+from pulsing.exceptions import (
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingTimeoutError,
+)
+
+@pul.remote
+class Service:
+    async def validate(self, data: str) -> bool:
+        if not data:
+            raise PulsingBusinessError(400, "数据必需")
+        return True
+
+    async def process(self, data: str) -> str:
+        try:
+            return expensive_operation(data)
+        except Exception as e:
+            raise PulsingSystemError(f"处理失败: {e}", recoverable=True)
+
+    async def fetch_with_timeout(self, url: str) -> str:
+        try:
+            return await asyncio.wait_for(httpx.get(url), timeout=5.0)
+        except asyncio.TimeoutError:
+            raise PulsingTimeoutError("fetch", duration_ms=5000)
+```
+
+### 捕获错误
+
+```python
+from pulsing.exceptions import (
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingRuntimeError,
+)
+
+try:
+    result = await service.process(data)
+except PulsingBusinessError as e:
+    # 处理业务逻辑错误
+    print(f"验证错误: {e.message}")
+except PulsingSystemError as e:
+    # 处理系统错误
+    if e.recoverable:
+        # 可以重试或等待 Actor 重启
+        pass
+    else:
+        # 不可恢复的错误
+        logger.error(f"致命错误: {e.error}")
+except PulsingRuntimeError as e:
+    # 处理框架错误（网络、集群等）
+    print(f"系统错误: {e}")
+```
+
+### 自动错误分类
+
+标准 Python 异常会自动分类：
+
+```python
+@pul.remote
+class Processor:
+    def process(self, data: str) -> str:
+        if not data:
+            # ValueError → PulsingBusinessError (code=400)
+            raise ValueError("数据必需")
+
+        # 其他异常 → PulsingSystemError (recoverable=True)
+        return process_data(data)
+```
 
 ---
 

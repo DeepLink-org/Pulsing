@@ -241,18 +241,52 @@ system.shutdown().await?;
 
 ### Python
 
+Pulsing 提供了统一的错误类型系统，区分框架错误和 Actor 执行错误：
+
 ```python
+from pulsing.exceptions import (
+    PulsingActorError,
+    PulsingRuntimeError,
+    PulsingBusinessError,
+    PulsingSystemError,
+)
+
 try:
     response = await actor.ask({"action": "process", "data": data})
-except RuntimeError as e:
-    # Actor 端异常作为 RuntimeError 传输
-    print(f"Actor error: {e}")
-except ConnectionError as e:
-    # 网络错误
-    print(f"Connection error: {e}")
+except PulsingBusinessError as e:
+    # 业务错误：用户输入验证失败等
+    print(f"业务错误 [{e.code}]: {e.message}")
+except PulsingSystemError as e:
+    # 系统错误：内部处理失败（可能触发 Actor 重启）
+    print(f"系统错误: {e.error}, 可恢复: {e.recoverable}")
+except PulsingActorError as e:
+    # 其他 Actor 执行错误
+    print(f"Actor 错误: {e}")
+except PulsingRuntimeError as e:
+    # 框架错误：网络、集群、Actor 系统等
+    print(f"框架错误: {e}")
 except asyncio.TimeoutError as e:
-    # 超时错误
-    print(f"Timeout: {e}")
+    # 超时错误（使用 ask_with_timeout 时）
+    print(f"超时: {e}")
+```
+
+#### 在 Actor 中抛出错误
+
+```python
+from pulsing.exceptions import PulsingBusinessError, PulsingSystemError
+
+@pul.remote
+class Processor:
+    async def process(self, data: str) -> str:
+        if not data:
+            # 抛出业务错误
+            raise PulsingBusinessError(400, "数据不能为空")
+
+        try:
+            return expensive_operation(data)
+        except Exception as e:
+            # 抛出系统错误
+            raise PulsingSystemError(f"处理失败: {e}", recoverable=True)
 ```
 
 ### Rust

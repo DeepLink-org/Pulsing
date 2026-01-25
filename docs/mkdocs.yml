@@ -92,6 +92,7 @@ plugins:
             User Guide: 用户指南
             Guide: 指南
             Actors: Actor 指南
+            Communication Patterns: 通信范式
             Remote Actors: 远程 Actor
             Operations: CLI 运维
             Reliability: 可靠性
@@ -142,6 +143,7 @@ nav:
   - User Guide:
     - Guide: guide/index.md
     - Actors: guide/actors.md
+    - Communication Patterns: guide/communication_patterns.md
     - Remote Actors: guide/remote_actors.md
     - Operations: guide/operations.md
     - Reliability: guide/reliability.md

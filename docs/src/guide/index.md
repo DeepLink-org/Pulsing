@@ -14,6 +14,14 @@ This guide covers **how to build** with Pulsing. For design rationale, see [Desi
 
     [:octicons-arrow-right-24: Actor Guide](actors.md)
 
+-   :material-message-text:{ .lg .middle } **Communication Patterns**
+
+    ---
+
+    When to use sync, async, streaming, and fire-and-forget patterns
+
+    [:octicons-arrow-right-24: Communication Patterns](communication_patterns.md)
+
 -   :material-cloud-sync:{ .lg .middle } **Remote Actors**
 
     ---
@@ -37,6 +45,7 @@ This guide covers **how to build** with Pulsing. For design rationale, see [Desi
 | Goal | Link |
 |------|------|
 | New to Pulsing? | [Quickstart](../quickstart/index.md) |
+| Choose communication pattern | [Communication Patterns](communication_patterns.md) |
 | Reliability patterns | [Reliability](reliability.md) |
 | Secure your cluster | [Security](security.md) |
 | Run LLM inference | [LLM Inference](../examples/llm_inference.md) |
