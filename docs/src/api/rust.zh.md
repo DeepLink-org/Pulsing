@@ -174,7 +174,7 @@ Actor 可以配置重启策略以实现容错。
 ```rust
 use pulsing_actor::system::SupervisionSpec;
 
-let options = SpawnOptions::new()
+let options = SpawnOptions::default()
     .supervision(SupervisionSpec::on_failure().max_restarts(3));
 
 // 基于工厂的生成，支持监督

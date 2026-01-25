@@ -174,7 +174,7 @@ Actors can be configured with restart policies for fault tolerance.
 ```rust
 use pulsing_actor::system::SupervisionSpec;
 
-let options = SpawnOptions::new()
+let options = SpawnOptions::default()
     .supervision(SupervisionSpec::on_failure().max_restarts(3));
 
 // Factory-based spawning with supervision

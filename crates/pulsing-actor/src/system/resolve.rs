@@ -75,9 +75,9 @@ impl ActorSystem {
     {
         let path = path.into_actor_path()?;
         let options = if let Some(nid) = node_id {
-            ResolveOptions::new().node_id(*nid)
+            ResolveOptions::default().node_id(*nid)
         } else {
-            ResolveOptions::new()
+            ResolveOptions::default()
         };
         self.resolve_named_with_options(&path, options).await
     }
@@ -107,9 +107,9 @@ impl ActorSystem {
         node_id: Option<&NodeId>,
     ) -> anyhow::Result<ActorRef> {
         let options = if let Some(nid) = node_id {
-            ResolveOptions::new().node_id(*nid)
+            ResolveOptions::default().node_id(*nid)
         } else {
-            ResolveOptions::new()
+            ResolveOptions::default()
         };
         self.resolve_named_with_options(path, options).await
     }

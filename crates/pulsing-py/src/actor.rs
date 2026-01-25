@@ -1217,7 +1217,7 @@ impl PyActorSystem {
         let _ = public;
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let options = pulsing_actor::system::SpawnOptions::new()
+            let options = pulsing_actor::system::SpawnOptions::default()
                 .supervision(supervision)
                 .metadata(metadata);
 

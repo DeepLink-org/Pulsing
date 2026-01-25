@@ -390,7 +390,7 @@ system.resolving().lazy(name)?;                // Lazy resolution (~5s TTL auto-
 Factory-based spawning for supervision restarts (named actors only):
 
 ```rust
-let options = SpawnOptions::new()
+let options = SpawnOptions::default()
     .supervision(SupervisionSpec::on_failure().max_restarts(3));
 
 // Only named actors support supervision (anonymous cannot be re-resolved)

@@ -65,6 +65,7 @@ pub trait ActorSystemCoreExt: Sized {
 pub struct SpawnBuilder<'a> {
     system: &'a Arc<ActorSystem>,
     name: Option<ActorPath>,
+    name_error: Option<String>,
     options: SpawnOptions,
 }
 
@@ -74,6 +75,7 @@ impl<'a> SpawnBuilder<'a> {
         Self {
             system,
             name: None,
+            name_error: None,
             options: SpawnOptions::default(),
         }
     }
@@ -82,14 +84,19 @@ impl<'a> SpawnBuilder<'a> {
     ///
     /// The name will be validated as an ActorPath. For user actors,
     /// use paths like "services/echo" or "actors/counter".
+    ///
+    /// If validation fails, the error will be stored and returned when `spawn()` or `spawn_factory()` is called.
     pub fn name(mut self, name: impl AsRef<str>) -> Self {
-        // Store as ActorPath to validate early
         match ActorPath::new(name.as_ref()) {
-            Ok(path) => self.name = Some(path),
-            Err(_) => {
-                // Store as string for now, will error on spawn
-                // This allows the builder pattern to continue
-                tracing::warn!("Invalid actor path: {}", name.as_ref());
+            Ok(path) => {
+                self.name = Some(path);
+                self.name_error = None; // Clear any previous error
+            }
+            Err(e) => {
+                // Store error message for later reporting
+                self.name_error = Some(format!("Invalid actor path '{}': {}", name.as_ref(), e));
+                self.name = None;
+                tracing::warn!("{}", self.name_error.as_ref().unwrap());
             }
         }
         self
@@ -102,6 +109,7 @@ impl<'a> SpawnBuilder<'a> {
     /// you already have an ActorPath or need to use system namespace paths.
     pub fn path(mut self, path: ActorPath) -> Self {
         self.name = Some(path);
+        self.name_error = None; // Clear any previous error
         self
     }
 
@@ -158,6 +166,11 @@ impl<'a> SpawnBuilder<'a> {
         F: FnMut() -> anyhow::Result<A> + Send + 'static,
         A: Actor,
     {
+        // Check if name validation failed
+        if let Some(ref error) = self.name_error {
+            return Err(anyhow::anyhow!("{}", error));
+        }
+
         match self.name {
             Some(path) => {
                 // Named actor: resolvable by name
@@ -174,9 +187,7 @@ impl<'a> SpawnBuilder<'a> {
 /// Builder for resolving actors with advanced options.
 pub struct ResolveBuilder<'a> {
     system: &'a Arc<ActorSystem>,
-    node_id: Option<NodeId>,
-    policy: Option<Arc<dyn LoadBalancingPolicy>>,
-    filter_alive: bool,
+    options: ResolveOptions,
 }
 
 impl<'a> ResolveBuilder<'a> {
@@ -184,41 +195,26 @@ impl<'a> ResolveBuilder<'a> {
     pub(crate) fn new(system: &'a Arc<ActorSystem>) -> Self {
         Self {
             system,
-            node_id: None,
-            policy: None,
-            filter_alive: true,
+            options: ResolveOptions::default(),
         }
     }
 
     /// Target a specific node (bypasses load balancing)
     pub fn node(mut self, node_id: NodeId) -> Self {
-        self.node_id = Some(node_id);
+        self.options = self.options.node_id(node_id);
         self
     }
 
     /// Set load balancing policy
     pub fn policy(mut self, policy: Arc<dyn LoadBalancingPolicy>) -> Self {
-        self.policy = Some(policy);
+        self.options = self.options.policy(policy);
         self
     }
 
     /// Set whether to filter only alive nodes (default: true)
     pub fn filter_alive(mut self, filter: bool) -> Self {
-        self.filter_alive = filter;
+        self.options = self.options.filter_alive(filter);
         self
-    }
-
-    /// Build ResolveOptions from this builder
-    fn build_options(&self) -> ResolveOptions {
-        let mut options = ResolveOptions::new();
-        if let Some(node_id) = self.node_id {
-            options = options.node_id(node_id);
-        }
-        if let Some(ref policy) = self.policy {
-            options = options.policy(policy.clone());
-        }
-        options = options.filter_alive(self.filter_alive);
-        options
     }
 
     /// Resolve a named actor
@@ -227,8 +223,7 @@ impl<'a> ResolveBuilder<'a> {
         P: IntoActorPath + Send,
     {
         let path = name.into_actor_path()?;
-        let options = self.build_options();
-        ActorSystem::resolve_named_with_options(self.system, &path, options).await
+        ActorSystem::resolve_named_with_options(self.system, &path, self.options).await
     }
 
     /// List all instances of a named actor
@@ -237,7 +232,7 @@ impl<'a> ResolveBuilder<'a> {
         P: IntoActorPath + Send,
     {
         let path = name.into_actor_path()?;
-        ActorSystem::resolve_all_instances(self.system, &path, self.filter_alive).await
+        ActorSystem::resolve_all_instances(self.system, &path, self.options.filter_alive).await
     }
 
     /// Lazy resolve - returns ActorRef that auto re-resolves when stale

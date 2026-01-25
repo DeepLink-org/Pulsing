@@ -90,7 +90,7 @@ impl ActorSystem {
     /// let system = ActorSystem::builder().build().await?;
     /// ```
     pub fn builder() -> ActorSystemBuilder {
-        ActorSystemBuilder::new()
+        ActorSystemBuilder::default()
     }
 
     /// Create a new actor system

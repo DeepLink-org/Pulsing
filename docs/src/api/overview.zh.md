@@ -212,7 +212,7 @@ let response = actor.ask(Ping(42)).await?;
 Factory 模式生成，支持监督重启（仅命名 actor）：
 
 ```rust
-let options = SpawnOptions::new()
+let options = SpawnOptions::default()
     .supervision(SupervisionSpec::on_failure().max_restarts(3));
 
 // 仅命名 actor 支持 supervision

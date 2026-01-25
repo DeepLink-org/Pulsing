@@ -215,24 +215,10 @@ impl ActorRef {
                 remote.transport.send_message(&self.actor_id, msg).await
             }
             ActorRefInner::Lazy(lazy) => {
-                // Resolve and call the underlying send directly to avoid recursion
+                // Resolve and delegate to the resolved reference
                 let resolved = lazy.get().await?;
-                match &resolved.inner {
-                    ActorRefInner::Local(sender) => {
-                        let (tx, rx) = oneshot::channel();
-                        sender
-                            .send(Envelope::ask(msg, tx))
-                            .await
-                            .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
-                        rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
-                    }
-                    ActorRefInner::Remote(remote) => {
-                        remote.transport.send_message(&resolved.actor_id, msg).await
-                    }
-                    ActorRefInner::Lazy(_) => {
-                        Err(anyhow::anyhow!("Nested lazy refs not supported"))
-                    }
-                }
+                // Box the recursive future to avoid infinite size
+                Box::pin(resolved.send(msg)).await
             }
         }
     }
@@ -248,20 +234,10 @@ impl ActorRef {
                 remote.transport.send_oneway(&self.actor_id, msg).await
             }
             ActorRefInner::Lazy(lazy) => {
-                // Resolve and call the underlying send_oneway directly to avoid recursion
+                // Resolve and delegate to the resolved reference
                 let resolved = lazy.get().await?;
-                match &resolved.inner {
-                    ActorRefInner::Local(sender) => sender
-                        .send(Envelope::tell(msg))
-                        .await
-                        .map_err(|_| anyhow::anyhow!("Actor mailbox closed")),
-                    ActorRefInner::Remote(remote) => {
-                        remote.transport.send_oneway(&resolved.actor_id, msg).await
-                    }
-                    ActorRefInner::Lazy(_) => {
-                        Err(anyhow::anyhow!("Nested lazy refs not supported"))
-                    }
-                }
+                // Box the recursive future to avoid infinite size
+                Box::pin(resolved.send_oneway(msg)).await
             }
         }
     }

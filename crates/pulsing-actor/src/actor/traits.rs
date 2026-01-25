@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use futures::Stream;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
@@ -81,6 +82,48 @@ pub enum StopReason {
     SystemShutdown,
 }
 
+/// Message serialization format
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// Binary format (bincode)
+    Bincode,
+    /// JSON format (serde_json)
+    Json,
+    /// Auto-detect format (try JSON first, then bincode)
+    Auto,
+}
+
+impl Format {
+    /// Parse data using this format
+    pub fn parse<T: DeserializeOwned>(&self, data: &[u8]) -> anyhow::Result<T> {
+        match self {
+            Format::Bincode => Ok(bincode::deserialize(data)?),
+            Format::Json => Ok(serde_json::from_slice(data)?),
+            Format::Auto => {
+                // Try JSON first for Python compatibility, then bincode
+                match serde_json::from_slice(data) {
+                    Ok(value) => Ok(value),
+                    Err(_) => Ok(bincode::deserialize(data)?),
+                }
+            }
+        }
+    }
+
+    /// Serialize data using this format
+    #[allow(dead_code)]
+    pub fn serialize<T: Serialize>(&self, value: &T) -> anyhow::Result<Vec<u8>> {
+        match self {
+            Format::Bincode => Ok(bincode::serialize(value)?),
+            Format::Json => Ok(serde_json::to_vec(value)?),
+            Format::Auto => {
+                // Default to bincode for Auto serialization
+                Ok(bincode::serialize(value)?)
+            }
+        }
+    }
+}
+
 /// Message stream type (stream of Single messages).
 pub type MessageStream = Pin<Box<dyn Stream<Item = anyhow::Result<Message>> + Send>>;
 
@@ -115,6 +158,14 @@ impl Message {
         match self {
             Message::Single { data, .. } => Ok(bincode::deserialize(&data)?),
             Message::Stream { .. } => Err(anyhow::anyhow!("Cannot unpack stream message")),
+        }
+    }
+
+    /// Parse message data with auto-detection (JSON first, then bincode)
+    pub fn parse<M: DeserializeOwned>(&self) -> anyhow::Result<M> {
+        match self {
+            Message::Single { data, .. } => Format::Auto.parse(data),
+            Message::Stream { .. } => Err(anyhow::anyhow!("Cannot parse stream message")),
         }
     }
 

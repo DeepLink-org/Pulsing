@@ -337,23 +337,14 @@ impl Actor for SystemActor {
     async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
         self.metrics.inc_message();
 
-        // Parse system message (try JSON first for Python compatibility)
+        // Parse system message using auto-detection (JSON first, then bincode)
         let sys_msg: SystemMessage = match &msg {
-            Message::Single { data, .. } => {
-                // Try JSON parsing first (Python compatible)
-                match serde_json::from_slice(data) {
-                    Ok(m) => m,
-                    Err(_) => {
-                        // Then try bincode parsing (Rust native)
-                        match bincode::deserialize(data) {
-                            Ok(m) => m,
-                            Err(e) => {
-                                return self.json_error_response(&format!(
-                                    "Invalid message format: {}",
-                                    e
-                                ));
-                            }
-                        }
+            Message::Single { .. } => {
+                match msg.parse() {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        // Return error response instead of propagating error
+                        return self.json_error_response(&format!("Invalid message format: {}", e));
                     }
                 }
             }

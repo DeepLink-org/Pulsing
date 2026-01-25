@@ -245,11 +245,6 @@ pub struct ActorSystemBuilder {
 }
 
 impl ActorSystemBuilder {
-    /// Create a new builder with default configuration
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Set the bind address
     ///
     /// Accepts `&str`, `String`, or `SocketAddr`.
@@ -471,14 +466,14 @@ mod tests {
 
     #[test]
     fn test_spawn_options_default() {
-        let options = SpawnOptions::new();
+        let options = SpawnOptions::default();
         assert!(options.mailbox_capacity.is_none());
         assert!(options.metadata.is_empty());
     }
 
     #[test]
     fn test_spawn_options_builder() {
-        let options = SpawnOptions::new()
+        let options = SpawnOptions::default()
             .mailbox_capacity(512)
             .metadata([("key".to_string(), "value".to_string())].into());
 
@@ -488,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_resolve_options_default() {
-        let options = ResolveOptions::new();
+        let options = ResolveOptions::default();
         assert!(options.node_id.is_none());
         assert!(options.policy.is_none());
         assert!(options.filter_alive);
@@ -497,7 +492,9 @@ mod tests {
     #[test]
     fn test_resolve_options_builder() {
         let node_id = NodeId::new(123);
-        let options = ResolveOptions::new().node_id(node_id).filter_alive(false);
+        let options = ResolveOptions::default()
+            .node_id(node_id)
+            .filter_alive(false);
 
         assert_eq!(options.node_id, Some(node_id));
         assert!(!options.filter_alive);
@@ -553,11 +550,6 @@ pub struct SpawnOptions {
 }
 
 impl SpawnOptions {
-    /// Create new spawn options with defaults
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Set mailbox capacity override
     pub fn mailbox_capacity(mut self, capacity: usize) -> Self {
         self.mailbox_capacity = Some(capacity);
@@ -578,7 +570,7 @@ impl SpawnOptions {
 }
 
 /// Options for resolving named actors
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ResolveOptions {
     /// Target node ID (if specified, skip load balancing)
     pub node_id: Option<NodeId>,
@@ -586,6 +578,16 @@ pub struct ResolveOptions {
     pub policy: Option<Arc<dyn LoadBalancingPolicy>>,
     /// Only select Alive nodes (default: true)
     pub filter_alive: bool,
+}
+
+impl Default for ResolveOptions {
+    fn default() -> Self {
+        Self {
+            node_id: None,
+            policy: None,
+            filter_alive: true,
+        }
+    }
 }
 
 impl std::fmt::Debug for ResolveOptions {
@@ -599,14 +601,6 @@ impl std::fmt::Debug for ResolveOptions {
 }
 
 impl ResolveOptions {
-    /// Create new resolve options with defaults
-    pub fn new() -> Self {
-        Self {
-            filter_alive: true,
-            ..Default::default()
-        }
-    }
-
     /// Set target node ID (bypasses load balancing)
     pub fn node_id(mut self, node_id: NodeId) -> Self {
         self.node_id = Some(node_id);
