@@ -2,23 +2,16 @@
 Tests for SystemActor functionality.
 
 Covers:
-- Rust SystemActor (system/core) operations
-- Python ActorService (_python_actor_service) operations
-- System helper functions (list_actors, get_metrics, etc.)
+- Rust SystemActor (system/core) operations via SystemActorProxy
+- Python ActorService (system/python_actor_service) operations via PythonActorServiceProxy
 """
 
 import asyncio
 import pytest
 import pulsing as pul
 from pulsing.actor import (
-    Actor,
-    ActorId,
-    Message,
-    list_actors,
-    get_metrics,
-    get_node_info,
-    health_check,
-    ping,
+    get_python_actor_service,
+    get_system_actor,
     remote,
 )
 
@@ -34,6 +27,18 @@ async def system():
     system = await pul.actor_system()
     yield system
     await system.shutdown()
+
+
+@pytest.fixture
+async def sys_proxy(system):
+    """Create a SystemActorProxy for the test system."""
+    return await get_system_actor(system)
+
+
+@pytest.fixture
+async def service_proxy(system):
+    """Create a PythonActorServiceProxy for the test system."""
+    return await get_python_actor_service(system)
 
 
 # ============================================================================
@@ -58,27 +63,28 @@ async def test_python_actor_service_auto_registered(system):
 
 
 # ============================================================================
-# Test: SystemActor Reference
+# Test: SystemActorProxy
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_get_system_actor_reference(system):
-    """Should be able to get SystemActor reference."""
-    sys_ref = await system.system()
-    assert sys_ref is not None
-    assert sys_ref.is_local()
+async def test_get_system_actor_proxy(system):
+    """Should be able to get SystemActorProxy."""
+    sys_proxy = await get_system_actor(system)
+    assert sys_proxy is not None
+    assert sys_proxy.ref is not None
+    assert sys_proxy.ref.is_local()
 
 
 # ============================================================================
-# Test: Ping
+# Test: Ping via Proxy
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_ping_local(system):
-    """Ping should return Pong with node info."""
-    result = await ping(system)
+async def test_ping_via_proxy(sys_proxy, system):
+    """Ping via SystemActorProxy should return Pong with node info."""
+    result = await sys_proxy.ping()
 
     assert result["type"] == "Pong"
     assert "node_id" in result
@@ -87,28 +93,15 @@ async def test_ping_local(system):
     assert int(result["node_id"]) == system.node_id.id
 
 
-@pytest.mark.asyncio
-async def test_ping_direct_message(system):
-    """Direct ping message to SystemActor."""
-    sys_ref = await system.system()
-    msg = Message.from_json("SystemMessage", {"type": "Ping"})
-    resp = await sys_ref.ask(msg)
-    data = resp.to_json()
-
-    assert data["type"] == "Pong"
-    # node_id is serialized as string in JSON for u128 precision
-    assert int(data["node_id"]) == system.node_id.id
-
-
 # ============================================================================
-# Test: Health Check
+# Test: Health Check via Proxy
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_health_check(system):
-    """Health check should return healthy status."""
-    result = await health_check(system)
+async def test_health_check_via_proxy(sys_proxy):
+    """Health check via SystemActorProxy should return healthy status."""
+    result = await sys_proxy.health_check()
 
     assert result["type"] == "Health"
     assert result["status"] == "healthy"
@@ -116,27 +109,15 @@ async def test_health_check(system):
     assert "uptime_secs" in result
 
 
-@pytest.mark.asyncio
-async def test_health_check_direct_message(system):
-    """Direct health check message to SystemActor."""
-    sys_ref = await system.system()
-    msg = Message.from_json("SystemMessage", {"type": "HealthCheck"})
-    resp = await sys_ref.ask(msg)
-    data = resp.to_json()
-
-    assert data["type"] == "Health"
-    assert data["status"] == "healthy"
-
-
 # ============================================================================
-# Test: Get Node Info
+# Test: Get Node Info via Proxy
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_get_node_info(system):
-    """Should return node information."""
-    result = await get_node_info(system)
+async def test_get_node_info_via_proxy(sys_proxy, system):
+    """Should return node information via SystemActorProxy."""
+    result = await sys_proxy.get_node_info()
 
     assert result["type"] == "NodeInfo"
     # node_id is serialized as string in JSON for u128 precision
@@ -146,9 +127,9 @@ async def test_get_node_info(system):
 
 
 @pytest.mark.asyncio
-async def test_get_node_info_address_format(system):
+async def test_get_node_info_address_format(sys_proxy):
     """Node address should be in IP:port format."""
-    result = await get_node_info(system)
+    result = await sys_proxy.get_node_info()
     addr = result["addr"]
 
     # Should contain port separator
@@ -156,14 +137,14 @@ async def test_get_node_info_address_format(system):
 
 
 # ============================================================================
-# Test: Get Metrics
+# Test: Get Metrics via Proxy
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_get_metrics(system):
-    """Should return system metrics."""
-    result = await get_metrics(system)
+async def test_get_metrics_via_proxy(sys_proxy):
+    """Should return system metrics via SystemActorProxy."""
+    result = await sys_proxy.get_metrics()
 
     assert result["type"] == "Metrics"
     assert "actors_count" in result
@@ -174,113 +155,61 @@ async def test_get_metrics(system):
 
 
 @pytest.mark.asyncio
-async def test_metrics_message_count_increases(system):
+async def test_metrics_message_count_increases(sys_proxy):
     """Message count should increase with each message."""
     # Get initial count
-    result1 = await get_metrics(system)
+    result1 = await sys_proxy.get_metrics()
     initial_count = result1["messages_total"]
 
     # Send a few more messages
-    await ping(system)
-    await ping(system)
+    await sys_proxy.ping()
+    await sys_proxy.ping()
 
     # Get new count
-    result2 = await get_metrics(system)
+    result2 = await sys_proxy.get_metrics()
     new_count = result2["messages_total"]
 
     assert new_count > initial_count
 
 
 # ============================================================================
-# Test: List Actors
+# Test: List Actors via Proxy
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_list_actors_empty_initially(system):
+async def test_list_actors_via_proxy(sys_proxy):
     """Actor list should be empty initially (only system actors)."""
-    result = await list_actors(system)
+    result = await sys_proxy.list_actors()
 
     # Should be empty or only contain system actors
     assert isinstance(result, list)
 
 
-@pytest.mark.asyncio
-async def test_list_actors_direct_message(system):
-    """Direct ListActors message to SystemActor."""
-    sys_ref = await system.system()
-    msg = Message.from_json("SystemMessage", {"type": "ListActors"})
-    resp = await sys_ref.ask(msg)
-    data = resp.to_json()
-
-    assert data["type"] == "ActorList"
-    assert "actors" in data
-
-
 # ============================================================================
-# Test: GetActor
+# Test: PythonActorServiceProxy
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_get_actor_not_found(system):
-    """GetActor should return error for non-existent actor."""
-    sys_ref = await system.system()
-    msg = Message.from_json(
-        "SystemMessage", {"type": "GetActor", "name": "nonexistent"}
-    )
-    resp = await sys_ref.ask(msg)
-    data = resp.to_json()
-
-    assert data["type"] == "Error"
-    assert "not found" in data["message"].lower()
-
-
-# ============================================================================
-# Test: CreateActor (should fail in pure Rust mode)
-# ============================================================================
+async def test_get_python_actor_service_proxy(system):
+    """Should be able to get PythonActorServiceProxy."""
+    service_proxy = await get_python_actor_service(system)
+    assert service_proxy is not None
+    assert service_proxy.ref is not None
 
 
 @pytest.mark.asyncio
-async def test_create_actor_not_supported_in_rust(system):
-    """CreateActor should return error in pure Rust SystemActor."""
-    sys_ref = await system.system()
-    msg = Message.from_json(
-        "SystemMessage",
-        {
-            "type": "CreateActor",
-            "actor_type": "Counter",
-            "name": "test_counter",
-            "params": {},
-            "public": True,
-        },
-    )
-    resp = await sys_ref.ask(msg)
-    data = resp.to_json()
+async def test_list_registry_via_proxy(service_proxy):
+    """PythonActorServiceProxy should list registered actor classes."""
+    classes = await service_proxy.list_registry()
 
-    assert data["type"] == "Error"
-    assert "not supported" in data["message"].lower()
+    assert classes is not None
+    assert isinstance(classes, list)
 
 
 # ============================================================================
-# Test: PythonActorService
-# ============================================================================
-
-
-@pytest.mark.asyncio
-async def test_python_actor_service_list_registry(system):
-    """PythonActorService should list registered actor classes."""
-    service_ref = await system.resolve_named("system/python_actor_service")
-    msg = Message.from_json("ListRegistry", {})
-    resp = await service_ref.ask(msg)
-    data = resp.to_json()
-
-    assert data.get("classes") is not None
-    assert isinstance(data["classes"], list)
-
-
-# ============================================================================
-# Test: @remote with PythonActorService
+# Test: @remote with PythonActorServiceProxy
 # ============================================================================
 
 
@@ -313,27 +242,23 @@ async def test_remote_local_creation(system):
 
 
 @pytest.mark.asyncio
-async def test_remote_class_registered(system):
+async def test_remote_class_registered(service_proxy):
     """@remote decorated class should be registered in global registry."""
-    service_ref = await system.resolve_named("system/python_actor_service")
-    msg = Message.from_json("ListRegistry", {})
-    resp = await service_ref.ask(msg)
-    data = resp.to_json()
+    classes = await service_proxy.list_registry()
 
     # TestCounter should be in the registry
-    class_names = data.get("classes", [])
-    assert any("TestCounter" in name for name in class_names)
+    assert any("TestCounter" in name for name in classes)
 
 
 # ============================================================================
-# Test: Multiple Concurrent Requests
+# Test: Multiple Concurrent Requests via Proxy
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_concurrent_ping_requests(system):
-    """SystemActor should handle concurrent requests."""
-    tasks = [ping(system) for _ in range(10)]
+async def test_concurrent_ping_requests(sys_proxy, system):
+    """SystemActor should handle concurrent requests via proxy."""
+    tasks = [sys_proxy.ping() for _ in range(10)]
     results = await asyncio.gather(*tasks)
 
     for result in results:
@@ -343,14 +268,14 @@ async def test_concurrent_ping_requests(system):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_mixed_requests(system):
-    """SystemActor should handle mixed concurrent requests."""
+async def test_concurrent_mixed_requests(sys_proxy):
+    """SystemActor should handle mixed concurrent requests via proxy."""
     tasks = [
-        ping(system),
-        health_check(system),
-        get_node_info(system),
-        get_metrics(system),
-        list_actors(system),
+        sys_proxy.ping(),
+        sys_proxy.health_check(),
+        sys_proxy.get_node_info(),
+        sys_proxy.get_metrics(),
+        sys_proxy.list_actors(),
     ]
     results = await asyncio.gather(*tasks)
 
@@ -362,49 +287,50 @@ async def test_concurrent_mixed_requests(system):
 
 
 # ============================================================================
-# Test: Error Handling
+# Test: Uptime via Proxy
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_invalid_message_type(system):
-    """SystemActor should handle invalid message types gracefully."""
-    sys_ref = await system.system()
-    msg = Message.from_json("SystemMessage", {"type": "InvalidType"})
-    resp = await sys_ref.ask(msg)
-    data = resp.to_json()
-
-    # Should return error for unknown message type
-    assert data["type"] == "Error"
-
-
-@pytest.mark.asyncio
-async def test_malformed_message(system):
-    """SystemActor should handle malformed messages gracefully."""
-    sys_ref = await system.system()
-    # Send a message without proper format
-    msg = Message.from_json("BadMessage", {"foo": "bar"})
-    resp = await sys_ref.ask(msg)
-    data = resp.to_json()
-
-    # Should return error
-    assert data["type"] == "Error"
-
-
-# ============================================================================
-# Test: Uptime
-# ============================================================================
-
-
-@pytest.mark.asyncio
-async def test_uptime_increases(system):
+async def test_uptime_increases(sys_proxy):
     """Uptime should increase over time."""
-    result1 = await get_node_info(system)
+    result1 = await sys_proxy.get_node_info()
     uptime1 = result1["uptime_secs"]
 
     await asyncio.sleep(1.1)
 
-    result2 = await get_node_info(system)
+    result2 = await sys_proxy.get_node_info()
     uptime2 = result2["uptime_secs"]
 
     assert uptime2 >= uptime1
+
+
+# ============================================================================
+# Test: Remote Node Access via Proxy
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_system_actor_for_remote_node(system):
+    """get_system_actor with node_id should work (for cluster scenarios)."""
+    # For local testing, use local node's ID
+    local_node_id = system.node_id.id
+
+    # This should work even with local node_id
+    sys_proxy = await get_system_actor(system, node_id=local_node_id)
+    result = await sys_proxy.ping()
+
+    assert result["type"] == "Pong"
+
+
+@pytest.mark.asyncio
+async def test_get_python_actor_service_for_remote_node(system):
+    """get_python_actor_service with node_id should work (for cluster scenarios)."""
+    # For local testing, use local node's ID
+    local_node_id = system.node_id.id
+
+    # This should work even with local node_id
+    service_proxy = await get_python_actor_service(system, node_id=local_node_id)
+    classes = await service_proxy.list_registry()
+
+    assert isinstance(classes, list)

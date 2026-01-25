@@ -1411,9 +1411,10 @@ impl PyActorSystem {
                 .into_iter()
                 .map(|(member, instance_opt)| {
                     let mut map = std::collections::HashMap::new();
+                    // Use decimal string for node_id to match members() format
                     map.insert(
                         "node_id".to_string(),
-                        serde_json::Value::String(member.node_id.to_string()),
+                        serde_json::Value::String(member.node_id.0.to_string()),
                     );
                     map.insert(
                         "addr".to_string(),
@@ -1426,9 +1427,10 @@ impl PyActorSystem {
 
                     // Add detailed instance info if available
                     if let Some(inst) = instance_opt {
+                        // Use decimal string for actor_id to match other APIs
                         map.insert(
                             "actor_id".to_string(),
-                            serde_json::Value::String(inst.actor_id.to_string()),
+                            serde_json::Value::String(inst.actor_id.0.to_string()),
                         );
                         // Add metadata fields
                         for (k, v) in inst.metadata {
@@ -1471,11 +1473,11 @@ impl PyActorSystem {
                                 info.instance_count(),
                             )),
                         );
-                        // Convert instance_nodes (HashSet<NodeId>) to list of node IDs as strings
+                        // Convert instance_nodes (HashSet<NodeId>) to list of node IDs as decimal strings
                         let instances: Vec<serde_json::Value> = info
                             .instance_nodes
                             .iter()
-                            .map(|id| serde_json::Value::String(id.to_string()))
+                            .map(|id| serde_json::Value::String(id.0.to_string()))
                             .collect();
                         map.insert("instances".to_string(), serde_json::Value::Array(instances));
 
@@ -1485,13 +1487,14 @@ impl PyActorSystem {
                             .iter()
                             .map(|(node_id, inst)| {
                                 let mut inst_map = serde_json::Map::new();
+                                // Use decimal string to match members() format
                                 inst_map.insert(
                                     "node_id".to_string(),
-                                    serde_json::Value::String(node_id.to_string()),
+                                    serde_json::Value::String(node_id.0.to_string()),
                                 );
                                 inst_map.insert(
                                     "actor_id".to_string(),
-                                    serde_json::Value::String(inst.actor_id.to_string()),
+                                    serde_json::Value::String(inst.actor_id.0.to_string()),
                                 );
                                 // Add metadata
                                 for (k, v) in &inst.metadata {

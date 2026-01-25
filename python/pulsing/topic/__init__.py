@@ -26,12 +26,14 @@ from pulsing.topic.topic import (
     TopicReader,
     TopicWriter,
     read_topic,
+    subscribe_to_topic,
     write_topic,
 )
 
 __all__ = [
     "write_topic",
     "read_topic",
+    "subscribe_to_topic",
     "TopicWriter",
     "TopicReader",
     "PublishMode",

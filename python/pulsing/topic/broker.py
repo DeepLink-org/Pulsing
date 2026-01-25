@@ -6,12 +6,12 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pulsing.actor import ActorRef, ActorSystem
 
-from pulsing.actor import Actor, ActorId, Message
+from pulsing.actor import ActorId, remote
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +35,9 @@ class _Subscriber:
     consecutive_failures: int = 0
 
 
-class TopicBroker(Actor):
-    """Topic broker actor."""
+@remote
+class TopicBroker:
+    """Topic broker actor with remote method support."""
 
     def __init__(self, topic: str, system: "ActorSystem"):
         self.topic = topic
@@ -60,44 +61,30 @@ class TopicBroker(Actor):
             "subscriber_count": str(len(self._subscribers)),
         }
 
-    async def receive(self, msg: Message) -> Message | None:
-        try:
-            return await self._handle(msg)
-        except Exception as e:
-            logger.exception(f"TopicBroker[{self.topic}] error: {e}")
-            return Message.from_json("Error", {"error": str(e)})
+    # ========== Public Remote Methods ==========
 
-    async def _handle(self, msg: Message) -> Message | None:
-        data = msg.to_json()
+    async def subscribe(
+        self,
+        subscriber_id: str,
+        actor_name: str,
+        node_id: int | None = None,
+    ) -> dict:
+        """Subscribe an actor to this topic.
 
-        if msg.msg_type == "Subscribe":
-            return await self._subscribe(data)
-        elif msg.msg_type == "Unsubscribe":
-            return await self._unsubscribe(data)
-        elif msg.msg_type == "Publish":
-            return await self._publish(data)
-        elif msg.msg_type == "GetStats":
-            return self._stats()
-        else:
-            return Message.from_json("Error", {"error": f"Unknown: {msg.msg_type}"})
+        Args:
+            subscriber_id: Unique subscriber identifier
+            actor_name: Name of the actor to receive messages
+            node_id: Optional node ID (for cross-node subscriptions)
 
-    async def _subscribe(self, data: dict) -> Message:
-        subscriber_id = data.get("subscriber_id")
-        actor_name = data.get("actor_name")
-        node_id_raw = data.get("node_id")
-        # node_id comes as string from JSON, convert to int for resolve_named
-        node_id = int(node_id_raw) if node_id_raw else None
-
+        Returns:
+            {"success": True, "topic": "..."}
+        """
         if not subscriber_id or not actor_name:
-            return Message.from_json(
-                "Error", {"error": "Missing subscriber_id or actor_name"}
-            )
+            raise ValueError("Missing subscriber_id or actor_name")
 
         async with self._lock:
             if subscriber_id in self._subscribers:
-                return Message.from_json(
-                    "SubscribeResult", {"success": True, "already": True}
-                )
+                return {"success": True, "already": True}
 
             self._subscribers[subscriber_id] = _Subscriber(
                 subscriber_id=subscriber_id,
@@ -105,21 +92,87 @@ class TopicBroker(Actor):
                 node_id=node_id,
             )
             logger.debug(f"TopicBroker[{self.topic}] +subscriber: {subscriber_id}")
-            return Message.from_json(
-                "SubscribeResult", {"success": True, "topic": self.topic}
-            )
+            return {"success": True, "topic": self.topic}
 
-    async def _unsubscribe(self, data: dict) -> Message:
-        subscriber_id = data.get("subscriber_id")
+    async def unsubscribe(self, subscriber_id: str) -> dict:
+        """Unsubscribe from this topic.
+
+        Args:
+            subscriber_id: Subscriber ID to remove
+
+        Returns:
+            {"success": True/False}
+        """
         if not subscriber_id:
-            return Message.from_json("Error", {"error": "Missing subscriber_id"})
+            raise ValueError("Missing subscriber_id")
 
         async with self._lock:
             if subscriber_id in self._subscribers:
                 del self._subscribers[subscriber_id]
                 logger.debug(f"TopicBroker[{self.topic}] -subscriber: {subscriber_id}")
-                return Message.from_json("UnsubscribeResult", {"success": True})
-            return Message.from_json("UnsubscribeResult", {"success": False})
+                return {"success": True}
+            return {"success": False}
+
+    async def publish(
+        self,
+        payload: Any,
+        mode: str = "fire_and_forget",
+        sender_id: str | None = None,
+        timeout: float = DEFAULT_FANOUT_TIMEOUT,
+    ) -> dict:
+        """Publish a message to all subscribers.
+
+        Args:
+            payload: Message payload
+            mode: "fire_and_forget", "wait_all_acks", "wait_any_ack", "best_effort"
+            sender_id: Optional sender ID (excluded from delivery)
+            timeout: Timeout for ack modes
+
+        Returns:
+            {"success": True, "delivered": N, "failed": N, "subscriber_count": N}
+        """
+        self._total_published += 1
+
+        if not self._subscribers:
+            return {"success": True, "delivered": 0, "failed": 0, "subscriber_count": 0}
+
+        envelope = {
+            "topic": self.topic,
+            "payload": payload,
+            "sender_id": sender_id,
+            "timestamp": time.time(),
+        }
+
+        if mode == "fire_and_forget":
+            return await self._fanout_tell(envelope, sender_id)
+        elif mode == "wait_all_acks":
+            return await self._fanout_ask(
+                envelope, sender_id, wait_all=True, timeout=timeout
+            )
+        elif mode == "wait_any_ack":
+            return await self._fanout_ask(
+                envelope, sender_id, wait_all=False, timeout=timeout
+            )
+        elif mode == "best_effort":
+            return await self._fanout_best_effort(envelope, sender_id)
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+
+    def get_stats(self) -> dict:
+        """Get topic statistics.
+
+        Returns:
+            {"topic": "...", "subscriber_count": N, "total_published": N, ...}
+        """
+        return {
+            "topic": self.topic,
+            "subscriber_count": len(self._subscribers),
+            "total_published": self._total_published,
+            "total_delivered": self._total_delivered,
+            "total_failed": self._total_failed,
+        }
+
+    # ========== Internal Methods ==========
 
     async def _resolve(self, sub: _Subscriber) -> "ActorRef | None":
         now = time.time()
@@ -138,37 +191,6 @@ class TopicBroker(Actor):
             sub._ref = None
             sub._ref_resolved_at = 0
             return None
-
-    async def _publish(self, data: dict) -> Message:
-        payload = data.get("payload")
-        mode = data.get("mode", "fire_and_forget")
-        sender_id = data.get("sender_id")
-
-        self._total_published += 1
-
-        if not self._subscribers:
-            return Message.from_json(
-                "PublishResult",
-                {"success": True, "delivered": 0, "failed": 0, "subscriber_count": 0},
-            )
-
-        envelope = {
-            "topic": self.topic,
-            "payload": payload,
-            "sender_id": sender_id,
-            "timestamp": time.time(),
-        }
-
-        if mode == "fire_and_forget":
-            return await self._fanout_tell(envelope, sender_id)
-        elif mode == "wait_all_acks":
-            return await self._fanout_ask(envelope, sender_id, wait_all=True)
-        elif mode == "wait_any_ack":
-            return await self._fanout_ask(envelope, sender_id, wait_all=False)
-        elif mode == "best_effort":
-            return await self._fanout_best_effort(envelope, sender_id)
-        else:
-            return Message.from_json("Error", {"error": f"Unknown mode: {mode}"})
 
     def _record_success(self, sub: _Subscriber) -> None:
         sub.messages_delivered += 1
@@ -190,7 +212,7 @@ class TopicBroker(Actor):
                         f"TopicBroker[{self.topic}] evicted zombie subscriber: {sub_id}"
                     )
 
-    async def _fanout_tell(self, envelope: dict, sender_id: str | None) -> Message:
+    async def _fanout_tell(self, envelope: dict, sender_id: str | None) -> dict:
         sent = 0
         failed = 0
         zombies: list[str] = []
@@ -218,15 +240,12 @@ class TopicBroker(Actor):
         self._total_delivered += sent
         self._total_failed += failed
 
-        return Message.from_json(
-            "PublishResult",
-            {
-                "success": True,
-                "delivered": sent,
-                "failed": failed,
-                "subscriber_count": len(self._subscribers),
-            },
-        )
+        return {
+            "success": True,
+            "delivered": sent,
+            "failed": failed,
+            "subscriber_count": len(self._subscribers),
+        }
 
     async def _fanout_ask(
         self,
@@ -234,7 +253,7 @@ class TopicBroker(Actor):
         sender_id: str | None,
         wait_all: bool,
         timeout: float = DEFAULT_FANOUT_TIMEOUT,
-    ) -> Message:
+    ) -> dict:
         """Wait for ack mode."""
         tasks = []
         sub_ids = []
@@ -253,10 +272,7 @@ class TopicBroker(Actor):
 
         if not tasks:
             await self._evict_zombies(resolve_failed)
-            return Message.from_json(
-                "PublishResult",
-                {"success": True, "delivered": 0, "failed": 0, "subscriber_count": 0},
-            )
+            return {"success": True, "delivered": 0, "failed": 0, "subscriber_count": 0}
 
         delivered = 0
         failed = 0
@@ -304,39 +320,31 @@ class TopicBroker(Actor):
                     if not task.exception():
                         delivered = 1
                         break
-                # Cancel other pending tasks (local cancellation, remote relies on RST_STREAM)
+                # Cancel other pending tasks
                 for task in pending:
                     task.cancel()
             except asyncio.TimeoutError:
-                # Timeout: no response
                 logger.warning(
                     f"TopicBroker[{self.topic}] wait_any_ack timeout after {timeout}s"
                 )
-                # Cancel all tasks
                 for task in tasks:
                     if not task.done():
                         task.cancel()
 
-        # Evict zombie subscribers
         await self._evict_zombies(zombies)
 
         self._total_delivered += delivered
         self._total_failed += failed
 
-        return Message.from_json(
-            "PublishResult",
-            {
-                "success": delivered > 0 or failed == 0,
-                "delivered": delivered,
-                "failed": failed,
-                "failed_subscribers": failed_ids,
-                "subscriber_count": len(self._subscribers),
-            },
-        )
+        return {
+            "success": delivered > 0 or failed == 0,
+            "delivered": delivered,
+            "failed": failed,
+            "failed_subscribers": failed_ids,
+            "subscriber_count": len(self._subscribers),
+        }
 
-    async def _fanout_best_effort(
-        self, envelope: dict, sender_id: str | None
-    ) -> Message:
+    async def _fanout_best_effort(self, envelope: dict, sender_id: str | None) -> dict:
         """Best-effort: try to send, record failures"""
         delivered = 0
         failed = 0
@@ -363,31 +371,15 @@ class TopicBroker(Actor):
                 if self._record_failure(sub):
                     zombies.append(sub_id)
 
-        # Evict zombie subscribers
         await self._evict_zombies(zombies)
 
         self._total_delivered += delivered
         self._total_failed += failed
 
-        return Message.from_json(
-            "PublishResult",
-            {
-                "success": True,
-                "delivered": delivered,
-                "failed": failed,
-                "failed_subscribers": failed_ids,
-                "subscriber_count": len(self._subscribers),
-            },
-        )
-
-    def _stats(self) -> Message:
-        return Message.from_json(
-            "TopicStats",
-            {
-                "topic": self.topic,
-                "subscriber_count": len(self._subscribers),
-                "total_published": self._total_published,
-                "total_delivered": self._total_delivered,
-                "total_failed": self._total_failed,
-            },
-        )
+        return {
+            "success": True,
+            "delivered": delivered,
+            "failed": failed,
+            "failed_subscribers": failed_ids,
+            "subscriber_count": len(self._subscribers),
+        }

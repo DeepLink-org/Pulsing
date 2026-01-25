@@ -187,8 +187,12 @@ from .remote import (
     ActorClass,
     ActorProxy,
     PythonActorService,
+    PythonActorServiceProxy,
+    SystemActorProxy,
     get_metrics,
     get_node_info,
+    get_python_actor_service,
+    get_system_actor,
     health_check,
     list_actors,
     ping,
@@ -206,6 +210,7 @@ __all__ = [
     "remote",
     "resolve",
     "get_system",
+    "get_system_actor",
     "is_initialized",
     # Minimal core types commonly used in docs/examples
     "Actor",
@@ -216,6 +221,7 @@ __all__ = [
     "ActorRef",
     "ActorId",
     "ActorProxy",
+    "SystemActorProxy",
     # Service (for actor_system function)
     "PythonActorService",
     "PYTHON_ACTOR_SERVICE_NAME",

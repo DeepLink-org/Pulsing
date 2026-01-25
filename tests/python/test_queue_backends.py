@@ -249,28 +249,24 @@ class TestBucketStorageWithBackend:
     async def test_bucket_storage_with_memory_backend(
         self, actor_system, temp_storage_path
     ):
-        """Test BucketStorage with memory backend."""
-        from pulsing.actor import Message
-
-        storage = BucketStorage(
+        """Test BucketStorage with memory backend via proxy."""
+        # Use BucketStorage.local() for proper @remote wrapping
+        bucket = await BucketStorage.local(
+            actor_system,
             bucket_id=0,
             storage_path=f"{temp_storage_path}/bucket_memory",
             batch_size=10,
             backend="memory",
+            name="bucket_memory_test",
         )
 
-        actor_ref = await actor_system.spawn(storage, name="bucket_memory_test")
-
-        # Put records
+        # Put records via proxy method
         for i in range(5):
-            response = await actor_ref.ask(
-                Message.from_json("Put", {"record": {"id": f"test_{i}", "value": i}})
-            )
-            assert response.to_json().get("status") == "ok"
+            result = await bucket.put({"id": f"test_{i}", "value": i})
+            assert result["status"] == "ok"
 
-        # Get stats
-        stats_response = await actor_ref.ask(Message.from_json("Stats", {}))
-        stats = stats_response.to_json()
+        # Get stats via proxy method
+        stats = await bucket.stats()
 
         assert stats["bucket_id"] == 0
         assert stats["total_count"] == 5
@@ -278,30 +274,25 @@ class TestBucketStorageWithBackend:
 
     @pytest.mark.asyncio
     async def test_bucket_storage_put_batch(self, actor_system, temp_storage_path):
-        """Test BucketStorage PutBatch message."""
-        from pulsing.actor import Message
-
-        storage = BucketStorage(
+        """Test BucketStorage put_batch method via proxy."""
+        # Use BucketStorage.local() for proper @remote wrapping
+        bucket = await BucketStorage.local(
+            actor_system,
             bucket_id=0,
             storage_path=f"{temp_storage_path}/bucket_batch",
             batch_size=100,
             backend="memory",
+            name="bucket_batch_test",
         )
 
-        actor_ref = await actor_system.spawn(storage, name="bucket_batch_test")
-
-        # Put batch
+        # Put batch via proxy method
         records = [{"id": f"batch_{i}", "value": i} for i in range(10)]
-        response = await actor_ref.ask(
-            Message.from_json("PutBatch", {"records": records})
-        )
-        result = response.to_json()
-        assert result.get("status") == "ok"
-        assert result.get("count") == 10
+        result = await bucket.put_batch(records)
+        assert result["status"] == "ok"
+        assert result["count"] == 10
 
-        # Verify
-        stats_response = await actor_ref.ask(Message.from_json("Stats", {}))
-        stats = stats_response.to_json()
+        # Verify via stats
+        stats = await bucket.stats()
         assert stats["total_count"] == 10
 
 
@@ -472,8 +463,7 @@ class TestCustomBackendProtocol:
     async def test_custom_backend_with_bucket_storage(
         self, actor_system, temp_storage_path
     ):
-        """Test custom backend with BucketStorage actor."""
-        from pulsing.actor import Message
+        """Test custom backend with BucketStorage actor via proxy."""
 
         class TrackingBackend:
             """Backend that tracks all operations."""
@@ -530,24 +520,24 @@ class TestCustomBackendProtocol:
         # Register and use
         register_backend("tracking", TrackingBackend)
 
-        storage = BucketStorage(
+        # Use BucketStorage.local() for proper @remote wrapping
+        bucket = await BucketStorage.local(
+            actor_system,
             bucket_id=0,
             storage_path=f"{temp_storage_path}/tracking_test",
             batch_size=100,
             backend="tracking",
+            name="tracking_bucket",
         )
 
-        actor_ref = await actor_system.spawn(storage, name="tracking_bucket")
-
-        # Perform operations
-        await actor_ref.ask(Message.from_json("Put", {"record": {"id": "1"}}))
-        await actor_ref.ask(Message.from_json("Put", {"record": {"id": "2"}}))
-        await actor_ref.ask(Message.from_json("Get", {"limit": 10, "offset": 0}))
-        await actor_ref.ask(Message.from_json("Flush", {}))
+        # Perform operations via proxy methods
+        await bucket.put({"id": "1"})
+        await bucket.put({"id": "2"})
+        await bucket.get(limit=10, offset=0)
+        await bucket.flush()
 
         # Check tracking
-        stats_response = await actor_ref.ask(Message.from_json("Stats", {}))
-        stats = stats_response.to_json()
+        stats = await bucket.stats()
 
         assert stats["backend"] == "tracking"
         assert "put" in stats["operations"]

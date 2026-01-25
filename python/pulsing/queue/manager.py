@@ -3,11 +3,14 @@
 import asyncio
 import hashlib
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pulsing.actor import Actor, ActorId, ActorRef, ActorSystem, Message
 
 from .storage import BucketStorage
+
+if TYPE_CHECKING:
+    from pulsing.actor.remote import ActorProxy
 
 logger = logging.getLogger(__name__)
 
@@ -149,17 +152,18 @@ class StorageManager(Actor):
                 self._buckets[key] = await self.system.resolve_named(actor_name)
                 logger.debug(f"Resolved existing bucket: {actor_name}")
             except Exception:
-                # Create new, use specified backend or default backend
-                storage = BucketStorage(
+                # Create new using BucketStorage.local() for proper @remote wrapping
+                proxy = await BucketStorage.local(
+                    self.system,
                     bucket_id=bucket_id,
                     storage_path=bucket_storage_path,
                     batch_size=batch_size,
                     backend=backend or self.default_backend,
                     backend_options=backend_options,
+                    name=actor_name,
+                    public=True,
                 )
-                self._buckets[key] = await self.system.spawn(
-                    storage, name=actor_name, public=True
-                )
+                self._buckets[key] = proxy.ref
                 logger.info(f"Created bucket: {actor_name} at {bucket_storage_path}")
 
             return self._buckets[key]
@@ -181,10 +185,11 @@ class StorageManager(Actor):
                 # Lazy import to avoid circular dependency
                 from pulsing.topic.broker import TopicBroker
 
-                broker = TopicBroker(topic_name, self.system)
-                self._topics[topic_name] = await self.system.spawn(
-                    broker, name=actor_name, public=True
+                # Use TopicBroker.local() to create properly wrapped actor
+                proxy = await TopicBroker.local(
+                    self.system, topic_name, self.system, name=actor_name, public=True
                 )
+                self._topics[topic_name] = proxy.ref
                 logger.info(f"Created topic broker: {actor_name}")
 
             return self._topics[topic_name]
@@ -395,10 +400,11 @@ async def get_bucket_ref(
     backend: str | type | None = None,
     backend_options: dict | None = None,
     max_redirects: int = 3,
-) -> ActorRef:
-    """Get ActorRef for specified bucket
+) -> "ActorProxy":
+    """Get ActorProxy for specified bucket
 
     Automatically handles redirects to ensure getting the bucket on the correct node.
+    Returns ActorProxy for direct method calls on BucketStorage.
 
     Args:
         system: Actor system
@@ -410,8 +416,6 @@ async def get_bucket_ref(
         backend_options: Additional backend options (optional)
         max_redirects: Maximum redirect count
     """
-    from pulsing.actor import ActorId, NodeId
-
     # Request from local StorageManager first
     manager = await get_storage_manager(system)
 
@@ -438,14 +442,10 @@ async def get_bucket_ref(
         msg_type = response.msg_type or resp_data.get("_type", "")
 
         if msg_type == "BucketReady":
-            # Successfully got bucket
-            actor_id = resp_data["actor_id"]
-            # actor_id is now a UUID (u128), transmitted as string
-            if isinstance(actor_id, str):
-                actor_id = int(actor_id)
-
-            bucket_actor_id = ActorId(actor_id)
-            return await system.actor_ref(bucket_actor_id)
+            # Successfully got bucket - resolve by actor name for typed proxy
+            actor_name = f"bucket_{topic}_{bucket_id}"
+            # Use BucketStorage.resolve to get typed ActorProxy
+            return await BucketStorage.resolve(actor_name, system=system)
 
         elif msg_type == "Redirect":
             # Need to redirect to other node

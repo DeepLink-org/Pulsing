@@ -876,44 +876,202 @@ def remote(
 # ============================================================================
 
 
+class SystemActorProxy:
+    """Proxy for SystemActor with direct method calls.
+
+    Example:
+        system_proxy = await get_system_actor(system)
+        actors = await system_proxy.list_actors()
+        metrics = await system_proxy.get_metrics()
+        await system_proxy.ping()
+    """
+
+    def __init__(self, actor_ref: ActorRef):
+        self._ref = actor_ref
+
+    @property
+    def ref(self) -> ActorRef:
+        """Get underlying ActorRef."""
+        return self._ref
+
+    async def _ask(self, msg_type: str) -> dict:
+        """Send SystemMessage and return response."""
+        resp = await self._ref.ask(
+            Message.from_json("SystemMessage", {"type": msg_type})
+        )
+        return resp.to_json()
+
+    async def list_actors(self) -> list[dict]:
+        """List all actors on this node."""
+        data = await self._ask("ListActors")
+        if data.get("type") == "Error":
+            raise RuntimeError(data.get("message"))
+        return data.get("actors", [])
+
+    async def get_metrics(self) -> dict:
+        """Get system metrics."""
+        return await self._ask("GetMetrics")
+
+    async def get_node_info(self) -> dict:
+        """Get node info."""
+        return await self._ask("GetNodeInfo")
+
+    async def health_check(self) -> dict:
+        """Health check."""
+        return await self._ask("HealthCheck")
+
+    async def ping(self) -> dict:
+        """Ping this node."""
+        return await self._ask("Ping")
+
+
+async def get_system_actor(
+    system: ActorSystem, node_id: int | None = None
+) -> SystemActorProxy:
+    """Get SystemActorProxy for direct method calls.
+
+    Args:
+        system: ActorSystem instance
+        node_id: Target node ID (None means local node)
+
+    Returns:
+        SystemActorProxy with methods: list_actors(), get_metrics(), etc.
+
+    Example:
+        sys = await get_system_actor(system)
+        actors = await sys.list_actors()
+        await sys.ping()
+    """
+    if node_id is None:
+        actor_ref = await system.system()
+    else:
+        actor_ref = await system.remote_system(node_id)
+    return SystemActorProxy(actor_ref)
+
+
+class PythonActorServiceProxy:
+    """Proxy for PythonActorService with direct method calls.
+
+    Example:
+        service = await get_python_actor_service(system)
+        classes = await service.list_registry()
+        actor_ref = await service.create_actor("MyClass", name="my_actor")
+    """
+
+    def __init__(self, actor_ref: ActorRef):
+        self._ref = actor_ref
+
+    @property
+    def ref(self) -> ActorRef:
+        """Get underlying ActorRef."""
+        return self._ref
+
+    async def list_registry(self) -> list[str]:
+        """List registered actor classes.
+
+        Returns:
+            List of registered class names
+        """
+        resp = await self._ref.ask(Message.from_json("ListRegistry", {}))
+        data = resp.to_json()
+        return data.get("classes", [])
+
+    async def create_actor(
+        self,
+        class_name: str,
+        *args,
+        name: str | None = None,
+        public: bool = True,
+        restart_policy: str = "never",
+        max_restarts: int = 3,
+        min_backoff: float = 0.1,
+        max_backoff: float = 30.0,
+        **kwargs,
+    ) -> dict:
+        """Create a Python actor.
+
+        Args:
+            class_name: Name of the registered actor class
+            *args: Positional arguments for the class constructor
+            name: Optional actor name
+            public: Whether the actor should be publicly resolvable
+            restart_policy: "never", "always", or "on_failure"
+            max_restarts: Maximum restart attempts
+            min_backoff: Minimum backoff time in seconds
+            max_backoff: Maximum backoff time in seconds
+            **kwargs: Keyword arguments for the class constructor
+
+        Returns:
+            {"actor_id": "...", "node_id": "...", "actor_name": "..."}
+
+        Raises:
+            RuntimeError: If creation fails
+        """
+        resp = await self._ref.ask(
+            Message.from_json(
+                "CreateActor",
+                {
+                    "class_name": class_name,
+                    "actor_name": name,
+                    "args": args,
+                    "kwargs": kwargs,
+                    "public": public,
+                    "restart_policy": restart_policy,
+                    "max_restarts": max_restarts,
+                    "min_backoff": min_backoff,
+                    "max_backoff": max_backoff,
+                },
+            )
+        )
+        data = resp.to_json()
+        if resp.msg_type == "Error" or data.get("error"):
+            raise RuntimeError(data.get("error", "Unknown error"))
+        return data
+
+
+async def get_python_actor_service(
+    system: ActorSystem, node_id: int | None = None
+) -> PythonActorServiceProxy:
+    """Get PythonActorServiceProxy for direct method calls.
+
+    Args:
+        system: ActorSystem instance
+        node_id: Target node ID (None means local node)
+
+    Returns:
+        PythonActorServiceProxy with methods: list_registry(), create_actor()
+
+    Example:
+        service = await get_python_actor_service(system)
+        classes = await service.list_registry()
+    """
+    service_ref = await system.resolve_named(PYTHON_ACTOR_SERVICE_NAME, node_id=node_id)
+    return PythonActorServiceProxy(service_ref)
+
+
+# Legacy helper functions (for backwards compatibility)
 async def list_actors(system: ActorSystem) -> list[dict]:
     """List all actors on the current node."""
-    sys_actor = await system.system()
-    # SystemMessage uses serde tag format
-    resp = await sys_actor.ask(
-        Message.from_json("SystemMessage", {"type": "ListActors"})
-    )
-    data = resp.to_json()
-    if data.get("type") == "Error":
-        raise RuntimeError(data.get("message"))
-    return data.get("actors", [])
+    proxy = await get_system_actor(system)
+    return await proxy.list_actors()
 
 
 async def get_metrics(system: ActorSystem) -> dict:
     """Get system metrics."""
-    sys_actor = await system.system()
-    resp = await sys_actor.ask(
-        Message.from_json("SystemMessage", {"type": "GetMetrics"})
-    )
-    return resp.to_json()
+    proxy = await get_system_actor(system)
+    return await proxy.get_metrics()
 
 
 async def get_node_info(system: ActorSystem) -> dict:
     """Get node info."""
-    sys_actor = await system.system()
-    resp = await sys_actor.ask(
-        Message.from_json("SystemMessage", {"type": "GetNodeInfo"})
-    )
-    return resp.to_json()
+    proxy = await get_system_actor(system)
+    return await proxy.get_node_info()
 
 
 async def health_check(system: ActorSystem) -> dict:
     """Health check."""
-    sys_actor = await system.system()
-    resp = await sys_actor.ask(
-        Message.from_json("SystemMessage", {"type": "HealthCheck"})
-    )
-    return resp.to_json()
+    proxy = await get_system_actor(system)
+    return await proxy.health_check()
 
 
 async def ping(system: ActorSystem, node_id: int | None = None) -> dict:
@@ -923,12 +1081,8 @@ async def ping(system: ActorSystem, node_id: int | None = None) -> dict:
         system: ActorSystem instance
         node_id: Target node ID (None means local node)
     """
-    if node_id is None:
-        sys_actor = await system.system()
-    else:
-        sys_actor = await system.remote_system(node_id)
-    resp = await sys_actor.ask(Message.from_json("SystemMessage", {"type": "Ping"}))
-    return resp.to_json()
+    proxy = await get_system_actor(system, node_id)
+    return await proxy.ping()
 
 
 async def resolve(

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 if TYPE_CHECKING:
     from pulsing.actor import ActorRef
+    from pulsing.actor.remote import ActorProxy
 
 from pulsing.actor import Actor, ActorId, ActorSystem, Message
 
@@ -44,11 +45,48 @@ class PublishResult:
 MessageCallback = Callable[[Any], Coroutine[Any, Any, Any] | Any]
 
 
-async def _get_broker(system: ActorSystem, topic: str) -> "ActorRef":
-    """Get topic broker (reuses queue/manager infrastructure)"""
+async def _get_broker(system: ActorSystem, topic: str) -> "ActorProxy":
+    """Get topic broker proxy (reuses queue/manager infrastructure)"""
+    from pulsing.actor.remote import ActorProxy
     from pulsing.queue.manager import get_topic_broker
 
-    return await get_topic_broker(system, topic)
+    broker_ref = await get_topic_broker(system, topic)
+    # Wrap ActorRef with ActorProxy to enable direct method calls
+    return ActorProxy.from_ref(
+        broker_ref,
+        methods=["subscribe", "unsubscribe", "publish", "get_stats"],
+        async_methods={"subscribe", "unsubscribe", "publish"},
+    )
+
+
+async def subscribe_to_topic(
+    system: ActorSystem,
+    topic: str,
+    subscriber_id: str,
+    actor_name: str,
+    node_id: int | None = None,
+) -> dict:
+    """Subscribe an actor to a topic.
+
+    This is a helper function for manually registering subscribers with a topic broker.
+    For normal usage, prefer using TopicReader which handles this automatically.
+
+    Args:
+        system: ActorSystem instance
+        topic: Topic name
+        subscriber_id: Unique subscriber identifier
+        actor_name: Name of the actor to receive messages
+        node_id: Optional node ID (defaults to local node)
+
+    Returns:
+        Response dict from broker
+
+    Raises:
+        RuntimeError: If subscription fails
+    """
+    broker = await _get_broker(system, topic)
+    # Direct method call on broker proxy
+    return await broker.subscribe(subscriber_id, actor_name, node_id)
 
 
 class TopicWriter:
@@ -58,7 +96,7 @@ class TopicWriter:
         self._system = system
         self._topic = topic
         self._writer_id = writer_id or f"writer_{uuid.uuid4().hex[:8]}"
-        self._broker: "ActorRef | None" = None
+        self._broker: "ActorProxy | None" = None
 
     @property
     def topic(self) -> str:
@@ -68,7 +106,7 @@ class TopicWriter:
     def writer_id(self) -> str:
         return self._writer_id
 
-    async def _broker_ref(self) -> "ActorRef":
+    async def _broker_ref(self) -> "ActorProxy":
         if self._broker is None:
             self._broker = await _get_broker(self._system, self._topic)
         return self._broker
@@ -101,23 +139,16 @@ class TopicWriter:
         effective_timeout = timeout if timeout is not None else DEFAULT_PUBLISH_TIMEOUT
 
         async def _do_publish():
-            return await broker.ask(
-                Message.from_json(
-                    "Publish",
-                    {
-                        "payload": message,
-                        "mode": mode.value,
-                        "sender_id": self._writer_id,
-                    },
-                )
+            # Direct method call on broker proxy
+            return await broker.publish(
+                message,
+                mode=mode.value,
+                sender_id=self._writer_id,
+                timeout=effective_timeout,
             )
 
-        response = await asyncio.wait_for(_do_publish(), timeout=effective_timeout)
+        data = await asyncio.wait_for(_do_publish(), timeout=effective_timeout)
 
-        if response.msg_type == "Error":
-            raise RuntimeError(response.to_json().get("error"))
-
-        data = response.to_json()
         return PublishResult(
             success=data.get("success", False),
             delivered=data.get("delivered", 0),
@@ -129,8 +160,8 @@ class TopicWriter:
     async def stats(self) -> dict[str, Any]:
         """Get topic statistics"""
         broker = await self._broker_ref()
-        response = await broker.ask(Message.from_json("GetStats", {}))
-        return response.to_json()
+        # Direct method call on broker proxy
+        return await broker.get_stats()
 
 
 class _SubscriberActor(Actor):
@@ -237,22 +268,13 @@ class TopicReader:
             subscriber, name=actor_name, public=True
         )
 
-        # Register with broker
+        # Register with broker using direct method call
         broker = await _get_broker(self._system, self._topic)
-        response = await broker.ask(
-            Message.from_json(
-                "Subscribe",
-                {
-                    "subscriber_id": self._reader_id,
-                    "actor_name": actor_name,
-                    # Use string for JSON serialization of large u128 integers
-                    "node_id": str(self._system.node_id.id),
-                },
-            )
+        await broker.subscribe(
+            self._reader_id,
+            actor_name,
+            node_id=self._system.node_id.id,
         )
-
-        if response.msg_type == "Error":
-            raise RuntimeError(f"Subscribe failed: {response.to_json().get('error')}")
 
         self._started = True
         logger.debug(f"TopicReader[{self._reader_id}] started for topic: {self._topic}")
@@ -262,12 +284,10 @@ class TopicReader:
         if not self._started:
             return
 
-        # Unsubscribe from broker
+        # Unsubscribe from broker using direct method call
         try:
             broker = await _get_broker(self._system, self._topic)
-            await broker.ask(
-                Message.from_json("Unsubscribe", {"subscriber_id": self._reader_id})
-            )
+            await broker.unsubscribe(self._reader_id)
         except Exception as e:
             logger.warning(f"Unsubscribe error: {e}")
 
@@ -286,8 +306,8 @@ class TopicReader:
     async def stats(self) -> dict[str, Any]:
         """Get topic statistics"""
         broker = await _get_broker(self._system, self._topic)
-        response = await broker.ask(Message.from_json("GetStats", {}))
-        return response.to_json()
+        # Direct method call on broker proxy
+        return await broker.get_stats()
 
 
 async def write_topic(

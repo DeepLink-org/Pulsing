@@ -8,7 +8,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from pulsing.actor import ActorRef, ActorSystem, Message
+from pulsing.actor import ActorSystem
+from pulsing.actor.remote import ActorProxy
 
 from .manager import get_bucket_ref, get_storage_manager
 
@@ -57,8 +58,8 @@ class Queue:
         self.backend = backend
         self.backend_options = backend_options
 
-        # Actor references for each bucket
-        self._bucket_refs: dict[int, ActorRef] = {}
+        # Actor proxies for each bucket
+        self._bucket_refs: dict[int, ActorProxy] = {}
         self._init_lock = asyncio.Lock()
 
         # Save event loop reference (for sync wrapper)
@@ -74,7 +75,7 @@ class Queue:
         hash_value = int(hashlib.md5(str(value).encode()).hexdigest(), 16)
         return hash_value % self.num_buckets
 
-    async def _ensure_bucket(self, bucket_id: int) -> ActorRef:
+    async def _ensure_bucket(self, bucket_id: int) -> ActorProxy:
         """Ensure Actor for specified bucket is created
 
         Get bucket reference through StorageManager:
@@ -122,12 +123,10 @@ class Queue:
                 raise ValueError(f"Missing partition column '{self.bucket_column}'")
 
             bucket_id = self._hash_partition(rec[self.bucket_column])
-            bucket_ref = await self._ensure_bucket(bucket_id)
+            bucket = await self._ensure_bucket(bucket_id)
 
-            response = await bucket_ref.ask(Message.from_json("Put", {"record": rec}))
-            if response.msg_type == "Error":
-                raise RuntimeError(f"Put failed: {response.to_json().get('error')}")
-
+            # Direct method call via proxy
+            await bucket.put(rec)
             results.append({"bucket_id": bucket_id, "status": "ok"})
 
         return results[0] if single else results
@@ -165,44 +164,28 @@ class Queue:
         timeout: float | None,
     ) -> list[dict[str, Any]]:
         """Read data from specified bucket"""
-        bucket_ref = await self._ensure_bucket(bucket_id)
+        bucket = await self._ensure_bucket(bucket_id)
 
-        # Use streaming read
-        response = await bucket_ref.ask(
-            Message.from_json(
-                "GetStream",
-                {"limit": limit, "offset": offset, "wait": wait, "timeout": timeout},
-            )
-        )
-
-        if response.msg_type == "Error":
-            raise RuntimeError(f"Get failed: {response.to_json().get('error')}")
-
-        if not response.is_stream:
+        # Try streaming read first via proxy
+        try:
+            records = []
+            async for batch in bucket.get_stream(limit, offset, wait, timeout):
+                for record in batch:
+                    records.append(record)
+                    if len(records) >= limit:
+                        return records
+            return records
+        except Exception:
             # Fallback to non-streaming
-            response = await bucket_ref.ask(
-                Message.from_json("Get", {"limit": limit, "offset": offset})
-            )
-            return response.to_json().get("records", [])
-
-        records = []
-        reader = response.stream_reader()
-        async for chunk in reader:
-            for record in chunk.get("records", []):
-                records.append(record)
-                if len(records) >= limit:
-                    return records
-
-        return records
+            return await bucket.get(limit, offset)
 
     async def flush(self) -> None:
         """Flush all bucket buffers"""
         tasks = []
         for bucket_id in range(self.num_buckets):
             if bucket_id in self._bucket_refs:
-                tasks.append(
-                    self._bucket_refs[bucket_id].ask(Message.from_json("Flush", {}))
-                )
+                # Direct method call via proxy
+                tasks.append(self._bucket_refs[bucket_id].flush())
         if tasks:
             await asyncio.gather(*tasks)
 
@@ -211,10 +194,8 @@ class Queue:
         bucket_stats = {}
         for bucket_id in range(self.num_buckets):
             if bucket_id in self._bucket_refs:
-                response = await self._bucket_refs[bucket_id].ask(
-                    Message.from_json("Stats", {})
-                )
-                bucket_stats[bucket_id] = response.to_json()
+                # Direct method call via proxy
+                bucket_stats[bucket_id] = await self._bucket_refs[bucket_id].stats()
 
         return {
             "topic": self.topic,
@@ -456,11 +437,16 @@ async def read_queue(
 
     # Try to resolve existing bucket Actors
     if assigned_buckets:
+        from .storage import BucketStorage
+
         for bid in assigned_buckets:
             # Must match `StorageManager` bucket actor naming: "bucket_{topic}_{bucket_id}"
             actor_name = f"bucket_{topic}_{bid}"
             try:
-                queue._bucket_refs[bid] = await system.resolve_named(actor_name)
+                # Use BucketStorage.resolve to get typed ActorProxy
+                queue._bucket_refs[bid] = await BucketStorage.resolve(
+                    actor_name, system=system
+                )
             except Exception:
                 pass
 

@@ -946,41 +946,84 @@ async def test_data_integrity_under_stress(actor_system, temp_storage_path):
 
 @pytest.mark.asyncio
 async def test_bucket_storage_direct(actor_system, temp_storage_path):
-    """Test BucketStorage actor directly with memory backend."""
-    storage = BucketStorage(
+    """Test BucketStorage actor directly with memory backend via proxy."""
+    # Use BucketStorage.local() to create properly wrapped actor with proxy
+    bucket = await BucketStorage.local(
+        actor_system,
         bucket_id=0,
         storage_path=f"{temp_storage_path}/direct_bucket",
         batch_size=5,
         backend="memory",
+        name="test_bucket",
     )
 
-    # Spawn actor
-    actor_ref = await actor_system.spawn(storage, name="test_bucket")
-
-    from pulsing.actor import Message
-
-    # Put records
+    # Put records via proxy method
     for i in range(10):
-        response = await actor_ref.ask(
-            Message.from_json("Put", {"record": {"id": f"test_{i}", "value": i}})
-        )
-        assert response.to_json().get("status") == "ok"
+        result = await bucket.put({"id": f"test_{i}", "value": i})
+        assert result["status"] == "ok"
 
-    # Get stats
-    stats_response = await actor_ref.ask(Message.from_json("Stats", {}))
-    stats = stats_response.to_json()
+    # Get stats via proxy method
+    stats = await bucket.stats()
 
     assert stats["bucket_id"] == 0
     assert stats["total_count"] == 10
     assert stats["backend"] == "memory"
 
     # Flush (no-op for memory backend)
-    await actor_ref.ask(Message.from_json("Flush", {}))
+    await bucket.flush()
 
     # Data should still be there
-    stats_response = await actor_ref.ask(Message.from_json("Stats", {}))
-    stats = stats_response.to_json()
+    stats = await bucket.stats()
     assert stats["total_count"] == 10
+
+
+@pytest.mark.asyncio
+async def test_bucket_storage_get(actor_system, temp_storage_path):
+    """Test BucketStorage get method via proxy."""
+    bucket = await BucketStorage.local(
+        actor_system,
+        bucket_id=0,
+        storage_path=f"{temp_storage_path}/get_bucket",
+        batch_size=5,
+        backend="memory",
+        name="test_bucket_get",
+    )
+
+    # Put records
+    for i in range(10):
+        await bucket.put({"id": f"test_{i}", "value": i})
+
+    # Get records via proxy
+    records = await bucket.get(limit=10, offset=0)
+    assert len(records) == 10
+
+    # Get with limit
+    records = await bucket.get(limit=5)
+    assert len(records) == 5
+
+
+@pytest.mark.asyncio
+async def test_bucket_storage_put_batch(actor_system, temp_storage_path):
+    """Test BucketStorage put_batch method via proxy."""
+    bucket = await BucketStorage.local(
+        actor_system,
+        bucket_id=0,
+        storage_path=f"{temp_storage_path}/batch_bucket",
+        batch_size=100,
+        backend="memory",
+        name="test_bucket_batch",
+    )
+
+    # Put batch of records
+    records = [{"id": f"batch_{i}", "value": i * 10} for i in range(20)]
+    result = await bucket.put_batch(records)
+
+    assert result["status"] == "ok"
+    assert result["count"] == 20
+
+    # Verify via stats
+    stats = await bucket.stats()
+    assert stats["total_count"] == 20
 
 
 # ============================================================================

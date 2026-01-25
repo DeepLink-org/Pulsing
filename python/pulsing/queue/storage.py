@@ -2,16 +2,17 @@
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, AsyncIterator
 
-from pulsing.actor import Actor, ActorId, Message, StreamMessage
+from pulsing.actor import ActorId, StreamMessage, remote
 
 from .backend import StorageBackend, get_backend_class
 
 logger = logging.getLogger(__name__)
 
 
-class BucketStorage(Actor):
+@remote
+class BucketStorage:
     """Storage Actor for a Single Bucket
 
     Uses pluggable StorageBackend for data storage.
@@ -61,64 +62,82 @@ class BucketStorage(Actor):
     def on_stop(self) -> None:
         logger.info(f"BucketStorage[{self.bucket_id}] stopping")
 
-    async def receive(self, msg: Message) -> Message | StreamMessage | None:
-        msg_type = msg.msg_type
-        data = msg.to_json()
+    # ========== Public Remote Methods ==========
 
-        if msg_type == "Put":
-            record = data.get("record")
-            if not record:
-                return Message.from_json("Error", {"error": "Missing 'record'"})
+    async def put(self, record: dict) -> dict:
+        """Put a single record.
 
-            await self._backend.put(record)
-            return Message.from_json("PutResponse", {"status": "ok"})
+        Args:
+            record: Record to store
 
-        elif msg_type == "PutBatch":
-            records = data.get("records")
-            if not records:
-                return Message.from_json("Error", {"error": "Missing 'records'"})
+        Returns:
+            {"status": "ok"}
+        """
+        if not record:
+            raise ValueError("Missing 'record'")
+        await self._backend.put(record)
+        return {"status": "ok"}
 
-            await self._backend.put_batch(records)
-            return Message.from_json(
-                "PutBatchResponse", {"status": "ok", "count": len(records)}
-            )
+    async def put_batch(self, records: list[dict]) -> dict:
+        """Put multiple records.
 
-        elif msg_type == "Get":
-            limit = data.get("limit", 100)
-            offset = data.get("offset", 0)
-            records = await self._backend.get(limit, offset)
-            return Message.from_json("GetResponse", {"records": records})
+        Args:
+            records: List of records to store
 
-        elif msg_type == "GetStream":
-            limit = data.get("limit", 100)
-            offset = data.get("offset", 0)
-            wait: bool = data.get("wait", False)
-            timeout: float | None = data.get("timeout", None)
+        Returns:
+            {"status": "ok", "count": N}
+        """
+        if not records:
+            raise ValueError("Missing 'records'")
+        await self._backend.put_batch(records)
+        return {"status": "ok", "count": len(records)}
 
-            stream_msg, writer = StreamMessage.create("GetStream")
+    async def get(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        """Get records.
 
-            async def produce():
-                try:
-                    async for records in self._backend.get_stream(
-                        limit, offset, wait, timeout
-                    ):
-                        await writer.write({"records": records})
-                    writer.close()
-                except Exception as e:
-                    logger.error(f"BucketStorage[{self.bucket_id}] stream error: {e}")
-                    await writer.error(str(e))
-                    writer.close()
+        Args:
+            limit: Maximum number of records to return
+            offset: Starting offset
 
-            asyncio.create_task(produce())
-            return stream_msg
+        Returns:
+            List of records
+        """
+        return await self._backend.get(limit, offset)
 
-        elif msg_type == "Flush":
-            await self._backend.flush()
-            return Message.from_json("FlushResponse", {"status": "ok"})
+    async def get_stream(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        wait: bool = False,
+        timeout: float | None = None,
+    ) -> AsyncIterator[list[dict]]:
+        """Get records as a stream.
 
-        elif msg_type == "Stats":
-            stats = await self._backend.stats()
-            return Message.from_json("StatsResponse", stats)
+        Args:
+            limit: Maximum number of records to return
+            offset: Starting offset
+            wait: Whether to wait for new records
+            timeout: Timeout in seconds
 
-        else:
-            return Message.from_json("Error", {"error": f"Unknown: {msg_type}"})
+        Yields:
+            Batches of records
+        """
+        async for records in self._backend.get_stream(limit, offset, wait, timeout):
+            yield records
+
+    async def flush(self) -> dict:
+        """Flush pending writes.
+
+        Returns:
+            {"status": "ok"}
+        """
+        await self._backend.flush()
+        return {"status": "ok"}
+
+    async def stats(self) -> dict:
+        """Get storage statistics.
+
+        Returns:
+            Statistics dict from backend
+        """
+        return await self._backend.stats()

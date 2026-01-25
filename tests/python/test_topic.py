@@ -894,20 +894,11 @@ async def test_publish_timeout_error(actor_system):
     actor_name = "_topic_sub_timeout_error_topic_slow_sub"
     await actor_system.spawn(slow_actor, name=actor_name, public=True)
 
-    # Register with broker
-    from pulsing.queue.manager import get_topic_broker
-    from pulsing.actor import Message
+    # Register with broker using helper function
+    from pulsing.topic import subscribe_to_topic
 
-    broker = await get_topic_broker(actor_system, "timeout_error_topic")
-    await broker.ask(
-        Message.from_json(
-            "Subscribe",
-            {
-                "subscriber_id": "slow_sub",
-                "actor_name": actor_name,
-                "node_id": actor_system.node_id.id,
-            },
-        )
+    await subscribe_to_topic(
+        actor_system, "timeout_error_topic", "slow_sub", actor_name
     )
 
     # Publish with very short timeout - should timeout
@@ -1024,8 +1015,7 @@ async def test_subscriber_failure_threshold_eviction(actor_system):
 
     Verify P0-3 fix: Subscribers are automatically evicted after 3 consecutive failures.
     """
-    from pulsing.actor import Actor, ActorId, Message
-    from pulsing.queue.manager import get_topic_broker
+    from pulsing.actor import Actor, ActorId
     from pulsing.topic.broker import MAX_CONSECUTIVE_FAILURES
 
     # Verify configuration constants
@@ -1048,17 +1038,11 @@ async def test_subscriber_failure_threshold_eviction(actor_system):
     actor_name = "_topic_sub_eviction_test_topic_failing"
     await actor_system.spawn(failing_actor, name=actor_name, public=True)
 
-    # Register failing subscriber with broker
-    broker = await get_topic_broker(actor_system, "eviction_test_topic")
-    await broker.ask(
-        Message.from_json(
-            "Subscribe",
-            {
-                "subscriber_id": "failing_sub",
-                "actor_name": actor_name,
-                "node_id": actor_system.node_id.id,
-            },
-        )
+    # Register failing subscriber with broker using helper function
+    from pulsing.topic import subscribe_to_topic
+
+    await subscribe_to_topic(
+        actor_system, "eviction_test_topic", "failing_sub", actor_name
     )
 
     # Get initial statistics
