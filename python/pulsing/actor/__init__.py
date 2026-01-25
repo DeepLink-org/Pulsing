@@ -110,7 +110,11 @@ async def shutdown() -> None:
 def get_system() -> ActorSystem:
     """Get the global actor system (must call init() first)"""
     if _global_system is None:
-        raise RuntimeError("Actor system not initialized. Call 'await init()' first.")
+        from pulsing.exceptions import PulsingRuntimeError
+
+        raise PulsingRuntimeError(
+            "Actor system not initialized. Call 'await init()' first."
+        )
     return _global_system
 
 
@@ -200,6 +204,13 @@ from .remote import (
     resolve,
 )
 
+# Import exceptions for convenience
+from pulsing.exceptions import (
+    PulsingError,
+    PulsingRuntimeError,
+    PulsingActorError,
+)
+
 # NOTE: `__all__` is the *public, stable surface* for `from pulsing.actor import *`.
 # We intentionally keep it minimal. Advanced/diagnostic APIs may still be
 # importable by name, but are not part of the stable top-level contract.
@@ -225,6 +236,10 @@ __all__ = [
     # Service (for actor_system function)
     "PythonActorService",
     "PYTHON_ACTOR_SERVICE_NAME",
+    # Exceptions
+    "PulsingError",
+    "PulsingRuntimeError",
+    "PulsingActorError",
 ]
 
 

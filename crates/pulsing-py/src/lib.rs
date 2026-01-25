@@ -6,7 +6,9 @@
 use pyo3::prelude::*;
 
 mod actor;
+mod errors;
 mod policies;
+mod python_error_converter;
 mod python_executor;
 
 pub use python_executor::{init_python_executor, python_executor, ExecutorError};
@@ -29,6 +31,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         )
         .try_init()
         .ok();
+
+    // Add error classes
+    errors::add_to_module(m)?;
 
     // Add actor system classes
     actor::add_to_module(m)?;

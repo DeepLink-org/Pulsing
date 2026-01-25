@@ -1,5 +1,6 @@
 use crate::actor::ActorRef;
 use crate::actor::ActorSystemRef;
+use crate::error::{PulsingError, RuntimeError};
 use serde::{de::DeserializeOwned, Serialize};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -72,9 +73,13 @@ where
     fn resolve(&self) -> anyhow::Result<ActorRef> {
         match &self.mode {
             ResolutionMode::Direct(inner) => Ok(inner.clone()),
-            ResolutionMode::Dynamic(system) => system
-                .local_actor_ref_by_name(&self.name)
-                .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", self.name)),
+            ResolutionMode::Dynamic(system) => {
+                system.local_actor_ref_by_name(&self.name).ok_or_else(|| {
+                    anyhow::Error::from(PulsingError::from(RuntimeError::actor_not_found(
+                        self.name.clone(),
+                    )))
+                })
+            }
         }
     }
 

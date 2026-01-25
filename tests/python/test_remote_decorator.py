@@ -77,7 +77,9 @@ async def test_sync_method_error_handling():
     try:
         service = await ErrorService.spawn()
 
-        with pytest.raises(RuntimeError, match="Intentional error"):
+        from pulsing.exceptions import PulsingActorError
+
+        with pytest.raises(PulsingActorError, match="Intentional error"):
             await service.will_fail()
 
     finally:
@@ -100,7 +102,9 @@ async def test_async_method_error_handling():
     try:
         service = await AsyncErrorService.spawn()
 
-        with pytest.raises(RuntimeError, match="Async error"):
+        from pulsing.exceptions import PulsingActorError
+
+        with pytest.raises(PulsingActorError, match="Async error"):
             await service.will_fail()
 
     finally:

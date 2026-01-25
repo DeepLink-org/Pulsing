@@ -7,6 +7,8 @@ mod retry;
 mod server;
 mod stream;
 
+use crate::error::RuntimeError;
+
 #[cfg(feature = "tls")]
 mod tls;
 
@@ -106,7 +108,7 @@ impl Http2Transport {
     ) -> anyhow::Result<()> {
         let path = format!("/actors/{}", actor_name);
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming not supported for tell"));
+            return Err(RuntimeError::protocol_error("Streaming not supported for tell").into());
         };
 
         self.client.tell(addr, &path, &msg_type, data).await
@@ -120,7 +122,7 @@ impl Http2Transport {
     ) -> anyhow::Result<()> {
         let url_path = format!("/named/{}", path.as_str());
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming not supported for tell"));
+            return Err(RuntimeError::protocol_error("Streaming not supported for tell").into());
         };
 
         self.client.tell(addr, &url_path, &msg_type, data).await
@@ -350,10 +352,11 @@ impl RemoteTransport for Http2RemoteTransport {
     ) -> anyhow::Result<Vec<u8>> {
         // Check circuit breaker before making request
         if !self.circuit_breaker.can_execute() {
-            return Err(anyhow::anyhow!(
-                "Circuit breaker is open for {}",
-                self.remote_addr
-            ));
+            return Err(RuntimeError::ConnectionFailed {
+                addr: self.remote_addr.to_string(),
+                reason: "Circuit breaker is open".to_string(),
+            }
+            .into());
         }
 
         let result = self
@@ -374,10 +377,11 @@ impl RemoteTransport for Http2RemoteTransport {
     ) -> anyhow::Result<()> {
         // Check circuit breaker before making request
         if !self.circuit_breaker.can_execute() {
-            return Err(anyhow::anyhow!(
-                "Circuit breaker is open for {}",
-                self.remote_addr
-            ));
+            return Err(RuntimeError::ConnectionFailed {
+                addr: self.remote_addr.to_string(),
+                reason: "Circuit breaker is open".to_string(),
+            }
+            .into());
         }
 
         let result = self
@@ -399,10 +403,11 @@ impl RemoteTransport for Http2RemoteTransport {
     async fn send_message(&self, _actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
         // Check circuit breaker before making request
         if !self.circuit_breaker.can_execute() {
-            return Err(anyhow::anyhow!(
-                "Circuit breaker is open for {}",
-                self.remote_addr
-            ));
+            return Err(RuntimeError::ConnectionFailed {
+                addr: self.remote_addr.to_string(),
+                reason: "Circuit breaker is open".to_string(),
+            }
+            .into());
         }
 
         // Use unified send_message_full that handles both single and streaming

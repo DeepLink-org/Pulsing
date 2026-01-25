@@ -9,6 +9,77 @@ from abc import ABC, abstractmethod
 from typing import Any, TypeVar
 
 from pulsing._core import ActorRef, ActorSystem, Message, StreamMessage
+from pulsing.exceptions import PulsingActorError, PulsingRuntimeError
+
+
+def _convert_rust_error(err: RuntimeError) -> Exception:
+    """Convert Rust-raised RuntimeError to appropriate Pulsing exception.
+
+    Rust layer prefixes error messages with markers:
+    - "ACTOR_ERROR:" -> PulsingActorError (or specific subclasses)
+    - "RUNTIME_ERROR:" -> PulsingRuntimeError
+
+    The error message format for ActorError:
+    - "ACTOR_ERROR:Business error [code]: message" -> PulsingBusinessError
+    - "ACTOR_ERROR:System error: message" -> PulsingSystemError
+    - "ACTOR_ERROR:Timeout: operation 'op' timed out..." -> PulsingTimeoutError
+    - "ACTOR_ERROR:Unsupported operation: op" -> PulsingUnsupportedError
+    """
+    from pulsing.exceptions import (
+        PulsingBusinessError,
+        PulsingSystemError,
+        PulsingTimeoutError,
+        PulsingUnsupportedError,
+    )
+
+    err_msg = str(err)
+
+    if err_msg.startswith("ACTOR_ERROR:"):
+        msg = err_msg.replace("ACTOR_ERROR:", "")
+
+        # Try to identify specific ActorError type from message
+        if msg.startswith("Business error ["):
+            # Extract code, message, and details from "Business error [code]: message"
+            import re
+
+            match = re.match(r"Business error \[(\d+)\]: (.+)", msg)
+            if match:
+                code = int(match.group(1))
+                message = match.group(2)
+                return PulsingBusinessError(code, message)
+
+        if msg.startswith("System error: "):
+            # Extract error message from "System error: message"
+            error_msg = msg.replace("System error: ", "")
+            # Default to recoverable=True (we don't have recoverable flag in message)
+            return PulsingSystemError(error_msg, recoverable=True)
+
+        if msg.startswith("Timeout: operation '"):
+            # Extract operation and duration from "Timeout: operation 'op' timed out after Xms"
+            import re
+
+            match = re.match(
+                r"Timeout: operation '([^']+)' timed out after (\d+)ms", msg
+            )
+            if match:
+                operation = match.group(1)
+                duration_ms = int(match.group(2))
+                return PulsingTimeoutError(operation, duration_ms)
+
+        if msg.startswith("Unsupported operation: "):
+            # Extract operation from "Unsupported operation: op"
+            operation = msg.replace("Unsupported operation: ", "")
+            return PulsingUnsupportedError(operation)
+
+        # Fallback: generic PulsingActorError
+        return PulsingActorError(msg)
+    elif err_msg.startswith("RUNTIME_ERROR:"):
+        msg = err_msg.replace("RUNTIME_ERROR:", "")
+        return PulsingRuntimeError(msg)
+    else:
+        # Unknown format, wrap as RuntimeError
+        return PulsingRuntimeError(err_msg)
+
 
 logger = logging.getLogger(__name__)
 
@@ -127,14 +198,25 @@ class _MethodCaller:
 
         if isinstance(resp, dict):
             if "__error__" in resp:
-                raise RuntimeError(resp["__error__"])
+                # Actor execution error
+                try:
+                    raise PulsingActorError(
+                        resp["__error__"], actor_name=str(self._ref.actor_id.id)
+                    )
+                except RuntimeError as e:
+                    # If it's a Rust error, convert it
+                    raise _convert_rust_error(e) from e
             return resp.get("__result__")
         elif isinstance(resp, Message):
             if resp.is_stream:
                 return _SyncGeneratorStreamReader(resp)
             data = resp.to_json()
             if resp.msg_type == "Error":
-                raise RuntimeError(data.get("error", "Remote call failed"))
+                # Actor execution error
+                raise PulsingActorError(
+                    data.get("error", "Remote call failed"),
+                    actor_name=str(self._ref.actor_id.id),
+                )
             return data.get("result")
         return resp
 
@@ -182,7 +264,11 @@ class _AsyncMethodCall:
                     # Not streaming, might be an error
                     data = resp.to_json()
                     if resp.msg_type == "Error":
-                        raise RuntimeError(data.get("error", "Remote call failed"))
+                        # Actor execution error
+                        raise PulsingActorError(
+                            data.get("error", "Remote call failed"),
+                            actor_name=str(self._ref.actor_id.id),
+                        )
                     # Wrap as single-value iterator
                     self._stream_reader = _SingleValueIterator(data)
             else:
@@ -207,7 +293,10 @@ class _AsyncMethodCall:
                     self._got_result = True
                     raise StopAsyncIteration
                 if "__error__" in item:
-                    raise RuntimeError(item["__error__"])
+                    # Actor execution error
+                    raise PulsingActorError(
+                        item["__error__"], actor_name=str(self._ref.actor_id.id)
+                    )
                 if "__yield__" in item:
                     return item["__yield__"]
             return item
@@ -264,7 +353,10 @@ class _SyncGeneratorStreamReader:
                     self._got_result = True
                     raise StopAsyncIteration
                 if "__error__" in item:
-                    raise RuntimeError(item["__error__"])
+                    # Actor execution error
+                    raise PulsingActorError(
+                        item["__error__"], actor_name=str(self._ref.actor_id.id)
+                    )
                 if "__yield__" in item:
                     return item["__yield__"]
             return item
@@ -606,7 +698,7 @@ class ActorClass:
         from . import _global_system
 
         if _global_system is None:
-            raise RuntimeError(
+            raise PulsingRuntimeError(
                 "Actor system not initialized. Call 'await init()' first."
             )
 
@@ -747,7 +839,8 @@ class ActorClass:
 
         data = resp.to_json()
         if resp.msg_type == "Error":
-            raise RuntimeError(f"Remote create failed: {data.get('error')}")
+            # System error: actor creation failed
+            raise PulsingRuntimeError(f"Remote create failed: {data.get('error')}")
 
         # Build remote ActorRef
         from pulsing._core import ActorId
@@ -905,7 +998,8 @@ class SystemActorProxy:
         """List all actors on this node."""
         data = await self._ask("ListActors")
         if data.get("type") == "Error":
-            raise RuntimeError(data.get("message"))
+            # System error: system message failed
+            raise PulsingRuntimeError(data.get("message"))
         return data.get("actors", [])
 
     async def get_metrics(self) -> dict:
@@ -1025,7 +1119,8 @@ class PythonActorServiceProxy:
         )
         data = resp.to_json()
         if resp.msg_type == "Error" or data.get("error"):
-            raise RuntimeError(data.get("error", "Unknown error"))
+            # System error: actor creation failed
+            raise PulsingRuntimeError(data.get("error", "Unknown error"))
         return data
 
 

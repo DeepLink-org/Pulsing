@@ -2,9 +2,10 @@
 
 use futures::StreamExt;
 use pulsing_actor::actor::{ActorId, ActorPath, NodeId};
+use pulsing_actor::error::PulsingError;
 use pulsing_actor::prelude::*;
 use pulsing_actor::supervision::{BackoffStrategy, RestartPolicy, SupervisionSpec};
-use pyo3::exceptions::{PyException, PyRuntimeError, PyStopAsyncIteration, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::net::SocketAddr;
@@ -13,13 +14,27 @@ use std::sync::Mutex as StdMutex;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
 
+use crate::errors::pulsing_error_to_py_err_direct;
+use crate::python_error_converter::convert_python_exception_to_actor_error;
 use crate::python_executor::python_executor;
 
 /// Special message type identifier for pickle-encoded Python objects
 const SEALED_PY_MSG_TYPE: &str = "__sealed_py_message__";
 
+/// Convert error to Python exception
+/// Prefer using pulsing_error_to_py_err_direct for PulsingError types
 fn to_pyerr<E: std::fmt::Display>(err: E) -> PyErr {
-    PyException::new_err(format!("{}", err))
+    // Try to downcast to PulsingError
+    let err_str = err.to_string();
+
+    // For non-PulsingError types, use RuntimeError
+    // In practice, most errors from pulsing-actor should be PulsingError
+    PyRuntimeError::new_err(err_str)
+}
+
+/// Convert PulsingError to Python exception
+fn pulsing_to_pyerr(err: PulsingError) -> PyErr {
+    pulsing_error_to_py_err_direct(err)
 }
 
 /// Python wrapper for NodeId
@@ -924,7 +939,7 @@ impl Actor for PythonActorWrapper {
         let is_sealed_msg = msg.msg_type() == SEALED_PY_MSG_TYPE;
         let py_msg = PyMessage::from_rust_message(msg);
 
-        let response = python_executor()
+        let response: Result<PyActorResponse, PyErr> = python_executor()
             .execute(move || {
                 Python::with_gil(|py| -> PyResult<PyActorResponse> {
                     let receive_method = handler.getattr(py, "receive")?;
@@ -939,7 +954,18 @@ impl Actor for PythonActorWrapper {
                         py_msg.into_pyobject(py)?.into_any().unbind()
                     };
 
-                    let result = receive_method.call1(py, (call_arg,))?;
+                    let result = receive_method.call1(py, (call_arg,));
+
+                    // Handle Python exceptions and convert to ActorError
+                    let result = match result {
+                        Ok(value) => value,
+                        Err(py_err) => {
+                            // Convert Python exception to ActorError
+                            // We need to return this as an error in the Python execution context
+                            // The error will be caught and converted at the Rust level
+                            return Err(py_err);
+                        }
+                    };
 
                     let asyncio = py.import("asyncio")?;
                     let is_coro = asyncio
@@ -1023,8 +1049,22 @@ impl Actor for PythonActorWrapper {
                 })
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))?
-            .map_err(|e| anyhow::anyhow!("Python handler error: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))?;
+
+        // Convert Python exceptions to ActorError
+        let response = match response {
+            Ok(resp) => resp,
+            Err(py_err) => {
+                // Convert Python exception to ActorError
+                Python::with_gil(|py| {
+                    let actor_err = convert_python_exception_to_actor_error(py, &py_err)?;
+                    // Convert ActorError to PulsingError and then to anyhow::Error
+                    Err(anyhow::Error::from(
+                        pulsing_actor::error::PulsingError::from(actor_err),
+                    ))
+                })
+            }?,
+        };
 
         match response {
             PyActorResponse::Single(msg) => Ok(msg.to_message()),
@@ -1133,7 +1173,9 @@ impl PyActorSystem {
     ) -> PyResult<Bound<'py, PyAny>> {
         let config_inner = config.inner;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let system = ActorSystem::new(config_inner).await.map_err(to_pyerr)?;
+            let system = ActorSystem::new(config_inner)
+                .await
+                .map_err(|e| pulsing_to_pyerr(PulsingError::from(e)))?;
             Ok(PyActorSystem {
                 inner: system,
                 event_loop,

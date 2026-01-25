@@ -7,6 +7,7 @@ use crate::actor::{
     ActorAddress, ActorId, ActorPath, ActorRef, ActorResolver, IntoActorPath, NodeId,
 };
 use crate::cluster::{MemberInfo, MemberStatus, NamedActorInfo};
+use crate::error::{PulsingError, RuntimeError};
 use crate::policies::LoadBalancingPolicy;
 use crate::system::config::ResolveOptions;
 use crate::system::load_balancer::{MemberWorker, NodeLoadTracker};
@@ -48,7 +49,9 @@ impl ActorSystem {
             return Ok(ActorRef::remote(*id, member_info.addr, Arc::new(transport)));
         }
 
-        Err(anyhow::anyhow!("Actor not found: {}", id))
+        Err(anyhow::Error::from(PulsingError::from(
+            RuntimeError::actor_not_found(id.to_string()),
+        )))
     }
 
     /// Resolve a named actor by path (direct resolution)
@@ -157,10 +160,11 @@ impl ActorSystem {
                 .ok_or_else(|| anyhow::anyhow!("Named actor not found locally"))?
                 .clone();
 
-            let local_id = self
-                .actor_names
-                .get(&actor_name)
-                .ok_or_else(|| anyhow::anyhow!("Actor not found: {}", actor_name))?;
+            let local_id = self.actor_names.get(&actor_name).ok_or_else(|| {
+                anyhow::Error::from(PulsingError::from(RuntimeError::actor_not_found(
+                    actor_name.clone(),
+                )))
+            })?;
 
             let handle = self
                 .local_actors

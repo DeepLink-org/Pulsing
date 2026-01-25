@@ -7,6 +7,7 @@
 //! All other spawn methods delegate to the builder.
 
 use crate::actor::{Actor, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Mailbox};
+use crate::error::{PulsingError, RuntimeError};
 use crate::system::config::SpawnOptions;
 use crate::system::handle::{ActorStats, LocalActorHandle};
 use crate::system::runtime::run_supervision_loop;
@@ -33,7 +34,9 @@ impl ActorSystem {
         // Check for name conflicts (only for named actors)
         if let Some(ref name) = name_str {
             if self.actor_names.contains_key(name) {
-                return Err(anyhow::anyhow!("Actor already exists: {}", name));
+                return Err(anyhow::Error::from(PulsingError::from(
+                    RuntimeError::actor_already_exists(name.clone()),
+                )));
             }
             if self.named_actor_paths.contains_key(name) {
                 return Err(anyhow::anyhow!("Named path already registered: {}", name));

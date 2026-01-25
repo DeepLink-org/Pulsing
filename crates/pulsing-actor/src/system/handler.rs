@@ -4,6 +4,7 @@ use super::handle::LocalActorHandle;
 use crate::actor::{ActorId, ActorPath, Envelope, Message, NodeId};
 use crate::cluster::backends::{RegisterActorRequest, UnregisterActorRequest};
 use crate::cluster::{GossipBackend, GossipMessage, HeadNodeBackend, NamingBackend};
+use crate::error::{PulsingError, RuntimeError};
 use crate::metrics::{metrics, SystemMetrics as PrometheusMetrics};
 use crate::transport::Http2ServerHandler;
 use dashmap::DashMap;
@@ -59,7 +60,9 @@ impl SystemMessageHandler {
             }
         }
 
-        Err(anyhow::anyhow!("Actor not found: {}", actor_name))
+        Err(anyhow::Error::from(PulsingError::from(
+            RuntimeError::actor_not_found(actor_name.to_string()),
+        )))
     }
 
     /// Dispatch a message to an actor (ask pattern)

@@ -83,6 +83,17 @@ from pulsing.actor import (
     PYTHON_ACTOR_SERVICE_NAME,
 )
 
+# Import exceptions
+from pulsing.exceptions import (
+    PulsingError,
+    PulsingRuntimeError,
+    PulsingActorError,
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingTimeoutError,
+    PulsingUnsupportedError,
+)
+
 
 class ActorSystem:
     """ActorSystem wrapper with queue API
@@ -274,4 +285,13 @@ __all__ = [
     "ActorProxy",
     "Message",
     "StreamMessage",
+    # Exceptions
+    "PulsingError",
+    "PulsingRuntimeError",
+    "PulsingActorError",
+    # Business-level exceptions (automatically converted to ActorError)
+    "PulsingBusinessError",
+    "PulsingSystemError",
+    "PulsingTimeoutError",
+    "PulsingUnsupportedError",
 ]

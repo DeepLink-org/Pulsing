@@ -6,6 +6,7 @@ use super::retry::{RetryConfig, RetryExecutor};
 use super::stream::{BinaryFrameParser, StreamFrame, StreamHandle};
 use super::{headers, MessageMode, RequestType};
 use crate::actor::{Message, MessageStream};
+use crate::error::RuntimeError;
 use crate::tracing::{TraceContext, TRACEPARENT_HEADER};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
@@ -308,8 +309,13 @@ impl Http2Client {
         let tcp_stream =
             tokio::time::timeout(self.config.connect_timeout, TcpStream::connect(addr))
                 .await
-                .map_err(|_| anyhow::anyhow!("Connection timeout"))?
-                .map_err(|e| anyhow::anyhow!("Failed to connect: {}", e))?;
+                .map_err(|_| {
+                    RuntimeError::connection_failed(
+                        addr.to_string(),
+                        "Connection timeout".to_string(),
+                    )
+                })?
+                .map_err(|e| RuntimeError::connection_failed(addr.to_string(), e.to_string()))?;
 
         // Build HTTP/2 connection with streaming body type - with or without TLS
         type StreamingBody =
@@ -373,7 +379,9 @@ impl Http2Client {
                 .header(TRACEPARENT_HEADER, trace_ctx.to_traceparent())
                 .header("content-type", "application/octet-stream")
                 .body(body)
-                .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+                .map_err(|e| {
+                    RuntimeError::protocol_error(format!("Failed to build request: {}", e))
+                })?;
 
             let send_future = sender.send_request(request);
             let response = tokio::time::timeout(self.config.stream_timeout, send_future)
@@ -389,7 +397,9 @@ impl Http2Client {
         let (mut sender, conn): (http2::SendRequest<StreamingBody>, _) =
             http2::handshake(TokioExecutor::new(), io)
                 .await
-                .map_err(|e| anyhow::anyhow!("HTTP/2 handshake failed: {}", e))?;
+                .map_err(|e| {
+                    RuntimeError::protocol_error(format!("HTTP/2 handshake failed: {}", e))
+                })?;
 
         // Spawn connection driver
         let cancel = self.cancel.clone();
@@ -446,14 +456,18 @@ impl Http2Client {
             .header(TRACEPARENT_HEADER, trace_ctx.to_traceparent())
             .header("content-type", "application/octet-stream")
             .body(body)
-            .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+            .map_err(|e| RuntimeError::protocol_error(format!("Failed to build request: {}", e)))?;
 
         // Send request with timeout
         let send_future = sender.send_request(request);
         let response = tokio::time::timeout(self.config.stream_timeout, send_future)
             .await
-            .map_err(|_| anyhow::anyhow!("Streaming request timeout"))?
-            .map_err(|e| anyhow::anyhow!("Streaming request failed: {}", e))?;
+            .map_err(|_| {
+                RuntimeError::request_timeout(self.config.stream_timeout.as_millis() as u64)
+            })?
+            .map_err(|e| {
+                RuntimeError::protocol_error(format!("Streaming request failed: {}", e))
+            })?;
 
         Ok(response)
     }
@@ -588,14 +602,16 @@ impl Http2Client {
             .header(TRACEPARENT_HEADER, trace_ctx.to_traceparent())
             .header("content-type", "application/octet-stream")
             .body(Full::new(Bytes::from(payload)))
-            .map_err(|e| anyhow::anyhow!("Failed to build request: {}", e))?;
+            .map_err(|e| RuntimeError::protocol_error(format!("Failed to build request: {}", e)))?;
 
         // Send request with timeout
         let send_future = conn.sender.send_request(request);
         let response = tokio::time::timeout(self.config.request_timeout, send_future)
             .await
-            .map_err(|_| anyhow::anyhow!("Request timeout"))?
-            .map_err(|e| anyhow::anyhow!("Request failed: {}", e))?;
+            .map_err(|_| {
+                RuntimeError::request_timeout(self.config.request_timeout.as_millis() as u64)
+            })?
+            .map_err(|e| RuntimeError::protocol_error(format!("Request failed: {}", e)))?;
 
         Ok(response)
     }

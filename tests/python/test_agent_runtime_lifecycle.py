@@ -64,7 +64,9 @@ class TestRuntimeLifecycle:
             assert result == 10
 
         # After runtime exits, global system should be cleaned up
-        with pytest.raises(RuntimeError, match="Actor system not initialized"):
+        from pulsing.exceptions import PulsingRuntimeError
+
+        with pytest.raises(PulsingRuntimeError, match="Actor system not initialized"):
             get_system()
 
     @pytest.mark.asyncio
@@ -77,7 +79,9 @@ class TestRuntimeLifecycle:
                 assert result == i
 
             # Check system is cleaned up after each exit
-            with pytest.raises(RuntimeError):
+            from pulsing.exceptions import PulsingRuntimeError
+
+            with pytest.raises(PulsingRuntimeError):
                 get_system()
 
     @pytest.mark.asyncio
@@ -163,7 +167,9 @@ class TestRuntimeLifecycle:
             assert results == list(range(10))
 
         # After runtime exits, system should clean up all actors
-        with pytest.raises(RuntimeError):
+        from pulsing.exceptions import PulsingRuntimeError
+
+        with pytest.raises(PulsingRuntimeError):
             get_system()
 
     @pytest.mark.asyncio
@@ -197,7 +203,9 @@ class TestRuntimeLifecycle:
             pass
 
         # Even with exception, system should be cleaned up
-        with pytest.raises(RuntimeError):
+        from pulsing.exceptions import PulsingRuntimeError
+
+        with pytest.raises(PulsingRuntimeError):
             get_system()
 
         clear_agent_registry()
@@ -341,7 +349,9 @@ class TestRuntimeEdgeCases:
         async with runtime():
             pass
 
-        with pytest.raises(RuntimeError):
+        from pulsing.exceptions import PulsingRuntimeError
+
+        with pytest.raises(PulsingRuntimeError):
             get_system()
 
     @pytest.mark.asyncio
