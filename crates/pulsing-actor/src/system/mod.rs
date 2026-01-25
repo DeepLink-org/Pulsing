@@ -21,7 +21,7 @@ pub use config::{
 };
 pub use handle::ActorStats;
 pub use load_balancer::NodeLoadTracker;
-pub use traits::{ActorSystemAdvancedExt, ActorSystemCoreExt, ActorSystemOpsExt};
+pub use traits::{ActorSystemCoreExt, ActorSystemOpsExt};
 
 use crate::actor::{ActorId, ActorPath, ActorRef, ActorResolver, ActorSystemRef, Envelope, NodeId};
 use crate::cluster::{GossipBackend, HeadNodeBackend, NamingBackend};
@@ -217,7 +217,10 @@ impl ActorSystem {
 
         // Spawn as named actor with path "system" (use new_system to bypass namespace check)
         let system_path = ActorPath::new_system(SYSTEM_ACTOR_PATH)?;
-        self.spawn_named(system_path, system_actor).await?;
+        self.spawning()
+            .path(system_path)
+            .spawn(system_actor)
+            .await?;
 
         // Note: The local_actors_ref and actor_names_ref are used internally,
         // SystemRef snapshot may become stale for new actors but that's acceptable
@@ -250,7 +253,10 @@ impl ActorSystem {
 
         // Spawn as named actor (use new_system to bypass namespace check)
         let system_path = ActorPath::new_system(SYSTEM_ACTOR_PATH)?;
-        self.spawn_named(system_path, system_actor).await?;
+        self.spawning()
+            .path(system_path)
+            .spawn(system_actor)
+            .await?;
 
         tracing::debug!(
             path = SYSTEM_ACTOR_PATH,

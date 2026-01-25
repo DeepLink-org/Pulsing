@@ -18,6 +18,7 @@
 
 use crate::actor::{Actor, ActorContext, ActorRef, Message};
 use crate::system::{ActorSystem, SystemConfig};
+use crate::ActorSystemCoreExt;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};

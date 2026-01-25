@@ -2,152 +2,43 @@
 //!
 //! This module contains the implementation of actor spawning methods
 //! that are used by the ActorSystem.
+//!
+//! The core spawn implementation is in `SpawnBuilder::spawn_factory()`.
+//! All other spawn methods delegate to the builder.
 
-use crate::actor::{
-    Actor, ActorContext, ActorId, ActorRef, ActorSystemRef, IntoActor, IntoActorPath, Mailbox,
-};
+use crate::actor::{Actor, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Mailbox};
 use crate::system::config::SpawnOptions;
 use crate::system::handle::{ActorStats, LocalActorHandle};
-use crate::system::runtime::{run_actor_instance, run_supervision_loop};
+use crate::system::runtime::run_supervision_loop;
 use crate::system::ActorSystem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 impl ActorSystem {
-    /// Create a once-use factory from an actor instance
-    pub(crate) fn once_factory<A: Actor>(actor: A) -> impl FnMut() -> anyhow::Result<A> {
-        let mut actor_opt = Some(actor);
-        move || {
-            actor_opt
-                .take()
-                .ok_or_else(|| anyhow::anyhow!("Actor cannot be restarted (spawned as instance)"))
-        }
-    }
-
-    /// Spawn an anonymous actor (no name, only accessible via ActorRef)
+    /// Internal spawn implementation - the actual core logic
     ///
-    /// Note: Anonymous actors do not support supervision/restart because they have
-    /// no stable identity for re-resolution. Use `spawn_named_factory` for actors
-    /// that need supervision.
-    pub async fn spawn_anonymous<A>(self: &Arc<Self>, actor: A) -> anyhow::Result<ActorRef>
-    where
-        A: IntoActor,
-    {
-        self.spawn_anonymous_with_options(actor.into_actor(), SpawnOptions::default())
-            .await
-    }
-
-    /// Spawn an anonymous actor with custom options
-    pub async fn spawn_anonymous_with_options<A>(
+    /// This is called by `SpawnBuilder::spawn_factory()` and handles both
+    /// anonymous and named actor spawning.
+    pub(crate) async fn spawn_internal<F, A>(
         self: &Arc<Self>,
-        actor: A,
-        options: SpawnOptions,
-    ) -> anyhow::Result<ActorRef>
-    where
-        A: IntoActor,
-    {
-        let actor = actor.into_actor();
-        let actor_id = self.next_actor_id();
-
-        let mailbox = Mailbox::with_capacity(self.mailbox_capacity(&options));
-        let (sender, receiver) = mailbox.split();
-
-        let stats = Arc::new(ActorStats::default());
-
-        let actor_cancel = self.cancel_token.child_token();
-
-        let ctx = Self::build_context(self, actor_id, &sender, &actor_cancel, None);
-
-        let stats_clone = stats.clone();
-        let cancel = actor_cancel.clone();
-        let actor_id_for_log = actor_id;
-
-        let join_handle = tokio::spawn(async move {
-            let mut receiver = receiver;
-            let mut ctx = ctx;
-            let reason =
-                run_actor_instance(actor, &mut receiver, &mut ctx, cancel, stats_clone).await;
-            tracing::debug!(actor_id = ?actor_id_for_log, reason = ?reason, "Anonymous actor stopped");
-        });
-
-        let local_id = actor_id.local_id();
-        let handle = LocalActorHandle {
-            sender: sender.clone(),
-            join_handle,
-            cancel_token: actor_cancel,
-            stats: stats.clone(),
-            metadata: options.metadata.clone(),
-            named_path: None,
-            actor_id,
-        };
-
-        self.local_actors.insert(local_id, handle);
-        self.actor_names.insert(actor_id.to_string(), local_id);
-
-        Ok(ActorRef::local(actor_id, sender))
-    }
-
-    /// Spawn a named actor (resolvable by name across the cluster)
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// // Name is used as both path (for resolution) and local name
-    /// system.spawn_named("services/echo", MyActor).await?;
-    /// ```
-    pub async fn spawn_named<P, A>(self: &Arc<Self>, name: P, actor: A) -> anyhow::Result<ActorRef>
-    where
-        P: IntoActorPath,
-        A: IntoActor,
-    {
-        let path = name.into_actor_path()?;
-        self.spawn_named_factory(
-            path,
-            Self::once_factory(actor.into_actor()),
-            SpawnOptions::default(),
-        )
-        .await
-    }
-
-    /// Spawn a named actor with custom options
-    pub async fn spawn_named_with_options<P, A>(
-        self: &Arc<Self>,
-        name: P,
-        actor: A,
-        options: SpawnOptions,
-    ) -> anyhow::Result<ActorRef>
-    where
-        P: IntoActorPath,
-        A: IntoActor,
-    {
-        let path = name.into_actor_path()?;
-        self.spawn_named_factory(path, Self::once_factory(actor.into_actor()), options)
-            .await
-    }
-
-    /// Spawn a named actor using a factory function
-    pub async fn spawn_named_factory<P, F, A>(
-        self: &Arc<Self>,
-        name: P,
+        path: Option<ActorPath>,
         factory: F,
         options: SpawnOptions,
     ) -> anyhow::Result<ActorRef>
     where
-        P: IntoActorPath,
         F: FnMut() -> anyhow::Result<A> + Send + 'static,
         A: Actor,
     {
-        let path = name.into_actor_path()?;
-        let name_str = path.as_str();
+        let name_str = path.as_ref().map(|p| p.as_str().to_string());
 
-        if self.actor_names.contains_key(&name_str.to_string()) {
-            return Err(anyhow::anyhow!("Actor already exists: {}", name_str));
-        }
-
-        if self.named_actor_paths.contains_key(&name_str.to_string()) {
-            return Err(anyhow::anyhow!(
-                "Named path already registered: {}",
-                name_str
-            ));
+        // Check for name conflicts (only for named actors)
+        if let Some(ref name) = name_str {
+            if self.actor_names.contains_key(name) {
+                return Err(anyhow::anyhow!("Actor already exists: {}", name));
+            }
+            if self.named_actor_paths.contains_key(name) {
+                return Err(anyhow::anyhow!("Named path already registered: {}", name));
+            }
         }
 
         let actor_id = self.next_actor_id();
@@ -161,13 +52,7 @@ impl ActorSystem {
 
         let actor_cancel = self.cancel_token.child_token();
 
-        let ctx = Self::build_context(
-            self,
-            actor_id,
-            &sender,
-            &actor_cancel,
-            Some(name_str.to_string()),
-        );
+        let ctx = Self::build_context(self, actor_id, &sender, &actor_cancel, name_str.clone());
 
         let stats_clone = stats.clone();
         let cancel = actor_cancel.clone();
@@ -187,23 +72,32 @@ impl ActorSystem {
             cancel_token: actor_cancel,
             stats: stats.clone(),
             metadata: metadata.clone(),
-            named_path: Some(path.clone()),
+            named_path: path.clone(),
             actor_id,
         };
 
         self.local_actors.insert(local_id, handle);
-        self.actor_names.insert(name_str.to_string(), local_id);
-        self.named_actor_paths
-            .insert(name_str.to_string(), name_str.to_string());
 
-        if let Some(cluster) = self.cluster.read().await.as_ref() {
-            if metadata.is_empty() {
-                cluster.register_named_actor(path.clone()).await;
-            } else {
-                cluster
-                    .register_named_actor_full(path.clone(), actor_id, metadata)
-                    .await;
+        // Register in name maps
+        if let Some(ref name) = name_str {
+            self.actor_names.insert(name.clone(), local_id);
+            self.named_actor_paths.insert(name.clone(), name.clone());
+
+            // Register with cluster if available
+            if let Some(ref path) = path {
+                if let Some(cluster) = self.cluster.read().await.as_ref() {
+                    if metadata.is_empty() {
+                        cluster.register_named_actor(path.clone()).await;
+                    } else {
+                        cluster
+                            .register_named_actor_full(path.clone(), actor_id, metadata)
+                            .await;
+                    }
+                }
             }
+        } else {
+            // Anonymous actor: use actor_id as key
+            self.actor_names.insert(actor_id.to_string(), local_id);
         }
 
         Ok(ActorRef::local(actor_id, sender))

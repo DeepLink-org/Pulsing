@@ -95,8 +95,8 @@ pub mod prelude {
     pub use crate::actor::{Actor, ActorContext, ActorRef, IntoActor, Message};
     pub use crate::supervision::{BackoffStrategy, RestartPolicy, SupervisionSpec};
     pub use crate::system::{
-        ActorSystem, ActorSystemAdvancedExt, ActorSystemCoreExt, ActorSystemOpsExt, ResolveOptions,
-        SpawnOptions, SystemConfig,
+        ActorSystem, ActorSystemCoreExt, ActorSystemOpsExt, ResolveOptions, SpawnOptions,
+        SystemConfig,
     };
     pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};

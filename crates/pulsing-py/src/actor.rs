@@ -1234,7 +1234,9 @@ impl PyActorSystem {
                     // actor is the instance
                     let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
                     system
-                        .spawn_anonymous_with_options(actor_wrapper, options)
+                        .spawning()
+                        .metadata(options.metadata)
+                        .spawn(actor_wrapper)
                         .await
                         .map_err(to_pyerr)?
                 }
@@ -1258,7 +1260,11 @@ impl PyActorSystem {
                         // actor is the instance
                         let actor_wrapper = PythonActorWrapper::new(actor, event_loop);
                         system
-                            .spawn_named_with_options(path, actor_wrapper, options)
+                            .spawning()
+                            .path(path)
+                            .supervision(options.supervision)
+                            .metadata(options.metadata)
+                            .spawn(actor_wrapper)
                             .await
                             .map_err(to_pyerr)?
                     } else {
@@ -1273,7 +1279,11 @@ impl PyActorSystem {
                             })
                         };
                         system
-                            .spawn_named_factory(path, factory, options)
+                            .spawning()
+                            .path(path)
+                            .supervision(options.supervision)
+                            .metadata(options.metadata)
+                            .spawn_factory(factory)
                             .await
                             .map_err(to_pyerr)?
                     }
