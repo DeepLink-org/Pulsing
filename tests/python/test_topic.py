@@ -729,7 +729,6 @@ async def test_double_start_stop(actor_system):
 async def test_topic_broker_via_storage_manager(actor_system):
     """Test that topic broker is created via StorageManager."""
     from pulsing.queue.manager import get_storage_manager
-    from pulsing.actor import Message
 
     # Ensure StorageManager exists
     manager = await get_storage_manager(actor_system)
@@ -738,9 +737,8 @@ async def test_topic_broker_via_storage_manager(actor_system):
     writer = await write_topic(actor_system, "sm_integration_topic")
     await writer.publish({"test": True})
 
-    # Check stats include topics
-    response = await manager.ask(Message.from_json("GetStats", {}))
-    stats = response.to_json()
+    # Check stats include topics via proxy method
+    stats = await manager.get_stats()
 
     assert "topic_count" in stats
     assert stats["topic_count"] >= 1
@@ -751,7 +749,6 @@ async def test_topic_broker_via_storage_manager(actor_system):
 async def test_list_topics(actor_system):
     """Test listing topics via StorageManager."""
     from pulsing.queue.manager import get_storage_manager
-    from pulsing.actor import Message
 
     # Create some topics
     await write_topic(actor_system, "list_topic_1")
@@ -763,13 +760,12 @@ async def test_list_topics(actor_system):
     await w1.publish({"test": 1})
     await w2.publish({"test": 2})
 
+    # List topics via proxy method
     manager = await get_storage_manager(actor_system)
-    response = await manager.ask(Message.from_json("ListTopics", {}))
-    data = response.to_json()
+    topics = await manager.list_topics()
 
-    assert "topics" in data
-    assert "list_topic_1" in data["topics"]
-    assert "list_topic_2" in data["topics"]
+    assert "list_topic_1" in topics
+    assert "list_topic_2" in topics
 
 
 # ============================================================================

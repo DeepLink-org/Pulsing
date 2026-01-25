@@ -47,16 +47,10 @@ MessageCallback = Callable[[Any], Coroutine[Any, Any, Any] | Any]
 
 async def _get_broker(system: ActorSystem, topic: str) -> "ActorProxy":
     """Get topic broker proxy (reuses queue/manager infrastructure)"""
-    from pulsing.actor.remote import ActorProxy
     from pulsing.queue.manager import get_topic_broker
 
-    broker_ref = await get_topic_broker(system, topic)
-    # Wrap ActorRef with ActorProxy to enable direct method calls
-    return ActorProxy.from_ref(
-        broker_ref,
-        methods=["subscribe", "unsubscribe", "publish", "get_stats"],
-        async_methods={"subscribe", "unsubscribe", "publish"},
-    )
+    # get_topic_broker already returns ActorProxy (via TopicBroker.resolve)
+    return await get_topic_broker(system, topic)
 
 
 async def subscribe_to_topic(
