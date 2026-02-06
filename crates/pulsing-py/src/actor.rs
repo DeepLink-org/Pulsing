@@ -2,7 +2,6 @@
 
 use futures::StreamExt;
 use pulsing_actor::actor::{ActorId, ActorPath, NodeId};
-use pulsing_actor::error::PulsingError;
 use pulsing_actor::prelude::*;
 use pulsing_actor::supervision::{BackoffStrategy, RestartPolicy, SupervisionSpec};
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyValueError};
@@ -14,27 +13,22 @@ use std::sync::Mutex as StdMutex;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::errors::pulsing_error_to_py_err_direct;
+use crate::errors::anyhow_to_py_err;
 use crate::python_error_converter::convert_python_exception_to_actor_error;
 use crate::python_executor::python_executor;
 
 /// Special message type identifier for pickle-encoded Python objects
 const SEALED_PY_MSG_TYPE: &str = "__sealed_py_message__";
 
-/// Convert error to Python exception
-/// Prefer using pulsing_error_to_py_err_direct for PulsingError types
-fn to_pyerr<E: std::fmt::Display>(err: E) -> PyErr {
-    // Try to downcast to PulsingError
-    let err_str = err.to_string();
-
-    // For non-PulsingError types, use RuntimeError
-    // In practice, most errors from pulsing-actor should be PulsingError
-    PyRuntimeError::new_err(err_str)
+/// Convert anyhow::Error from actor system operations to Python exception.
+/// Routes through PulsingError for structured JSON error encoding.
+fn to_pyerr(err: anyhow::Error) -> PyErr {
+    anyhow_to_py_err(err)
 }
 
-/// Convert PulsingError to Python exception
-fn pulsing_to_pyerr(err: PulsingError) -> PyErr {
-    pulsing_error_to_py_err_direct(err)
+/// Convert non-anyhow errors (parse, validation) to Python ValueError.
+fn to_py_value_err<E: std::fmt::Display>(err: E) -> PyErr {
+    PyValueError::new_err(err.to_string())
 }
 
 /// Python wrapper for NodeId
@@ -253,7 +247,7 @@ impl PyMessage {
     #[staticmethod]
     fn from_json(py: Python<'_>, msg_type: String, data: PyObject) -> PyResult<Self> {
         let json_value: serde_json::Value = pythonize::depythonize(&data.into_bound(py))?;
-        let payload = serde_json::to_vec(&json_value).map_err(to_pyerr)?;
+        let payload = serde_json::to_vec(&json_value).map_err(to_py_value_err)?;
         Ok(Self {
             msg_type,
             payload: Some(payload),
@@ -297,7 +291,8 @@ impl PyMessage {
     fn to_json(&self, py: Python<'_>) -> PyResult<PyObject> {
         match &self.payload {
             Some(data) => {
-                let value: serde_json::Value = serde_json::from_slice(data).map_err(to_pyerr)?;
+                let value: serde_json::Value =
+                    serde_json::from_slice(data).map_err(to_py_value_err)?;
                 let pyobj = pythonize::pythonize(py, &value)?;
                 Ok(pyobj.into())
             }
@@ -739,7 +734,7 @@ impl PySystemConfig {
 
     #[staticmethod]
     fn with_addr(addr: String) -> PyResult<Self> {
-        let socket_addr: SocketAddr = addr.parse().map_err(to_pyerr)?;
+        let socket_addr: SocketAddr = addr.parse().map_err(to_py_value_err)?;
         Ok(Self {
             inner: SystemConfig::with_addr(socket_addr),
         })
@@ -747,7 +742,7 @@ impl PySystemConfig {
 
     fn with_seeds(&self, seeds: Vec<String>) -> PyResult<Self> {
         let seed_addrs: Result<Vec<SocketAddr>, _> = seeds.iter().map(|s| s.parse()).collect();
-        let seed_addrs = seed_addrs.map_err(to_pyerr)?;
+        let seed_addrs = seed_addrs.map_err(to_py_value_err)?;
         Ok(Self {
             inner: self.inner.clone().with_seeds(seed_addrs),
         })
@@ -1173,9 +1168,7 @@ impl PyActorSystem {
     ) -> PyResult<Bound<'py, PyAny>> {
         let config_inner = config.inner;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let system = ActorSystem::new(config_inner)
-                .await
-                .map_err(|e| pulsing_to_pyerr(PulsingError::from(e)))?;
+            let system = ActorSystem::new(config_inner).await.map_err(to_pyerr)?;
             Ok(PyActorSystem {
                 inner: system,
                 event_loop,
@@ -1344,9 +1337,9 @@ impl PyActorSystem {
 
                     // Parse the path - use new_system for system/* paths (internal use only)
                     let path = if name.starts_with("system/") {
-                        ActorPath::new_system(&name).map_err(to_pyerr)?
+                        ActorPath::new_system(&name).map_err(to_py_value_err)?
                     } else {
-                        ActorPath::new(&name).map_err(to_pyerr)?
+                        ActorPath::new(&name).map_err(to_py_value_err)?
                     };
 
                     if matches!(policy, RestartPolicy::Never) {
@@ -1444,9 +1437,9 @@ impl PyActorSystem {
             };
             // Use new_system for system/* paths (internal use)
             let path = if name.starts_with("system/") {
-                ActorPath::new_system(&name).map_err(to_pyerr)?
+                ActorPath::new_system(&name).map_err(to_py_value_err)?
             } else {
-                ActorPath::new(&name).map_err(to_pyerr)?
+                ActorPath::new(&name).map_err(to_py_value_err)?
             };
             let instances = system.get_named_instances_detailed(&path).await;
             let result: Vec<std::collections::HashMap<String, serde_json::Value>> = instances
@@ -1581,9 +1574,9 @@ impl PyActorSystem {
             };
             // Use new_system for system/* paths (internal use)
             let path = if name.starts_with("system/") {
-                ActorPath::new_system(&name).map_err(to_pyerr)?
+                ActorPath::new_system(&name).map_err(to_py_value_err)?
             } else {
-                ActorPath::new(&name).map_err(to_pyerr)?
+                ActorPath::new(&name).map_err(to_py_value_err)?
             };
             let node = node_id.map(NodeId::new);
             let actor_ref = system
@@ -1639,7 +1632,7 @@ impl PyActorSystem {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             // Use system/core - the correct system actor path
-            let path = ActorPath::new_system("system/core").map_err(to_pyerr)?;
+            let path = ActorPath::new_system("system/core").map_err(to_py_value_err)?;
             let actor_ref = system
                 .resolve_named(&path, Some(&NodeId::new(node_id)))
                 .await

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::actor::{Actor, ActorId, ActorPath, ActorRef, IntoActor, IntoActorPath, NodeId};
 use crate::cluster::{MemberInfo, NamedActorInfo};
+use crate::error::{PulsingError, RuntimeError};
 use crate::supervision::SupervisionSpec;
 use crate::system_actor::BoxedActorFactory;
 
@@ -147,9 +148,12 @@ impl<'a> SpawnBuilder<'a> {
         // Create a once-use factory from the actor instance
         let mut actor_opt = Some(actor);
         let factory = move || {
-            actor_opt
-                .take()
-                .ok_or_else(|| anyhow::anyhow!("Actor cannot be restarted (spawned as instance)"))
+            actor_opt.take().ok_or_else(|| {
+                PulsingError::from(RuntimeError::actor_spawn_failed(
+                    "Actor cannot be restarted (spawned as instance)",
+                ))
+                .into()
+            })
         };
         self.spawn_factory(factory).await
     }
@@ -168,7 +172,7 @@ impl<'a> SpawnBuilder<'a> {
     {
         // Check if name validation failed
         if let Some(ref error) = self.name_error {
-            return Err(anyhow::anyhow!("{}", error));
+            return Err(PulsingError::from(RuntimeError::invalid_actor_path(error.clone())).into());
         }
 
         match self.name {

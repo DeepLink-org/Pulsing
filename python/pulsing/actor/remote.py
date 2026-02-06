@@ -154,19 +154,22 @@ def _unwrap_response(resp: dict) -> tuple[Any, str | None]:
         return (resp.get("__result__"), None)
 
 
+_PULSING_ERROR_PREFIX = "__PULSING_ERROR__:"
+
+
 def _convert_rust_error(err: RuntimeError) -> Exception:
     """Convert Rust-raised RuntimeError to appropriate Pulsing exception.
 
-    Rust layer prefixes error messages with markers:
-    - "ACTOR_ERROR:" -> PulsingActorError (or specific subclasses)
-    - "RUNTIME_ERROR:" -> PulsingRuntimeError
+    Rust layer encodes errors as JSON envelopes with prefix "__PULSING_ERROR__:".
+    The JSON format:
+      Actor errors:  {"category": "actor", "error": {"type": "business", "code": 400, ...}}
+      Runtime errors: {"category": "runtime", "kind": "actor_not_found", "message": "...", ...}
 
-    The error message format for ActorError:
-    - "ACTOR_ERROR:Business error [code]: message" -> PulsingBusinessError
-    - "ACTOR_ERROR:System error: message" -> PulsingSystemError
-    - "ACTOR_ERROR:Timeout: operation 'op' timed out..." -> PulsingTimeoutError
-    - "ACTOR_ERROR:Unsupported operation: op" -> PulsingUnsupportedError
+    This replaces the previous regex-based string prefix parsing with
+    reliable JSON deserialization.
     """
+    import json
+
     from pulsing.exceptions import (
         PulsingBusinessError,
         PulsingSystemError,
@@ -176,51 +179,60 @@ def _convert_rust_error(err: RuntimeError) -> Exception:
 
     err_msg = str(err)
 
-    if err_msg.startswith("ACTOR_ERROR:"):
-        msg = err_msg.replace("ACTOR_ERROR:", "")
+    if not err_msg.startswith(_PULSING_ERROR_PREFIX):
+        # Not a structured Pulsing error, wrap as generic RuntimeError
+        return PulsingRuntimeError(err_msg)
 
-        # Try to identify specific ActorError type from message
-        if msg.startswith("Business error ["):
-            # Extract code, message, and details from "Business error [code]: message"
-            import re
+    json_str = err_msg[len(_PULSING_ERROR_PREFIX) :]
+    try:
+        envelope = json.loads(json_str)
+    except (json.JSONDecodeError, ValueError):
+        # JSON parse failed, fall back to generic error
+        return PulsingRuntimeError(err_msg)
 
-            match = re.match(r"Business error \[(\d+)\]: (.+)", msg)
-            if match:
-                code = int(match.group(1))
-                message = match.group(2)
-                return PulsingBusinessError(code, message)
+    category = envelope.get("category")
 
-        if msg.startswith("System error: "):
-            # Extract error message from "System error: message"
-            error_msg = msg.replace("System error: ", "")
-            # Default to recoverable=True (we don't have recoverable flag in message)
-            return PulsingSystemError(error_msg, recoverable=True)
+    if category == "actor":
+        actor_err = envelope.get("error", {})
+        err_type = actor_err.get("type")
 
-        if msg.startswith("Timeout: operation '"):
-            # Extract operation and duration from "Timeout: operation 'op' timed out after Xms"
-            import re
+        if err_type == "business":
+            code = actor_err.get("code", 0)
+            message = actor_err.get("message", "Unknown error")
+            details = actor_err.get("details")
+            return PulsingBusinessError(code, message, details=details)
 
-            match = re.match(
-                r"Timeout: operation '([^']+)' timed out after (\d+)ms", msg
-            )
-            if match:
-                operation = match.group(1)
-                duration_ms = int(match.group(2))
-                return PulsingTimeoutError(operation, duration_ms)
+        if err_type == "system":
+            error = actor_err.get("error", "Unknown error")
+            recoverable = actor_err.get("recoverable", True)
+            return PulsingSystemError(error, recoverable=recoverable)
 
-        if msg.startswith("Unsupported operation: "):
-            # Extract operation from "Unsupported operation: op"
-            operation = msg.replace("Unsupported operation: ", "")
+        if err_type == "timeout":
+            operation = actor_err.get("operation", "unknown")
+            duration_ms = actor_err.get("duration_ms", 0)
+            return PulsingTimeoutError(operation, duration_ms)
+
+        if err_type == "unsupported":
+            operation = actor_err.get("operation", "unknown")
             return PulsingUnsupportedError(operation)
 
-        # Fallback: generic PulsingActorError
-        return PulsingActorError(msg)
-    elif err_msg.startswith("RUNTIME_ERROR:"):
-        msg = err_msg.replace("RUNTIME_ERROR:", "")
-        return PulsingRuntimeError(msg)
-    else:
-        # Unknown format, wrap as RuntimeError
-        return PulsingRuntimeError(err_msg)
+        # Unknown actor error type, generic fallback
+        return PulsingActorError(str(actor_err))
+
+    if category == "runtime":
+        message = envelope.get("message", "Unknown runtime error")
+        return PulsingRuntimeError(message)
+
+    # Unknown category
+    return PulsingRuntimeError(err_msg)
+
+
+async def _ask_convert_errors(ref, msg) -> Any:
+    """Call ref.ask(msg) and convert Rust RuntimeError to Pulsing exceptions."""
+    try:
+        return await ref.ask(msg)
+    except RuntimeError as e:
+        raise _convert_rust_error(e) from e
 
 
 logger = logging.getLogger(__name__)
@@ -337,7 +349,7 @@ class _MethodCaller:
         else:
             call_msg = _wrap_call_v1(self._method, args, kwargs, False)
 
-        resp = await self._ref.ask(call_msg)
+        resp = await _ask_convert_errors(self._ref, call_msg)
 
         if isinstance(resp, dict):
             result, error = _unwrap_response(resp)
@@ -397,7 +409,7 @@ class _AsyncMethodCall:
                 call_msg = _wrap_call_v2(self._method, self._args, self._kwargs, True)
             else:
                 call_msg = _wrap_call_v1(self._method, self._args, self._kwargs, True)
-            resp = await self._ref.ask(call_msg)
+            resp = await _ask_convert_errors(self._ref, call_msg)
 
             # Response may be PyMessage (streaming) or direct Python object
             if isinstance(resp, Message):
@@ -497,10 +509,7 @@ class _SyncGeneratorStreamReader:
                     self._got_result = True
                     raise StopAsyncIteration
                 if "__error__" in item:
-                    # Actor execution error
-                    raise PulsingActorError(
-                        item["__error__"], actor_name=str(self._ref.actor_id.id)
-                    )
+                    raise PulsingActorError(item["__error__"])
                 if "__yield__" in item:
                     return item["__yield__"]
             return item
@@ -974,7 +983,8 @@ class ActorClass:
             actor_name = f"actors/{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
 
         # Send creation request
-        resp = await service_ref.ask(
+        resp = await _ask_convert_errors(
+            service_ref,
             Message.from_json(
                 "CreateActor",
                 {
@@ -989,7 +999,7 @@ class ActorClass:
                     "min_backoff": self._min_backoff,
                     "max_backoff": self._max_backoff,
                 },
-            )
+            ),
         )
 
         data = resp.to_json()
@@ -1144,8 +1154,9 @@ class SystemActorProxy:
 
     async def _ask(self, msg_type: str) -> dict:
         """Send SystemMessage and return response."""
-        resp = await self._ref.ask(
-            Message.from_json("SystemMessage", {"type": msg_type})
+        resp = await _ask_convert_errors(
+            self._ref,
+            Message.from_json("SystemMessage", {"type": msg_type}),
         )
         return resp.to_json()
 
@@ -1221,7 +1232,9 @@ class PythonActorServiceProxy:
         Returns:
             List of registered class names
         """
-        resp = await self._ref.ask(Message.from_json("ListRegistry", {}))
+        resp = await _ask_convert_errors(
+            self._ref, Message.from_json("ListRegistry", {})
+        )
         data = resp.to_json()
         return data.get("classes", [])
 
@@ -1256,7 +1269,8 @@ class PythonActorServiceProxy:
         Raises:
             RuntimeError: If creation fails
         """
-        resp = await self._ref.ask(
+        resp = await _ask_convert_errors(
+            self._ref,
             Message.from_json(
                 "CreateActor",
                 {
@@ -1270,7 +1284,7 @@ class PythonActorServiceProxy:
                     "min_backoff": min_backoff,
                     "max_backoff": max_backoff,
                 },
-            )
+            ),
         )
         data = resp.to_json()
         if resp.msg_type == "Error" or data.get("error"):
@@ -1377,7 +1391,10 @@ async def resolve(
     if _global_system is None:
         raise RuntimeError("Actor system not initialized. Call 'await init()' first.")
 
-    return await _global_system.resolve(name, node_id=node_id)
+    try:
+        return await _global_system.resolve(name, node_id=node_id)
+    except RuntimeError as e:
+        raise _convert_rust_error(e) from e
 
 
 RemoteClass = ActorClass

@@ -25,7 +25,7 @@ impl ActorSystem {
     async fn cluster_or_err(&self) -> anyhow::Result<Arc<dyn crate::cluster::NamingBackend>> {
         self.cluster_opt()
             .await
-            .ok_or_else(|| anyhow::anyhow!("Cluster not initialized"))
+            .ok_or_else(|| PulsingError::from(RuntimeError::ClusterNotInitialized).into())
     }
 
     /// Get ActorRef for a local or remote actor by ID
@@ -33,25 +33,21 @@ impl ActorSystem {
     /// This is an O(1) operation for local actors using ActorId indexing.
     pub async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef> {
         // Try local lookup first (O(1))
-        if let Some(handle) = self.local_actors.get(id) {
+        if let Some(handle) = self.registry.get_handle(id) {
             return Ok(ActorRef::local(handle.actor_id, handle.sender.clone()));
         }
 
         // Not found locally - try remote lookup via cluster
-        // Note: With UUID-based IDs, we need to check cluster for actor location
         let cluster = self.cluster_or_err().await?;
 
         // Lookup actor location in cluster
         if let Some(member_info) = cluster.lookup_actor(id).await {
-            // Create remote transport using actor id
             let transport =
                 Http2RemoteTransport::new_by_id(self.transport.client(), member_info.addr, *id);
             return Ok(ActorRef::remote(*id, member_info.addr, Arc::new(transport)));
         }
 
-        Err(anyhow::Error::from(PulsingError::from(
-            RuntimeError::actor_not_found(id.to_string()),
-        )))
+        Err(PulsingError::from(RuntimeError::actor_not_found(id.to_string())).into())
     }
 
     /// Resolve a named actor by path (direct resolution)
@@ -124,7 +120,9 @@ impl ActorSystem {
         let instances = cluster.get_named_actor_instances(path).await;
 
         if instances.is_empty() {
-            return Err(anyhow::anyhow!("Named actor not found: {}", path.as_str()));
+            return Err(
+                PulsingError::from(RuntimeError::named_actor_not_found(path.as_str())).into(),
+            );
         }
 
         let healthy_instances: Vec<_> = if options.filter_alive {
@@ -137,17 +135,18 @@ impl ActorSystem {
         };
 
         if healthy_instances.is_empty() {
-            return Err(anyhow::anyhow!(
-                "No healthy instances for named actor: {}",
-                path.as_str()
-            ));
+            return Err(
+                PulsingError::from(RuntimeError::no_healthy_instances(path.as_str())).into(),
+            );
         }
 
         let target = if let Some(nid) = options.node_id {
             healthy_instances
                 .iter()
                 .find(|i| i.node_id == nid)
-                .ok_or_else(|| anyhow::anyhow!("Actor instance not found on node: {}", nid))?
+                .ok_or_else(|| -> anyhow::Error {
+                    PulsingError::from(RuntimeError::node_not_found(nid.to_string())).into()
+                })?
         } else {
             let policy = options.policy.as_ref().unwrap_or(&self.default_lb_policy);
             self.select_instance(&healthy_instances, policy.as_ref())
@@ -155,21 +154,25 @@ impl ActorSystem {
 
         if target.node_id == self.node_id {
             let actor_name = self
-                .named_actor_paths
-                .get(&path.as_str())
-                .ok_or_else(|| anyhow::anyhow!("Named actor not found locally"))?
-                .clone();
+                .registry
+                .get_actor_name_by_path(&path.as_str())
+                .ok_or_else(|| -> anyhow::Error {
+                    PulsingError::from(RuntimeError::named_actor_not_found(path.as_str())).into()
+                })?;
 
-            let local_id = self.actor_names.get(&actor_name).ok_or_else(|| {
-                anyhow::Error::from(PulsingError::from(RuntimeError::actor_not_found(
-                    actor_name.clone(),
-                )))
-            })?;
+            let local_id =
+                self.registry
+                    .get_actor_id(&actor_name)
+                    .ok_or_else(|| -> anyhow::Error {
+                        PulsingError::from(RuntimeError::actor_not_found(actor_name.clone())).into()
+                    })?;
 
             let handle = self
-                .local_actors
-                .get(local_id.value())
-                .ok_or_else(|| anyhow::anyhow!("Actor handle not found: {}", actor_name))?;
+                .registry
+                .get_handle(&local_id)
+                .ok_or_else(|| -> anyhow::Error {
+                    PulsingError::from(RuntimeError::actor_not_found(actor_name.clone())).into()
+                })?;
 
             return Ok(ActorRef::local(handle.actor_id, handle.sender.clone()));
         }

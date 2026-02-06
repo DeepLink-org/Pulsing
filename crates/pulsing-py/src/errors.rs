@@ -1,54 +1,66 @@
 //! Python exception bindings for Pulsing errors
 //!
-//! This module converts Rust error types to Python exceptions.
-//! Due to PyO3 abi3 limitations, we use PyRuntimeError as the base
-//! and let Python layer re-raise as appropriate exception types.
+//! This module converts Rust error types to Python exceptions using
+//! JSON-structured error envelopes instead of string prefixes.
+//!
+//! The JSON envelope format:
+//! ```json
+//! {
+//!   "category": "actor" | "runtime",
+//!   // For actor errors (category="actor"):
+//!   "error": { "type": "business", "code": 400, ... },
+//!   // For runtime errors (category="runtime"):
+//!   "kind": "actor_not_found",
+//!   "message": "Actor not found: my-actor",
+//!   "actor_name": "my-actor"  // optional
+//! }
+//! ```
 
-use pulsing_actor::error::{PulsingError, RuntimeError};
+use pulsing_actor::error::PulsingError;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-/// Convert Rust PulsingError to appropriate Python exception
+/// JSON marker prefix for structured error envelopes.
+/// Python layer detects this prefix and parses the JSON payload.
+pub const ERROR_ENVELOPE_PREFIX: &str = "__PULSING_ERROR__:";
+
+/// Convert Rust PulsingError to Python exception using JSON envelope.
 ///
-/// This function prefixes error messages with error type markers so Python
-/// layer can identify and re-raise as appropriate exception types.
+/// Instead of string-prefix-based encoding (fragile, requires regex parsing),
+/// this uses a JSON-structured envelope that Python can reliably decode.
 pub fn pulsing_error_to_py_err(err: PulsingError) -> PyErr {
-    let err_msg = err.to_string();
-
-    match &err {
-        // Actor errors (user code errors) -> prefix with "ACTOR_ERROR:"
-        PulsingError::Actor(_actor_err) => {
-            PyRuntimeError::new_err(format!("ACTOR_ERROR:{}", err_msg))
+    let json_str = match &err {
+        PulsingError::Actor(actor_err) => {
+            // ActorError already derives Serialize with serde(tag = "type")
+            let actor_json = serde_json::to_value(actor_err).unwrap_or_else(|_| {
+                serde_json::json!({"type": "system", "error": err.to_string(), "recoverable": true})
+            });
+            serde_json::json!({
+                "category": "actor",
+                "error": actor_json,
+            })
+            .to_string()
         }
-        // Runtime errors (framework errors) -> prefix with "RUNTIME_ERROR:"
-        PulsingError::Runtime(runtime_err) => {
-            // Extract actor name if available for runtime errors
-            let actor_name = match runtime_err {
-                RuntimeError::ActorNotFound { name } => Some(name.clone()),
-                RuntimeError::ActorAlreadyExists { name } => Some(name.clone()),
-                RuntimeError::ActorNotLocal { name } => Some(name.clone()),
-                RuntimeError::ActorStopped { name } => Some(name.clone()),
-                RuntimeError::ActorMailboxFull { name } => Some(name.clone()),
-                RuntimeError::InvalidActorPath { path: _ } => None,
-                RuntimeError::MessageTypeMismatch { .. } => None,
-                RuntimeError::ActorSpawnFailed { .. } => None,
-                _ => None,
-            };
+        PulsingError::Runtime(runtime_err) => serde_json::json!({
+            "category": "runtime",
+            "kind": runtime_err.kind(),
+            "message": runtime_err.to_string(),
+            "actor_name": runtime_err.actor_name(),
+        })
+        .to_string(),
+    };
 
-            let full_msg = if let Some(ref name) = actor_name {
-                format!("RUNTIME_ERROR:{}:actor={}", err_msg, name)
-            } else {
-                format!("RUNTIME_ERROR:{}", err_msg)
-            };
-
-            PyRuntimeError::new_err(full_msg)
-        }
-    }
+    PyRuntimeError::new_err(format!("{}{}", ERROR_ENVELOPE_PREFIX, json_str))
 }
 
-/// Convert PulsingError to Python exception (preferred method)
-pub fn pulsing_error_to_py_err_direct(err: PulsingError) -> PyErr {
-    pulsing_error_to_py_err(err)
+/// Convert anyhow::Error to Python exception via PulsingError.
+///
+/// This first converts anyhow::Error to PulsingError (which extracts
+/// RuntimeError/ActorError if present), then uses JSON envelope encoding.
+/// Use this instead of the generic `to_pyerr` for actor system operations.
+pub fn anyhow_to_py_err(err: anyhow::Error) -> PyErr {
+    let pulsing_err = PulsingError::from(err);
+    pulsing_error_to_py_err(pulsing_err)
 }
 
 /// Add error classes to Python module
@@ -59,4 +71,51 @@ pub fn pulsing_error_to_py_err_direct(err: PulsingError) -> PyErr {
 pub fn add_to_module(_m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Error classes are defined in Python layer
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pulsing_actor::error::{ActorError, RuntimeError};
+
+    #[test]
+    fn test_actor_error_envelope() {
+        let err = PulsingError::Actor(ActorError::business(400, "Invalid input", None));
+        let py_err = pulsing_error_to_py_err(err);
+        let msg = py_err.to_string();
+        assert!(msg.starts_with(ERROR_ENVELOPE_PREFIX));
+
+        let json_str = &msg[ERROR_ENVELOPE_PREFIX.len()..];
+        let envelope: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        assert_eq!(envelope["category"], "actor");
+        assert_eq!(envelope["error"]["type"], "business");
+        assert_eq!(envelope["error"]["code"], 400);
+    }
+
+    #[test]
+    fn test_runtime_error_envelope() {
+        let err = PulsingError::Runtime(RuntimeError::actor_not_found("my-actor"));
+        let py_err = pulsing_error_to_py_err(err);
+        let msg = py_err.to_string();
+        assert!(msg.starts_with(ERROR_ENVELOPE_PREFIX));
+
+        let json_str = &msg[ERROR_ENVELOPE_PREFIX.len()..];
+        let envelope: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        assert_eq!(envelope["category"], "runtime");
+        assert_eq!(envelope["kind"], "actor_not_found");
+        assert_eq!(envelope["actor_name"], "my-actor");
+    }
+
+    #[test]
+    fn test_anyhow_error_conversion() {
+        let anyhow_err = anyhow::anyhow!("something went wrong");
+        let py_err = anyhow_to_py_err(anyhow_err);
+        let msg = py_err.to_string();
+        assert!(msg.starts_with(ERROR_ENVELOPE_PREFIX));
+
+        let json_str = &msg[ERROR_ENVELOPE_PREFIX.len()..];
+        let envelope: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        assert_eq!(envelope["category"], "runtime");
+        assert_eq!(envelope["kind"], "other");
+    }
 }

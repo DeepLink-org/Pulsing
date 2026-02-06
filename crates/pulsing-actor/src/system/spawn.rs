@@ -12,6 +12,7 @@ use crate::system::config::SpawnOptions;
 use crate::system::handle::{ActorStats, LocalActorHandle};
 use crate::system::runtime::run_supervision_loop;
 use crate::system::ActorSystem;
+use dashmap::mapref::entry::Entry;
 use std::sync::Arc;
 
 impl ActorSystem {
@@ -19,6 +20,9 @@ impl ActorSystem {
     ///
     /// This is called by `SpawnBuilder::spawn_factory()` and handles both
     /// anonymous and named actor spawning.
+    ///
+    /// Name registration uses DashMap::entry() for atomic insert, avoiding
+    /// TOCTOU races when two concurrent spawns use the same name.
     pub(crate) async fn spawn_internal<F, A>(
         self: &Arc<Self>,
         path: Option<ActorPath>,
@@ -30,18 +34,6 @@ impl ActorSystem {
         A: Actor,
     {
         let name_str = path.as_ref().map(|p| p.as_str().to_string());
-
-        // Check for name conflicts (only for named actors)
-        if let Some(ref name) = name_str {
-            if self.actor_names.contains_key(name) {
-                return Err(anyhow::Error::from(PulsingError::from(
-                    RuntimeError::actor_already_exists(name.clone()),
-                )));
-            }
-            if self.named_actor_paths.contains_key(name) {
-                return Err(anyhow::anyhow!("Named path already registered: {}", name));
-            }
-        }
 
         let actor_id = self.next_actor_id();
 
@@ -77,12 +69,26 @@ impl ActorSystem {
             actor_id,
         };
 
-        self.local_actors.insert(actor_id, handle);
+        self.registry.register_actor(actor_id, handle);
 
-        // Register in name maps
+        // Register in name maps. For named actors use atomic entry() to avoid TOCTOU.
         if let Some(ref name) = name_str {
-            self.actor_names.insert(name.clone(), actor_id);
-            self.named_actor_paths.insert(name.clone(), name.clone());
+            match self.registry.actor_names.entry(name.clone()) {
+                Entry::Occupied(_) => {
+                    if let Some((_, dropped_handle)) = self.registry.remove_handle(&actor_id) {
+                        dropped_handle.cancel_token.cancel();
+                    }
+                    return Err(PulsingError::from(RuntimeError::actor_already_exists(
+                        name.clone(),
+                    ))
+                    .into());
+                }
+                Entry::Vacant(v) => {
+                    v.insert(actor_id);
+                }
+            }
+            self.registry
+                .register_named_path(name.clone(), name.clone());
 
             // Register with cluster if available
             if let Some(ref path) = path {
@@ -98,7 +104,7 @@ impl ActorSystem {
             }
         } else {
             // Anonymous actor: use actor_id as key
-            self.actor_names.insert(actor_id.to_string(), actor_id);
+            self.registry.register_name(actor_id.to_string(), actor_id);
         }
 
         Ok(ActorRef::local(actor_id, sender))

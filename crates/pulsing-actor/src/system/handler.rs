@@ -1,13 +1,12 @@
 //! HTTP/2 message handler for the actor system
 
-use super::handle::LocalActorHandle;
 use crate::actor::{ActorId, ActorPath, Envelope, Message, NodeId};
 use crate::cluster::backends::{RegisterActorRequest, UnregisterActorRequest};
 use crate::cluster::{GossipBackend, GossipMessage, HeadNodeBackend, NamingBackend};
 use crate::error::{PulsingError, RuntimeError};
 use crate::metrics::{metrics, SystemMetrics as PrometheusMetrics};
+use crate::system::registry::ActorRegistry;
 use crate::transport::Http2ServerHandler;
-use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -15,54 +14,35 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
-/// Unified message handler for HTTP/2 transport
+/// Unified message handler for HTTP/2 transport.
+///
+/// Uses [`ActorRegistry`] for actor lookup instead of raw DashMaps.
 pub(crate) struct SystemMessageHandler {
     node_id: NodeId,
-    /// Local actors indexed by ActorId
-    local_actors: Arc<DashMap<ActorId, LocalActorHandle>>,
-    /// Actor name to ActorId mapping
-    actor_names: Arc<DashMap<String, ActorId>>,
-    named_actor_paths: Arc<DashMap<String, String>>,
+    /// Actor registry for local actor management
+    registry: Arc<ActorRegistry>,
+    /// Cluster backend
     cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
 }
 
 impl SystemMessageHandler {
     pub fn new(
         node_id: NodeId,
-        local_actors: Arc<DashMap<ActorId, LocalActorHandle>>,
-        actor_names: Arc<DashMap<String, ActorId>>,
-        named_actor_paths: Arc<DashMap<String, String>>,
+        registry: Arc<ActorRegistry>,
         cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
     ) -> Self {
         Self {
             node_id,
-            local_actors,
-            actor_names,
-            named_actor_paths,
+            registry,
             cluster,
         }
     }
 
-    /// Find actor sender by name or ActorId (O(1) lookup)
+    /// Find actor sender by name or ActorId (O(1) lookup via registry)
     fn find_actor_sender(&self, actor_name: &str) -> anyhow::Result<mpsc::Sender<Envelope>> {
-        // First try by name -> ActorId -> handle
-        if let Some(actor_id) = self.actor_names.get(actor_name) {
-            if let Some(handle) = self.local_actors.get(actor_id.value()) {
-                return Ok(handle.sender.clone());
-            }
-        }
-
-        // Then try parsing as ActorId (UUID format)
-        if let Ok(uuid) = uuid::Uuid::parse_str(actor_name) {
-            let actor_id = ActorId::new(uuid.as_u128());
-            if let Some(handle) = self.local_actors.get(&actor_id) {
-                return Ok(handle.sender.clone());
-            }
-        }
-
-        Err(anyhow::Error::from(PulsingError::from(
-            RuntimeError::actor_not_found(actor_name.to_string()),
-        )))
+        self.registry.find_actor_sender(actor_name).ok_or_else(|| {
+            PulsingError::from(RuntimeError::actor_not_found(actor_name.to_string())).into()
+        })
     }
 
     /// Dispatch a message to an actor (ask pattern)
@@ -72,7 +52,7 @@ impl SystemMessageHandler {
         } else if let Some(named_path) = path.strip_prefix("/named/") {
             self.send_to_named_actor(named_path, msg).await
         } else {
-            Err(anyhow::anyhow!("Invalid path: {}", path))
+            Err(PulsingError::from(RuntimeError::invalid_actor_path(path)).into())
         }
     }
 
@@ -83,7 +63,7 @@ impl SystemMessageHandler {
         } else if let Some(named_path) = path.strip_prefix("/named/") {
             self.tell_named_actor(named_path, msg).await
         } else {
-            Err(anyhow::anyhow!("Invalid path: {}", path))
+            Err(PulsingError::from(RuntimeError::invalid_actor_path(path)).into())
         }
     }
 
@@ -93,42 +73,44 @@ impl SystemMessageHandler {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let envelope = Envelope::ask(msg, tx);
 
-        sender
-            .send(envelope)
-            .await
-            .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
+        sender.send(envelope).await.map_err(|_| -> anyhow::Error {
+            PulsingError::from(RuntimeError::actor_stopped(actor_name)).into()
+        })?;
 
-        rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
+        rx.await.map_err(|_| -> anyhow::Error {
+            PulsingError::from(RuntimeError::actor_stopped(actor_name)).into()
+        })?
     }
 
     async fn tell_local_actor(&self, actor_name: &str, msg: Message) -> anyhow::Result<()> {
         let sender = self.find_actor_sender(actor_name)?;
         let envelope = Envelope::tell(msg);
 
-        sender
-            .send(envelope)
-            .await
-            .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
+        sender.send(envelope).await.map_err(|_| -> anyhow::Error {
+            PulsingError::from(RuntimeError::actor_stopped(actor_name)).into()
+        })?;
 
         Ok(())
     }
 
     async fn send_to_named_actor(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
-        let actor_name = self
-            .named_actor_paths
-            .get(path)
-            .ok_or_else(|| anyhow::anyhow!("Named actor not found: {}", path))?
-            .clone();
+        let actor_name =
+            self.registry
+                .get_actor_name_by_path(path)
+                .ok_or_else(|| -> anyhow::Error {
+                    PulsingError::from(RuntimeError::named_actor_not_found(path)).into()
+                })?;
 
         self.send_to_local_actor(&actor_name, msg).await
     }
 
     async fn tell_named_actor(&self, path: &str, msg: Message) -> anyhow::Result<()> {
-        let actor_name = self
-            .named_actor_paths
-            .get(path)
-            .ok_or_else(|| anyhow::anyhow!("Named actor not found: {}", path))?
-            .clone();
+        let actor_name =
+            self.registry
+                .get_actor_name_by_path(path)
+                .ok_or_else(|| -> anyhow::Error {
+                    PulsingError::from(RuntimeError::named_actor_not_found(path)).into()
+                })?;
 
         self.tell_local_actor(&actor_name, msg).await
     }
@@ -190,12 +172,13 @@ impl Http2ServerHandler for SystemMessageHandler {
     async fn health_check(&self) -> serde_json::Value {
         // Collect local actors info
         let mut actors = Vec::new();
-        for entry in self.local_actors.iter() {
+        for entry in self.registry.iter_actors() {
             let local_id = *entry.key();
             let handle = entry.value();
 
             // Find name from actor_names (reverse lookup)
             let name = self
+                .registry
                 .actor_names
                 .iter()
                 .find(|e| *e.value() == local_id)
@@ -218,8 +201,8 @@ impl Http2ServerHandler for SystemMessageHandler {
 
         // Collect named actors info
         let named_actors: Vec<_> = self
-            .named_actor_paths
-            .iter()
+            .registry
+            .iter_named_paths()
             .map(|e| {
                 serde_json::json!({
                     "path": e.key().clone(),
@@ -272,16 +255,16 @@ impl Http2ServerHandler for SystemMessageHandler {
 
         // Count messages from local actors
         let mut total_messages: u64 = 0;
-        for entry in self.local_actors.iter() {
+        for entry in self.registry.iter_actors() {
             total_messages += entry.value().stats.message_count.load(Ordering::Relaxed);
         }
 
         // Build system metrics
         let system_metrics = PrometheusMetrics {
             node_id: self.node_id.0,
-            actors_count: self.local_actors.len(),
+            actors_count: self.registry.actor_count(),
             messages_total: total_messages,
-            actors_created: self.local_actors.len() as u64,
+            actors_created: self.registry.actor_count() as u64,
             actors_stopped: 0,
             cluster_members,
         };
@@ -397,9 +380,9 @@ impl SystemMessageHandler {
         body: Vec<u8>,
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let cluster_guard = self.cluster.read().await;
-        let backend = cluster_guard
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Cluster backend not available"))?;
+        let backend = cluster_guard.as_ref().ok_or_else(|| -> anyhow::Error {
+            PulsingError::from(RuntimeError::ClusterNotInitialized).into()
+        })?;
 
         // Try to downcast to HeadNodeBackend
         let head_backend = match backend.as_any().downcast_ref::<HeadNodeBackend>() {
@@ -465,11 +448,11 @@ impl SystemMessageHandler {
                     .await?;
                 Ok(Some(Vec::new()))
             }
-            _ => Err(anyhow::anyhow!(
+            _ => Err(PulsingError::from(RuntimeError::Other(format!(
                 "Unknown head API endpoint: {} {}",
-                method,
-                path
-            )),
+                method, path
+            )))
+            .into()),
         }
     }
 }

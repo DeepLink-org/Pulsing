@@ -373,6 +373,51 @@ impl RuntimeError {
     pub fn io(err: std::io::Error) -> Self {
         Self::Io(err.to_string())
     }
+
+    /// Get the error kind as a snake_case string (for structured serialization)
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::ActorNotFound { .. } => "actor_not_found",
+            Self::ActorAlreadyExists { .. } => "actor_already_exists",
+            Self::ActorNotLocal { .. } => "actor_not_local",
+            Self::ActorStopped { .. } => "actor_stopped",
+            Self::ActorMailboxFull { .. } => "actor_mailbox_full",
+            Self::InvalidActorPath { .. } => "invalid_actor_path",
+            Self::MessageTypeMismatch { .. } => "message_type_mismatch",
+            Self::ActorSpawnFailed { .. } => "actor_spawn_failed",
+            Self::ConnectionFailed { .. } => "connection_failed",
+            Self::ConnectionClosed { .. } => "connection_closed",
+            Self::RequestTimeout { .. } => "request_timeout",
+            Self::InvalidResponse { .. } => "invalid_response",
+            Self::TlsError { .. } => "tls_error",
+            Self::ProtocolError { .. } => "protocol_error",
+            Self::ClusterNotInitialized => "cluster_not_initialized",
+            Self::NodeNotFound { .. } => "node_not_found",
+            Self::NamedActorNotFound { .. } => "named_actor_not_found",
+            Self::NoHealthyInstances { .. } => "no_healthy_instances",
+            Self::JoinFailed { .. } => "join_failed",
+            Self::GossipError { .. } => "gossip_error",
+            Self::InvalidConfigValue { .. } => "invalid_config_value",
+            Self::MissingRequiredConfig { .. } => "missing_required_config",
+            Self::ConflictingConfig { .. } => "conflicting_config",
+            Self::InvalidAddress { .. } => "invalid_address",
+            Self::Io(_) => "io_error",
+            Self::Serialization(_) => "serialization_error",
+            Self::Other(_) => "other",
+        }
+    }
+
+    /// Extract actor name if this error is related to a specific actor
+    pub fn actor_name(&self) -> Option<&str> {
+        match self {
+            Self::ActorNotFound { name } => Some(name),
+            Self::ActorAlreadyExists { name } => Some(name),
+            Self::ActorNotLocal { name } => Some(name),
+            Self::ActorStopped { name } => Some(name),
+            Self::ActorMailboxFull { name } => Some(name),
+            _ => None,
+        }
+    }
 }
 
 impl From<std::io::Error> for RuntimeError {
