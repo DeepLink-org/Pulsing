@@ -6,7 +6,7 @@ use super::retry::{RetryConfig, RetryExecutor};
 use super::stream::{BinaryFrameParser, StreamFrame, StreamHandle};
 use super::{headers, MessageMode, RequestType};
 use crate::actor::{Message, MessageStream};
-use crate::error::{PulsingError, RuntimeError};
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::tracing::{TraceContext, TRACEPARENT_HEADER};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
@@ -20,12 +20,36 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+/// Context for fault injection (testing / chaos).
+#[derive(Clone, Debug)]
+pub struct FaultInjectContext {
+    pub addr: SocketAddr,
+    pub path: String,
+    pub msg_type: String,
+    pub operation: FaultInjectOperation,
+}
+
+/// Operation kind for fault injection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FaultInjectOperation {
+    Ask,
+    Tell,
+    Stream,
+}
+
+/// Fault injector for testing: optionally return an error before performing the request.
+pub trait FaultInjector: Send + Sync {
+    /// If returns Some(error), the client will return this error without sending the request.
+    fn inject(&self, ctx: &FaultInjectContext) -> Option<PulsingError>;
+}
+
 /// HTTP/2 client with connection pooling, retry, and timeout support.
 pub struct Http2Client {
     pool: Arc<ConnectionPool>,
     config: Http2Config,
     retry_config: RetryConfig,
     cancel: CancellationToken,
+    fault_injector: Option<Arc<dyn FaultInjector>>,
 }
 
 impl Http2Client {
@@ -35,6 +59,7 @@ impl Http2Client {
             config,
             retry_config: RetryConfig::default(),
             cancel: CancellationToken::new(),
+            fault_injector: None,
         }
     }
 
@@ -51,12 +76,22 @@ impl Http2Client {
             config: http2_config,
             retry_config,
             cancel: CancellationToken::new(),
+            fault_injector: None,
         }
     }
 
     pub fn with_retry(mut self, retry_config: RetryConfig) -> Self {
         self.retry_config = retry_config;
         self
+    }
+
+    /// Set fault injector for testing / chaos engineering. When set, injector may return
+    /// an error before the request is sent.
+    pub fn with_fault_injector(self, injector: Option<Arc<dyn FaultInjector>>) -> Self {
+        Self {
+            fault_injector: injector,
+            ..self
+        }
     }
 
     pub fn pool(&self) -> &Arc<ConnectionPool> {
@@ -75,15 +110,36 @@ impl Http2Client {
         self.cancel.cancel();
     }
 
+    fn check_fault_inject(
+        &self,
+        addr: SocketAddr,
+        path: &str,
+        msg_type: &str,
+        op: FaultInjectOperation,
+    ) -> Result<()> {
+        if let Some(ref injector) = self.fault_injector {
+            let ctx = FaultInjectContext {
+                addr,
+                path: path.to_string(),
+                msg_type: msg_type.to_string(),
+                operation: op,
+            };
+            if let Some(err) = injector.inject(&ctx) {
+                return Err(err);
+            }
+        }
+        Ok(())
+    }
+
     pub async fn ask(
         &self,
         addr: SocketAddr,
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
+        self.check_fault_inject(addr, path, msg_type, FaultInjectOperation::Ask)?;
         let executor = RetryExecutor::new(self.retry_config.clone());
-
         executor
             .execute(true, || {
                 self.ask_once(addr, path, msg_type, payload.clone())
@@ -97,7 +153,7 @@ impl Http2Client {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
         let response = self
             .send_request(addr, path, msg_type, payload, MessageMode::Ask)
             .await?;
@@ -106,17 +162,18 @@ impl Http2Client {
 
         let body = tokio::time::timeout(self.config.request_timeout, response.collect())
             .await
-            .map_err(|_| anyhow::anyhow!("Response body read timeout"))?
-            .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?
+            .map_err(|_| {
+                RuntimeError::request_timeout(self.config.request_timeout.as_millis() as u64)
+            })?
+            .map_err(|e| RuntimeError::Io(e.to_string()))?
             .to_bytes();
 
         if !status.is_success() {
             let error_msg = String::from_utf8_lossy(&body);
-            return Err(anyhow::anyhow!(
-                "Request failed with status {}: {}",
-                status,
-                error_msg
-            ));
+            return Err(PulsingError::from(RuntimeError::invalid_response(format!(
+                "status {}: {}",
+                status, error_msg
+            ))));
         }
 
         Ok(body.to_vec())
@@ -128,9 +185,9 @@ impl Http2Client {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
+        self.check_fault_inject(addr, path, msg_type, FaultInjectOperation::Tell)?;
         let executor = RetryExecutor::new(self.retry_config.clone());
-
         executor
             .execute(false, || {
                 self.tell_once(addr, path, msg_type, payload.clone())
@@ -144,7 +201,7 @@ impl Http2Client {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let response = self
             .send_request(addr, path, msg_type, payload, MessageMode::Tell)
             .await?;
@@ -152,14 +209,16 @@ impl Http2Client {
         let status = response.status();
 
         if !status.is_success() {
-            let body = response.collect().await?.to_bytes();
+            let body = response
+                .collect()
+                .await
+                .map_err(|e| RuntimeError::Io(e.to_string()))?
+                .to_bytes();
             let error_msg = String::from_utf8_lossy(&body);
-            return Err(anyhow::anyhow!(
-                "Tell failed with status {} to {}: {}",
-                status,
-                addr,
-                error_msg
-            ));
+            return Err(PulsingError::from(RuntimeError::invalid_response(format!(
+                "tell status {} to {}: {}",
+                status, addr, error_msg
+            ))));
         }
 
         Ok(())
@@ -172,7 +231,8 @@ impl Http2Client {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<StreamHandle<StreamFrame>> {
+    ) -> Result<StreamHandle<StreamFrame>> {
+        self.check_fault_inject(addr, path, msg_type, FaultInjectOperation::Stream)?;
         let response = self
             .send_request(addr, path, msg_type, payload, MessageMode::Stream)
             .await?;
@@ -180,19 +240,21 @@ impl Http2Client {
         let status = response.status();
 
         if !status.is_success() {
-            let body = response.collect().await?.to_bytes();
+            let body = response
+                .collect()
+                .await
+                .map_err(|e| RuntimeError::Io(e.to_string()))?
+                .to_bytes();
             let error_msg = String::from_utf8_lossy(&body);
-            return Err(anyhow::anyhow!(
-                "Stream request failed with status {}: {}",
-                status,
-                error_msg
-            ));
+            return Err(PulsingError::from(RuntimeError::invalid_response(format!(
+                "stream status {}: {}",
+                status, error_msg
+            ))));
         }
 
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
 
-        // Apply stream timeout
         let stream_timeout = self.config.stream_timeout;
         let body_stream = response.into_body();
         let frame_stream = Self::body_to_frame_stream(body_stream, cancel_clone, stream_timeout);
@@ -209,13 +271,9 @@ impl Http2Client {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> crate::error::Result<MessageStream> {
-        let stream_handle = self
-            .ask_stream(addr, path, msg_type, payload)
-            .await
-            .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
+    ) -> Result<MessageStream> {
+        let stream_handle = self.ask_stream(addr, path, msg_type, payload).await?;
 
-        // Convert StreamFrame stream to Message stream using to_message()
         let msg_stream = stream_handle.filter_map(|result| async move {
             match result {
                 Ok(frame) => match frame.to_message() {
@@ -238,7 +296,7 @@ impl Http2Client {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Message> {
+    ) -> Result<Message> {
         let response = self
             .send_request(addr, path, msg_type, payload, MessageMode::Ask)
             .await?;
@@ -256,17 +314,15 @@ impl Http2Client {
         addr: SocketAddr,
         path: &str,
         msg: Message,
-    ) -> anyhow::Result<Message> {
+    ) -> Result<Message> {
         match msg {
             Message::Single { msg_type, data } => {
-                // Single request - use existing method
                 self.send_message(addr, path, &msg_type, data).await
             }
             Message::Stream {
                 default_msg_type,
                 stream,
             } => {
-                // Streaming request - send as binary frames
                 let response = self
                     .send_stream_request(addr, path, &default_msg_type, stream)
                     .await?;
@@ -285,7 +341,7 @@ impl Http2Client {
         path: &str,
         msg_type: &str,
         stream: MessageStream,
-    ) -> anyhow::Result<hyper::Response<Incoming>> {
+    ) -> Result<hyper::Response<Incoming>> {
         use hyper::client::conn::http2;
         use hyper_util::rt::{TokioExecutor, TokioIo};
         use tokio::net::TcpStream;
@@ -318,19 +374,22 @@ impl Http2Client {
                 .map_err(|e| RuntimeError::connection_failed(addr.to_string(), e.to_string()))?;
 
         // Build HTTP/2 connection with streaming body type - with or without TLS
-        type StreamingBody =
-            StreamBody<tokio_stream::wrappers::ReceiverStream<Result<Frame<Bytes>, Infallible>>>;
+        type StreamingBody = StreamBody<
+            tokio_stream::wrappers::ReceiverStream<std::result::Result<Frame<Bytes>, Infallible>>,
+        >;
 
         #[cfg(feature = "tls")]
         if let Some(ref tls_config) = self.config.tls {
-            // TLS mode: wrap TCP stream with TLS
             let server_name = addr.ip().to_string();
-            let tls_stream = tls_config.connect(tcp_stream, &server_name).await?;
+            let tls_stream = tls_config
+                .connect(tcp_stream, &server_name)
+                .await
+                .map_err(|e| RuntimeError::tls_error(e.to_string()))?;
             let io = TokioIo::new(tls_stream);
             let (mut sender, conn): (http2::SendRequest<StreamingBody>, _) =
                 http2::handshake(TokioExecutor::new(), io)
                     .await
-                    .map_err(|e| anyhow::anyhow!("HTTP/2 TLS handshake failed: {}", e))?;
+                    .map_err(|e| RuntimeError::tls_error(e.to_string()))?;
 
             // Spawn connection driver for TLS
             let cancel = self.cancel.clone();
@@ -348,7 +407,8 @@ impl Http2Client {
             });
 
             // Complete the streaming request (TLS path)
-            let (tx, rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, Infallible>>(32);
+            let (tx, rx) =
+                tokio::sync::mpsc::channel::<std::result::Result<Frame<Bytes>, Infallible>>(32);
             let default_msg_type = msg_type.to_string();
             tokio::spawn(async move {
                 let mut stream = std::pin::pin!(stream);
@@ -386,8 +446,10 @@ impl Http2Client {
             let send_future = sender.send_request(request);
             let response = tokio::time::timeout(self.config.stream_timeout, send_future)
                 .await
-                .map_err(|_| anyhow::anyhow!("Streaming request timeout"))?
-                .map_err(|e| anyhow::anyhow!("Streaming request failed: {}", e))?;
+                .map_err(|_| {
+                    RuntimeError::request_timeout(self.config.stream_timeout.as_millis() as u64)
+                })?
+                .map_err(|e| RuntimeError::protocol_error(e.to_string()))?;
 
             return Ok(response);
         }
@@ -417,7 +479,8 @@ impl Http2Client {
         });
 
         // Create a channel for streaming body
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, Infallible>>(32);
+        let (tx, rx) =
+            tokio::sync::mpsc::channel::<std::result::Result<Frame<Bytes>, Infallible>>(32);
 
         // Spawn task to convert Message stream to binary frames
         let default_msg_type = msg_type.to_string();
@@ -473,19 +536,21 @@ impl Http2Client {
     }
 
     /// Parse HTTP response into Message (handles both single and stream responses)
-    async fn parse_response(&self, response: hyper::Response<Incoming>) -> anyhow::Result<Message> {
+    async fn parse_response(&self, response: hyper::Response<Incoming>) -> Result<Message> {
         let status = response.status();
         if !status.is_success() {
-            let body = response.collect().await?.to_bytes();
+            let body = response
+                .collect()
+                .await
+                .map_err(|e| RuntimeError::Io(e.to_string()))?
+                .to_bytes();
             let error_msg = String::from_utf8_lossy(&body);
-            return Err(anyhow::anyhow!(
-                "Request failed: {} - {}",
-                status,
-                error_msg
-            ));
+            return Err(PulsingError::from(RuntimeError::invalid_response(format!(
+                "{} - {}",
+                status, error_msg
+            ))));
         }
 
-        // Check response type header
         let response_type = response
             .headers()
             .get(headers::RESPONSE_TYPE)
@@ -493,7 +558,6 @@ impl Http2Client {
             .unwrap_or("single");
 
         if response_type == "stream" {
-            // Stream response - parse binary frames
             let cancel = CancellationToken::new();
             let cancel_clone = cancel.clone();
             let stream_timeout = self.config.stream_timeout;
@@ -502,7 +566,6 @@ impl Http2Client {
                 Self::body_to_frame_stream(body_stream, cancel_clone, stream_timeout);
             let stream_handle = StreamHandle::new(frame_stream, cancel);
 
-            // Convert StreamFrame stream to Message stream
             let msg_stream = stream_handle.filter_map(|result| async move {
                 match result {
                     Ok(frame) => match frame.to_message() {
@@ -519,18 +582,19 @@ impl Http2Client {
                 stream: Box::pin(msg_stream),
             })
         } else {
-            // Single response - read body directly
             let body = tokio::time::timeout(self.config.request_timeout, response.collect())
                 .await
-                .map_err(|_| anyhow::anyhow!("Response body read timeout"))?
-                .map_err(|e| anyhow::anyhow!("Failed to read body: {}", e))?
+                .map_err(|_| {
+                    RuntimeError::request_timeout(self.config.request_timeout.as_millis() as u64)
+                })?
+                .map_err(|e| RuntimeError::Io(e.to_string()))?
                 .to_bytes();
 
             Ok(Message::single("", body.to_vec()))
         }
     }
 
-    /// Convert response body to stream of StreamFrames using binary format
+    /// Convert response body to stream of StreamFrames using binary format.
     fn body_to_frame_stream(
         body: Incoming,
         cancel: CancellationToken,
@@ -548,7 +612,7 @@ impl Http2Client {
             .map(move |result| {
                 let parser = parser.clone();
                 async move {
-                    let frame = result.map_err(|e| anyhow::anyhow!("Body read error: {}", e))?;
+                    let frame = result.map_err(|e| anyhow::anyhow!("Body read: {}", e))?;
                     let data = frame
                         .into_data()
                         .map_err(|_| anyhow::anyhow!("Not data frame"))?;
@@ -556,7 +620,6 @@ impl Http2Client {
                     let mut parser = parser.lock().await;
                     parser.push(&data);
 
-                    // Parse all complete frames
                     let frames = parser.parse_all();
                     Ok::<_, anyhow::Error>(futures::stream::iter(frames))
                 }
@@ -573,8 +636,7 @@ impl Http2Client {
         msg_type: &str,
         payload: Vec<u8>,
         mode: MessageMode,
-    ) -> anyhow::Result<hyper::Response<Incoming>> {
-        // Create trace context for outgoing request
+    ) -> Result<hyper::Response<Incoming>> {
         let trace_ctx = TraceContext::from_current()
             .map(|p| p.child())
             .unwrap_or_default();
@@ -589,7 +651,12 @@ impl Http2Client {
         );
         let _enter = span.enter();
 
-        let conn_guard = self.pool.get_connection(addr).await?;
+        let conn_guard = self.pool.get_connection(addr).await.map_err(|e| {
+            PulsingError::from(RuntimeError::connection_failed(
+                addr.to_string(),
+                e.to_string(),
+            ))
+        })?;
         let mut conn = conn_guard.get().await;
 
         // Build request with trace context header
@@ -624,6 +691,7 @@ impl Clone for Http2Client {
             config: self.config.clone(),
             retry_config: self.retry_config.clone(),
             cancel: self.cancel.clone(),
+            fault_injector: self.fault_injector.clone(),
         }
     }
 }
@@ -633,6 +701,7 @@ pub struct Http2ClientBuilder {
     http2_config: Http2Config,
     pool_config: Option<PoolConfig>,
     retry_config: Option<RetryConfig>,
+    fault_injector: Option<Arc<dyn FaultInjector>>,
 }
 
 impl Http2ClientBuilder {
@@ -642,7 +711,14 @@ impl Http2ClientBuilder {
             http2_config: Http2Config::default(),
             pool_config: None,
             retry_config: None,
+            fault_injector: None,
         }
+    }
+
+    /// Set fault injector for testing / chaos engineering.
+    pub fn fault_injector(mut self, injector: Option<Arc<dyn FaultInjector>>) -> Self {
+        self.fault_injector = injector;
+        self
     }
 
     /// Set HTTP/2 configuration
@@ -689,11 +765,12 @@ impl Http2ClientBuilder {
 
     /// Build the client
     pub fn build(self) -> Http2Client {
-        Http2Client::with_configs(
+        let client = Http2Client::with_configs(
             self.http2_config,
             self.pool_config.unwrap_or_default(),
             self.retry_config.unwrap_or_default(),
-        )
+        );
+        client.with_fault_injector(self.fault_injector)
     }
 }
 
@@ -744,5 +821,135 @@ mod tests {
         let cloned = client.clone();
         // Both should share the same pool
         assert!(Arc::ptr_eq(&client.pool, &cloned.pool));
+    }
+
+    // --- 连接管理 ---
+
+    #[test]
+    fn test_client_pool_and_stats() {
+        use std::sync::atomic::Ordering;
+        let client = Http2Client::new(Http2Config::default());
+        let pool = client.pool();
+        let stats = client.stats();
+        assert_eq!(stats.connections_created.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.connections_closed.load(Ordering::Relaxed), 0);
+        assert!(Arc::ptr_eq(client.pool(), pool));
+    }
+
+    #[test]
+    fn test_client_with_retry() {
+        let retry = RetryConfig::no_retry();
+        let client = Http2Client::new(Http2Config::default()).with_retry(retry.clone());
+        assert_eq!(client.retry_config.max_retries, 0);
+    }
+
+    #[test]
+    fn test_client_with_configs() {
+        let http2_config = Http2Config::default();
+        let pool_config = PoolConfig::default();
+        let retry_config = RetryConfig::with_max_retries(2);
+        let client = Http2Client::with_configs(http2_config, pool_config, retry_config);
+        assert_eq!(client.retry_config.max_retries, 2);
+    }
+
+    #[tokio::test]
+    async fn test_start_background_tasks_and_shutdown() {
+        let client = Http2Client::new(Http2Config::default());
+        client.start_background_tasks();
+        client.shutdown();
+        // Shutdown again should be no-op
+        client.shutdown();
+    }
+
+    // --- 错误恢复：对不可达地址应返回连接错误 ---
+
+    #[tokio::test]
+    async fn test_ask_connection_error() {
+        let client =
+            Http2Client::new(Http2Config::default().connect_timeout(Duration::from_millis(100)))
+                .with_retry(RetryConfig::no_retry());
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let result = client.ask(addr, "/actors/foo", "ping", vec![]).await;
+        let err = result.unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("connection") || msg.contains("refused") || msg.contains("reset"),
+            "expected connection-related error, got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tell_connection_error() {
+        let client =
+            Http2Client::new(Http2Config::default().connect_timeout(Duration::from_millis(100)))
+                .with_retry(RetryConfig::no_retry());
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let result = client.tell(addr, "/actors/foo", "ping", vec![]).await;
+        let err = result.unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("connection") || msg.contains("refused") || msg.contains("reset"),
+            "expected connection-related error, got: {}",
+            msg
+        );
+    }
+
+    // --- 错误植入 ---
+
+    #[tokio::test]
+    async fn test_fault_injector_ask() {
+        struct InjectAllAsk;
+        impl FaultInjector for InjectAllAsk {
+            fn inject(&self, ctx: &FaultInjectContext) -> Option<PulsingError> {
+                if ctx.operation == FaultInjectOperation::Ask {
+                    Some(PulsingError::from(RuntimeError::connection_failed(
+                        ctx.addr.to_string(),
+                        "injected".to_string(),
+                    )))
+                } else {
+                    None
+                }
+            }
+        }
+        let client = Http2Client::new(Http2Config::default())
+            .with_fault_injector(Some(Arc::new(InjectAllAsk)));
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let err = client.ask(addr, "/p", "t", vec![]).await.unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("injected"));
+    }
+
+    #[tokio::test]
+    async fn test_fault_injector_tell() {
+        struct InjectTell;
+        impl FaultInjector for InjectTell {
+            fn inject(&self, ctx: &FaultInjectContext) -> Option<PulsingError> {
+                if ctx.operation == FaultInjectOperation::Tell {
+                    Some(PulsingError::from(RuntimeError::request_timeout(1)))
+                } else {
+                    None
+                }
+            }
+        }
+        let client = Http2Client::new(Http2Config::default())
+            .with_fault_injector(Some(Arc::new(InjectTell)));
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let err = client.tell(addr, "/p", "t", vec![]).await.unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("timeout"));
+    }
+
+    #[tokio::test]
+    async fn test_fault_injector_none_no_effect() {
+        let client =
+            Http2Client::new(Http2Config::default().connect_timeout(Duration::from_millis(50)))
+                .with_retry(RetryConfig::no_retry())
+                .with_fault_injector(None);
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let result = client.ask(addr, "/p", "t", vec![]).await;
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("connection")
+                || err.to_string().to_lowercase().contains("refused")
+        );
     }
 }

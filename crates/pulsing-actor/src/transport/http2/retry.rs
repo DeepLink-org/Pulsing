@@ -1,5 +1,6 @@
 //! Retry and timeout strategies for HTTP/2 transport.
 
+use crate::error::{PulsingError, Result};
 use std::time::Duration;
 
 /// Retry configuration.
@@ -115,13 +116,19 @@ pub enum RetryableError {
 }
 
 impl RetryableError {
-    pub fn classify(error: &anyhow::Error) -> Self {
+    /// Classify PulsingError for retry decision (preferred).
+    pub fn classify_pulsing(error: &PulsingError) -> Self {
         let msg = error.to_string().to_lowercase();
+        Self::classify_msg(&msg)
+    }
+
+    /// Classify by error message string (used for anyhow or PulsingError).
+    fn classify_msg(msg: &str) -> Self {
+        let msg = msg.to_lowercase();
 
         if msg.contains("backing off") {
             return Self::Unknown;
         }
-
         if msg.contains("connection")
             || msg.contains("connect")
             || msg.contains("refused")
@@ -129,15 +136,12 @@ impl RetryableError {
         {
             return Self::Connection;
         }
-
         if msg.contains("timeout") || msg.contains("timed out") {
             return Self::Timeout;
         }
-
         if msg.contains("503") || msg.contains("service unavailable") {
             return Self::ServerOverloaded;
         }
-
         if msg.contains("500")
             || msg.contains("502")
             || msg.contains("504")
@@ -147,7 +151,6 @@ impl RetryableError {
         {
             return Self::ServerError;
         }
-
         if msg.contains("400")
             || msg.contains("401")
             || msg.contains("403")
@@ -159,8 +162,12 @@ impl RetryableError {
         {
             return Self::ClientError;
         }
-
         Self::Unknown
+    }
+
+    /// Classify anyhow::Error (for compatibility with code still using anyhow).
+    pub fn classify(error: &anyhow::Error) -> Self {
+        Self::classify_msg(&error.to_string())
     }
 
     pub fn is_retryable(&self, idempotent_only: bool, is_idempotent: bool) -> bool {
@@ -191,16 +198,15 @@ impl RetryExecutor {
         Self { config }
     }
 
-    /// Execute a function with retry logic
-    pub async fn execute<F, Fut, T>(&self, is_idempotent: bool, mut f: F) -> anyhow::Result<T>
+    /// Execute a function with retry logic (unified error type).
+    pub async fn execute<F, Fut, T>(&self, is_idempotent: bool, mut f: F) -> Result<T>
     where
         F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = anyhow::Result<T>>,
+        Fut: std::future::Future<Output = Result<T>>,
     {
-        let mut last_error = None;
+        let mut last_error: Option<PulsingError> = None;
 
         for attempt in 0..=self.config.max_retries {
-            // Wait before retry (except for first attempt)
             if attempt > 0 {
                 let delay = self.config.delay_for_attempt(attempt);
                 tracing::debug!(
@@ -214,7 +220,7 @@ impl RetryExecutor {
             match f().await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
-                    let error_type = RetryableError::classify(&e);
+                    let error_type = RetryableError::classify_pulsing(&e);
                     let should_retry = attempt < self.config.max_retries
                         && error_type.is_retryable(self.config.idempotent_only, is_idempotent);
 
@@ -234,7 +240,11 @@ impl RetryExecutor {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
+        Err(last_error.unwrap_or_else(|| {
+            PulsingError::from(crate::error::RuntimeError::Other(
+                "Max retries exceeded".to_string(),
+            ))
+        }))
     }
 }
 
@@ -328,7 +338,7 @@ mod tests {
     async fn test_retry_executor_success() {
         let executor = RetryExecutor::new(RetryConfig::with_max_retries(3));
         let result = executor
-            .execute(true, || async { Ok::<_, anyhow::Error>(42) })
+            .execute(true, || async { Ok::<_, PulsingError>(42) })
             .await;
         assert_eq!(result.unwrap(), 42);
     }
@@ -347,7 +357,12 @@ mod tests {
                 async move {
                     let n = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     if n < 2 {
-                        Err(anyhow::anyhow!("Connection refused"))
+                        Err(PulsingError::from(
+                            crate::error::RuntimeError::connection_failed(
+                                "127.0.0.1:1",
+                                "Connection refused",
+                            ),
+                        ))
                     } else {
                         Ok(42)
                     }
@@ -357,5 +372,21 @@ mod tests {
 
         assert_eq!(result.unwrap(), 42);
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn test_error_classification_pulsing() {
+        use crate::error::RuntimeError;
+        let conn_err =
+            PulsingError::from(RuntimeError::connection_failed("127.0.0.1:1", "refused"));
+        assert_eq!(
+            RetryableError::classify_pulsing(&conn_err),
+            RetryableError::Connection
+        );
+        let timeout_err = PulsingError::from(RuntimeError::request_timeout(5000));
+        assert_eq!(
+            RetryableError::classify_pulsing(&timeout_err),
+            RetryableError::Timeout
+        );
     }
 }

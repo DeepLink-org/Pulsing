@@ -482,3 +482,141 @@ struct UnregisterNamedActorRequest {
     path: ActorPath,
     node_id: NodeId,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::system::handle::{ActorStats, LocalActorHandle};
+    use std::collections::HashMap;
+
+    fn make_mock_actor(
+        _actor_id: ActorId,
+    ) -> (mpsc::Sender<Envelope>, tokio::task::JoinHandle<()>) {
+        let (tx, mut rx) = mpsc::channel::<Envelope>(8);
+        let join = tokio::spawn(async move {
+            while let Some(env) = rx.recv().await {
+                let (_, responder) = env.into_parts();
+                responder.send(Ok(Message::single("pong", vec![1, 2, 3])));
+            }
+        });
+        (tx, join)
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_message_invalid_path() {
+        let registry = Arc::new(ActorRegistry::new());
+        let cluster = Arc::new(RwLock::new(None));
+        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+        let msg = Message::single("ping", vec![]);
+
+        let err = handler
+            .handle_message_full("/invalid/path", msg)
+            .await
+            .unwrap_err();
+        assert!(err.is_runtime());
+        assert!(err.to_string().to_lowercase().contains("path"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_message_actor_not_found() {
+        let registry = Arc::new(ActorRegistry::new());
+        let cluster = Arc::new(RwLock::new(None));
+        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+        let msg = Message::single("ping", vec![]);
+
+        let err = handler
+            .handle_message_full("/actors/missing-actor", msg)
+            .await
+            .unwrap_err();
+        assert!(err.is_runtime());
+        assert!(err.to_string().contains("missing-actor"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_message_named_actor_not_found() {
+        let registry = Arc::new(ActorRegistry::new());
+        let cluster = Arc::new(RwLock::new(None));
+        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+        let msg = Message::single("ping", vec![]);
+
+        let err = handler
+            .handle_message_full("/named/services/foo", msg)
+            .await
+            .unwrap_err();
+        assert!(err.is_runtime());
+        assert!(
+            err.to_string().contains("named_actor_not_found")
+                || err.to_string().contains("services/foo")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_message_success() {
+        let actor_id = ActorId::generate();
+        let (sender, join_handle) = make_mock_actor(actor_id);
+        let handle = LocalActorHandle {
+            sender,
+            join_handle,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            stats: Arc::new(ActorStats::default()),
+            metadata: HashMap::new(),
+            named_path: None,
+            actor_id,
+        };
+
+        let registry = Arc::new(ActorRegistry::new());
+        registry.register_actor(actor_id, handle);
+        registry.register_name("test-actor".to_string(), actor_id);
+
+        let cluster = Arc::new(RwLock::new(None));
+        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+        let msg = Message::single("ping", vec![]);
+
+        let response = handler
+            .handle_message_full("/actors/test-actor", msg)
+            .await
+            .unwrap();
+        assert_eq!(response.msg_type(), "pong");
+    }
+
+    #[tokio::test]
+    async fn test_handle_message_simple_routing() {
+        let actor_id = ActorId::generate();
+        let (sender, join_handle) = make_mock_actor(actor_id);
+        let handle = LocalActorHandle {
+            sender,
+            join_handle,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            stats: Arc::new(ActorStats::default()),
+            metadata: HashMap::new(),
+            named_path: None,
+            actor_id,
+        };
+
+        let registry = Arc::new(ActorRegistry::new());
+        registry.register_actor(actor_id, handle);
+        registry.register_name("simple".to_string(), actor_id);
+
+        let cluster = Arc::new(RwLock::new(None));
+        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+
+        let response = handler
+            .handle_message_simple("/actors/simple", "req", vec![1, 2, 3])
+            .await
+            .unwrap();
+        assert_eq!(response.msg_type(), "pong");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_tell_actor_not_found() {
+        let registry = Arc::new(ActorRegistry::new());
+        let cluster = Arc::new(RwLock::new(None));
+        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+
+        let err = handler
+            .handle_tell("/actors/missing", "msg", vec![])
+            .await
+            .unwrap_err();
+        assert!(err.is_runtime());
+    }
+}

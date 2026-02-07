@@ -515,6 +515,114 @@ mod tests {
         let err = ConfigValidationError::ConflictingHeadNodeConfig;
         assert!(err.to_string().contains("head_node"));
     }
+
+    // --- 配置解析 ---
+
+    #[test]
+    fn test_config_with_seeds() {
+        let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
+        let config = SystemConfig::standalone().with_seeds(vec![addr]);
+        assert_eq!(config.seed_nodes.len(), 1);
+        assert_eq!(config.seed_nodes[0], addr);
+    }
+
+    #[test]
+    fn test_config_with_head_node_and_head_addr() {
+        let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
+        let config = SystemConfig::standalone().with_head_node();
+        assert!(config.is_head_node);
+        assert!(config.head_addr.is_none());
+
+        let config = SystemConfig::standalone().with_head_addr(addr);
+        assert!(!config.is_head_node);
+        assert_eq!(config.head_addr, Some(addr));
+    }
+
+    #[tokio::test]
+    async fn test_builder_invalid_addr_parse() {
+        let result = ActorSystemBuilder::default()
+            .addr("not-a-valid-address")
+            .build()
+            .await;
+        let err = match result {
+            Ok(_) => panic!("expected build to fail"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().to_lowercase().contains("invalid"));
+    }
+
+    #[tokio::test]
+    async fn test_builder_invalid_seed_parse() {
+        let result = ActorSystemBuilder::default()
+            .seeds(vec!["127.0.0.1:0", "invalid-seed"])
+            .build()
+            .await;
+        let err = match result {
+            Ok(_) => panic!("expected build to fail"),
+            Err(e) => e,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid") && msg.contains("index"));
+    }
+
+    #[tokio::test]
+    async fn test_builder_validation_mailbox_too_small() {
+        let result = ActorSystemBuilder::default()
+            .addr("127.0.0.1:0")
+            .mailbox_capacity(1)
+            .build()
+            .await;
+        let err = match result {
+            Ok(_) => panic!("expected validation to fail"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().to_lowercase().contains("mailbox"));
+    }
+
+    #[tokio::test]
+    async fn test_builder_validation_mailbox_too_large() {
+        let result = ActorSystemBuilder::default()
+            .addr("127.0.0.1:0")
+            .mailbox_capacity(10_000_000)
+            .build()
+            .await;
+        let err = match result {
+            Ok(_) => panic!("expected validation to fail"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().to_lowercase().contains("mailbox"));
+    }
+
+    #[test]
+    fn test_validation_multiple_errors() {
+        let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
+        let config = SystemConfig {
+            default_mailbox_capacity: 1,
+            is_head_node: true,
+            head_addr: Some(addr),
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert_eq!(errors.len(), 2);
+        let has_mailbox = errors
+            .iter()
+            .any(|e| matches!(e, ConfigValidationError::MailboxTooSmall { .. }));
+        let has_conflict = errors
+            .iter()
+            .any(|e| matches!(e, ConfigValidationError::ConflictingHeadNodeConfig));
+        assert!(has_mailbox);
+        assert!(has_conflict);
+    }
+
+    #[tokio::test]
+    async fn test_builder_valid_build() {
+        let result = ActorSystemBuilder::default()
+            .addr("127.0.0.1:0")
+            .build()
+            .await;
+        let system = result.unwrap();
+        system.shutdown().await.unwrap();
+    }
 }
 
 /// Helper type for flexible address input (defers parsing errors)

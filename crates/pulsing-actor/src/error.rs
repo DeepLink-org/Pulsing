@@ -258,6 +258,20 @@ impl RuntimeError {
         Self::RequestTimeout { timeout_ms }
     }
 
+    /// Create a connection closed error
+    pub fn connection_closed(reason: impl Into<String>) -> Self {
+        Self::ConnectionClosed {
+            reason: reason.into(),
+        }
+    }
+
+    /// Create an invalid response error
+    pub fn invalid_response(reason: impl Into<String>) -> Self {
+        Self::InvalidResponse {
+            reason: reason.into(),
+        }
+    }
+
     /// Create a TLS error
     pub fn tls_error(reason: impl Into<String>) -> Self {
         Self::TlsError {
@@ -526,6 +540,7 @@ pub type Result<T> = std::result::Result<T, PulsingError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
 
     #[test]
     fn test_runtime_error_display() {
@@ -588,5 +603,79 @@ mod tests {
 
         assert_eq!(err1, err2);
         assert_ne!(err1, err3);
+    }
+
+    #[test]
+    fn test_runtime_error_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let runtime_err: RuntimeError = io_err.into();
+        assert!(matches!(runtime_err, RuntimeError::Io(_)));
+        assert!(runtime_err.to_string().contains("file not found"));
+    }
+
+    #[test]
+    fn test_runtime_error_kind_and_actor_name() {
+        let err = RuntimeError::actor_not_found("my-actor");
+        assert_eq!(err.kind(), "actor_not_found");
+        assert_eq!(err.actor_name(), Some("my-actor"));
+
+        let err = RuntimeError::Other("generic".to_string());
+        assert_eq!(err.kind(), "other");
+        assert_eq!(err.actor_name(), None);
+    }
+
+    #[test]
+    fn test_pulsing_error_is_runtime_is_actor() {
+        let runtime_err = PulsingError::from(RuntimeError::actor_not_found("x"));
+        assert!(runtime_err.is_runtime());
+        assert!(!runtime_err.is_actor());
+
+        let actor_err = PulsingError::from(ActorError::business(400, "y", None));
+        assert!(!actor_err.is_runtime());
+        assert!(actor_err.is_actor());
+    }
+
+    /// Test error propagation with ? operator
+    fn propagate_result(ok: bool) -> Result<()> {
+        if ok {
+            Ok(())
+        } else {
+            Err(RuntimeError::actor_not_found("test").into())
+        }
+    }
+
+    #[test]
+    fn test_error_propagation() {
+        assert!(propagate_result(true).is_ok());
+        let err = propagate_result(false).unwrap_err();
+        assert!(err.is_runtime());
+        assert!(err.to_string().contains("test"));
+    }
+
+    #[test]
+    fn test_runtime_error_resolve_helpers() {
+        let err = RuntimeError::no_healthy_instances("svc/echo");
+        assert_eq!(err.kind(), "no_healthy_instances");
+        assert!(err.to_string().to_lowercase().contains("svc/echo"));
+
+        let err = RuntimeError::node_not_found("node-42");
+        assert_eq!(err.kind(), "node_not_found");
+        assert!(err.to_string().contains("node-42"));
+
+        let err = RuntimeError::named_actor_not_found("a/b");
+        assert_eq!(err.kind(), "named_actor_not_found");
+        assert!(err.to_string().contains("a/b"));
+
+        let err = RuntimeError::ClusterNotInitialized;
+        assert_eq!(err.kind(), "cluster_not_initialized");
+        assert!(err.to_string().to_lowercase().contains("cluster"));
+    }
+
+    #[test]
+    fn test_error_source_chain() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let runtime_err: RuntimeError = io_err.into();
+        let pulsing_err: PulsingError = runtime_err.into();
+        assert!(pulsing_err.source().is_some());
     }
 }

@@ -331,3 +331,59 @@ impl ActorSystem {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::system::config::ActorSystemBuilder;
+
+    #[tokio::test]
+    async fn test_resolve_named_invalid_path_single_segment() {
+        let system = ActorSystemBuilder::default()
+            .addr("127.0.0.1:0")
+            .build()
+            .await
+            .unwrap();
+        let err = system.resolve_named("x", None).await.unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("namespace") || msg.contains("path"),
+            "expected path/namespace error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_named_lazy_invalid_path() {
+        let system = ActorSystemBuilder::default()
+            .addr("127.0.0.1:0")
+            .build()
+            .await
+            .unwrap();
+        let err = system.resolve_named_lazy("single").unwrap_err();
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("namespace") || msg.contains("path"),
+            "expected path/namespace error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_named_valid_path_no_instances() {
+        let system = ActorSystemBuilder::default()
+            .addr("127.0.0.1:0")
+            .build()
+            .await
+            .unwrap();
+        let err = system
+            .resolve_named("svc/nonexistent", None)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("nonexistent") || msg.contains("not_found") || msg.contains("not found"),
+            "expected named_actor_not_found, got: {}",
+            err
+        );
+    }
+}

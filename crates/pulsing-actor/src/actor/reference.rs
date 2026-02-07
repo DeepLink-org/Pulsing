@@ -282,10 +282,16 @@ impl std::fmt::Debug for ActorRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actor::ActorPath;
 
     #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
     struct TestMsg {
         value: i32,
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+    struct TestReply {
+        result: i32,
     }
 
     #[tokio::test]
@@ -297,7 +303,6 @@ mod tests {
         actor_ref.tell(TestMsg { value: 42 }).await.unwrap();
 
         let envelope = rx.recv().await.unwrap();
-        // type_name includes module path
         assert!(envelope.msg_type().ends_with("TestMsg"));
     }
 
@@ -313,5 +318,220 @@ mod tests {
         let envelope = rx.recv().await.unwrap();
         assert_eq!(envelope.msg_type(), "TestMsg");
         assert!(!envelope.expects_response());
+    }
+
+    #[tokio::test]
+    async fn test_local_actor_ref_ask_success() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let actor_id = ActorId::generate();
+        let actor_ref = ActorRef::local(actor_id, tx.clone());
+
+        let reply_handle = tokio::spawn(async move {
+            let envelope = rx.recv().await.unwrap();
+            let (msg, responder) = envelope.into_parts();
+            let req: TestMsg = msg.unpack().unwrap();
+            responder.send(Ok(Message::pack(&TestReply {
+                result: req.value * 2,
+            })
+            .unwrap()));
+        });
+
+        let reply: TestReply = actor_ref.ask(TestMsg { value: 21 }).await.unwrap();
+        assert_eq!(reply.result, 42);
+        reply_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_local_actor_ref_mailbox_closed() {
+        let (tx, rx) = mpsc::channel(16);
+        let actor_id = ActorId::generate();
+        let actor_ref = ActorRef::local(actor_id, tx);
+        drop(rx);
+
+        let err = actor_ref.tell(TestMsg { value: 1 }).await.unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("mailbox")
+                || err.to_string().to_lowercase().contains("closed")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_actor_ref_is_local_is_lazy() {
+        let (tx, _rx) = mpsc::channel(16);
+        let local_ref = ActorRef::local(ActorId::generate(), tx);
+        assert!(local_ref.is_local());
+        assert!(!local_ref.is_lazy());
+
+        let path = ActorPath::new("a/b").unwrap();
+        struct MockResolver;
+        #[async_trait::async_trait]
+        impl ActorResolver for MockResolver {
+            async fn resolve_path(&self, _path: &ActorPath) -> Result<ActorRef> {
+                Err(PulsingError::from(RuntimeError::actor_not_found("mock")))
+            }
+        }
+        let lazy_ref = ActorRef::lazy(path, Arc::new(MockResolver));
+        assert!(!lazy_ref.is_local());
+        assert!(lazy_ref.is_lazy());
+    }
+
+    #[tokio::test]
+    async fn test_remote_actor_ref_delegates_to_transport() {
+        struct MockTransport {
+            request_result: Result<Vec<u8>>,
+            send_result: Result<()>,
+        }
+        #[async_trait::async_trait]
+        impl RemoteTransport for MockTransport {
+            async fn request(
+                &self,
+                _actor_id: &ActorId,
+                _msg_type: &str,
+                _payload: Vec<u8>,
+            ) -> Result<Vec<u8>> {
+                self.request_result.clone()
+            }
+            async fn send(
+                &self,
+                _actor_id: &ActorId,
+                _msg_type: &str,
+                _payload: Vec<u8>,
+            ) -> Result<()> {
+                self.send_result.clone()
+            }
+        }
+
+        let transport = Arc::new(MockTransport {
+            request_result: Ok(bincode::serialize(&TestReply { result: 100 }).unwrap()),
+            send_result: Ok(()),
+        });
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let remote_ref = ActorRef::remote(ActorId::generate(), addr, transport);
+
+        let reply: TestReply = remote_ref.ask(TestMsg { value: 50 }).await.unwrap();
+        assert_eq!(reply.result, 100);
+        remote_ref.tell(TestMsg { value: 0 }).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_remote_actor_ref_transport_error() {
+        struct FailingTransport;
+        #[async_trait::async_trait]
+        impl RemoteTransport for FailingTransport {
+            async fn request(&self, _: &ActorId, _: &str, _: Vec<u8>) -> Result<Vec<u8>> {
+                Err(PulsingError::from(RuntimeError::connection_failed(
+                    "127.0.0.1:1".to_string(),
+                    "refused".to_string(),
+                )))
+            }
+            async fn send(&self, _: &ActorId, _: &str, _: Vec<u8>) -> Result<()> {
+                Err(PulsingError::from(RuntimeError::connection_failed(
+                    "127.0.0.1:1".to_string(),
+                    "refused".to_string(),
+                )))
+            }
+        }
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let remote_ref = ActorRef::remote(ActorId::generate(), addr, Arc::new(FailingTransport));
+
+        let err = remote_ref
+            .ask::<TestMsg, TestReply>(TestMsg { value: 1 })
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("connection")
+                || err.to_string().to_lowercase().contains("refused")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lazy_ref_resolves_and_caches() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let actor_id = ActorId::generate();
+        let local_ref = ActorRef::local(actor_id, tx.clone());
+
+        struct ResolverThatReturns {
+            ref_to_return: ActorRef,
+        }
+        #[async_trait::async_trait]
+        impl ActorResolver for ResolverThatReturns {
+            async fn resolve_path(&self, _path: &ActorPath) -> Result<ActorRef> {
+                Ok(self.ref_to_return.clone())
+            }
+        }
+
+        let path = ActorPath::new("svc/echo").unwrap();
+        let lazy_ref = ActorRef::lazy(
+            path,
+            Arc::new(ResolverThatReturns {
+                ref_to_return: local_ref,
+            }),
+        );
+
+        let reply_handle = tokio::spawn(async move {
+            for _ in 0..2 {
+                let Some(envelope) = rx.recv().await else {
+                    break;
+                };
+                let (msg, responder) = envelope.into_parts();
+                let req: TestMsg = msg.unpack().unwrap();
+                responder.send(Ok(Message::pack(&TestReply {
+                    result: req.value + 1,
+                })
+                .unwrap()));
+            }
+        });
+
+        let r1: TestReply = lazy_ref.ask(TestMsg { value: 10 }).await.unwrap();
+        assert_eq!(r1.result, 11);
+        let r2: TestReply = lazy_ref.ask(TestMsg { value: 20 }).await.unwrap();
+        assert_eq!(r2.result, 21);
+        reply_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_lazy_ref_resolve_failure() {
+        struct FailingResolver;
+        #[async_trait::async_trait]
+        impl ActorResolver for FailingResolver {
+            async fn resolve_path(&self, path: &ActorPath) -> Result<ActorRef> {
+                Err(PulsingError::from(RuntimeError::named_actor_not_found(
+                    path.as_str(),
+                )))
+            }
+        }
+        let path = ActorPath::new("svc/missing").unwrap();
+        let lazy_ref = ActorRef::lazy(path, Arc::new(FailingResolver));
+
+        let err = lazy_ref
+            .ask::<TestMsg, TestReply>(TestMsg { value: 1 })
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("missing") || err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_cache() {
+        let path = ActorPath::new("a/b").unwrap();
+        struct CountResolver {
+            count: std::sync::atomic::AtomicU32,
+        }
+        #[async_trait::async_trait]
+        impl ActorResolver for CountResolver {
+            async fn resolve_path(&self, _path: &ActorPath) -> Result<ActorRef> {
+                let (tx, rx) = mpsc::channel(16);
+                let c = self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let id = ActorId::new(c as u128);
+                let ref_ = ActorRef::local(id, tx);
+                drop(rx);
+                Ok(ref_)
+            }
+        }
+        let resolver = Arc::new(CountResolver {
+            count: std::sync::atomic::AtomicU32::new(0),
+        });
+        let lazy_ref = ActorRef::lazy(path.clone(), resolver);
+        lazy_ref.invalidate_cache().await;
+        lazy_ref.invalidate_cache().await;
     }
 }

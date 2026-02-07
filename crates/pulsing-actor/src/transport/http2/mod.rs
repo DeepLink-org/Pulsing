@@ -12,7 +12,9 @@ use crate::error::{PulsingError, Result, RuntimeError};
 #[cfg(feature = "tls")]
 mod tls;
 
-pub use client::{Http2Client, Http2ClientBuilder};
+pub use client::{
+    FaultInjectContext, FaultInjectOperation, FaultInjector, Http2Client, Http2ClientBuilder,
+};
 pub use config::Http2Config;
 pub use pool::{ConnectionPool, PoolConfig, PoolStats};
 pub use retry::{RetryConfig, RetryExecutor, RetryableError};
@@ -83,12 +85,7 @@ impl Http2Transport {
     }
 
     /// Send a request to an actor and wait for response.
-    pub async fn ask(
-        &self,
-        addr: SocketAddr,
-        actor_name: &str,
-        msg: Message,
-    ) -> anyhow::Result<Message> {
+    pub async fn ask(&self, addr: SocketAddr, actor_name: &str, msg: Message) -> Result<Message> {
         let path = format!("/actors/{}", actor_name);
         self.client.send_message_full(addr, &path, msg).await
     }
@@ -99,17 +96,12 @@ impl Http2Transport {
         addr: SocketAddr,
         path: &ActorPath,
         msg: Message,
-    ) -> anyhow::Result<Message> {
+    ) -> Result<Message> {
         let url_path = format!("/named/{}", path.as_str());
         self.client.send_message_full(addr, &url_path, msg).await
     }
 
-    pub async fn tell(
-        &self,
-        addr: SocketAddr,
-        actor_name: &str,
-        msg: Message,
-    ) -> anyhow::Result<()> {
+    pub async fn tell(&self, addr: SocketAddr, actor_name: &str, msg: Message) -> Result<()> {
         let path = format!("/actors/{}", actor_name);
         let Message::Single { msg_type, data } = msg else {
             return Err(RuntimeError::protocol_error("Streaming not supported for tell").into());
@@ -118,12 +110,7 @@ impl Http2Transport {
         self.client.tell(addr, &path, &msg_type, data).await
     }
 
-    pub async fn tell_named(
-        &self,
-        addr: SocketAddr,
-        path: &ActorPath,
-        msg: Message,
-    ) -> anyhow::Result<()> {
+    pub async fn tell_named(&self, addr: SocketAddr, path: &ActorPath, msg: Message) -> Result<()> {
         let url_path = format!("/named/{}", path.as_str());
         let Message::Single { msg_type, data } = msg else {
             return Err(RuntimeError::protocol_error("Streaming not supported for tell").into());
@@ -133,11 +120,7 @@ impl Http2Transport {
     }
 
     /// Send a gossip message
-    pub async fn send_gossip(
-        &self,
-        addr: SocketAddr,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    pub async fn send_gossip(&self, addr: SocketAddr, payload: Vec<u8>) -> Result<Option<Vec<u8>>> {
         let response = self
             .client
             .ask(addr, "/cluster/gossip", "gossip", payload)
