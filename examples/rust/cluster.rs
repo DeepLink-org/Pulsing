@@ -16,7 +16,11 @@ struct Counter {
 
 #[async_trait]
 impl Actor for Counter {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let n: i32 = msg.unpack()?;
         self.count += n;
         println!("[{}] +{} -> {}", self.node_id, n, self.count);
@@ -25,7 +29,7 @@ impl Actor for Counter {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> pulsing_actor::error::Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
     let args: Vec<String> = std::env::args().collect();

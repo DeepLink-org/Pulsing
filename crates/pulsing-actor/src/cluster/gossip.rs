@@ -6,6 +6,7 @@ use super::member::{
 };
 use super::swim::SwimConfig;
 use crate::actor::{ActorId, ActorPath, NodeId, StopReason};
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::transport::http2::Http2Transport;
 use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
@@ -343,7 +344,7 @@ impl GossipCluster {
     }
 
     /// Join cluster via seed nodes
-    pub async fn join(&self, seed_addrs: Vec<SocketAddr>) -> anyhow::Result<()> {
+    pub async fn join(&self, seed_addrs: Vec<SocketAddr>) -> Result<()> {
         if seed_addrs.is_empty() {
             tracing::info!("No seed nodes provided, starting as first node");
             return Ok(());
@@ -356,7 +357,8 @@ impl GossipCluster {
             from_addr: self.state.local_addr,
             current_epoch: self.state.current_epoch(),
         };
-        let payload = bincode::serialize(&msg)?;
+        let payload = bincode::serialize(&msg)
+            .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string())))?;
 
         tracing::info!(seeds = ?seed_addrs, "Probing seed nodes");
 
@@ -411,7 +413,7 @@ impl GossipCluster {
     }
 
     /// Leave cluster gracefully
-    pub async fn leave(&self) -> anyhow::Result<()> {
+    pub async fn leave(&self) -> Result<()> {
         tracing::info!(node_id = %self.state.local_node, "Leaving cluster");
         Ok(())
     }

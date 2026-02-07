@@ -3,6 +3,7 @@
 use super::messages::*;
 use crate::tokenizer::TokenCounter;
 use async_trait::async_trait;
+use pulsing_actor::error::{PulsingError, RuntimeError};
 use pulsing_actor::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -449,12 +450,12 @@ impl Default for SchedulerActor {
 
 #[async_trait]
 impl Actor for SchedulerActor {
-    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         info!("Scheduler started with actor_id {:?}", ctx.id());
         Ok(())
     }
 
-    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         self.is_active.store(false, Ordering::SeqCst);
         info!(
             "Scheduler stopped. Total sent: {}",
@@ -463,7 +464,11 @@ impl Actor for SchedulerActor {
         Ok(())
     }
 
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let msg_type = msg.msg_type();
 
         if msg_type.ends_with("ConfigureScheduler") {
@@ -495,7 +500,10 @@ impl Actor for SchedulerActor {
             return Message::pack(&self.get_progress());
         }
 
-        Err(anyhow::anyhow!("Unknown message type: {}", msg_type))
+        Err(PulsingError::from(RuntimeError::Other(format!(
+            "Unknown message type: {}",
+            msg_type
+        ))))
     }
 }
 

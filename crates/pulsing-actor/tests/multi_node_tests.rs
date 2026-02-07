@@ -1,6 +1,7 @@
 //! Multi-node cluster integration tests
 
 use pulsing_actor::actor::{ActorAddress, ActorPath};
+use pulsing_actor::error::{PulsingError, RuntimeError};
 use pulsing_actor::prelude::*;
 use pulsing_actor::ActorSystemOpsExt;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -40,14 +41,20 @@ struct Echo;
 
 #[async_trait]
 impl Actor for Echo {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         if msg.msg_type().ends_with("Ping") {
             let ping: Ping = msg.unpack()?;
             return Message::pack(&Pong {
                 result: ping.value * 2,
             });
         }
-        Err(anyhow::anyhow!("Unknown message"))
+        Err(PulsingError::from(RuntimeError::Other(
+            "Unknown message".into(),
+        )))
     }
 }
 
@@ -57,7 +64,11 @@ struct Counter {
 
 #[async_trait]
 impl Actor for Counter {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         if msg.msg_type().ends_with("Increment") {
             let new_count = self.count.fetch_add(1, Ordering::SeqCst) + 1;
             return Message::pack(&CountResponse { count: new_count });
@@ -66,7 +77,9 @@ impl Actor for Counter {
             let count = self.count.load(Ordering::SeqCst);
             return Message::pack(&CountResponse { count });
         }
-        Err(anyhow::anyhow!("Unknown message"))
+        Err(PulsingError::from(RuntimeError::Other(
+            "Unknown message".into(),
+        )))
     }
 }
 

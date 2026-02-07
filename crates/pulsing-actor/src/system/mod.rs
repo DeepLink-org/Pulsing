@@ -27,7 +27,7 @@ pub use traits::{ActorSystemCoreExt, ActorSystemOpsExt};
 
 use crate::actor::{ActorId, ActorPath, ActorRef, ActorResolver, ActorSystemRef, Envelope, NodeId};
 use crate::cluster::{GossipBackend, HeadNodeBackend, NamingBackend};
-use crate::error::{PulsingError, RuntimeError};
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::policies::{LoadBalancingPolicy, RoundRobinPolicy};
 use crate::system_actor::{BoxedActorFactory, SystemActor, SystemRef, SYSTEM_ACTOR_PATH};
 use crate::transport::Http2Transport;
@@ -85,7 +85,7 @@ impl ActorSystem {
     }
 
     /// Create a new actor system
-    pub async fn new(config: SystemConfig) -> anyhow::Result<Arc<Self>> {
+    pub async fn new(config: SystemConfig) -> Result<Arc<Self>> {
         let cancel_token = CancellationToken::new();
         let node_id = NodeId::generate();
         let registry = Arc::new(ActorRegistry::new());
@@ -166,7 +166,7 @@ impl ActorSystem {
     }
 
     /// Start SystemActor (internal, called during system creation)
-    async fn start_system_actor(self: &Arc<Self>) -> anyhow::Result<()> {
+    async fn start_system_actor(self: &Arc<Self>) -> Result<()> {
         // Create senders snapshot for SystemRef
         let local_actor_senders: Arc<DashMap<String, mpsc::Sender<Envelope>>> =
             Arc::new(DashMap::new());
@@ -217,13 +217,12 @@ impl ActorSystem {
     pub async fn start_system_actor_with_factory(
         self: &Arc<Self>,
         factory: BoxedActorFactory,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         // Check if already started
         if self.registry.has_name(SYSTEM_ACTOR_PATH) {
             return Err(PulsingError::from(RuntimeError::Other(
                 "SystemActor already started".into(),
-            ))
-            .into());
+            )));
         }
 
         // Create SystemRef (snapshot of named paths)
@@ -256,7 +255,7 @@ impl ActorSystem {
     }
 
     /// Get SystemActor reference
-    pub async fn system(&self) -> anyhow::Result<ActorRef> {
+    pub async fn system(&self) -> Result<ActorRef> {
         self.resolve_named(&ActorPath::new_system(SYSTEM_ACTOR_PATH)?, None)
             .await
     }
@@ -287,7 +286,7 @@ impl ActorSystem {
 
 #[async_trait::async_trait]
 impl ActorSystemRef for ActorSystem {
-    async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef> {
+    async fn actor_ref(&self, id: &ActorId) -> Result<ActorRef> {
         ActorSystem::actor_ref(self, id).await
     }
 
@@ -295,21 +294,20 @@ impl ActorSystemRef for ActorSystem {
         self.node_id
     }
 
-    async fn watch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()> {
+    async fn watch(&self, watcher: &ActorId, target: &ActorId) -> Result<()> {
         // Check if target is a local actor
         if self.registry.get_handle(target).is_none() {
             return Err(PulsingError::from(RuntimeError::Other(format!(
                 "Cannot watch remote actor: {} (watching remote actors not yet supported)",
                 target
-            )))
-            .into());
+            ))));
         }
 
         self.registry.lifecycle.watch(watcher, target).await;
         Ok(())
     }
 
-    async fn unwatch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()> {
+    async fn unwatch(&self, watcher: &ActorId, target: &ActorId) -> Result<()> {
         self.registry.lifecycle.unwatch(watcher, target).await;
         Ok(())
     }
@@ -324,7 +322,7 @@ impl ActorSystemRef for ActorSystem {
 /// This enables lazy ActorRef to resolve named actors on demand.
 #[async_trait::async_trait]
 impl ActorResolver for ActorSystem {
-    async fn resolve_path(&self, path: &ActorPath) -> anyhow::Result<ActorRef> {
+    async fn resolve_path(&self, path: &ActorPath) -> Result<ActorRef> {
         // Use direct resolution (not lazy) to avoid infinite recursion
         self.resolve_named_direct(path, None).await
     }

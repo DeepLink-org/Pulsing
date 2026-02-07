@@ -3,6 +3,7 @@
 use super::address::ActorPath;
 use super::mailbox::Envelope;
 use super::traits::{ActorId, Message};
+use crate::error::{PulsingError, Result, RuntimeError};
 use serde::{de::DeserializeOwned, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -54,7 +55,7 @@ const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 /// Trait for resolving actor paths to ActorRefs.
 #[async_trait::async_trait]
 pub trait ActorResolver: Send + Sync {
-    async fn resolve_path(&self, path: &ActorPath) -> anyhow::Result<ActorRef>;
+    async fn resolve_path(&self, path: &ActorPath) -> crate::error::Result<ActorRef>;
 }
 
 impl LazyActorRef {
@@ -67,7 +68,7 @@ impl LazyActorRef {
         }
     }
 
-    async fn get(&self) -> anyhow::Result<ActorRef> {
+    async fn get(&self) -> Result<ActorRef> {
         {
             let cache = self.cache.read().await;
             if let Some(ref cached) = *cache {
@@ -113,29 +114,26 @@ pub trait RemoteTransport: Send + Sync {
         actor_id: &ActorId,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>>;
+    ) -> Result<Vec<u8>>;
 
-    async fn send(
-        &self,
-        actor_id: &ActorId,
-        msg_type: &str,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<()>;
+    async fn send(&self, actor_id: &ActorId, msg_type: &str, payload: Vec<u8>) -> Result<()>;
 
     /// Send a message and receive response (unified interface).
-    async fn send_message(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<Message> {
+    async fn send_message(&self, actor_id: &ActorId, msg: Message) -> Result<Message> {
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!("Streaming requests not yet supported"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Streaming requests not yet supported".into(),
+            )));
         };
         let response = self.request(actor_id, &msg_type, data).await?;
         Ok(Message::single("", response))
     }
 
-    async fn send_oneway(&self, actor_id: &ActorId, msg: Message) -> anyhow::Result<()> {
+    async fn send_oneway(&self, actor_id: &ActorId, msg: Message) -> Result<()> {
         let Message::Single { msg_type, data } = msg else {
-            return Err(anyhow::anyhow!(
-                "Streaming not supported for fire-and-forget"
-            ));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Streaming not supported for fire-and-forget".into(),
+            )));
         };
         self.send(actor_id, &msg_type, data).await
     }
@@ -201,15 +199,15 @@ impl ActorRef {
     ///
     /// Use this when you need direct access to `Message`, e.g., for streaming.
     /// For type-safe communication, prefer `ask()` and `tell()`.
-    pub async fn send(&self, msg: Message) -> anyhow::Result<Message> {
+    pub async fn send(&self, msg: Message) -> Result<Message> {
         match &self.inner {
             ActorRefInner::Local(sender) => {
                 let (tx, rx) = oneshot::channel();
-                sender
-                    .send(Envelope::ask(msg, tx))
-                    .await
-                    .map_err(|_| anyhow::anyhow!("Actor mailbox closed"))?;
-                rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
+                sender.send(Envelope::ask(msg, tx)).await.map_err(|_| {
+                    PulsingError::from(RuntimeError::Other("Actor mailbox closed".into()))
+                })?;
+                rx.await
+                    .map_err(|_| PulsingError::from(RuntimeError::Other("Actor dropped".into())))?
             }
             ActorRefInner::Remote(remote) => {
                 remote.transport.send_message(&self.actor_id, msg).await
@@ -224,12 +222,11 @@ impl ActorRef {
     }
 
     /// Send a raw message without waiting for response (low-level fire-and-forget)
-    pub async fn send_oneway(&self, msg: Message) -> anyhow::Result<()> {
+    pub async fn send_oneway(&self, msg: Message) -> Result<()> {
         match &self.inner {
-            ActorRefInner::Local(sender) => sender
-                .send(Envelope::tell(msg))
-                .await
-                .map_err(|_| anyhow::anyhow!("Actor mailbox closed")),
+            ActorRefInner::Local(sender) => sender.send(Envelope::tell(msg)).await.map_err(|_| {
+                PulsingError::from(RuntimeError::Other("Actor mailbox closed".into()))
+            }),
             ActorRefInner::Remote(remote) => {
                 remote.transport.send_oneway(&self.actor_id, msg).await
             }
@@ -248,7 +245,7 @@ impl ActorRef {
     /// ```ignore
     /// let pong: Pong = actor.ask(Ping { value: 42 }).await?;
     /// ```
-    pub async fn ask<M, R>(&self, msg: M) -> anyhow::Result<R>
+    pub async fn ask<M, R>(&self, msg: M) -> Result<R>
     where
         M: Serialize + 'static,
         R: DeserializeOwned,
@@ -262,7 +259,7 @@ impl ActorRef {
     /// ```ignore
     /// actor.tell(Ping { value: 42 }).await?;
     /// ```
-    pub async fn tell<M>(&self, msg: M) -> anyhow::Result<()>
+    pub async fn tell<M>(&self, msg: M) -> Result<()>
     where
         M: Serialize + 'static,
     {

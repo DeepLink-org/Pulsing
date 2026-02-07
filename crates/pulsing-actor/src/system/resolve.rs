@@ -7,7 +7,7 @@ use crate::actor::{
     ActorAddress, ActorId, ActorPath, ActorRef, ActorResolver, IntoActorPath, NodeId,
 };
 use crate::cluster::{MemberInfo, MemberStatus, NamedActorInfo};
-use crate::error::{PulsingError, RuntimeError};
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::policies::LoadBalancingPolicy;
 use crate::system::config::ResolveOptions;
 use crate::system::load_balancer::{MemberWorker, NodeLoadTracker};
@@ -22,16 +22,16 @@ impl ActorSystem {
         self.cluster.read().await.as_ref().cloned()
     }
 
-    async fn cluster_or_err(&self) -> anyhow::Result<Arc<dyn crate::cluster::NamingBackend>> {
+    async fn cluster_or_err(&self) -> Result<Arc<dyn crate::cluster::NamingBackend>> {
         self.cluster_opt()
             .await
-            .ok_or_else(|| PulsingError::from(RuntimeError::ClusterNotInitialized).into())
+            .ok_or_else(|| PulsingError::from(RuntimeError::ClusterNotInitialized))
     }
 
     /// Get ActorRef for a local or remote actor by ID
     ///
     /// This is an O(1) operation for local actors using ActorId indexing.
-    pub async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef> {
+    pub async fn actor_ref(&self, id: &ActorId) -> Result<ActorRef> {
         // Try local lookup first (O(1))
         if let Some(handle) = self.registry.get_handle(id) {
             return Ok(ActorRef::local(handle.actor_id, handle.sender.clone()));
@@ -47,7 +47,9 @@ impl ActorSystem {
             return Ok(ActorRef::remote(*id, member_info.addr, Arc::new(transport)));
         }
 
-        Err(PulsingError::from(RuntimeError::actor_not_found(id.to_string())).into())
+        Err(PulsingError::from(RuntimeError::actor_not_found(
+            id.to_string(),
+        )))
     }
 
     /// Resolve a named actor by path (direct resolution)
@@ -60,11 +62,7 @@ impl ActorSystem {
     /// ```rust,ignore
     /// let actor = system.resolve_named("services/echo", None).await?;
     /// ```
-    pub async fn resolve_named<P>(
-        &self,
-        path: P,
-        node_id: Option<&NodeId>,
-    ) -> anyhow::Result<ActorRef>
+    pub async fn resolve_named<P>(&self, path: P, node_id: Option<&NodeId>) -> Result<ActorRef>
     where
         P: IntoActorPath,
     {
@@ -87,7 +85,7 @@ impl ActorSystem {
     /// let actor = system.resolve_named_lazy("services/echo").await?;
     /// // Even if the actor migrates, this ref will find it after cache expires
     /// ```
-    pub fn resolve_named_lazy<P>(self: &Arc<Self>, path: P) -> anyhow::Result<ActorRef>
+    pub fn resolve_named_lazy<P>(self: &Arc<Self>, path: P) -> Result<ActorRef>
     where
         P: IntoActorPath,
     {
@@ -100,7 +98,7 @@ impl ActorSystem {
         &self,
         path: &ActorPath,
         node_id: Option<&NodeId>,
-    ) -> anyhow::Result<ActorRef> {
+    ) -> Result<ActorRef> {
         let options = if let Some(nid) = node_id {
             ResolveOptions::default().node_id(*nid)
         } else {
@@ -114,15 +112,15 @@ impl ActorSystem {
         &self,
         path: &ActorPath,
         options: ResolveOptions,
-    ) -> anyhow::Result<ActorRef> {
+    ) -> Result<ActorRef> {
         let cluster = self.cluster_or_err().await?;
 
         let instances = cluster.get_named_actor_instances(path).await;
 
         if instances.is_empty() {
-            return Err(
-                PulsingError::from(RuntimeError::named_actor_not_found(path.as_str())).into(),
-            );
+            return Err(PulsingError::from(RuntimeError::named_actor_not_found(
+                path.as_str(),
+            )));
         }
 
         let healthy_instances: Vec<_> = if options.filter_alive {
@@ -135,18 +133,16 @@ impl ActorSystem {
         };
 
         if healthy_instances.is_empty() {
-            return Err(
-                PulsingError::from(RuntimeError::no_healthy_instances(path.as_str())).into(),
-            );
+            return Err(PulsingError::from(RuntimeError::no_healthy_instances(
+                path.as_str(),
+            )));
         }
 
         let target = if let Some(nid) = options.node_id {
             healthy_instances
                 .iter()
                 .find(|i| i.node_id == nid)
-                .ok_or_else(|| -> anyhow::Error {
-                    PulsingError::from(RuntimeError::node_not_found(nid.to_string())).into()
-                })?
+                .ok_or_else(|| PulsingError::from(RuntimeError::node_not_found(nid.to_string())))?
         } else {
             let policy = options.policy.as_ref().unwrap_or(&self.default_lb_policy);
             self.select_instance(&healthy_instances, policy.as_ref())
@@ -156,23 +152,17 @@ impl ActorSystem {
             let actor_name = self
                 .registry
                 .get_actor_name_by_path(&path.as_str())
-                .ok_or_else(|| -> anyhow::Error {
-                    PulsingError::from(RuntimeError::named_actor_not_found(path.as_str())).into()
+                .ok_or_else(|| {
+                    PulsingError::from(RuntimeError::named_actor_not_found(path.as_str()))
                 })?;
 
-            let local_id =
-                self.registry
-                    .get_actor_id(&actor_name)
-                    .ok_or_else(|| -> anyhow::Error {
-                        PulsingError::from(RuntimeError::actor_not_found(actor_name.clone())).into()
-                    })?;
+            let local_id = self.registry.get_actor_id(&actor_name).ok_or_else(|| {
+                PulsingError::from(RuntimeError::actor_not_found(actor_name.clone()))
+            })?;
 
-            let handle = self
-                .registry
-                .get_handle(&local_id)
-                .ok_or_else(|| -> anyhow::Error {
-                    PulsingError::from(RuntimeError::actor_not_found(actor_name.clone())).into()
-                })?;
+            let handle = self.registry.get_handle(&local_id).ok_or_else(|| {
+                PulsingError::from(RuntimeError::actor_not_found(actor_name.clone()))
+            })?;
 
             return Ok(ActorRef::local(handle.actor_id, handle.sender.clone()));
         }
@@ -259,7 +249,7 @@ impl ActorSystem {
     }
 
     /// Resolve an actor address and get an ActorRef
-    pub async fn resolve(&self, address: &ActorAddress) -> anyhow::Result<ActorRef> {
+    pub async fn resolve(&self, address: &ActorAddress) -> Result<ActorRef> {
         match address {
             ActorAddress::Named { path, instance } => {
                 self.resolve_named(path, instance.as_ref()).await
@@ -284,7 +274,7 @@ impl ActorSystem {
         &self,
         path: &ActorPath,
         filter_alive: bool,
-    ) -> anyhow::Result<Vec<ActorRef>> {
+    ) -> Result<Vec<ActorRef>> {
         let cluster = self.cluster_or_err().await?;
 
         let instances = cluster.get_named_actor_instances_detailed(path).await;

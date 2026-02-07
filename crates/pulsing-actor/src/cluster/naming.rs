@@ -2,6 +2,7 @@
 
 use crate::actor::{ActorId, ActorPath, NodeId, StopReason};
 use crate::cluster::member::{MemberInfo, NamedActorInfo, NamedActorInstance};
+use crate::error::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -10,9 +11,9 @@ use tokio_util::sync::CancellationToken;
 /// Trait for naming backends that provide cluster membership and actor discovery.
 #[async_trait]
 pub trait NamingBackend: Send + Sync {
-    async fn join(&self, seeds: Vec<SocketAddr>) -> anyhow::Result<()>;
+    async fn join(&self, seeds: Vec<SocketAddr>) -> Result<()>;
 
-    async fn leave(&self) -> anyhow::Result<()>;
+    async fn leave(&self) -> Result<()>;
 
     async fn all_members(&self) -> Vec<MemberInfo>;
 

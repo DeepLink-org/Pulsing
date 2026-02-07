@@ -1,6 +1,7 @@
 //! Integration tests for the complete actor system
 
 use pulsing_actor::actor::{ActorAddress, ActorPath};
+use pulsing_actor::error::{PulsingError, RuntimeError};
 use pulsing_actor::prelude::*;
 use pulsing_actor::ActorSystemOpsExt;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
@@ -44,7 +45,11 @@ struct EchoActor {
 
 #[async_trait]
 impl Actor for EchoActor {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         if msg.msg_type().ends_with("Ping") {
             let ping: Ping = msg.unpack()?;
             self.echo_count.fetch_add(1, Ordering::SeqCst);
@@ -52,7 +57,9 @@ impl Actor for EchoActor {
                 result: ping.value * 2,
             });
         }
-        Err(anyhow::anyhow!("Unknown message"))
+        Err(PulsingError::from(RuntimeError::Other(
+            "Unknown message".into(),
+        )))
     }
 }
 
@@ -62,7 +69,11 @@ struct Accumulator {
 
 #[async_trait]
 impl Actor for Accumulator {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let msg_type = msg.msg_type();
         if msg_type.ends_with("Accumulate") {
             let acc: Accumulate = msg.unpack()?;
@@ -72,7 +83,9 @@ impl Actor for Accumulator {
         if msg_type.ends_with("GetTotal") {
             return Message::pack(&TotalResponse { total: self.total });
         }
-        Err(anyhow::anyhow!("Unknown message"))
+        Err(PulsingError::from(RuntimeError::Other(
+            "Unknown message".into(),
+        )))
     }
 }
 
@@ -333,16 +346,20 @@ mod error_tests {
             &mut self,
             msg: Message,
             _ctx: &mut ActorContext,
-        ) -> anyhow::Result<Message> {
+        ) -> pulsing_actor::error::Result<Message> {
             if msg.msg_type().ends_with("CrashMessage") {
                 self.crash_count.fetch_add(1, Ordering::SeqCst);
-                return Err(anyhow::anyhow!("Intentional crash!"));
+                return Err(PulsingError::from(RuntimeError::Other(
+                    "Intentional crash!".into(),
+                )));
             }
             if msg.msg_type().ends_with("Ping") {
                 let ping: Ping = msg.unpack()?;
                 return Message::pack(&Pong { result: ping.value });
             }
-            Err(anyhow::anyhow!("Unknown message"))
+            Err(PulsingError::from(RuntimeError::Other(
+                "Unknown message".into(),
+            )))
         }
     }
 
@@ -443,12 +460,12 @@ mod lifecycle_tests {
 
     #[async_trait]
     impl Actor for LifecycleTracker {
-        async fn on_start(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+        async fn on_start(&mut self, _ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
             self.events.lock().await.push("started".to_string());
             Ok(())
         }
 
-        async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+        async fn on_stop(&mut self, _ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
             self.events.lock().await.push("stopped".to_string());
             Ok(())
         }
@@ -457,7 +474,7 @@ mod lifecycle_tests {
             &mut self,
             msg: Message,
             _ctx: &mut ActorContext,
-        ) -> anyhow::Result<Message> {
+        ) -> pulsing_actor::error::Result<Message> {
             self.events
                 .lock()
                 .await

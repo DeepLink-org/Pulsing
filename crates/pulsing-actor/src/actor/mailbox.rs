@@ -1,16 +1,17 @@
 //! Actor mailbox - message envelope and queue.
 
 use super::traits::Message;
+use crate::error::{PulsingError, Result, RuntimeError};
 use tokio::sync::{mpsc, oneshot};
 
 /// Response channel type.
-pub type ResponseChannel = oneshot::Sender<anyhow::Result<Message>>;
+pub type ResponseChannel = oneshot::Sender<Result<Message>>;
 
 /// Responder - sends response back to caller (no-op for tell pattern).
 pub struct Responder(Option<ResponseChannel>);
 
 impl Responder {
-    pub fn send(self, result: anyhow::Result<Message>) {
+    pub fn send(self, result: Result<Message>) {
         if let Some(tx) = self.0 {
             let _ = tx.send(result);
         }
@@ -111,17 +112,17 @@ impl MailboxSender {
         Self { inner: sender }
     }
 
-    pub async fn send(&self, envelope: Envelope) -> anyhow::Result<()> {
+    pub async fn send(&self, envelope: Envelope) -> Result<()> {
         self.inner
             .send(envelope)
             .await
-            .map_err(|_| anyhow::anyhow!("Mailbox closed"))
+            .map_err(|_| PulsingError::from(RuntimeError::Other("Mailbox closed".into())))
     }
 
-    pub fn try_send(&self, envelope: Envelope) -> anyhow::Result<()> {
-        self.inner
-            .try_send(envelope)
-            .map_err(|e| anyhow::anyhow!("Mailbox send failed: {}", e))
+    pub fn try_send(&self, envelope: Envelope) -> Result<()> {
+        self.inner.try_send(envelope).map_err(|e| {
+            PulsingError::from(RuntimeError::Other(format!("Mailbox send failed: {}", e)))
+        })
     }
 
     pub fn is_closed(&self) -> bool {

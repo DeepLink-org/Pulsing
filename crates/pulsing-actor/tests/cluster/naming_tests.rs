@@ -32,7 +32,11 @@ struct TestActor;
 
 #[async_trait::async_trait]
 impl Actor for TestActor {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         // Echo back the message
         Ok(msg)
     }
@@ -195,7 +199,11 @@ impl Actor for MetadataActor {
         self.metadata.clone()
     }
 
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         Ok(msg)
     }
 }

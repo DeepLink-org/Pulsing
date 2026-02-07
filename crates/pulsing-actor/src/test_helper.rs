@@ -97,7 +97,11 @@ impl Default for TestEchoActor {
 
 #[async_trait]
 impl Actor for TestEchoActor {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> crate::error::Result<Message> {
         if msg.msg_type().ends_with("TestPing") {
             let ping: TestPing = msg.unpack()?;
             self.echo_count.fetch_add(1, Ordering::SeqCst);
@@ -105,7 +109,9 @@ impl Actor for TestEchoActor {
                 result: ping.value * 2,
             });
         }
-        Err(anyhow::anyhow!("Unknown message type: {}", msg.msg_type()))
+        Err(crate::error::PulsingError::from(
+            crate::error::RuntimeError::Other(format!("Unknown message type: {}", msg.msg_type())),
+        ))
     }
 }
 
@@ -131,7 +137,11 @@ impl Default for TestAccumulatorActor {
 
 #[async_trait]
 impl Actor for TestAccumulatorActor {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> crate::error::Result<Message> {
         let msg_type = msg.msg_type();
         if msg_type.ends_with("TestAccumulate") {
             let acc: TestAccumulate = msg.unpack()?;
@@ -141,7 +151,9 @@ impl Actor for TestAccumulatorActor {
         if msg_type.ends_with("TestGetTotal") {
             return Message::pack(&TestTotalResponse { total: self.total });
         }
-        Err(anyhow::anyhow!("Unknown message type: {}", msg_type))
+        Err(crate::error::PulsingError::from(
+            crate::error::RuntimeError::Other(format!("Unknown message type: {}", msg_type)),
+        ))
     }
 }
 
@@ -251,10 +263,10 @@ macro_rules! actor_test {
 macro_rules! actor_test_result {
     ($test_name:ident, $system:ident, $test_body:block) => {
         #[tokio::test]
-        async fn $test_name() -> anyhow::Result<()> {
+        async fn $test_name() -> $crate::error::Result<()> {
             let $system = $crate::test_helper::create_test_system().await;
             // Execute the test body
-            let test_result: anyhow::Result<()> = $test_body;
+            let test_result: $crate::error::Result<()> = $test_body;
             // Shutdown the system regardless of test result
             $system.shutdown().await?;
             test_result

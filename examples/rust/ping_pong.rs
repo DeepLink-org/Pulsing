@@ -8,14 +8,18 @@ struct Echo;
 
 #[async_trait]
 impl Actor for Echo {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let s: String = msg.unpack()?;
         Message::pack(&format!("echo: {}", s))
     }
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> pulsing_actor::error::Result<()> {
     let system = ActorSystem::builder().build().await?;
     let echo = system.spawn_named("test/echo", Echo).await?;
 

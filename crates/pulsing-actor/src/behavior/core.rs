@@ -1,6 +1,7 @@
 use super::context::BehaviorContext;
 use super::reference::TypedRef;
 use crate::actor::{Actor, ActorContext, IntoActor, Message};
+use crate::error::{PulsingError, Result, RuntimeError};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use serde::{de::DeserializeOwned, Serialize};
@@ -106,15 +107,17 @@ impl<M> Actor for BehaviorWrapper<M>
 where
     M: Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> Result<Message> {
         let typed_msg: M = msg.unpack()?;
 
         let mut behavior = self.behavior.lock().await;
         let mut ctx_guard = self.behavior_ctx.lock().await;
 
-        let ctx = ctx_guard
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("BehaviorContext not initialized"))?;
+        let ctx = ctx_guard.as_mut().ok_or_else(|| {
+            PulsingError::from(RuntimeError::Other(
+                "BehaviorContext not initialized".into(),
+            ))
+        })?;
 
         let action = behavior.receive(typed_msg, ctx).await;
 
@@ -138,21 +141,23 @@ where
 
                 _ctx.cancel_token().cancel();
 
-                Err(anyhow::anyhow!(
+                Err(PulsingError::from(RuntimeError::Other(format!(
                     "Actor stopped: {}",
                     reason.unwrap_or_default()
-                ))
+                ))))
             }
             BehaviorAction::AlreadyStopped => {
                 let actor_name = self.name.lock().await;
                 let name = actor_name.as_deref().unwrap_or("unknown");
                 tracing::warn!(actor = %name, "Message received after actor stopped");
-                Err(anyhow::anyhow!("Actor already stopped"))
+                Err(PulsingError::from(RuntimeError::Other(
+                    "Actor already stopped".into(),
+                )))
             }
         }
     }
 
-    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> Result<()> {
         // Get or derive the actor name
         let actor_name = ctx
             .named_path()

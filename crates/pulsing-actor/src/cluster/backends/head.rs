@@ -5,6 +5,7 @@ use crate::cluster::{
     member::{MemberInfo, MemberStatus, NamedActorInfo, NamedActorInstance},
     NamingBackend,
 };
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::transport::http2::{Http2Client, Http2Config};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -345,13 +346,11 @@ impl HeadNodeBackend {
     }
 
     /// Handle node registration (head node only)
-    pub async fn handle_register_node(
-        &self,
-        node_id: NodeId,
-        addr: SocketAddr,
-    ) -> anyhow::Result<()> {
+    pub async fn handle_register_node(&self, node_id: NodeId, addr: SocketAddr) -> Result<()> {
         if !self.is_head() {
-            return Err(anyhow::anyhow!("Not a head node"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Not a head node".into(),
+            )));
         }
 
         let mut state = self.state.write().await;
@@ -363,9 +362,11 @@ impl HeadNodeBackend {
     }
 
     /// Handle heartbeat (head node only)
-    pub async fn handle_heartbeat(&self, node_id: &NodeId) -> anyhow::Result<()> {
+    pub async fn handle_heartbeat(&self, node_id: &NodeId) -> Result<()> {
         if !self.is_head() {
-            return Err(anyhow::anyhow!("Not a head node"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Not a head node".into(),
+            )));
         }
 
         let mut state = self.state.write().await;
@@ -373,10 +374,14 @@ impl HeadNodeBackend {
             if head_state.update_heartbeat(node_id) {
                 Ok(())
             } else {
-                Err(anyhow::anyhow!("Node not found: {}", node_id))
+                Err(PulsingError::from(RuntimeError::node_not_found(
+                    node_id.to_string(),
+                )))
             }
         } else {
-            Err(anyhow::anyhow!("Invalid state"))
+            Err(PulsingError::from(RuntimeError::Other(
+                "Invalid state".into(),
+            )))
         }
     }
 
@@ -387,9 +392,11 @@ impl HeadNodeBackend {
         node_id: NodeId,
         actor_id: Option<ActorId>,
         metadata: HashMap<String, String>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         if !self.is_head() {
-            return Err(anyhow::anyhow!("Not a head node"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Not a head node".into(),
+            )));
         }
 
         let mut state = self.state.write().await;
@@ -405,9 +412,11 @@ impl HeadNodeBackend {
         &self,
         path: &ActorPath,
         node_id: &NodeId,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         if !self.is_head() {
-            return Err(anyhow::anyhow!("Not a head node"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Not a head node".into(),
+            )));
         }
 
         let mut state = self.state.write().await;
@@ -419,13 +428,11 @@ impl HeadNodeBackend {
     }
 
     /// Handle register actor (head node only)
-    pub async fn handle_register_actor(
-        &self,
-        actor_id: ActorId,
-        node_id: NodeId,
-    ) -> anyhow::Result<()> {
+    pub async fn handle_register_actor(&self, actor_id: ActorId, node_id: NodeId) -> Result<()> {
         if !self.is_head() {
-            return Err(anyhow::anyhow!("Not a head node"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Not a head node".into(),
+            )));
         }
 
         let mut state = self.state.write().await;
@@ -441,9 +448,11 @@ impl HeadNodeBackend {
         &self,
         actor_id: &ActorId,
         node_id: &NodeId,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         if !self.is_head() {
-            return Err(anyhow::anyhow!("Not a head node"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Not a head node".into(),
+            )));
         }
 
         let mut state = self.state.write().await;
@@ -458,9 +467,11 @@ impl HeadNodeBackend {
     }
 
     /// Handle sync request (head node only) - returns current state
-    pub async fn handle_sync(&self) -> anyhow::Result<SyncResponse> {
+    pub async fn handle_sync(&self) -> Result<SyncResponse> {
         if !self.is_head() {
-            return Err(anyhow::anyhow!("Not a head node"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Not a head node".into(),
+            )));
         }
 
         let state = self.state.read().await;
@@ -475,7 +486,9 @@ impl HeadNodeBackend {
                 actors,
             })
         } else {
-            Err(anyhow::anyhow!("Invalid state"))
+            Err(PulsingError::from(RuntimeError::Other(
+                "Invalid state".into(),
+            )))
         }
     }
 
@@ -485,29 +498,35 @@ impl HeadNodeBackend {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<T> {
+    ) -> Result<T> {
         let head_addr = self.head_addr().ok_or_else(|| {
-            anyhow::anyhow!("Cannot make request to head node: this is a head node")
+            PulsingError::from(RuntimeError::Other(
+                "Cannot make request to head node: this is a head node".into(),
+            ))
         })?;
-        let client = self
-            .http_client
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("HTTP client not available"))?;
+        let client = self.http_client.as_ref().ok_or_else(|| {
+            PulsingError::from(RuntimeError::Other("HTTP client not available".into()))
+        })?;
 
-        let response_bytes = client.ask(head_addr, path, msg_type, payload).await?;
-        let result: T = bincode::deserialize(&response_bytes)?;
+        let response_bytes = client
+            .ask(head_addr, path, msg_type, payload)
+            .await
+            .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
+        let result: T = bincode::deserialize(&response_bytes)
+            .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string())))?;
         Ok(result)
     }
 
     /// Send request to head node without response (worker mode only)
-    async fn tell_head(&self, path: &str, msg_type: &str, payload: Vec<u8>) -> anyhow::Result<()> {
-        let head_addr = self
-            .head_addr()
-            .ok_or_else(|| anyhow::anyhow!("Cannot send to head node: this is a head node"))?;
-        let client = self
-            .http_client
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("HTTP client not available"))?;
+    async fn tell_head(&self, path: &str, msg_type: &str, payload: Vec<u8>) -> Result<()> {
+        let head_addr = self.head_addr().ok_or_else(|| {
+            PulsingError::from(RuntimeError::Other(
+                "Cannot send to head node: this is a head node".into(),
+            ))
+        })?;
+        let client = self.http_client.as_ref().ok_or_else(|| {
+            PulsingError::from(RuntimeError::Other("HTTP client not available".into()))
+        })?;
 
         tracing::debug!(
             head_addr = %head_addr,
@@ -516,13 +535,18 @@ impl HeadNodeBackend {
             "Sending tell to head node"
         );
 
-        client.tell(head_addr, path, msg_type, payload).await
+        client
+            .tell(head_addr, path, msg_type, payload)
+            .await
+            .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))
     }
 
     /// Sync with head node (worker mode only)
-    async fn sync_from_head(&self) -> anyhow::Result<()> {
+    async fn sync_from_head(&self) -> Result<()> {
         if self.is_head() {
-            return Err(anyhow::anyhow!("Cannot sync: this is a head node"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Cannot sync: this is a head node".into(),
+            )));
         }
 
         let sync: SyncResponse = self
@@ -538,16 +562,19 @@ impl HeadNodeBackend {
     }
 
     /// Register with head node (worker mode only)
-    async fn register_with_head(&self) -> anyhow::Result<()> {
+    async fn register_with_head(&self) -> Result<()> {
         if self.is_head() {
-            return Err(anyhow::anyhow!("Cannot register: this is a head node"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Cannot register: this is a head node".into(),
+            )));
         }
 
         let req = RegisterNodeRequest {
             node_id: self.local_node,
             addr: self.local_addr,
         };
-        let payload = bincode::serialize(&req)?;
+        let payload = bincode::serialize(&req)
+            .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string())))?;
 
         self.tell_head("/cluster/head/register", "register_node", payload)
             .await?;
@@ -562,17 +589,18 @@ impl HeadNodeBackend {
     }
 
     /// Send heartbeat to head node (worker mode only)
-    async fn send_heartbeat(&self) -> anyhow::Result<()> {
+    async fn send_heartbeat(&self) -> Result<()> {
         if self.is_head() {
-            return Err(anyhow::anyhow!(
-                "Cannot send heartbeat: this is a head node"
-            ));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Cannot send heartbeat: this is a head node".into(),
+            )));
         }
 
         let req = HeartbeatRequest {
             node_id: self.local_node,
         };
-        let payload = bincode::serialize(&req)?;
+        let payload = bincode::serialize(&req)
+            .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string())))?;
 
         self.tell_head("/cluster/head/heartbeat", "heartbeat", payload)
             .await?;
@@ -581,7 +609,7 @@ impl HeadNodeBackend {
     }
 
     /// Process pending sync operations (worker mode only)
-    async fn process_pending_sync(&self) -> anyhow::Result<()> {
+    async fn process_pending_sync(&self) -> Result<()> {
         if self.is_head() {
             return Ok(()); // No pending sync for head node
         }
@@ -608,7 +636,9 @@ impl HeadNodeBackend {
                         actor_id,
                         metadata: metadata.clone(),
                     };
-                    let payload = bincode::serialize(&req)?;
+                    let payload = bincode::serialize(&req).map_err(|e| {
+                        PulsingError::from(RuntimeError::Serialization(e.to_string()))
+                    })?;
                     if let Err(e) = self
                         .tell_head(
                             "/cluster/head/named_actor/register",
@@ -634,7 +664,9 @@ impl HeadNodeBackend {
                         path: path.clone(),
                         node_id: self.local_node,
                     };
-                    let payload = bincode::serialize(&req)?;
+                    let payload = bincode::serialize(&req).map_err(|e| {
+                        PulsingError::from(RuntimeError::Serialization(e.to_string()))
+                    })?;
                     if let Err(e) = self
                         .tell_head(
                             "/cluster/head/named_actor/unregister",
@@ -656,7 +688,9 @@ impl HeadNodeBackend {
                         actor_id,
                         node_id: self.local_node,
                     };
-                    let payload = bincode::serialize(&req)?;
+                    let payload = bincode::serialize(&req).map_err(|e| {
+                        PulsingError::from(RuntimeError::Serialization(e.to_string()))
+                    })?;
                     if let Err(e) = self
                         .tell_head("/cluster/head/actor/register", "register_actor", payload)
                         .await
@@ -673,7 +707,9 @@ impl HeadNodeBackend {
                         actor_id,
                         node_id: self.local_node,
                     };
-                    let payload = bincode::serialize(&req)?;
+                    let payload = bincode::serialize(&req).map_err(|e| {
+                        PulsingError::from(RuntimeError::Serialization(e.to_string()))
+                    })?;
                     if let Err(e) = self
                         .tell_head(
                             "/cluster/head/actor/unregister",
@@ -707,7 +743,7 @@ impl NamingBackend for HeadNodeBackend {
     // Node Management
     // ========================================================================
 
-    async fn join(&self, _seeds: Vec<SocketAddr>) -> anyhow::Result<()> {
+    async fn join(&self, _seeds: Vec<SocketAddr>) -> Result<()> {
         if self.is_head() {
             // Head node: register itself
             let mut state = self.state.write().await;
@@ -725,7 +761,7 @@ impl NamingBackend for HeadNodeBackend {
         }
     }
 
-    async fn leave(&self) -> anyhow::Result<()> {
+    async fn leave(&self) -> Result<()> {
         if self.is_head() {
             // Head node: clear all registrations
             let mut state = self.state.write().await;

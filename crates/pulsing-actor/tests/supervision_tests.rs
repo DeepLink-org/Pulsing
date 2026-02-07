@@ -1,3 +1,4 @@
+use pulsing_actor::error::{PulsingError, RuntimeError};
 use pulsing_actor::prelude::*;
 use pulsing_actor::supervision::{BackoffStrategy, SupervisionSpec};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -11,11 +12,15 @@ struct FailingActor {
 
 #[async_trait]
 impl Actor for FailingActor {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let count = self.counter.fetch_add(1, Ordering::SeqCst) + 1;
 
         if count == self.fail_at {
-            return Err(anyhow::anyhow!("Boom!"));
+            return Err(PulsingError::from(RuntimeError::Other("Boom!".into())));
         }
 
         // Echo

@@ -15,7 +15,11 @@ struct Target;
 
 #[async_trait]
 impl Actor for Target {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let ping: Ping = msg.unpack()?;
         Message::pack(&Pong {
             value: ping.value + 1,
@@ -29,7 +33,11 @@ struct Forwarder {
 
 #[async_trait]
 impl Actor for Forwarder {
-    async fn receive(&mut self, msg: Message, ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let ping: Ping = msg.unpack()?;
         let target_ref = ctx.actor_ref(&self.target).await?;
         let pong: Pong = target_ref.ask(Ping { value: ping.value }).await?;

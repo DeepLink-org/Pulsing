@@ -8,6 +8,7 @@
 
 use super::messages::*;
 use async_trait::async_trait;
+use pulsing_actor::error::{PulsingError, RuntimeError};
 use pulsing_actor::prelude::*;
 use std::time::{Duration, Instant};
 use tracing::info;
@@ -501,18 +502,22 @@ pub struct FinalReport {
 
 #[async_trait]
 impl Actor for MetricsAggregatorActor {
-    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         info!("MetricsAggregator started with actor_id {:?}", ctx.id());
         Ok(())
     }
 
-    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         self.finalize();
         info!("MetricsAggregator stopped");
         Ok(())
     }
 
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let msg_type = msg.msg_type();
 
         if msg_type.ends_with("RegisterRun") {
@@ -547,7 +552,10 @@ impl Actor for MetricsAggregatorActor {
             return Message::pack(&self.get_report());
         }
 
-        Err(anyhow::anyhow!("Unknown message type: {}", msg_type))
+        Err(PulsingError::from(RuntimeError::Other(format!(
+            "Unknown message type: {}",
+            msg_type
+        ))))
     }
 }
 

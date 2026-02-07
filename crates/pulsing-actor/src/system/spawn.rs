@@ -7,7 +7,7 @@
 //! All other spawn methods delegate to the builder.
 
 use crate::actor::{Actor, ActorContext, ActorId, ActorPath, ActorRef, ActorSystemRef, Mailbox};
-use crate::error::{PulsingError, RuntimeError};
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::system::config::SpawnOptions;
 use crate::system::handle::{ActorStats, LocalActorHandle};
 use crate::system::runtime::run_supervision_loop;
@@ -28,9 +28,9 @@ impl ActorSystem {
         path: Option<ActorPath>,
         factory: F,
         options: SpawnOptions,
-    ) -> anyhow::Result<ActorRef>
+    ) -> Result<ActorRef>
     where
-        F: FnMut() -> anyhow::Result<A> + Send + 'static,
+        F: FnMut() -> Result<A> + Send + 'static,
         A: Actor,
     {
         let name_str = path.as_ref().map(|p| p.as_str().to_string());
@@ -80,8 +80,7 @@ impl ActorSystem {
                     }
                     return Err(PulsingError::from(RuntimeError::actor_already_exists(
                         name.clone(),
-                    ))
-                    .into());
+                    )));
                 }
                 Entry::Vacant(v) => {
                     v.insert(actor_id);

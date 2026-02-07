@@ -13,17 +13,16 @@ use std::sync::Mutex as StdMutex;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::errors::anyhow_to_py_err;
+use crate::errors::pulsing_error_to_py_err;
 use crate::python_error_converter::convert_python_exception_to_actor_error;
 use crate::python_executor::python_executor;
 
 /// Special message type identifier for pickle-encoded Python objects
 const SEALED_PY_MSG_TYPE: &str = "__sealed_py_message__";
 
-/// Convert anyhow::Error from actor system operations to Python exception.
-/// Routes through PulsingError for structured JSON error encoding.
-fn to_pyerr(err: anyhow::Error) -> PyErr {
-    anyhow_to_py_err(err)
+/// Convert PulsingError to Python exception (used for actor system APIs that return Result<_, PulsingError>).
+fn to_pyerr(err: pulsing_actor::error::PulsingError) -> PyErr {
+    pulsing_error_to_py_err(err)
 }
 
 /// Convert non-anyhow errors (parse, validation) to Python ValueError.
@@ -501,7 +500,7 @@ impl PyStreamReader {
 #[pyclass(name = "StreamWriter")]
 pub struct PyStreamWriter {
     #[allow(clippy::type_complexity)]
-    sender: Arc<TokioMutex<Option<mpsc::Sender<anyhow::Result<Message>>>>>,
+    sender: Arc<TokioMutex<Option<mpsc::Sender<pulsing_actor::error::Result<Message>>>>>,
 }
 
 #[pymethods]
@@ -544,7 +543,11 @@ impl PyStreamWriter {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = sender.lock().await;
             if let Some(tx) = guard.take() {
-                let _ = tx.send(Err(anyhow::anyhow!(msg))).await;
+                let _ = tx
+                    .send(Err(pulsing_actor::error::PulsingError::from(
+                        pulsing_actor::error::RuntimeError::Other(msg),
+                    )))
+                    .await;
             }
             Ok(())
         })
@@ -567,7 +570,7 @@ pub struct PyStreamMessage {
     /// Default message type (used when chunk doesn't specify one)
     default_msg_type: String,
     #[allow(clippy::type_complexity)]
-    receiver: Arc<StdMutex<Option<mpsc::Receiver<anyhow::Result<Message>>>>>,
+    receiver: Arc<StdMutex<Option<mpsc::Receiver<pulsing_actor::error::Result<Message>>>>>,
 }
 
 #[pymethods]
@@ -578,7 +581,7 @@ impl PyStreamMessage {
     #[staticmethod]
     #[pyo3(signature = (msg_type, buffer_size=32))]
     fn create(msg_type: String, buffer_size: usize) -> (PyStreamMessage, PyStreamWriter) {
-        let (tx, rx) = mpsc::channel(buffer_size);
+        let (tx, rx) = mpsc::channel::<pulsing_actor::error::Result<Message>>(buffer_size);
         (
             PyStreamMessage {
                 default_msg_type: msg_type,
@@ -607,7 +610,10 @@ impl PyStreamMessage {
 enum PyActorResponse {
     Single(PyMessage),
     /// Stream of Messages with default msg_type
-    StreamChannel(String, mpsc::Receiver<anyhow::Result<Message>>),
+    StreamChannel(
+        String,
+        mpsc::Receiver<pulsing_actor::error::Result<Message>>,
+    ),
     /// Pickled Python object for Python-to-Python communication
     Sealed(Vec<u8>),
     /// Generator (async or sync) to be iterated
@@ -856,7 +862,7 @@ impl Actor for PythonActorWrapper {
         })
     }
 
-    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         let handler = Python::with_gil(|py| self.handler.clone_ref(py));
         let actor_id = *ctx.id();
         let event_loop = Python::with_gil(|py| self.event_loop.clone_ref(py));
@@ -868,7 +874,6 @@ impl Actor for PythonActorWrapper {
                         let py_actor_id = PyActorId { inner: actor_id };
                         let result = handler.call_method1(py, "on_start", (py_actor_id,))?;
 
-                        // Check if return value is a coroutine, if so wait for it to complete
                         let asyncio = py.import("asyncio")?;
                         let is_coro = asyncio
                             .call_method1("iscoroutine", (&result,))?
@@ -888,11 +893,19 @@ impl Actor for PythonActorWrapper {
                 })
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))?
-            .map_err(|e| anyhow::anyhow!("Python on_start error: {:?}", e))
+            .map_err(|e| {
+                pulsing_actor::error::PulsingError::from(pulsing_actor::error::RuntimeError::Other(
+                    format!("Python executor error: {:?}", e),
+                ))
+            })?
+            .map_err(|e| {
+                pulsing_actor::error::PulsingError::from(pulsing_actor::error::RuntimeError::Other(
+                    format!("Python on_start error: {:?}", e),
+                ))
+            })
     }
 
-    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         let handler = Python::with_gil(|py| self.handler.clone_ref(py));
         let event_loop = Python::with_gil(|py| self.event_loop.clone_ref(py));
 
@@ -902,7 +915,6 @@ impl Actor for PythonActorWrapper {
                     if handler.getattr(py, "on_stop").is_ok() {
                         let result = handler.call_method0(py, "on_stop")?;
 
-                        // Check if return value is a coroutine, if so wait for it to complete
                         let asyncio = py.import("asyncio")?;
                         let is_coro = asyncio
                             .call_method1("iscoroutine", (&result,))?
@@ -922,11 +934,23 @@ impl Actor for PythonActorWrapper {
                 })
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))?
-            .map_err(|e| anyhow::anyhow!("Python on_stop error: {:?}", e))
+            .map_err(|e| {
+                pulsing_actor::error::PulsingError::from(pulsing_actor::error::RuntimeError::Other(
+                    format!("Python executor error: {:?}", e),
+                ))
+            })?
+            .map_err(|e| {
+                pulsing_actor::error::PulsingError::from(pulsing_actor::error::RuntimeError::Other(
+                    format!("Python on_stop error: {:?}", e),
+                ))
+            })
     }
 
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let (handler, event_loop) =
             Python::with_gil(|py| (self.handler.clone_ref(py), self.event_loop.clone_ref(py)));
 
@@ -1044,19 +1068,26 @@ impl Actor for PythonActorWrapper {
                 })
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Python executor error: {:?}", e))?;
+            .map_err(|e| {
+                pulsing_actor::error::PulsingError::from(
+                    pulsing_actor::error::RuntimeError::Other(
+                        format!("Python executor error: {:?}", e),
+                    ),
+                )
+            })?;
 
         // Convert Python exceptions to ActorError
         let response = match response {
             Ok(resp) => resp,
             Err(py_err) => {
-                // Convert Python exception to ActorError
                 Python::with_gil(|py| {
-                    let actor_err = convert_python_exception_to_actor_error(py, &py_err)?;
-                    // Convert ActorError to PulsingError and then to anyhow::Error
-                    Err(anyhow::Error::from(
-                        pulsing_actor::error::PulsingError::from(actor_err),
-                    ))
+                    let actor_err =
+                        convert_python_exception_to_actor_error(py, &py_err).map_err(|e| {
+                            pulsing_actor::error::PulsingError::from(
+                                pulsing_actor::error::RuntimeError::Other(e.to_string()),
+                            )
+                        })?;
+                    Err(pulsing_actor::error::PulsingError::from(actor_err))
                 })
             }?,
         };
@@ -1069,7 +1100,7 @@ impl Actor for PythonActorWrapper {
             PyActorResponse::Sealed(data) => Ok(Message::single(SEALED_PY_MSG_TYPE, data)),
             PyActorResponse::Generator(generator, event_loop, is_async) => {
                 // Create channel for streaming generator values
-                let (tx, rx) = mpsc::channel(32);
+                let (tx, rx) = mpsc::channel::<pulsing_actor::error::Result<Message>>(32);
 
                 // Spawn background task to iterate generator
                 tokio::spawn(async move {
@@ -1101,10 +1132,13 @@ impl Actor for PythonActorWrapper {
                                                 if e.is_instance_of::<pyo3::exceptions::PyStopAsyncIteration>(py) {
                                                     break;
                                                 }
-                                                let _ = tx.blocking_send(Err(anyhow::anyhow!(
-                                                    "Generator error: {}",
-                                                    e
-                                                )));
+                                                let _ = tx.blocking_send(Err(
+                                                    pulsing_actor::error::PulsingError::from(
+                                                        pulsing_actor::error::RuntimeError::Other(
+                                                            format!("Generator error: {}", e),
+                                                        ),
+                                                    ),
+                                                ));
                                                 break;
                                             }
                                         }
@@ -1126,10 +1160,13 @@ impl Actor for PythonActorWrapper {
                                                 if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) {
                                                     break;
                                                 }
-                                                let _ = tx.blocking_send(Err(anyhow::anyhow!(
-                                                    "Generator error: {}",
-                                                    e
-                                                )));
+                                                let _ = tx.blocking_send(Err(
+                                                    pulsing_actor::error::PulsingError::from(
+                                                        pulsing_actor::error::RuntimeError::Other(
+                                                            format!("Generator error: {}", e),
+                                                        ),
+                                                    ),
+                                                ));
                                                 break;
                                             }
                                         }
@@ -1356,13 +1393,20 @@ impl PyActorSystem {
                     } else {
                         // actor is a factory - named actor with supervision
                         let factory = move || {
-                            Python::with_gil(|py| -> anyhow::Result<PythonActorWrapper> {
-                                let event_loop = event_loop.clone_ref(py);
-                                let instance = actor.call0(py).map_err(|e| {
-                                    anyhow::anyhow!("Python factory error: {:?}", e)
-                                })?;
-                                Ok(PythonActorWrapper::new(instance, event_loop))
-                            })
+                            Python::with_gil(
+                                |py| -> pulsing_actor::error::Result<PythonActorWrapper> {
+                                    let event_loop = event_loop.clone_ref(py);
+                                    let instance = actor.call0(py).map_err(|e| {
+                                        pulsing_actor::error::PulsingError::from(
+                                            pulsing_actor::error::RuntimeError::Other(format!(
+                                                "Python factory error: {:?}",
+                                                e
+                                            )),
+                                        )
+                                    })?;
+                                    Ok(PythonActorWrapper::new(instance, event_loop))
+                                },
+                            )
                         };
                         system
                             .spawning()

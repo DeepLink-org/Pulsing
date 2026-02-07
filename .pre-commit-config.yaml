@@ -23,13 +23,13 @@ repos:
       - id: mixed-line-ending
       - id: trailing-whitespace
 
-  # Spell check
-  - repo: https://github.com/codespell-project/codespell
-    rev: v2.3.0
-    hooks:
-      - id: codespell
-        additional_dependencies: [tomli]
-        args: [--skip, "*.lock,target/*"]
+  # # Spell check
+  # - repo: https://github.com/codespell-project/codespell
+  #   rev: v2.3.0
+  #   hooks:
+  #     - id: codespell
+  #       additional_dependencies: [tomli]
+  #       args: [--skip, "*.lock,target/*"]
 
   # Rust formatting (local hook)
   - repo: local

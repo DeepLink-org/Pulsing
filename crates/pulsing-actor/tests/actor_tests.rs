@@ -1,5 +1,6 @@
 //! Actor core functionality tests
 
+use pulsing_actor::error::{PulsingError, RuntimeError};
 use pulsing_actor::prelude::*;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
@@ -51,7 +52,11 @@ struct Counter {
 
 #[async_trait]
 impl Actor for Counter {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let msg_type = msg.msg_type();
         if msg_type.ends_with("Ping") {
             let ping: Ping = msg.unpack()?;
@@ -72,9 +77,14 @@ impl Actor for Counter {
             return Message::pack(&StateResponse { value: self.count });
         }
         if msg_type.ends_with("ErrorMessage") {
-            return Err(anyhow::anyhow!("Intentional error for testing"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Intentional error for testing".into(),
+            )));
         }
-        Err(anyhow::anyhow!("Unknown message type: {}", msg_type))
+        Err(PulsingError::from(RuntimeError::Other(format!(
+            "Unknown message type: {}",
+            msg_type
+        ))))
     }
 }
 
@@ -86,21 +96,27 @@ struct LifecycleActor {
 
 #[async_trait]
 impl Actor for LifecycleActor {
-    async fn on_start(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, _ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         self.start_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
-    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         self.stop_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         if msg.msg_type().ends_with("Ping") {
             return Message::pack(&Pong { result: 0 });
         }
-        Err(anyhow::anyhow!("Unknown message"))
+        Err(PulsingError::from(RuntimeError::Other(
+            "Unknown message".into(),
+        )))
     }
 }
 

@@ -25,6 +25,7 @@ pub use factory::{ActorFactory, BoxedActorFactory, DefaultActorFactory};
 pub use messages::{ActorInfo, ActorStatusInfo, SystemMessage, SystemResponse};
 
 use crate::actor::{Actor, ActorContext, ActorId, Message};
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::metrics::SystemMetrics as PrometheusSystemMetrics;
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -294,11 +295,12 @@ impl SystemActor {
     }
 
     /// Generate JSON error response
-    fn json_error_response(&self, message: &str) -> anyhow::Result<Message> {
+    fn json_error_response(&self, message: &str) -> Result<Message> {
         let response = SystemResponse::Error {
             message: message.to_string(),
         };
-        let json_data = serde_json::to_vec(&response)?;
+        let json_data = serde_json::to_vec(&response)
+            .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string())))?;
         Ok(Message::Single {
             msg_type: "SystemResponse".to_string(),
             data: json_data,
@@ -316,7 +318,7 @@ impl Actor for SystemActor {
         meta
     }
 
-    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> Result<()> {
         tracing::info!(
             actor_id = ?ctx.id(),
             path = SYSTEM_ACTOR_PATH,
@@ -325,7 +327,7 @@ impl Actor for SystemActor {
         Ok(())
     }
 
-    async fn on_stop(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_stop(&mut self, ctx: &mut ActorContext) -> Result<()> {
         tracing::info!(
             actor_id = ?ctx.id(),
             path = SYSTEM_ACTOR_PATH,
@@ -334,7 +336,7 @@ impl Actor for SystemActor {
         Ok(())
     }
 
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> Result<Message> {
         self.metrics.inc_message();
 
         // Parse system message using auto-detection (JSON first, then bincode)
@@ -392,7 +394,7 @@ impl Actor for SystemActor {
 
         // Use JSON serialization for response (for Python compatibility)
         let json_data = serde_json::to_vec(&response)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize response: {}", e))?;
+            .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string())))?;
         Ok(Message::Single {
             msg_type: "SystemResponse".to_string(),
             data: json_data,

@@ -3,7 +3,7 @@
 use crate::actor::{ActorId, ActorPath, Envelope, Message, NodeId};
 use crate::cluster::backends::{RegisterActorRequest, UnregisterActorRequest};
 use crate::cluster::{GossipBackend, GossipMessage, HeadNodeBackend, NamingBackend};
-use crate::error::{PulsingError, RuntimeError};
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::metrics::{metrics, SystemMetrics as PrometheusMetrics};
 use crate::system::registry::ActorRegistry;
 use crate::transport::Http2ServerHandler;
@@ -39,78 +39,75 @@ impl SystemMessageHandler {
     }
 
     /// Find actor sender by name or ActorId (O(1) lookup via registry)
-    fn find_actor_sender(&self, actor_name: &str) -> anyhow::Result<mpsc::Sender<Envelope>> {
+    fn find_actor_sender(&self, actor_name: &str) -> Result<mpsc::Sender<Envelope>> {
         self.registry.find_actor_sender(actor_name).ok_or_else(|| {
-            PulsingError::from(RuntimeError::actor_not_found(actor_name.to_string())).into()
+            PulsingError::from(RuntimeError::actor_not_found(actor_name.to_string()))
         })
     }
 
     /// Dispatch a message to an actor (ask pattern)
-    async fn dispatch_message(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
+    async fn dispatch_message(&self, path: &str, msg: Message) -> Result<Message> {
         if let Some(actor_name) = path.strip_prefix("/actors/") {
             self.send_to_local_actor(actor_name, msg).await
         } else if let Some(named_path) = path.strip_prefix("/named/") {
             self.send_to_named_actor(named_path, msg).await
         } else {
-            Err(PulsingError::from(RuntimeError::invalid_actor_path(path)).into())
+            Err(PulsingError::from(RuntimeError::invalid_actor_path(path)))
         }
     }
 
     /// Dispatch a fire-and-forget message
-    async fn dispatch_tell(&self, path: &str, msg: Message) -> anyhow::Result<()> {
+    async fn dispatch_tell(&self, path: &str, msg: Message) -> Result<()> {
         if let Some(actor_name) = path.strip_prefix("/actors/") {
             self.tell_local_actor(actor_name, msg).await
         } else if let Some(named_path) = path.strip_prefix("/named/") {
             self.tell_named_actor(named_path, msg).await
         } else {
-            Err(PulsingError::from(RuntimeError::invalid_actor_path(path)).into())
+            Err(PulsingError::from(RuntimeError::invalid_actor_path(path)))
         }
     }
 
-    async fn send_to_local_actor(&self, actor_name: &str, msg: Message) -> anyhow::Result<Message> {
+    async fn send_to_local_actor(&self, actor_name: &str, msg: Message) -> Result<Message> {
         let sender = self.find_actor_sender(actor_name)?;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
         let envelope = Envelope::ask(msg, tx);
 
-        sender.send(envelope).await.map_err(|_| -> anyhow::Error {
-            PulsingError::from(RuntimeError::actor_stopped(actor_name)).into()
-        })?;
+        sender
+            .send(envelope)
+            .await
+            .map_err(|_| PulsingError::from(RuntimeError::actor_stopped(actor_name)))?;
 
-        rx.await.map_err(|_| -> anyhow::Error {
-            PulsingError::from(RuntimeError::actor_stopped(actor_name)).into()
-        })?
+        rx.await
+            .map_err(|_| PulsingError::from(RuntimeError::actor_stopped(actor_name)))?
     }
 
-    async fn tell_local_actor(&self, actor_name: &str, msg: Message) -> anyhow::Result<()> {
+    async fn tell_local_actor(&self, actor_name: &str, msg: Message) -> Result<()> {
         let sender = self.find_actor_sender(actor_name)?;
         let envelope = Envelope::tell(msg);
 
-        sender.send(envelope).await.map_err(|_| -> anyhow::Error {
-            PulsingError::from(RuntimeError::actor_stopped(actor_name)).into()
-        })?;
+        sender
+            .send(envelope)
+            .await
+            .map_err(|_| PulsingError::from(RuntimeError::actor_stopped(actor_name)))?;
 
         Ok(())
     }
 
-    async fn send_to_named_actor(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
-        let actor_name =
-            self.registry
-                .get_actor_name_by_path(path)
-                .ok_or_else(|| -> anyhow::Error {
-                    PulsingError::from(RuntimeError::named_actor_not_found(path)).into()
-                })?;
+    async fn send_to_named_actor(&self, path: &str, msg: Message) -> Result<Message> {
+        let actor_name = self
+            .registry
+            .get_actor_name_by_path(path)
+            .ok_or_else(|| PulsingError::from(RuntimeError::named_actor_not_found(path)))?;
 
         self.send_to_local_actor(&actor_name, msg).await
     }
 
-    async fn tell_named_actor(&self, path: &str, msg: Message) -> anyhow::Result<()> {
-        let actor_name =
-            self.registry
-                .get_actor_name_by_path(path)
-                .ok_or_else(|| -> anyhow::Error {
-                    PulsingError::from(RuntimeError::named_actor_not_found(path)).into()
-                })?;
+    async fn tell_named_actor(&self, path: &str, msg: Message) -> Result<()> {
+        let actor_name = self
+            .registry
+            .get_actor_name_by_path(path)
+            .ok_or_else(|| PulsingError::from(RuntimeError::named_actor_not_found(path)))?;
 
         self.tell_local_actor(&actor_name, msg).await
     }
@@ -119,7 +116,7 @@ impl SystemMessageHandler {
 #[async_trait::async_trait]
 impl Http2ServerHandler for SystemMessageHandler {
     /// Unified message handler - accepts Message (Single or Stream), returns Message
-    async fn handle_message_full(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
+    async fn handle_message_full(&self, path: &str, msg: Message) -> Result<Message> {
         self.dispatch_message(path, msg).await
     }
 
@@ -129,17 +126,12 @@ impl Http2ServerHandler for SystemMessageHandler {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Message> {
+    ) -> Result<Message> {
         let msg = Message::single(msg_type, payload);
         self.dispatch_message(path, msg).await
     }
 
-    async fn handle_tell(
-        &self,
-        path: &str,
-        msg_type: &str,
-        payload: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    async fn handle_tell(&self, path: &str, msg_type: &str, payload: Vec<u8>) -> Result<()> {
         let msg = Message::single(msg_type, payload);
         self.dispatch_tell(path, msg).await
     }
@@ -148,15 +140,22 @@ impl Http2ServerHandler for SystemMessageHandler {
         &self,
         payload: Vec<u8>,
         peer_addr: SocketAddr,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> Result<Option<Vec<u8>>> {
         let cluster_guard = self.cluster.read().await;
         if let Some(backend) = cluster_guard.as_ref() {
             // Try to downcast to GossipBackend to access handle_gossip
             if let Some(gossip_backend) = backend.as_any().downcast_ref::<GossipBackend>() {
-                let msg: GossipMessage = bincode::deserialize(&payload)?;
-                let response = gossip_backend.inner().handle_gossip(msg, peer_addr).await?;
+                let msg: GossipMessage = bincode::deserialize(&payload)
+                    .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string())))?;
+                let response = gossip_backend
+                    .inner()
+                    .handle_gossip(msg, peer_addr)
+                    .await
+                    .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
                 if let Some(resp) = response {
-                    Ok(Some(bincode::serialize(&resp)?))
+                    Ok(Some(bincode::serialize(&resp).map_err(|e| {
+                        PulsingError::from(RuntimeError::Serialization(e.to_string()))
+                    })?))
                 } else {
                     Ok(None)
                 }
@@ -361,8 +360,7 @@ impl Http2ServerHandler for SystemMessageHandler {
         path: &str,
         method: &str,
         body: Vec<u8>,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
-        // Call the implementation method
+    ) -> Result<Option<Vec<u8>>> {
         SystemMessageHandler::handle_head_api_impl(self, path, method, body).await
     }
 }
@@ -378,71 +376,71 @@ impl SystemMessageHandler {
         path: &str,
         method: &str,
         body: Vec<u8>,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> Result<Option<Vec<u8>>> {
         let cluster_guard = self.cluster.read().await;
-        let backend = cluster_guard.as_ref().ok_or_else(|| -> anyhow::Error {
-            PulsingError::from(RuntimeError::ClusterNotInitialized).into()
-        })?;
+        let backend = cluster_guard
+            .as_ref()
+            .ok_or_else(|| PulsingError::from(RuntimeError::ClusterNotInitialized))?;
 
-        // Try to downcast to HeadNodeBackend
         let head_backend = match backend.as_any().downcast_ref::<HeadNodeBackend>() {
             Some(b) if b.is_head() => b,
             _ => return Ok(None),
         };
 
+        let ser =
+            |e: bincode::Error| PulsingError::from(RuntimeError::Serialization(e.to_string()));
+
         match (method, path) {
             ("POST", "/cluster/head/register") => {
-                let req: RegisterNodeRequest = bincode::deserialize(&body)?;
+                let req: RegisterNodeRequest = bincode::deserialize(&body).map_err(ser)?;
                 head_backend
                     .handle_register_node(req.node_id, req.addr)
                     .await?;
                 Ok(Some(Vec::new()))
             }
             ("POST", "/cluster/head/heartbeat") => {
-                let req: HeartbeatRequest = bincode::deserialize(&body)?;
+                let req: HeartbeatRequest = bincode::deserialize(&body).map_err(ser)?;
                 head_backend.handle_heartbeat(&req.node_id).await?;
-                Ok(Some(Vec::new())) // Return empty body for success
+                Ok(Some(Vec::new()))
             }
             ("POST", "/cluster/head/named_actor/register") => {
-                let req: RegisterNamedActorRequest = bincode::deserialize(&body)?;
+                let req: RegisterNamedActorRequest = bincode::deserialize(&body).map_err(ser)?;
                 head_backend
                     .handle_register_named_actor(req.path, req.node_id, req.actor_id, req.metadata)
                     .await?;
-                Ok(Some(Vec::new())) // Return empty body for success
+                Ok(Some(Vec::new()))
             }
             ("POST", "/cluster/head/named_actor/unregister") => {
-                let req: UnregisterNamedActorRequest = bincode::deserialize(&body)?;
+                let req: UnregisterNamedActorRequest = bincode::deserialize(&body).map_err(ser)?;
                 head_backend
                     .handle_unregister_named_actor(&req.path, &req.node_id)
                     .await?;
-                Ok(Some(Vec::new())) // Return empty body for success
+                Ok(Some(Vec::new()))
             }
             ("GET", "/cluster/head/members") | ("POST", "/cluster/head/members") => {
-                // Support both GET and POST (POST is used by Http2Client)
                 let members = head_backend.all_members().await;
-                let body = bincode::serialize(&members)?;
+                let body = bincode::serialize(&members).map_err(ser)?;
                 Ok(Some(body))
             }
             ("GET", "/cluster/head/named_actors") | ("POST", "/cluster/head/named_actors") => {
-                // Support both GET and POST (POST is used by Http2Client)
                 let named_actors = head_backend.all_named_actors().await;
-                let body = bincode::serialize(&named_actors)?;
+                let body = bincode::serialize(&named_actors).map_err(ser)?;
                 Ok(Some(body))
             }
             ("GET", "/cluster/head/sync") | ("POST", "/cluster/head/sync") => {
                 let sync = head_backend.handle_sync().await?;
-                let body = bincode::serialize(&sync)?;
+                let body = bincode::serialize(&sync).map_err(ser)?;
                 Ok(Some(body))
             }
             ("POST", "/cluster/head/actor/register") => {
-                let req: RegisterActorRequest = bincode::deserialize(&body)?;
+                let req: RegisterActorRequest = bincode::deserialize(&body).map_err(ser)?;
                 head_backend
                     .handle_register_actor(req.actor_id, req.node_id)
                     .await?;
                 Ok(Some(Vec::new()))
             }
             ("POST", "/cluster/head/actor/unregister") => {
-                let req: UnregisterActorRequest = bincode::deserialize(&body)?;
+                let req: UnregisterActorRequest = bincode::deserialize(&body).map_err(ser)?;
                 head_backend
                     .handle_unregister_actor(&req.actor_id, &req.node_id)
                     .await?;
@@ -451,8 +449,7 @@ impl SystemMessageHandler {
             _ => Err(PulsingError::from(RuntimeError::Other(format!(
                 "Unknown head API endpoint: {} {}",
                 method, path
-            )))
-            .into()),
+            )))),
         }
     }
 }

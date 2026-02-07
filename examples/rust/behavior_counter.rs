@@ -14,7 +14,7 @@ fn counter(init: i32) -> Behavior<i32> {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> pulsing_actor::error::Result<()> {
     let system = ActorSystem::builder().build().await?;
 
     // Behavior implements IntoActor, can be passed directly to spawn_named

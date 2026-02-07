@@ -4,6 +4,7 @@ use super::config::Http2Config;
 use super::stream::{BinaryFrameParser, StreamFrame};
 use super::{headers, MessageMode, RequestType};
 use crate::actor::Message;
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::tracing::{TraceContext, TRACEPARENT_HEADER};
 use bytes::Bytes;
 use futures::StreamExt;
@@ -25,14 +26,14 @@ use tokio_util::sync::CancellationToken;
 #[async_trait::async_trait]
 pub trait Http2ServerHandler: Send + Sync + 'static {
     /// Unified message handler.
-    async fn handle_message_full(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
+    async fn handle_message_full(&self, path: &str, msg: Message) -> Result<Message> {
         match msg {
             Message::Single { msg_type, data } => {
                 self.handle_message_simple(path, &msg_type, data).await
             }
-            Message::Stream { .. } => Err(anyhow::anyhow!(
-                "Streaming requests not supported by this handler"
-            )),
+            Message::Stream { .. } => Err(PulsingError::from(RuntimeError::Other(
+                "Streaming requests not supported by this handler".into(),
+            ))),
         }
     }
 
@@ -42,21 +43,22 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Message> {
+    ) -> Result<Message> {
         let _ = (path, msg_type, payload);
-        Err(anyhow::anyhow!("Not implemented"))
+        Err(PulsingError::from(RuntimeError::Other(
+            "Not implemented".into(),
+        )))
     }
 
     /// Handle tell (fire-and-forget) message.
-    async fn handle_tell(&self, path: &str, msg_type: &str, payload: Vec<u8>)
-        -> anyhow::Result<()>;
+    async fn handle_tell(&self, path: &str, msg_type: &str, payload: Vec<u8>) -> Result<()>;
 
     /// Handle gossip message.
     async fn handle_gossip(
         &self,
         payload: Vec<u8>,
         peer_addr: SocketAddr,
-    ) -> anyhow::Result<Option<Vec<u8>>>;
+    ) -> Result<Option<Vec<u8>>>;
 
     /// Get health status.
     async fn health_check(&self) -> serde_json::Value {
@@ -88,7 +90,7 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
         _path: &str,
         _method: &str,
         _body: Vec<u8>,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> Result<Option<Vec<u8>>> {
         Ok(None)
     }
 }
@@ -251,7 +253,7 @@ impl Http2Server {
         req: Request<Incoming>,
         handler: Arc<dyn Http2ServerHandler>,
         peer_addr: SocketAddr,
-    ) -> Result<Response<BoxBody>, Infallible> {
+    ) -> std::result::Result<Response<BoxBody>, Infallible> {
         let path = req.uri().path().to_string();
         let method = req.method().clone();
 
@@ -438,36 +440,31 @@ impl Http2Server {
 
     /// Parse a streaming request body (binary frames) into Message::Stream
     fn parse_streaming_request(body: Incoming, default_msg_type: &str) -> Message {
-        let (tx, rx) = mpsc::channel::<anyhow::Result<Message>>(32);
+        let (tx, rx) = mpsc::channel::<Result<Message>>(32);
         let default_msg_type = default_msg_type.to_string();
 
-        // Spawn task to parse binary frames
         tokio::spawn(async move {
             let mut parser = BinaryFrameParser::new();
             let mut body_stream = http_body_util::BodyStream::new(body);
-
             while let Some(result) = body_stream.next().await {
                 match result {
                     Ok(frame) => {
                         if let Ok(data) = frame.into_data() {
                             parser.push(&data);
 
-                            // Parse all complete frames
                             for frame_result in parser.parse_all() {
                                 match frame_result {
                                     Ok(frame) => {
-                                        // Skip end frames
                                         if frame.end && frame.get_data().is_empty() {
                                             continue;
                                         }
-                                        // Convert frame to message
                                         match frame.to_message() {
                                             Ok(Some(msg)) => {
                                                 if tx.send(Ok(msg)).await.is_err() {
                                                     return;
                                                 }
                                             }
-                                            Ok(None) => {} // Skip empty frames
+                                            Ok(None) => {}
                                             Err(e) => {
                                                 let _ = tx.send(Err(e)).await;
                                                 return;
@@ -475,7 +472,11 @@ impl Http2Server {
                                         }
                                     }
                                     Err(e) => {
-                                        let _ = tx.send(Err(e)).await;
+                                        let _ = tx
+                                            .send(Err(PulsingError::from(RuntimeError::Other(
+                                                e.to_string(),
+                                            ))))
+                                            .await;
                                         return;
                                     }
                                 }
@@ -484,7 +485,7 @@ impl Http2Server {
                     }
                     Err(e) => {
                         let _ = tx
-                            .send(Err(anyhow::anyhow!("Body read error: {}", e)))
+                            .send(Err(PulsingError::from(RuntimeError::Other(e.to_string()))))
                             .await;
                         return;
                     }
@@ -500,7 +501,7 @@ impl Http2Server {
         handler: &Arc<dyn Http2ServerHandler>,
         payload: Vec<u8>,
         peer_addr: SocketAddr,
-    ) -> Result<Response<BoxBody>, Infallible> {
+    ) -> std::result::Result<Response<BoxBody>, Infallible> {
         match handler.handle_gossip(payload, peer_addr).await {
             Ok(Some(response)) => Ok(octet_response(StatusCode::OK, response)),
             Ok(None) => Ok(empty_response(StatusCode::OK)),
@@ -516,7 +517,7 @@ impl Http2Server {
         handler: &Arc<dyn Http2ServerHandler>,
         path: &str,
         msg: Message,
-    ) -> Result<Response<BoxBody>, Infallible> {
+    ) -> std::result::Result<Response<BoxBody>, Infallible> {
         match handler.handle_message_full(path, msg).await {
             Ok(Message::Single { data, .. }) => {
                 // Single response - return directly with response type header
@@ -531,7 +532,7 @@ impl Http2Server {
                 stream,
             }) => {
                 // Stream response - convert Message stream to binary frames
-                let (tx, rx) = mpsc::channel::<Result<Frame<Bytes>, Infallible>>(32);
+                let (tx, rx) = mpsc::channel::<std::result::Result<Frame<Bytes>, Infallible>>(32);
 
                 tokio::spawn(async move {
                     let mut stream = std::pin::pin!(stream);
@@ -574,7 +575,7 @@ impl Http2Server {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> Result<Response<BoxBody>, Infallible> {
+    ) -> std::result::Result<Response<BoxBody>, Infallible> {
         match handler.handle_tell(path, msg_type, payload).await {
             Ok(()) => Ok(empty_response(StatusCode::ACCEPTED)),
             Err(e) => Ok(error_response(
@@ -696,17 +697,11 @@ mod tests {
             _path: &str,
             _msg_type: &str,
             payload: Vec<u8>,
-        ) -> anyhow::Result<Message> {
-            // Echo the payload as single message
+        ) -> Result<Message> {
             Ok(Message::single("", payload))
         }
 
-        async fn handle_tell(
-            &self,
-            _path: &str,
-            _msg_type: &str,
-            _payload: Vec<u8>,
-        ) -> anyhow::Result<()> {
+        async fn handle_tell(&self, _path: &str, _msg_type: &str, _payload: Vec<u8>) -> Result<()> {
             Ok(())
         }
 
@@ -714,7 +709,7 @@ mod tests {
             &self,
             _payload: Vec<u8>,
             _peer_addr: SocketAddr,
-        ) -> anyhow::Result<Option<Vec<u8>>> {
+        ) -> Result<Option<Vec<u8>>> {
             Ok(None)
         }
 

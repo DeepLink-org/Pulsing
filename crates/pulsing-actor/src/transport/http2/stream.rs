@@ -75,9 +75,11 @@ impl StreamFrame {
         }
     }
 
-    pub fn to_message(&self) -> anyhow::Result<Option<Message>> {
+    pub fn to_message(&self) -> crate::error::Result<Option<Message>> {
         if let Some(ref error) = self.error {
-            return Err(anyhow::anyhow!("{}", error));
+            return Err(crate::error::PulsingError::from(
+                crate::error::RuntimeError::Other(error.clone()),
+            ));
         }
         if self.end && self.data.is_empty() {
             return Ok(None);

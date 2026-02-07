@@ -53,16 +53,6 @@ pub fn pulsing_error_to_py_err(err: PulsingError) -> PyErr {
     PyRuntimeError::new_err(format!("{}{}", ERROR_ENVELOPE_PREFIX, json_str))
 }
 
-/// Convert anyhow::Error to Python exception via PulsingError.
-///
-/// This first converts anyhow::Error to PulsingError (which extracts
-/// RuntimeError/ActorError if present), then uses JSON envelope encoding.
-/// Use this instead of the generic `to_pyerr` for actor system operations.
-pub fn anyhow_to_py_err(err: anyhow::Error) -> PyErr {
-    let pulsing_err = PulsingError::from(err);
-    pulsing_error_to_py_err(pulsing_err)
-}
-
 /// Add error classes to Python module
 ///
 /// Note: In abi3 mode, we can't create custom exception classes directly.
@@ -109,7 +99,9 @@ mod tests {
     #[test]
     fn test_anyhow_error_conversion() {
         let anyhow_err = anyhow::anyhow!("something went wrong");
-        let py_err = anyhow_to_py_err(anyhow_err);
+        let py_err = pulsing_error_to_py_err(PulsingError::from(RuntimeError::Other(
+            anyhow_err.to_string(),
+        )));
         let msg = py_err.to_string();
         assert!(msg.starts_with(ERROR_ENVELOPE_PREFIX));
 

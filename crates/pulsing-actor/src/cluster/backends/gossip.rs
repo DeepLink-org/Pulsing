@@ -6,6 +6,7 @@ use crate::cluster::{
     member::{MemberInfo, NamedActorInfo, NamedActorInstance},
     GossipCluster, GossipConfig,
 };
+use crate::error::Result;
 use crate::transport::http2::Http2Transport;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -39,11 +40,11 @@ impl GossipBackend {
 
 #[async_trait]
 impl NamingBackend for GossipBackend {
-    async fn join(&self, seeds: Vec<SocketAddr>) -> anyhow::Result<()> {
+    async fn join(&self, seeds: Vec<SocketAddr>) -> Result<()> {
         self.cluster.join(seeds).await
     }
 
-    async fn leave(&self) -> anyhow::Result<()> {
+    async fn leave(&self) -> Result<()> {
         self.cluster.leave().await
     }
 

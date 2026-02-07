@@ -343,17 +343,21 @@ fn create_progress_bar(progress: f64) -> String {
 
 #[async_trait]
 impl Actor for ConsoleRendererActor {
-    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         info!("ConsoleRenderer started with actor_id {:?}", ctx.id());
         Ok(())
     }
 
-    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         info!("ConsoleRenderer stopped");
         Ok(())
     }
 
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let msg_type = msg.msg_type();
 
         if msg_type.ends_with("DisplayUpdate") {

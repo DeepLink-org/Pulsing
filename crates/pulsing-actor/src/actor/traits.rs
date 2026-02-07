@@ -1,5 +1,6 @@
 //! Core actor traits and types.
 
+use crate::error::{PulsingError, Result, RuntimeError};
 use async_trait::async_trait;
 use futures::Stream;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -96,36 +97,36 @@ pub enum Format {
 
 impl Format {
     /// Parse data using this format
-    pub fn parse<T: DeserializeOwned>(&self, data: &[u8]) -> anyhow::Result<T> {
+    pub fn parse<T: DeserializeOwned>(&self, data: &[u8]) -> Result<T> {
+        let to_err = |e: &(dyn std::error::Error + '_)| {
+            PulsingError::from(RuntimeError::Serialization(e.to_string()))
+        };
         match self {
-            Format::Bincode => Ok(bincode::deserialize(data)?),
-            Format::Json => Ok(serde_json::from_slice(data)?),
-            Format::Auto => {
-                // Try JSON first for Python compatibility, then bincode
-                match serde_json::from_slice(data) {
-                    Ok(value) => Ok(value),
-                    Err(_) => Ok(bincode::deserialize(data)?),
-                }
-            }
+            Format::Bincode => bincode::deserialize(data).map_err(|e| to_err(&e)),
+            Format::Json => serde_json::from_slice(data).map_err(|e| to_err(&e)),
+            Format::Auto => match serde_json::from_slice(data) {
+                Ok(value) => Ok(value),
+                Err(_) => bincode::deserialize(data).map_err(|e| to_err(&e)),
+            },
         }
     }
 
     /// Serialize data using this format
     #[allow(dead_code)]
-    pub fn serialize<T: Serialize>(&self, value: &T) -> anyhow::Result<Vec<u8>> {
+    pub fn serialize<T: Serialize>(&self, value: &T) -> Result<Vec<u8>> {
+        let to_err = |e: &(dyn std::error::Error + '_)| {
+            PulsingError::from(RuntimeError::Serialization(e.to_string()))
+        };
         match self {
-            Format::Bincode => Ok(bincode::serialize(value)?),
-            Format::Json => Ok(serde_json::to_vec(value)?),
-            Format::Auto => {
-                // Default to bincode for Auto serialization
-                Ok(bincode::serialize(value)?)
-            }
+            Format::Bincode => bincode::serialize(value).map_err(|e| to_err(&e)),
+            Format::Json => serde_json::to_vec(value).map_err(|e| to_err(&e)),
+            Format::Auto => bincode::serialize(value).map_err(|e| to_err(&e)),
         }
     }
 }
 
 /// Message stream type (stream of Single messages).
-pub type MessageStream = Pin<Box<dyn Stream<Item = anyhow::Result<Message>> + Send>>;
+pub type MessageStream = Pin<Box<dyn Stream<Item = Result<Message>> + Send>>;
 
 /// Unified message type for both requests and responses.
 pub enum Message {
@@ -147,31 +148,38 @@ impl Message {
         }
     }
 
-    pub fn pack<M: Serialize + 'static>(msg: &M) -> anyhow::Result<Self> {
-        Ok(Message::Single {
-            msg_type: std::any::type_name::<M>().to_string(),
-            data: bincode::serialize(msg)?,
-        })
+    pub fn pack<M: Serialize + 'static>(msg: &M) -> Result<Self> {
+        bincode::serialize(msg)
+            .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string())))
+            .map(|data| Message::Single {
+                msg_type: std::any::type_name::<M>().to_string(),
+                data,
+            })
     }
 
-    pub fn unpack<M: DeserializeOwned>(self) -> anyhow::Result<M> {
+    pub fn unpack<M: DeserializeOwned>(self) -> Result<M> {
         match self {
-            Message::Single { data, .. } => Ok(bincode::deserialize(&data)?),
-            Message::Stream { .. } => Err(anyhow::anyhow!("Cannot unpack stream message")),
+            Message::Single { data, .. } => bincode::deserialize(&data)
+                .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string()))),
+            Message::Stream { .. } => Err(PulsingError::from(RuntimeError::Other(
+                "Cannot unpack stream message".into(),
+            ))),
         }
     }
 
     /// Parse message data with auto-detection (JSON first, then bincode)
-    pub fn parse<M: DeserializeOwned>(&self) -> anyhow::Result<M> {
+    pub fn parse<M: DeserializeOwned>(&self) -> Result<M> {
         match self {
             Message::Single { data, .. } => Format::Auto.parse(data),
-            Message::Stream { .. } => Err(anyhow::anyhow!("Cannot parse stream message")),
+            Message::Stream { .. } => Err(PulsingError::from(RuntimeError::Other(
+                "Cannot parse stream message".into(),
+            ))),
         }
     }
 
     pub fn from_channel(
         default_msg_type: impl Into<String>,
-        rx: mpsc::Receiver<anyhow::Result<Message>>,
+        rx: mpsc::Receiver<Result<Message>>,
     ) -> Self {
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         Message::Stream {
@@ -182,7 +190,7 @@ impl Message {
 
     pub fn stream<S>(default_msg_type: impl Into<String>, stream: S) -> Self
     where
-        S: Stream<Item = anyhow::Result<Message>> + Send + 'static,
+        S: Stream<Item = Result<Message>> + Send + 'static,
     {
         Message::Stream {
             default_msg_type: default_msg_type.into(),
@@ -245,12 +253,12 @@ pub trait Actor: Send + Sync + 'static {
     }
 
     /// Called when the actor starts.
-    async fn on_start(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, _ctx: &mut ActorContext) -> Result<()> {
         Ok(())
     }
 
     /// Called when the actor stops.
-    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> Result<()> {
         Ok(())
     }
 
@@ -298,12 +306,12 @@ pub trait Actor: Send + Sync + 'static {
     ///     Message::pack(&sum)
     /// }
     /// ```
-    async fn receive(&mut self, msg: Message, ctx: &mut ActorContext) -> anyhow::Result<Message> {
-        Err(anyhow::anyhow!(
+    async fn receive(&mut self, msg: Message, ctx: &mut ActorContext) -> Result<Message> {
+        Err(PulsingError::from(RuntimeError::Other(format!(
             "Actor {} does not handle message type: {}",
             ctx.id(),
             msg.msg_type()
-        ))
+        ))))
     }
 }
 
@@ -410,7 +418,7 @@ mod tests {
     #[tokio::test]
     async fn test_message_server_streaming() {
         // Simulate a server streaming response with Message stream
-        let (tx, rx) = mpsc::channel::<anyhow::Result<Message>>(10);
+        let (tx, rx) = mpsc::channel::<Result<Message>>(10);
         let msg = Message::from_channel("StreamResponse", rx);
 
         assert!(msg.is_stream());
@@ -445,7 +453,7 @@ mod tests {
     #[tokio::test]
     async fn test_message_client_streaming() {
         // Simulate a client streaming request
-        let (tx, rx) = mpsc::channel::<anyhow::Result<Message>>(10);
+        let (tx, rx) = mpsc::channel::<Result<Message>>(10);
         let msg = Message::from_channel("StreamRequest", rx);
 
         tokio::spawn(async move {
@@ -471,7 +479,7 @@ mod tests {
     #[tokio::test]
     async fn test_message_stream_heterogeneous() {
         // Test heterogeneous stream - different message types in one stream
-        let (tx, rx) = mpsc::channel::<anyhow::Result<Message>>(10);
+        let (tx, rx) = mpsc::channel::<Result<Message>>(10);
         let msg = Message::from_channel("MixedStream", rx);
 
         tokio::spawn(async move {

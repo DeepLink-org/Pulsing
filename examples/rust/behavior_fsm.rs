@@ -94,7 +94,7 @@ fn yellow(stats: Stats) -> Behavior<Signal> {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> pulsing_actor::error::Result<()> {
     println!("=== Traffic Light State Machine ===\n");
 
     let system = ActorSystem::builder().build().await?;

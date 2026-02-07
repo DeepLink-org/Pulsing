@@ -8,6 +8,7 @@
 
 use crate::actor::{NodeId, DEFAULT_MAILBOX_SIZE};
 use crate::cluster::{GossipConfig, HeadNodeConfig};
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::policies::LoadBalancingPolicy;
 use crate::supervision::SupervisionSpec;
 use crate::transport::Http2Config;
@@ -109,8 +110,11 @@ impl SystemConfig {
     /// The passphrase is used to derive a shared CA certificate, enabling
     /// automatic mutual TLS authentication.
     #[cfg(feature = "tls")]
-    pub fn with_tls(mut self, passphrase: &str) -> anyhow::Result<Self> {
-        self.http2_config = self.http2_config.with_tls(passphrase)?;
+    pub fn with_tls(mut self, passphrase: &str) -> Result<Self> {
+        self.http2_config = self
+            .http2_config
+            .with_tls(passphrase)
+            .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
         Ok(self)
     }
 
@@ -227,9 +231,9 @@ impl std::error::Error for ConfigValidationError {}
 #[derive(Default)]
 pub struct ActorSystemBuilder {
     /// Bind address (stored as Result for deferred error handling)
-    addr: Option<Result<SocketAddr, String>>,
+    addr: Option<std::result::Result<SocketAddr, String>>,
     /// Seed nodes (stored as Results for deferred error handling)
-    seeds: Vec<Result<SocketAddr, String>>,
+    seeds: Vec<std::result::Result<SocketAddr, String>>,
     /// Mailbox capacity
     mailbox_capacity: Option<usize>,
     /// Gossip configuration
@@ -239,7 +243,7 @@ pub struct ActorSystemBuilder {
     /// Head node mode
     is_head_node: bool,
     /// Head node address (if set, makes this a worker)
-    head_addr: Option<Result<SocketAddr, String>>,
+    head_addr: Option<std::result::Result<SocketAddr, String>>,
     /// Head node configuration
     head_node_config: Option<HeadNodeConfig>,
 }
@@ -271,12 +275,13 @@ impl ActorSystemBuilder {
 
     /// Enable TLS with passphrase
     #[cfg(feature = "tls")]
-    pub fn tls(mut self, passphrase: &str) -> anyhow::Result<Self> {
+    pub fn tls(mut self, passphrase: &str) -> Result<Self> {
         let http2_config = self
             .http2_config
             .take()
             .unwrap_or_default()
-            .with_tls(passphrase)?;
+            .with_tls(passphrase)
+            .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
         self.http2_config = Some(http2_config);
         Ok(self)
     }
@@ -313,7 +318,7 @@ impl ActorSystemBuilder {
     /// Build the ActorSystem
     ///
     /// Returns an error if any address parsing or validation failed.
-    pub async fn build(self) -> anyhow::Result<Arc<crate::system::ActorSystem>> {
+    pub async fn build(self) -> crate::error::Result<Arc<crate::system::ActorSystem>> {
         let addr =
             Self::parse_optional_addr("bind address", self.addr)?.unwrap_or(DEFAULT_BIND_ADDR);
 
@@ -339,46 +344,47 @@ impl ActorSystemBuilder {
 
     fn parse_optional_addr(
         label: &str,
-        input: Option<Result<SocketAddr, String>>,
-    ) -> anyhow::Result<Option<SocketAddr>> {
+        input: Option<std::result::Result<SocketAddr, String>>,
+    ) -> Result<Option<SocketAddr>> {
         match input {
             Some(Ok(addr)) => Ok(Some(addr)),
-            Some(Err(invalid)) => Err(anyhow::anyhow!("Invalid {}: {}", label, invalid)),
+            Some(Err(invalid)) => Err(PulsingError::from(RuntimeError::Other(format!(
+                "Invalid {}: {}",
+                label, invalid
+            )))),
             None => Ok(None),
         }
     }
 
     fn parse_addr_list(
         label: &str,
-        seeds: Vec<Result<SocketAddr, String>>,
-    ) -> anyhow::Result<Vec<SocketAddr>> {
+        seeds: Vec<std::result::Result<SocketAddr, String>>,
+    ) -> Result<Vec<SocketAddr>> {
         let mut addrs = Vec::with_capacity(seeds.len());
         for (i, seed) in seeds.into_iter().enumerate() {
             match seed {
                 Ok(addr) => addrs.push(addr),
                 Err(invalid) => {
-                    return Err(anyhow::anyhow!(
+                    return Err(PulsingError::from(RuntimeError::Other(format!(
                         "Invalid {} at index {}: {}",
-                        label,
-                        i,
-                        invalid
-                    ));
+                        label, i, invalid
+                    ))));
                 }
             }
         }
         Ok(addrs)
     }
 
-    fn validate_config(config: &SystemConfig) -> anyhow::Result<()> {
+    fn validate_config(config: &SystemConfig) -> Result<()> {
         let errors = config.validate();
         if errors.is_empty() {
             return Ok(());
         }
         let error_msgs: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
-        Err(anyhow::anyhow!(
+        Err(PulsingError::from(RuntimeError::Other(format!(
             "Configuration validation failed:\n  - {}",
             error_msgs.join("\n  - ")
-        ))
+        ))))
     }
 }
 
@@ -512,7 +518,7 @@ mod tests {
 }
 
 /// Helper type for flexible address input (defers parsing errors)
-pub struct AddrInput(Result<SocketAddr, String>);
+pub struct AddrInput(std::result::Result<SocketAddr, String>);
 
 impl From<SocketAddr> for AddrInput {
     fn from(addr: SocketAddr) -> Self {

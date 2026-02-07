@@ -1,6 +1,7 @@
 //! Comprehensive tests for the actor addressing system
 
 use pulsing_actor::actor::{ActorId, ActorPath};
+use pulsing_actor::error::{PulsingError, RuntimeError};
 use pulsing_actor::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -31,7 +32,11 @@ struct IdentityActor {
 
 #[async_trait]
 impl Actor for IdentityActor {
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         if msg.msg_type().ends_with("EchoMsg") {
             let echo: EchoMsg = msg.unpack()?;
             self.call_count.fetch_add(1, Ordering::SeqCst);
@@ -40,7 +45,9 @@ impl Actor for IdentityActor {
                 from_node: self.node_name.clone(),
             });
         }
-        Err(anyhow::anyhow!("Unknown message"))
+        Err(PulsingError::from(RuntimeError::Other(
+            "Unknown message".into(),
+        )))
     }
 }
 

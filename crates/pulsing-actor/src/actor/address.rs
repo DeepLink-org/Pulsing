@@ -239,31 +239,39 @@ impl TryFrom<String> for ActorPath {
     }
 }
 
+impl From<AddressParseError> for crate::error::PulsingError {
+    fn from(err: AddressParseError) -> Self {
+        crate::error::PulsingError::from(crate::error::RuntimeError::invalid_actor_path(
+            err.to_string(),
+        ))
+    }
+}
+
 /// Trait for types that can be converted to ActorPath
 pub trait IntoActorPath {
-    fn into_actor_path(self) -> anyhow::Result<ActorPath>;
+    fn into_actor_path(self) -> crate::error::Result<ActorPath>;
 }
 
 impl IntoActorPath for &str {
-    fn into_actor_path(self) -> anyhow::Result<ActorPath> {
+    fn into_actor_path(self) -> crate::error::Result<ActorPath> {
         ActorPath::new(self).map_err(Into::into)
     }
 }
 
 impl IntoActorPath for String {
-    fn into_actor_path(self) -> anyhow::Result<ActorPath> {
+    fn into_actor_path(self) -> crate::error::Result<ActorPath> {
         ActorPath::new(self).map_err(Into::into)
     }
 }
 
 impl IntoActorPath for ActorPath {
-    fn into_actor_path(self) -> anyhow::Result<ActorPath> {
+    fn into_actor_path(self) -> crate::error::Result<ActorPath> {
         Ok(self)
     }
 }
 
 impl IntoActorPath for &ActorPath {
-    fn into_actor_path(self) -> anyhow::Result<ActorPath> {
+    fn into_actor_path(self) -> crate::error::Result<ActorPath> {
         Ok(self.clone())
     }
 }

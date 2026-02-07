@@ -47,25 +47,7 @@ impl PulsingError {
     }
 }
 
-impl From<anyhow::Error> for PulsingError {
-    fn from(err: anyhow::Error) -> Self {
-        // Try to downcast to known error types
-        if let Some(runtime_err) = err.downcast_ref::<RuntimeError>() {
-            return Self::Runtime(runtime_err.clone());
-        }
-        if let Some(actor_err) = err.downcast_ref::<ActorError>() {
-            return Self::Actor(actor_err.clone());
-        }
-        // Try to downcast to PulsingError itself
-        if let Some(pulsing_err) = err.downcast_ref::<PulsingError>() {
-            return pulsing_err.clone();
-        }
-        // Default to runtime error for unknown errors
-        Self::Runtime(RuntimeError::Other(err.to_string()))
-    }
-}
-
-// Implement Clone for PulsingError to support downcast
+// Implement Clone for PulsingError
 impl Clone for PulsingError {
     fn clone(&self) -> Self {
         match self {

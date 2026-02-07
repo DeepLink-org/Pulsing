@@ -24,13 +24,13 @@ pub struct ActorContext {
 /// Trait for system reference.
 #[async_trait::async_trait]
 pub trait ActorSystemRef: Send + Sync {
-    async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef>;
+    async fn actor_ref(&self, id: &ActorId) -> crate::error::Result<ActorRef>;
 
     fn node_id(&self) -> NodeId;
 
-    async fn watch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()>;
+    async fn watch(&self, watcher: &ActorId, target: &ActorId) -> crate::error::Result<()>;
 
-    async fn unwatch(&self, watcher: &ActorId, target: &ActorId) -> anyhow::Result<()>;
+    async fn unwatch(&self, watcher: &ActorId, target: &ActorId) -> crate::error::Result<()>;
 
     fn local_actor_ref_by_name(&self, name: &str) -> Option<ActorRef>;
 }
@@ -102,7 +102,7 @@ impl ActorContext {
         self.cancel_token.is_cancelled()
     }
 
-    pub async fn actor_ref(&mut self, id: &ActorId) -> anyhow::Result<ActorRef> {
+    pub async fn actor_ref(&mut self, id: &ActorId) -> crate::error::Result<ActorRef> {
         if let Some(r) = self.actor_refs.get(id) {
             return Ok(r.clone());
         }
@@ -117,7 +117,7 @@ impl ActorContext {
         &self,
         msg: M,
         delay: Duration,
-    ) -> anyhow::Result<()> {
+    ) -> crate::error::Result<()> {
         let sender = self.self_sender.clone();
         let message = Message::pack(&msg)?;
 
@@ -133,12 +133,12 @@ impl ActorContext {
     }
 
     /// Watch another actor.
-    pub async fn watch(&self, target: &ActorId) -> anyhow::Result<()> {
+    pub async fn watch(&self, target: &ActorId) -> crate::error::Result<()> {
         self.system.watch(&self.actor_id, target).await
     }
 
     /// Stop watching another actor.
-    pub async fn unwatch(&self, target: &ActorId) -> anyhow::Result<()> {
+    pub async fn unwatch(&self, target: &ActorId) -> crate::error::Result<()> {
         self.system.unwatch(&self.actor_id, target).await
     }
 }

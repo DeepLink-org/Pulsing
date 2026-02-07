@@ -4,6 +4,7 @@
 //! for graceful lifecycle management.
 
 use crate::actor::{ActorPath, StopReason};
+use crate::error::Result;
 use crate::system::ActorSystem;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -17,7 +18,7 @@ impl ActorSystem {
     /// This method first signals the actor to stop via its cancellation token,
     /// waits for it to finish (with timeout), then performs cleanup.
     /// If the actor doesn't stop within the timeout, it will be forcefully aborted.
-    pub async fn stop(&self, name: impl AsRef<str>) -> anyhow::Result<()> {
+    pub async fn stop(&self, name: impl AsRef<str>) -> Result<()> {
         self.stop_with_reason(name, StopReason::Killed).await
     }
 
@@ -25,11 +26,7 @@ impl ActorSystem {
     ///
     /// Note: If the name doesn't contain a "/" and no actor is found with the exact name,
     /// it will try with the "actors/" prefix (for Python compatibility).
-    pub async fn stop_with_reason(
-        &self,
-        name: impl AsRef<str>,
-        reason: StopReason,
-    ) -> anyhow::Result<()> {
+    pub async fn stop_with_reason(&self, name: impl AsRef<str>, reason: StopReason) -> Result<()> {
         let name = name.as_ref();
 
         let actual_name = if self.registry.has_name(name) {
@@ -63,7 +60,7 @@ impl ActorSystem {
     }
 
     /// Stop a named actor by path
-    pub async fn stop_named(&self, path: &crate::actor::ActorPath) -> anyhow::Result<()> {
+    pub async fn stop_named(&self, path: &crate::actor::ActorPath) -> Result<()> {
         self.stop_named_with_reason(path, StopReason::Killed).await
     }
 
@@ -72,7 +69,7 @@ impl ActorSystem {
         &self,
         path: &crate::actor::ActorPath,
         reason: StopReason,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let path_key = path.as_str();
 
         if let Some(actor_name) = self.registry.get_actor_name_by_path(&path_key) {
@@ -95,7 +92,7 @@ impl ActorSystem {
 
     /// Shutdown the entire actor system
     ///
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
+    pub async fn shutdown(&self) -> Result<()> {
         tracing::info!("Shutting down actor system");
 
         self.cancel_token.cancel();

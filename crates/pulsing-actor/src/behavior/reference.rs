@@ -70,27 +70,25 @@ where
         &self.name
     }
 
-    fn resolve(&self) -> anyhow::Result<ActorRef> {
+    fn resolve(&self) -> crate::error::Result<ActorRef> {
         match &self.mode {
             ResolutionMode::Direct(inner) => Ok(inner.clone()),
             ResolutionMode::Dynamic(system) => {
                 system.local_actor_ref_by_name(&self.name).ok_or_else(|| {
-                    anyhow::Error::from(PulsingError::from(RuntimeError::actor_not_found(
-                        self.name.clone(),
-                    )))
+                    PulsingError::from(RuntimeError::actor_not_found(self.name.clone()))
                 })
             }
         }
     }
 
     /// Send a message without waiting for response.
-    pub async fn tell(&self, msg: M) -> anyhow::Result<()> {
+    pub async fn tell(&self, msg: M) -> crate::error::Result<()> {
         let actor_ref = self.resolve()?;
         actor_ref.tell(msg).await
     }
 
     /// Send a message and wait for a response.
-    pub async fn ask<R>(&self, msg: M) -> anyhow::Result<R>
+    pub async fn ask<R>(&self, msg: M) -> crate::error::Result<R>
     where
         R: DeserializeOwned,
     {
@@ -99,17 +97,22 @@ where
     }
 
     /// Send a message and wait for a response with timeout.
-    pub async fn ask_timeout<R>(&self, msg: M, timeout: Duration) -> anyhow::Result<R>
+    pub async fn ask_timeout<R>(&self, msg: M, timeout: Duration) -> crate::error::Result<R>
     where
         R: DeserializeOwned,
     {
         tokio::time::timeout(timeout, self.ask(msg))
             .await
-            .map_err(|_| anyhow::anyhow!("Ask timeout after {:?}", timeout))?
+            .map_err(|_| {
+                PulsingError::from(RuntimeError::Other(format!(
+                    "Ask timeout after {:?}",
+                    timeout
+                )))
+            })?
     }
 
     /// Get the underlying untyped ActorRef.
-    pub fn as_untyped(&self) -> anyhow::Result<ActorRef> {
+    pub fn as_untyped(&self) -> crate::error::Result<ActorRef> {
         self.resolve()
     }
 

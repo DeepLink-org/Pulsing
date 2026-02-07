@@ -3,6 +3,7 @@
 use super::messages::*;
 use async_trait::async_trait;
 use futures_util::StreamExt;
+use pulsing_actor::error::{PulsingError, RuntimeError};
 use pulsing_actor::prelude::*;
 use reqwest::Client;
 use reqwest_eventsource::{Event as SseEvent, EventSource};
@@ -204,7 +205,7 @@ impl WorkerActor {
 
 #[async_trait]
 impl Actor for WorkerActor {
-    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         info!(
             "Worker {} started with actor_id {:?}",
             self.worker_id,
@@ -213,7 +214,7 @@ impl Actor for WorkerActor {
         Ok(())
     }
 
-    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         info!(
             "Worker {} stopped. Completed: {}, Failed: {}",
             self.worker_id,
@@ -223,7 +224,11 @@ impl Actor for WorkerActor {
         Ok(())
     }
 
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let msg_type = msg.msg_type();
 
         if msg_type.ends_with("SendRequest") {
@@ -253,7 +258,10 @@ impl Actor for WorkerActor {
             return Message::pack(&status);
         }
 
-        Err(anyhow::anyhow!("Unknown message type: {}", msg_type))
+        Err(PulsingError::from(RuntimeError::Other(format!(
+            "Unknown message type: {}",
+            msg_type
+        ))))
     }
 }
 

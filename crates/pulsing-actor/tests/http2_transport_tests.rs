@@ -50,7 +50,7 @@ impl Http2ServerHandler for TestHandler {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Message> {
+    ) -> pulsing_actor::error::Result<Message> {
         self.counters.ask_count.fetch_add(1, Ordering::SeqCst);
 
         // Echo the payload with path and msg_type prepended
@@ -64,7 +64,7 @@ impl Http2ServerHandler for TestHandler {
         _path: &str,
         _msg_type: &str,
         _payload: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    ) -> pulsing_actor::error::Result<()> {
         self.counters.tell_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -73,7 +73,7 @@ impl Http2ServerHandler for TestHandler {
         &self,
         _payload: Vec<u8>,
         _peer_addr: std::net::SocketAddr,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> pulsing_actor::error::Result<Option<Vec<u8>>> {
         Ok(None)
     }
 
@@ -990,7 +990,11 @@ impl StreamingHandler {
 
 #[async_trait::async_trait]
 impl Http2ServerHandler for StreamingHandler {
-    async fn handle_message_full(&self, path: &str, msg: Message) -> anyhow::Result<Message> {
+    async fn handle_message_full(
+        &self,
+        path: &str,
+        msg: Message,
+    ) -> pulsing_actor::error::Result<Message> {
         use futures::StreamExt;
         self.counters.ask_count.fetch_add(1, Ordering::SeqCst);
 
@@ -1011,7 +1015,11 @@ impl Http2ServerHandler for StreamingHandler {
                             collected.extend(data);
                         }
                         Ok(Message::Stream { .. }) => {
-                            return Err(anyhow::anyhow!("Nested streams not supported"));
+                            return Err(pulsing_actor::error::PulsingError::from(
+                                pulsing_actor::error::RuntimeError::Other(
+                                    "Nested streams not supported".into(),
+                                ),
+                            ));
                         }
                         Err(e) => return Err(e),
                     }
@@ -1027,7 +1035,7 @@ impl Http2ServerHandler for StreamingHandler {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<Message> {
+    ) -> pulsing_actor::error::Result<Message> {
         self.counters.ask_count.fetch_add(1, Ordering::SeqCst);
         let mut response = format!("{}:{}:", path, msg_type).into_bytes();
         response.extend(payload);
@@ -1039,7 +1047,7 @@ impl Http2ServerHandler for StreamingHandler {
         _path: &str,
         _msg_type: &str,
         _payload: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    ) -> pulsing_actor::error::Result<()> {
         self.counters.tell_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -1048,7 +1056,7 @@ impl Http2ServerHandler for StreamingHandler {
         &self,
         _payload: Vec<u8>,
         _peer_addr: std::net::SocketAddr,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> pulsing_actor::error::Result<Option<Vec<u8>>> {
         Ok(None)
     }
 
@@ -1079,7 +1087,7 @@ async fn test_http2_streaming_request() {
     let client = Http2Client::new(Http2Config::default());
 
     // Create a streaming request
-    let (tx, rx) = tokio::sync::mpsc::channel::<anyhow::Result<Message>>(10);
+    let (tx, rx) = tokio::sync::mpsc::channel::<pulsing_actor::error::Result<Message>>(10);
 
     // Send some messages through the stream
     tokio::spawn(async move {
@@ -1209,7 +1217,7 @@ mod tracing_tests {
             path: &str,
             msg_type: &str,
             payload: Vec<u8>,
-        ) -> anyhow::Result<Message> {
+        ) -> pulsing_actor::error::Result<Message> {
             self.counters.ask_count.fetch_add(1, Ordering::SeqCst);
 
             // Try to get current trace context
@@ -1229,7 +1237,7 @@ mod tracing_tests {
             _path: &str,
             _msg_type: &str,
             _payload: Vec<u8>,
-        ) -> anyhow::Result<()> {
+        ) -> pulsing_actor::error::Result<()> {
             self.counters.tell_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -1238,7 +1246,7 @@ mod tracing_tests {
             &self,
             _payload: Vec<u8>,
             _peer_addr: std::net::SocketAddr,
-        ) -> anyhow::Result<Option<Vec<u8>>> {
+        ) -> pulsing_actor::error::Result<Option<Vec<u8>>> {
             Ok(None)
         }
 

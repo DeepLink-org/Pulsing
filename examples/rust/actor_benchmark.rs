@@ -17,7 +17,7 @@
 use pulsing_bench::{run_benchmark, BenchmarkArgs};
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> pulsing_actor::error::Result<()> {
     // Parse command line arguments (simplified)
     let args: Vec<String> = std::env::args().collect();
 

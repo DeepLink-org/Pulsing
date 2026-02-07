@@ -12,6 +12,7 @@ use super::scheduler::{RequestGenerator, SimpleRequestGenerator, TokenizedReques
 use super::{ConsoleRendererActor, MetricsAggregatorActor, SchedulerActor, WorkerActor};
 use crate::tokenizer::TokenCounter;
 use async_trait::async_trait;
+use pulsing_actor::error::{PulsingError, RuntimeError};
 use pulsing_actor::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
@@ -486,22 +487,29 @@ impl Default for CoordinatorActor {
 
 #[async_trait]
 impl Actor for CoordinatorActor {
-    async fn on_start(&mut self, ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_start(&mut self, ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         info!("Coordinator started with actor_id {:?}", ctx.id());
         Ok(())
     }
 
-    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> anyhow::Result<()> {
+    async fn on_stop(&mut self, _ctx: &mut ActorContext) -> pulsing_actor::error::Result<()> {
         info!("Coordinator stopped");
         Ok(())
     }
 
-    async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
+    async fn receive(
+        &mut self,
+        msg: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
         let msg_type = msg.msg_type();
 
         if msg_type.ends_with("StartBenchmark") {
             let start: StartBenchmark = msg.unpack()?;
-            let result = self.start_benchmark(start).await?;
+            let result = self
+                .start_benchmark(start)
+                .await
+                .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
             return Message::pack(&result);
         }
 
@@ -525,9 +533,14 @@ impl Actor for CoordinatorActor {
             if let Some(ref report) = self.final_report {
                 return Message::pack(report);
             }
-            return Err(anyhow::anyhow!("No report available"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "No report available".into(),
+            )));
         }
 
-        Err(anyhow::anyhow!("Unknown message type: {}", msg_type))
+        Err(PulsingError::from(RuntimeError::Other(format!(
+            "Unknown message type: {}",
+            msg_type
+        ))))
     }
 }

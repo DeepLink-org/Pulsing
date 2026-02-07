@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::actor::{Actor, ActorId, ActorPath, ActorRef, IntoActor, IntoActorPath, NodeId};
 use crate::cluster::{MemberInfo, NamedActorInfo};
-use crate::error::{PulsingError, RuntimeError};
+use crate::error::{PulsingError, Result, RuntimeError};
 use crate::supervision::SupervisionSpec;
 use crate::system_actor::BoxedActorFactory;
 
@@ -24,7 +24,7 @@ pub trait ActorSystemCoreExt: Sized {
     /// Accepts any type that implements `IntoActor`, including:
     /// - Types implementing `Actor` directly
     /// - `Behavior<M>` (automatically wrapped)
-    async fn spawn<A>(&self, actor: A) -> anyhow::Result<ActorRef>
+    async fn spawn<A>(&self, actor: A) -> Result<ActorRef>
     where
         A: IntoActor;
 
@@ -39,11 +39,7 @@ pub trait ActorSystemCoreExt: Sized {
     /// # Arguments
     /// - `name` - The name for discovery (e.g., "services/echo")
     /// - `actor` - The actor instance or Behavior
-    async fn spawn_named<A>(
-        &self,
-        name: impl AsRef<str> + Send,
-        actor: A,
-    ) -> anyhow::Result<ActorRef>
+    async fn spawn_named<A>(&self, name: impl AsRef<str> + Send, actor: A) -> Result<ActorRef>
     where
         A: IntoActor;
 
@@ -51,10 +47,10 @@ pub trait ActorSystemCoreExt: Sized {
     fn spawning(&self) -> SpawnBuilder<'_>;
 
     /// Get ActorRef for a local or remote actor by ID
-    async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef>;
+    async fn actor_ref(&self, id: &ActorId) -> Result<ActorRef>;
 
     /// Resolve a named actor by name.
-    async fn resolve<P>(&self, name: P) -> anyhow::Result<ActorRef>
+    async fn resolve<P>(&self, name: P) -> Result<ActorRef>
     where
         P: IntoActorPath + Send;
 
@@ -140,7 +136,7 @@ impl<'a> SpawnBuilder<'a> {
     ///
     /// If a name was set, spawns a named actor (resolvable).
     /// Otherwise, spawns an anonymous actor (only accessible via ActorRef).
-    pub async fn spawn<A>(self, actor: A) -> anyhow::Result<ActorRef>
+    pub async fn spawn<A>(self, actor: A) -> Result<ActorRef>
     where
         A: IntoActor,
     {
@@ -152,7 +148,6 @@ impl<'a> SpawnBuilder<'a> {
                 PulsingError::from(RuntimeError::actor_spawn_failed(
                     "Actor cannot be restarted (spawned as instance)",
                 ))
-                .into()
             })
         };
         self.spawn_factory(factory).await
@@ -165,14 +160,16 @@ impl<'a> SpawnBuilder<'a> {
     ///
     /// Note: Only named actors support supervision/restart. Anonymous actors
     /// cannot be restarted because they have no stable identity for re-resolution.
-    pub async fn spawn_factory<F, A>(self, factory: F) -> anyhow::Result<ActorRef>
+    pub async fn spawn_factory<F, A>(self, factory: F) -> Result<ActorRef>
     where
-        F: FnMut() -> anyhow::Result<A> + Send + 'static,
+        F: FnMut() -> Result<A> + Send + 'static,
         A: Actor,
     {
         // Check if name validation failed
         if let Some(ref error) = self.name_error {
-            return Err(PulsingError::from(RuntimeError::invalid_actor_path(error.clone())).into());
+            return Err(PulsingError::from(RuntimeError::invalid_actor_path(
+                error.clone(),
+            )));
         }
 
         match self.name {
@@ -222,7 +219,7 @@ impl<'a> ResolveBuilder<'a> {
     }
 
     /// Resolve a named actor
-    pub async fn resolve<P>(self, name: P) -> anyhow::Result<ActorRef>
+    pub async fn resolve<P>(self, name: P) -> Result<ActorRef>
     where
         P: IntoActorPath + Send,
     {
@@ -231,7 +228,7 @@ impl<'a> ResolveBuilder<'a> {
     }
 
     /// List all instances of a named actor
-    pub async fn list<P>(self, name: P) -> anyhow::Result<Vec<ActorRef>>
+    pub async fn list<P>(self, name: P) -> Result<Vec<ActorRef>>
     where
         P: IntoActorPath + Send,
     {
@@ -240,7 +237,7 @@ impl<'a> ResolveBuilder<'a> {
     }
 
     /// Lazy resolve - returns ActorRef that auto re-resolves when stale
-    pub fn lazy<P>(self, name: P) -> anyhow::Result<ActorRef>
+    pub fn lazy<P>(self, name: P) -> Result<ActorRef>
     where
         P: IntoActorPath,
     {
@@ -252,13 +249,10 @@ impl<'a> ResolveBuilder<'a> {
 #[async_trait::async_trait]
 pub trait ActorSystemOpsExt {
     /// Get SystemActor reference
-    async fn system(&self) -> anyhow::Result<ActorRef>;
+    async fn system(&self) -> Result<ActorRef>;
 
     /// Start SystemActor with custom factory (for Python extension)
-    async fn start_system_actor_with_factory(
-        &self,
-        factory: BoxedActorFactory,
-    ) -> anyhow::Result<()>;
+    async fn start_system_actor_with_factory(&self, factory: BoxedActorFactory) -> Result<()>;
 
     /// Get node ID
     fn node_id(&self) -> &NodeId;
@@ -294,10 +288,7 @@ pub trait ActorSystemOpsExt {
     fn tracked_node_count(&self) -> usize;
 
     /// Resolve an actor address and get an ActorRef
-    async fn resolve_address(
-        &self,
-        address: &crate::actor::ActorAddress,
-    ) -> anyhow::Result<ActorRef>;
+    async fn resolve_address(&self, address: &crate::actor::ActorAddress) -> Result<ActorRef>;
 
     /// Get detailed instances with actor_id and metadata
     async fn get_named_instances_detailed(
@@ -315,27 +306,27 @@ pub trait ActorSystemOpsExt {
     async fn members(&self) -> Vec<MemberInfo>;
 
     /// Stop an actor by local name
-    async fn stop(&self, name: impl AsRef<str> + Send) -> anyhow::Result<()>;
+    async fn stop(&self, name: impl AsRef<str> + Send) -> Result<()>;
 
     /// Stop an actor with a specific reason
     async fn stop_with_reason(
         &self,
         name: impl AsRef<str> + Send,
         reason: crate::actor::StopReason,
-    ) -> anyhow::Result<()>;
+    ) -> Result<()>;
 
     /// Stop a named actor by path
-    async fn stop_named(&self, path: &ActorPath) -> anyhow::Result<()>;
+    async fn stop_named(&self, path: &ActorPath) -> Result<()>;
 
     /// Stop a named actor by path with a specific reason
     async fn stop_named_with_reason(
         &self,
         path: &ActorPath,
         reason: crate::actor::StopReason,
-    ) -> anyhow::Result<()>;
+    ) -> Result<()>;
 
     /// Shutdown the entire actor system
-    async fn shutdown(&self) -> anyhow::Result<()>;
+    async fn shutdown(&self) -> Result<()>;
 
     /// Get cancellation token
     fn cancel_token(&self) -> CancellationToken;
@@ -349,18 +340,14 @@ use super::ActorSystem;
 
 #[async_trait::async_trait]
 impl ActorSystemCoreExt for Arc<ActorSystem> {
-    async fn spawn<A>(&self, actor: A) -> anyhow::Result<ActorRef>
+    async fn spawn<A>(&self, actor: A) -> Result<ActorRef>
     where
         A: IntoActor,
     {
         self.spawning().spawn(actor).await
     }
 
-    async fn spawn_named<A>(
-        &self,
-        name: impl AsRef<str> + Send,
-        actor: A,
-    ) -> anyhow::Result<ActorRef>
+    async fn spawn_named<A>(&self, name: impl AsRef<str> + Send, actor: A) -> Result<ActorRef>
     where
         A: IntoActor,
     {
@@ -371,11 +358,11 @@ impl ActorSystemCoreExt for Arc<ActorSystem> {
         SpawnBuilder::new(self)
     }
 
-    async fn actor_ref(&self, id: &ActorId) -> anyhow::Result<ActorRef> {
+    async fn actor_ref(&self, id: &ActorId) -> Result<ActorRef> {
         ActorSystem::actor_ref(self.as_ref(), id).await
     }
 
-    async fn resolve<P>(&self, name: P) -> anyhow::Result<ActorRef>
+    async fn resolve<P>(&self, name: P) -> Result<ActorRef>
     where
         P: IntoActorPath + Send,
     {
@@ -389,14 +376,11 @@ impl ActorSystemCoreExt for Arc<ActorSystem> {
 
 #[async_trait::async_trait]
 impl ActorSystemOpsExt for Arc<ActorSystem> {
-    async fn system(&self) -> anyhow::Result<ActorRef> {
+    async fn system(&self) -> Result<ActorRef> {
         ActorSystem::system(self.as_ref()).await
     }
 
-    async fn start_system_actor_with_factory(
-        &self,
-        factory: BoxedActorFactory,
-    ) -> anyhow::Result<()> {
+    async fn start_system_actor_with_factory(&self, factory: BoxedActorFactory) -> Result<()> {
         ActorSystem::start_system_actor_with_factory(self, factory).await
     }
 
@@ -432,10 +416,7 @@ impl ActorSystemOpsExt for Arc<ActorSystem> {
         ActorSystem::tracked_node_count(self.as_ref())
     }
 
-    async fn resolve_address(
-        &self,
-        address: &crate::actor::ActorAddress,
-    ) -> anyhow::Result<ActorRef> {
+    async fn resolve_address(&self, address: &crate::actor::ActorAddress) -> Result<ActorRef> {
         ActorSystem::resolve(self.as_ref(), address).await
     }
 
@@ -458,7 +439,7 @@ impl ActorSystemOpsExt for Arc<ActorSystem> {
         ActorSystem::members(self.as_ref()).await
     }
 
-    async fn stop(&self, name: impl AsRef<str> + Send) -> anyhow::Result<()> {
+    async fn stop(&self, name: impl AsRef<str> + Send) -> Result<()> {
         ActorSystem::stop(self.as_ref(), name).await
     }
 
@@ -466,11 +447,11 @@ impl ActorSystemOpsExt for Arc<ActorSystem> {
         &self,
         name: impl AsRef<str> + Send,
         reason: crate::actor::StopReason,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         ActorSystem::stop_with_reason(self.as_ref(), name, reason).await
     }
 
-    async fn stop_named(&self, path: &ActorPath) -> anyhow::Result<()> {
+    async fn stop_named(&self, path: &ActorPath) -> Result<()> {
         ActorSystem::stop_named(self.as_ref(), path).await
     }
 
@@ -478,11 +459,11 @@ impl ActorSystemOpsExt for Arc<ActorSystem> {
         &self,
         path: &ActorPath,
         reason: crate::actor::StopReason,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         ActorSystem::stop_named_with_reason(self.as_ref(), path, reason).await
     }
 
-    async fn shutdown(&self) -> anyhow::Result<()> {
+    async fn shutdown(&self) -> Result<()> {
         ActorSystem::shutdown(self.as_ref()).await
     }
 

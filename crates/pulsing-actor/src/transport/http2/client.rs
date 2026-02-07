@@ -6,7 +6,7 @@ use super::retry::{RetryConfig, RetryExecutor};
 use super::stream::{BinaryFrameParser, StreamFrame, StreamHandle};
 use super::{headers, MessageMode, RequestType};
 use crate::actor::{Message, MessageStream};
-use crate::error::RuntimeError;
+use crate::error::{PulsingError, RuntimeError};
 use crate::tracing::{TraceContext, TRACEPARENT_HEADER};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
@@ -209,21 +209,21 @@ impl Http2Client {
         path: &str,
         msg_type: &str,
         payload: Vec<u8>,
-    ) -> anyhow::Result<MessageStream> {
-        let stream_handle = self.ask_stream(addr, path, msg_type, payload).await?;
+    ) -> crate::error::Result<MessageStream> {
+        let stream_handle = self
+            .ask_stream(addr, path, msg_type, payload)
+            .await
+            .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
 
         // Convert StreamFrame stream to Message stream using to_message()
         let msg_stream = stream_handle.filter_map(|result| async move {
             match result {
-                Ok(frame) => {
-                    // Use the new to_message() method
-                    match frame.to_message() {
-                        Ok(Some(msg)) => Some(Ok(msg)),
-                        Ok(None) => None, // End frame with no data
-                        Err(e) => Some(Err(e)),
-                    }
-                }
-                Err(e) => Some(Err(e)),
+                Ok(frame) => match frame.to_message() {
+                    Ok(Some(msg)) => Some(Ok(msg)),
+                    Ok(None) => None,
+                    Err(e) => Some(Err(e)),
+                },
+                Err(e) => Some(Err(PulsingError::from(RuntimeError::Other(e.to_string())))),
             }
         });
 
@@ -507,10 +507,10 @@ impl Http2Client {
                 match result {
                     Ok(frame) => match frame.to_message() {
                         Ok(Some(msg)) => Some(Ok(msg)),
-                        Ok(None) => None, // End frame
+                        Ok(None) => None,
                         Err(e) => Some(Err(e)),
                     },
-                    Err(e) => Some(Err(e)),
+                    Err(e) => Some(Err(PulsingError::from(RuntimeError::Other(e.to_string())))),
                 }
             });
 
