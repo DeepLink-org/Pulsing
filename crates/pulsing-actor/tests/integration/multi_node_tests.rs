@@ -164,7 +164,7 @@ mod two_node_tests {
 // Multi-Node Cluster Tests
 // ============================================================================
 
-mod multi_node_tests {
+mod multi_node {
     use super::*;
 
     #[tokio::test]

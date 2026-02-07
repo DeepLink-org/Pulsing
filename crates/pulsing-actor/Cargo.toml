@@ -97,9 +97,6 @@ path = "../../examples/rust/behavior_counter.rs"
 name = "behavior_fsm"
 path = "../../examples/rust/behavior_fsm.rs"
 
-[[test]]
-name = "integration"
-path = "tests/integration_tests.rs"
 
 [lints]
 workspace = true

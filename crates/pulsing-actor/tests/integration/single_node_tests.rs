@@ -93,7 +93,7 @@ impl Actor for Accumulator {
 // Single Node Integration Tests
 // ============================================================================
 
-mod single_node_tests {
+mod single_node {
     use super::*;
 
     #[tokio::test]

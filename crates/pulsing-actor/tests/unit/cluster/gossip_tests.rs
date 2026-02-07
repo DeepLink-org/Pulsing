@@ -1,9 +1,6 @@
 //! Cluster and Gossip protocol tests
 //!
 //! This file contains integration tests for cluster functionality.
-//! Unit tests for member types are in tests/cluster/member_tests.rs
-
-mod cluster;
 
 use pulsing_actor::actor::{ActorId, NodeId};
 use pulsing_actor::cluster::GossipConfig;
