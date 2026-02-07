@@ -92,7 +92,10 @@ class StorageManager:
         self._buckets: dict[tuple[str, int], ActorRef] = {}
         # Topic brokers managed by this node: {topic_name: ActorRef}
         self._topics: dict[str, ActorRef] = {}
-        self._lock = asyncio.Lock()
+        # Per-resource locks so different buckets/topics can be created in parallel
+        self._bucket_locks: dict[tuple[str, int], asyncio.Lock] = {}
+        self._topic_locks: dict[str, asyncio.Lock] = {}
+        self._locks_meta = asyncio.Lock()
 
         # Cached cluster member information
         self._members: list[dict] = []
@@ -131,32 +134,30 @@ class StorageManager:
         backend: str | type | None = None,
         backend_options: dict | None = None,
     ) -> ActorRef:
-        """Get or create local BucketStorage Actor"""
+        """Get or create local BucketStorage Actor. Per-key lock allows parallel creation."""
         key = (topic, bucket_id)
-
         if key in self._buckets:
             return self._buckets[key]
 
-        async with self._lock:
+        async with self._locks_meta:
+            if key not in self._bucket_locks:
+                self._bucket_locks[key] = asyncio.Lock()
+            lock = self._bucket_locks[key]
+
+        async with lock:
             if key in self._buckets:
                 return self._buckets[key]
-
-            # Create BucketStorage Actor
             actor_name = f"bucket_{topic}_{bucket_id}"
-            # Use provided storage_path or default path
             if storage_path:
                 bucket_storage_path = f"{storage_path}/bucket_{bucket_id}"
             else:
                 bucket_storage_path = (
                     f"{self.base_storage_path}/{topic}/bucket_{bucket_id}"
                 )
-
             try:
-                # Try to resolve existing
                 self._buckets[key] = await self.system.resolve_named(actor_name)
                 logger.debug(f"Resolved existing bucket: {actor_name}")
             except Exception:
-                # Create new using BucketStorage.local() for proper @remote wrapping
                 proxy = await BucketStorage.local(
                     self.system,
                     bucket_id=bucket_id,
@@ -169,33 +170,33 @@ class StorageManager:
                 )
                 self._buckets[key] = proxy.ref
                 logger.info(f"Created bucket: {actor_name} at {bucket_storage_path}")
-
             return self._buckets[key]
 
     async def _get_or_create_topic_broker(self, topic_name: str) -> ActorRef:
-        """Get or create local TopicBroker Actor"""
+        """Get or create local TopicBroker Actor. Per-topic lock allows parallel creation."""
         if topic_name in self._topics:
             return self._topics[topic_name]
 
-        async with self._lock:
+        async with self._locks_meta:
+            if topic_name not in self._topic_locks:
+                self._topic_locks[topic_name] = asyncio.Lock()
+            lock = self._topic_locks[topic_name]
+
+        async with lock:
             if topic_name in self._topics:
                 return self._topics[topic_name]
-
             actor_name = f"_topic_broker_{topic_name}"
             try:
                 self._topics[topic_name] = await self.system.resolve_named(actor_name)
                 logger.debug(f"Resolved existing topic broker: {actor_name}")
             except Exception:
-                # Lazy import to avoid circular dependency
                 from pulsing.topic.broker import TopicBroker
 
-                # Use TopicBroker.local() to create properly wrapped actor
                 proxy = await TopicBroker.local(
                     self.system, topic_name, self.system, name=actor_name, public=True
                 )
                 self._topics[topic_name] = proxy.ref
                 logger.info(f"Created topic broker: {actor_name}")
-
             return self._topics[topic_name]
 
     # ========== Public Remote Methods ==========
@@ -323,8 +324,19 @@ class StorageManager:
         }
 
 
-# Lock to prevent concurrent creation of StorageManager
-_manager_lock = asyncio.Lock()
+# Per-event-loop lock to prevent concurrent creation of StorageManager.
+# Lazy init so the lock is bound to the current loop (avoids "bound to a different event loop" in tests).
+_manager_lock: asyncio.Lock | None = None
+_manager_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_manager_lock() -> asyncio.Lock:
+    global _manager_lock, _manager_lock_loop
+    loop = asyncio.get_running_loop()
+    if _manager_lock is None or _manager_lock_loop is not loop:
+        _manager_lock = asyncio.Lock()
+        _manager_lock_loop = loop
+    return _manager_lock
 
 
 async def get_storage_manager(system: ActorSystem) -> "ActorProxy":
@@ -343,7 +355,7 @@ async def get_storage_manager(system: ActorSystem) -> "ActorProxy":
     except Exception:
         pass
 
-    async with _manager_lock:
+    async with _get_manager_lock():
         # Check local node again
         try:
             return await StorageManager.resolve(

@@ -378,16 +378,18 @@ mod error_tests {
             .await
             .unwrap();
 
-        // Send crash message
+        // receive 返回 Err 时只把错误返回给调用者，actor 不退出
         let result: Result<Pong, _> = actor_ref.ask(CrashMessage).await;
         assert!(result.is_err());
         assert_eq!(crash_count.load(Ordering::SeqCst), 1);
 
-        // With supervision model, errors cause actor to crash (unless supervision is configured)
-        // So subsequent messages should fail
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        // Actor 仍存活，后续消息应正常处理
         let result2: Result<Pong, _> = actor_ref.ask(Ping { value: 42 }).await;
-        assert!(result2.is_err(), "Actor should be dead after error");
+        assert!(
+            result2.is_ok(),
+            "Actor should still be alive after receive error"
+        );
+        assert_eq!(result2.unwrap().result, 42);
 
         system.shutdown().await.unwrap();
     }
@@ -407,17 +409,14 @@ mod error_tests {
             .await
             .unwrap();
 
-        // First crash message crashes the actor
-        let _: Result<Pong, _> = actor_ref.ask(CrashMessage).await;
+        // receive 返回 Err 时只把错误返回给调用者，actor 不退出
+        let r1: Result<Pong, _> = actor_ref.ask(CrashMessage).await;
+        assert!(r1.is_err());
         assert_eq!(crash_count.load(Ordering::SeqCst), 1);
 
-        // Actor is now dead - subsequent messages fail with mailbox closed
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        let result: Result<Pong, _> = actor_ref.ask(CrashMessage).await;
-        assert!(result.is_err(), "Actor should be dead after first error");
-
-        // Counter doesn't increment because actor is dead
-        assert_eq!(crash_count.load(Ordering::SeqCst), 1);
+        let r2: Result<Pong, _> = actor_ref.ask(CrashMessage).await;
+        assert!(r2.is_err());
+        assert_eq!(crash_count.load(Ordering::SeqCst), 2);
 
         system.shutdown().await.unwrap();
     }

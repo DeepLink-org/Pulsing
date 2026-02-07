@@ -42,7 +42,7 @@
 │   bucket_0   │           │   bucket_1   │           │   bucket_2   │
 │              │           │              │           │              │
 │  - buffer[]  │           │  - buffer[]  │           │  - buffer[]  │
-│  - Lance     │           │  - Lance     │           │  - Lance     │
+│  - backend   │           │  - backend   │           │  - backend   │
 │  - Condition │           │  - Condition │           │  - Condition │
 └──────────────┘           └──────────────┘           └──────────────┘
      Node A                     Node B                     Node A
@@ -68,7 +68,7 @@
 
 每个 bucket 一个实例，负责：
 - 数据缓冲（内存）
-- 数据持久化（Lance）
+- 数据持久化（由后端实现）
 - 消费者阻塞/唤醒（asyncio.Condition）
 
 ### 3. Queue / QueueWriter / QueueReader
@@ -132,7 +132,7 @@ get_bucket_ref(system, topic, bucket_id)
 ┌─────────────────────────────────────────────────────┐
 │                    总数据视图                        │
 ├─────────────────────────┬───────────────────────────┤
-│    持久化 (Lance)        │      内存缓冲             │
+│    持久化（若后端支持）   │      内存缓冲             │
 │    [0, persisted_count) │  [persisted_count, total) │
 └─────────────────────────┴───────────────────────────┘
                           ↑
@@ -140,7 +140,7 @@ get_bucket_ref(system, topic, bucket_id)
 ```
 
 - 写入后数据**立即**对消费者可见（在内存缓冲中）
-- 达到 `batch_size` 后自动持久化到 Lance
+- 达到 `batch_size` 后由后端决定是否持久化
 - 调用 `flush()` 可强制持久化
 
 ## 快速开始
@@ -248,17 +248,9 @@ Consumer (rank=0)           Consumer (rank=1)
       └─▶ bucket_2                └─▶ bucket_3
 ```
 
-## 依赖
-
-```bash
-pip install lance pyarrow
-```
-
----
-
 ## 可插拔存储后端
 
-队列系统支持可插拔的存储后端，可根据需求选择不同实现。
+队列仅内置 `memory` 后端；持久化等能力通过**插件**以 `register_backend()` 接入，不在 Pulsing 内直接依赖具体实现。
 
 ### 内置后端
 
@@ -266,38 +258,20 @@ pip install lance pyarrow
 |------|------|----------|
 | `memory` | 纯内存，无持久化（默认） | 测试、临时数据 |
 
-### 持久化后端（需安装 persisting）
+### 插件后端
 
-```bash
-pip install persisting[lance]
-```
-
-| 后端 | 说明 | 适用场景 |
-|------|------|----------|
-| `LanceBackend` | Lance 持久化 | 一般持久化场景 |
-| `PersistingBackend` | 增强版（WAL、监控） | 生产环境 |
-
-### 使用方式
+持久化或其它后端由第三方包提供，通过 `register_backend()` 注册后使用：
 
 ```python
-# 使用默认内存后端
+# 默认内存后端
 writer = await system.queue.write("my_queue")
 
-# 使用 persisting 的 Lance 持久化后端
-from persisting.queue import LanceBackend
+# 使用插件提供的后端（示例）
+from my_plugin import MyBackend
 from pulsing.queue import register_backend
 
-register_backend("lance", LanceBackend)
-writer = await system.queue.write("my_queue", backend="lance")
-
-# 使用增强版后端
-from persisting.queue import PersistingBackend
-register_backend("persisting", PersistingBackend)
-writer = await system.queue.write(
-    "my_queue",
-    backend="persisting",
-    backend_options={"enable_wal": True, "enable_metrics": True}
-)
+register_backend("my_backend", MyBackend)
+writer = await system.queue.write("my_queue", backend="my_backend")
 ```
 
 ### 自定义后端
@@ -364,11 +338,7 @@ class MyBackend:
    - 节点故障时，其 bucket 数据可能丢失（内存部分）
    - 可以考虑副本或 WAL 机制
 
-4. **Lance Schema 演化**
-   - 当前不支持 schema 变化
-   - 新字段可能导致写入失败
-
-5. **性能优化**
+4. **性能优化**
    - `get_bucket_ref` 每次都查询 StorageManager
    - 可以增加客户端缓存，减少 RPC 调用
 

@@ -1,21 +1,21 @@
 """Storage Backend Protocol - Pluggable Storage Implementation
 
-Defines StorageBackend protocol, allowing different storage implementations:
-- MemoryBackend: Pure in-memory (built-in default)
-- Third-party implementations: e.g., LanceBackend, PersistingBackend provided by persisting
+Defines StorageBackend protocol for pluggable storage:
+- MemoryBackend: Pure in-memory (built-in default, no extra deps)
+- Custom backends: register via register_backend() or pass class to write_queue()
 
 Usage:
-    # Use built-in backend
+    # Built-in memory backend
     writer = await write_queue(system, "topic", backend="memory")
 
-    # Use persistent backend provided by persisting
-    from persisting.queue import LanceBackend
+    # Custom backend (e.g. from a plugin package)
+    from some_plugin import MyBackend
     from pulsing.queue import register_backend
-    register_backend("lance", LanceBackend)
-    writer = await write_queue(system, "topic", backend="lance")
+    register_backend("my_backend", MyBackend)
+    writer = await write_queue(system, "topic", backend="my_backend")
 
     # Or pass class directly
-    writer = await write_queue(system, "topic", backend=LanceBackend)
+    writer = await write_queue(system, "topic", backend=MyBackend)
 """
 
 from __future__ import annotations
@@ -85,9 +85,7 @@ class MemoryBackend:
     - Supports blocking wait for new data
     - Lightweight, suitable for testing and temporary data
 
-    For persistence capabilities, use backends provided by the persisting package:
-    - persisting.queue.LanceBackend: Lance persistence
-    - persisting.queue.PersistingBackend: Enhanced version (WAL, monitoring, etc.)
+    For persistence, use a plugin that implements StorageBackend (e.g. register_backend).
     """
 
     def __init__(self, bucket_id: int, **kwargs):
@@ -175,18 +173,17 @@ _BUILTIN_BACKENDS: dict[str, type] = {
     "memory": MemoryBackend,
 }
 
-# Third-party backend registration (e.g., lance provided by persisting)
+# Plugin backends registered via register_backend()
 _REGISTERED_BACKENDS: dict[str, type] = {}
 
 
 def register_backend(name: str, backend_class: type) -> None:
-    """Register a custom backend
+    """Register a custom storage backend (e.g. from a plugin package).
 
     Example:
-        from persisting.queue import LanceBackend
-        register_backend("lance", LanceBackend)
-
-        writer = await write_queue(system, "topic", backend="lance")
+        from my_plugin import MyBackend
+        register_backend("my_backend", MyBackend)
+        writer = await write_queue(system, "topic", backend="my_backend")
     """
     if not isinstance(backend_class, type):
         raise TypeError(f"backend_class must be a class, got {type(backend_class)}")
@@ -215,7 +212,7 @@ def get_backend_class(backend: str | type) -> type:
     available = list(_BUILTIN_BACKENDS.keys()) + list(_REGISTERED_BACKENDS.keys())
     raise ValueError(
         f"Unknown backend: {backend}. Available: {available}. "
-        f"Use register_backend() to add custom backends, or install 'persisting' for Lance support."
+        "Use register_backend() to add custom backends."
     )
 
 

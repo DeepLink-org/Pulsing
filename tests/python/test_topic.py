@@ -653,19 +653,19 @@ async def test_producer_consumer_stress(actor_system):
 
 @pytest.mark.asyncio
 async def test_read_topic_auto_start(actor_system):
-    """Test auto_start parameter."""
+    """Test auto_start parameter: with callbacks, start() runs; without, ValueError."""
     _writer = await write_topic(actor_system, "auto_start_topic")
 
+    # auto_start=True with no callbacks must raise
+    with pytest.raises(ValueError, match="at least one callback required"):
+        await read_topic(actor_system, "auto_start_topic", auto_start=True)
+
+    # Normal: add_callback then start (or use auto_start=False and start() later)
     received = []
-
-    # No callbacks before start - should warn but work
-    reader = await read_topic(actor_system, "auto_start_topic", auto_start=True)
+    reader = await read_topic(actor_system, "auto_start_topic", auto_start=False)
     reader.add_callback(lambda m: received.append(m))
-
-    # Since auto_start=True but no callbacks at creation time,
-    # the reader started without callbacks
+    await reader.start()
     assert reader.is_started
-
     await reader.stop()
 
 

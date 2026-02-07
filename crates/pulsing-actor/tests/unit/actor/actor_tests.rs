@@ -288,12 +288,12 @@ mod error_tests {
         let result: Result<StateResponse, _> = actor_ref.ask(ErrorMessage).await;
         assert!(result.is_err());
 
-        // With the supervision model, errors cause the actor to crash
-        // (unless supervision is configured to restart it)
-        // So subsequent messages will fail with "mailbox closed"
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        // receive 返回 Err 时只把错误返回给调用者，actor 不退出
         let result2: Result<Pong, _> = actor_ref.ask(Ping { value: 1 }).await;
-        assert!(result2.is_err(), "Actor should be dead after error");
+        assert!(
+            result2.is_ok(),
+            "Actor should still be alive after receive error"
+        );
 
         let _ = system.shutdown().await;
     }

@@ -253,7 +253,7 @@ class TopicReader:
             return
 
         if not self._callbacks:
-            logger.warning(f"TopicReader[{self._reader_id}] has no callbacks")
+            raise ValueError("at least one callback required")
 
         # Create subscriber Actor
         actor_name = f"_topic_sub_{self._topic}_{self._reader_id}"

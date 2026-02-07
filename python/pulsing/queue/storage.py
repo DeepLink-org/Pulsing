@@ -22,9 +22,8 @@ class BucketStorage:
         storage_path: Storage path
         batch_size: Batch size
         backend: Backend name or backend class
-            - "memory": Pure in-memory backend
-            - "lance": Lance persistent backend (default)
-            - Custom class: Class implementing StorageBackend protocol
+            - "memory": Pure in-memory backend (default)
+            - Custom name/class: Use register_backend() or pass class
         backend_options: Additional parameters passed to backend
     """
 
@@ -33,7 +32,7 @@ class BucketStorage:
         bucket_id: int,
         storage_path: str,
         batch_size: int = 100,
-        backend: str | type = "lance",
+        backend: str | type = "memory",
         backend_options: dict[str, Any] | None = None,
     ):
         self.bucket_id = bucket_id

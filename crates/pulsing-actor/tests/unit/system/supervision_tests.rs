@@ -60,15 +60,11 @@ async fn test_restart_on_failure() {
     let resp = actor_ref.send(Message::single("ping", b"1")).await;
     assert!(resp.is_ok());
 
-    // 2nd message - failure (should crash and restart)
+    // 2nd message - receive 返回 Err，错误返回给调用者，actor 不退出、不重启
     let resp = actor_ref.send(Message::single("ping", b"2")).await;
-    assert!(resp.is_err()); // The ask fails because the actor crashed handling it
+    assert!(resp.is_err());
 
-    // Wait a bit for restart
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // 3rd message - success (new instance)
-    // Note: counter is shared, so it will continue from 2 -> 3
+    // 3rd message - 同一实例仍存活，继续处理
     let resp = actor_ref.send(Message::single("ping", b"3")).await;
     assert!(resp.is_ok());
 
@@ -84,21 +80,21 @@ async fn test_restart_on_failure() {
 
 #[tokio::test]
 async fn test_max_restarts_exceeded() {
+    // receive 返回 Err 不会导致 actor 退出，因此不会触发 restart；factory 只被调用一次
     let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
     let counter = Arc::new(AtomicU32::new(0));
 
     let counter_clone = counter.clone();
-    // Fail immediately
     let factory = move || {
         counter_clone.fetch_add(1, Ordering::SeqCst);
         Ok(FailingActor {
-            counter: Arc::new(AtomicU32::new(0)), // Unused
-            fail_at: 1,                           // Fail immediately
+            counter: Arc::new(AtomicU32::new(0)),
+            fail_at: 1, // 第 1 条消息返回 Err
         })
     };
 
     let spec = SupervisionSpec::on_failure()
-        .with_max_restarts(2) // Allow 2 restarts
+        .with_max_restarts(2)
         .with_backoff(BackoffStrategy {
             min: Duration::from_millis(1),
             max: Duration::from_millis(1),
@@ -114,32 +110,13 @@ async fn test_max_restarts_exceeded() {
         .await
         .unwrap();
 
-    // 1st crash
-    let _ = actor_ref.send(Message::single("ping", b"1")).await;
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    // 第 1 条消息：receive 返回 Err，只回传错误，actor 不退出
+    let r1 = actor_ref.send(Message::single("ping", b"1")).await;
+    assert!(r1.is_err());
+    assert_eq!(counter.load(Ordering::SeqCst), 1); // factory 只调用 1 次
 
-    // 2nd crash
-    let _ = actor_ref.send(Message::single("ping", b"2")).await;
-    tokio::time::sleep(Duration::from_millis(10)).await;
-
-    // 3rd crash
-    let _ = actor_ref.send(Message::single("ping", b"3")).await;
-    tokio::time::sleep(Duration::from_millis(10)).await;
-
-    // Should be dead now (Initial start + 2 restarts = 3 failures. Next attempt stops.)
-    // Wait for supervision loop to exit
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // Send message to dead actor
-    let resp = actor_ref.send(Message::single("ping", b"4")).await;
-    assert!(resp.is_err()); // Mailbox closed
-
-    // Check factory calls: Initial + 2 restarts = 3 calls
-    // Actually, if it crashes 3 times:
-    // 1. Start (count=1), Receive -> Crash
-    // 2. Restart 1 (count=2), Receive -> Crash
-    // 3. Restart 2 (count=3), Receive -> Crash
-    // 4. Max restarts exceeded -> Stop
-    // So factory called 3 times.
-    assert_eq!(counter.load(Ordering::SeqCst), 3);
+    // 第 2 条消息：同一实例，count=2 != fail_at(1)，返回 Ok
+    let r2 = actor_ref.send(Message::single("ping", b"2")).await;
+    assert!(r2.is_ok());
+    assert_eq!(counter.load(Ordering::SeqCst), 1); // 无重启
 }

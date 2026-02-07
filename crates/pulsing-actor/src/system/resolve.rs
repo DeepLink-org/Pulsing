@@ -117,7 +117,28 @@ impl ActorSystem {
 
         let instances = cluster.get_named_actor_instances(path).await;
 
+        // When node_id is specified but gossip hasn't propagated the path yet (e.g. Topic
+        // subscriber on another node), resolve by target node directly instead of failing.
         if instances.is_empty() {
+            if let Some(nid) = options.node_id {
+                if nid != self.node_id {
+                    if let Some(member) = cluster.get_member(&nid).await {
+                        if !options.filter_alive || member.status == MemberStatus::Alive {
+                            let transport = Http2RemoteTransport::new_named(
+                                self.transport.client(),
+                                member.addr,
+                                path.clone(),
+                            );
+                            let actor_id = ActorId::generate();
+                            return Ok(ActorRef::remote(
+                                actor_id,
+                                member.addr,
+                                Arc::new(transport),
+                            ));
+                        }
+                    }
+                }
+            }
             return Err(PulsingError::from(RuntimeError::named_actor_not_found(
                 path.as_str(),
             )));

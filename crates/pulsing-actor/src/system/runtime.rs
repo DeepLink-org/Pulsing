@@ -34,12 +34,10 @@ pub(crate) async fn run_actor_instance<A: Actor>(
                             Ok(response) => {
                                 responder.send(Ok(response));
                             }
-                  Err(e) => {
-                      let msg = e.to_string();
-                      tracing::error!(actor_id = ?ctx.id(), error = %e, "Actor error");
-                      responder.send(Err(e));
-                      // Actor crashes on error - supervision will decide whether to restart
-                      return StopReason::Failed(msg);
+                            Err(e) => {
+                                // 业务错误：receive 返回 Err，只把错误返回给调用者，actor 继续处理下一条消息
+                                tracing::warn!(actor_id = ?ctx.id(), error = %e, "Receive returned error (returned to caller)");
+                                responder.send(Err(e));
                             }
                         }
                     }

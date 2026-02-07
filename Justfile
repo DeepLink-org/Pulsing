@@ -56,6 +56,10 @@ test-python:
 test-chaos:
     pytest tests/python/test_chaos.py
 
+# Run Queue & Topic chaos tests (concurrent, join/leave, mixed workload)
+test-queue-topic-chaos:
+    pytest tests/python/test_queue_topic_chaos.py -v -s
+
 # Format all code (Rust + Python)
 fmt:
     cargo fmt

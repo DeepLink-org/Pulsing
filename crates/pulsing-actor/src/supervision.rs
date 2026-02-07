@@ -13,7 +13,7 @@ pub enum RestartPolicy {
     Always,
     /// Restart the actor only if it failed (non-normal exit)
     OnFailure,
-    /// Never restart the actor (default)
+    /// Never restart the actor (default). Panic / 不可恢复错误时停止且不恢复
     #[default]
     Never,
 }
@@ -95,7 +95,7 @@ pub struct SupervisionSpec {
     pub policy: RestartPolicy,
     /// Backoff strategy
     pub backoff: BackoffStrategy,
-    /// Maximum number of restarts allowed
+    /// Maximum number of restarts allowed (used when policy is Always/OnFailure)
     pub max_restarts: u32,
     /// Time window for max_restarts (optional).
     /// If set, max_restarts applies only within this sliding window.

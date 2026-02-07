@@ -69,10 +69,12 @@ from pulsing.actor import (
     remote,
     # Resolve function
     resolve,
+    as_any,
     # Types
     Actor,
     ActorSystem as _ActorSystem,
     ActorRef,
+    ActorRefView,
     ActorId,
     ActorProxy,
     Message,
@@ -273,6 +275,7 @@ __all__ = [
     "spawn",
     "refer",
     "resolve",
+    "as_any",
     "get_system",
     "is_initialized",
     # Decorator
@@ -281,6 +284,7 @@ __all__ = [
     "Actor",
     "ActorSystem",
     "ActorRef",
+    "ActorRefView",
     "ActorId",
     "ActorProxy",
     "Message",

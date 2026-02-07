@@ -327,6 +327,8 @@ class TopicBroker:
                 logger.warning(
                     f"TopicBroker[{self.topic}] wait_any_ack timeout after {timeout}s"
                 )
+                failed = len(tasks)
+                failed_ids = sub_ids.copy()
                 for task in tasks:
                     if not task.done():
                         task.cancel()

@@ -8,7 +8,7 @@ Architecture Features:
 
 Storage Backends:
 - "memory": Pure in-memory backend (built-in default)
-- Persistent backends require installing the persisting package
+- Custom backends: register_backend() or pass class to write_queue()
 
 Example:
     system = await pul.actor_system()

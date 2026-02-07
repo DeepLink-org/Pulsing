@@ -33,8 +33,7 @@ class Queue:
         storage_path: Storage path
         backend: Storage backend
             - "memory": Pure in-memory backend (default)
-            - Persistent backend requires installing persisting package
-            - Custom class: Class implementing StorageBackend protocol
+            - Custom: register_backend() or class implementing StorageBackend
         backend_options: Additional backend parameters
     """
 
@@ -58,9 +57,10 @@ class Queue:
         self.backend = backend
         self.backend_options = backend_options
 
-        # Actor proxies for each bucket
+        # Actor proxies for each bucket; per-bucket locks allow parallel resolution
         self._bucket_refs: dict[int, ActorProxy] = {}
-        self._init_lock = asyncio.Lock()
+        self._bucket_locks: dict[int, asyncio.Lock] = {}
+        self._bucket_locks_meta = asyncio.Lock()
 
         # Save event loop reference (for sync wrapper)
         try:
@@ -76,22 +76,21 @@ class Queue:
         return hash_value % self.num_buckets
 
     async def _ensure_bucket(self, bucket_id: int) -> ActorProxy:
-        """Ensure Actor for specified bucket is created
+        """Ensure Actor for specified bucket is created.
 
-        Get bucket reference through StorageManager:
-        1. Send GetBucket request to local StorageManager
-        2. StorageManager uses consistent hashing to determine owner
-        3. If this node, create and return; otherwise return redirect
-        4. Automatically handle redirects to get bucket on correct node
+        Uses per-bucket lock so different buckets can be resolved in parallel.
         """
         if bucket_id in self._bucket_refs:
             return self._bucket_refs[bucket_id]
 
-        async with self._init_lock:
+        async with self._bucket_locks_meta:
+            if bucket_id not in self._bucket_locks:
+                self._bucket_locks[bucket_id] = asyncio.Lock()
+            lock = self._bucket_locks[bucket_id]
+
+        async with lock:
             if bucket_id in self._bucket_refs:
                 return self._bucket_refs[bucket_id]
-
-            # Get bucket reference through StorageManager
             self._bucket_refs[bucket_id] = await get_bucket_ref(
                 self.system,
                 self.topic,
@@ -327,19 +326,17 @@ async def write_queue(
         storage_path: Storage path
         backend: Storage backend
             - "memory": Pure in-memory backend (default)
-            - Persistent backend requires installing persisting package
-            - Custom class: Class implementing StorageBackend protocol
+            - Custom: register_backend() or pass StorageBackend class
         backend_options: Additional backend parameters
 
     Example:
-        # Use default in-memory backend
         writer = await write_queue(system, "my_queue")
 
-        # Use persisting's Lance backend
-        from persisting.queue import LanceBackend
+        # Custom backend from a plugin
+        from my_plugin import MyBackend
         from pulsing.queue import register_backend
-        register_backend("lance", LanceBackend)
-        writer = await write_queue(system, "my_queue", backend="lance")
+        register_backend("my_backend", MyBackend)
+        writer = await write_queue(system, "my_queue", backend="my_backend")
     """
     # Ensure all nodes in cluster have StorageManager
     from .manager import ensure_storage_managers

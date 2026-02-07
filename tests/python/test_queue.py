@@ -9,7 +9,7 @@ Covers:
 - Distributed consumption (rank/world_size)
 - Stress tests (high concurrency, large data)
 
-Note: Persistence tests (Lance backend) are in persisting package.
+Note: Persistence tests live in plugin packages (e.g. persisting).
 """
 
 import asyncio

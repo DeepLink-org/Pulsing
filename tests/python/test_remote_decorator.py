@@ -8,6 +8,7 @@ NOTE: Basic @remote functionality (spawn, methods, streaming) is tested in:
 This file covers advanced features not in the apis tests:
 - ActorProxy.from_ref with method validation
 - Error handling in methods
+- Delayed call: self.delayed(sec).method(...)
 - Concurrent async method behavior
 """
 
@@ -183,6 +184,87 @@ async def test_actor_proxy_from_ref_with_async_methods():
         # Async method
         result = await proxy.async_method()
         assert result == "async"
+
+    finally:
+        await shutdown()
+
+
+# ============================================================================
+# Delayed Call Tests (self.delayed(sec).method(...))
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_remote_delayed_call():
+    """Test self.delayed(sec).method(...) schedules a tell after delay."""
+    from pulsing.actor import init, shutdown, remote
+
+    @remote
+    class DelayedCallService:
+        def __init__(self):
+            self.received: list[str] = []
+
+        def trigger_delayed(self):
+            """Schedule a delayed call to record(); returns immediately."""
+            self.delayed(0.05).record("delayed_ok")
+            return "scheduled"
+
+        def record(self, msg: str):
+            self.received.append(msg)
+
+        def get_received(self):
+            return list(self.received)
+
+    await init()
+
+    try:
+        service = await DelayedCallService.spawn()
+
+        out = await service.trigger_delayed()
+        assert out == "scheduled"
+
+        # Delayed call not yet delivered
+        assert await service.get_received() == []
+
+        await asyncio.sleep(0.1)
+
+        assert await service.get_received() == ["delayed_ok"]
+
+    finally:
+        await shutdown()
+
+
+@pytest.mark.asyncio
+async def test_remote_delayed_call_cancel():
+    """Test that the task returned by delayed().method() can be cancelled."""
+    from pulsing.actor import init, shutdown, remote
+
+    @remote
+    class DelayedCancelService:
+        def __init__(self):
+            self.received: list[str] = []
+
+        def schedule_then_cancel(self):
+            task = self.delayed(1.0).record("should_not_appear")
+            task.cancel()
+            return "cancelled"
+
+        def record(self, msg: str):
+            self.received.append(msg)
+
+        def get_received(self):
+            return list(self.received)
+
+    await init()
+
+    try:
+        service = await DelayedCancelService.spawn()
+
+        out = await service.schedule_then_cancel()
+        assert out == "cancelled"
+
+        await asyncio.sleep(0.2)
+        assert await service.get_received() == []
 
     finally:
         await shutdown()

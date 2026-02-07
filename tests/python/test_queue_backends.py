@@ -8,7 +8,7 @@ Covers:
 - Integration with write_queue/read_queue APIs
 - Custom backend implementation
 
-Note: LanceBackend tests are in persisting package.
+Note: Persistent backend tests live in plugin packages (e.g. persisting).
 """
 
 import asyncio
