@@ -1,5 +1,6 @@
 //! HTTP/2 transport configuration.
 
+use crate::error::Result;
 use std::time::Duration;
 
 #[cfg(feature = "tls")]
@@ -180,7 +181,7 @@ impl Http2Config {
     /// The passphrase is used to derive a shared CA certificate, enabling
     /// automatic mutual TLS authentication.
     #[cfg(feature = "tls")]
-    pub fn with_tls(mut self, passphrase: &str) -> anyhow::Result<Self> {
+    pub fn with_tls(mut self, passphrase: &str) -> Result<Self> {
         self.tls = Some(TlsConfig::from_passphrase(passphrase)?);
         Ok(self)
     }

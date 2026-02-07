@@ -1,5 +1,6 @@
 //! TLS support for HTTP/2 transport (passphrase-derived certificates).
 
+use crate::error::{PulsingError, Result, RuntimeError};
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose, SerialNumber, PKCS_ED25519,
@@ -39,12 +40,14 @@ pub struct TlsConfig {
 
 impl TlsConfig {
     /// Create TLS configuration from a passphrase.
-    pub fn from_passphrase(passphrase: &str) -> anyhow::Result<Self> {
+    pub fn from_passphrase(passphrase: &str) -> Result<Self> {
         ensure_crypto_provider();
 
-        let (ca_cert, ca_key_pair) = derive_ca_from_passphrase(passphrase)?;
+        let (ca_cert, ca_key_pair) = derive_ca_from_passphrase(passphrase)
+            .map_err(|e| PulsingError::from(RuntimeError::tls_error(e.to_string())))?;
 
-        let (node_cert, node_key_pair) = generate_node_cert(&ca_cert, &ca_key_pair)?;
+        let (node_cert, node_key_pair) = generate_node_cert(&ca_cert, &ca_key_pair)
+            .map_err(|e| PulsingError::from(RuntimeError::tls_error(e.to_string())))?;
 
         let ca_cert_der = CertificateDer::from(ca_cert.der().to_vec());
         let node_cert_der = CertificateDer::from(node_cert.der().to_vec());
@@ -52,21 +55,23 @@ impl TlsConfig {
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(node_key_pair.serialize_der()));
 
         let mut root_store = RootCertStore::empty();
-        root_store.add(ca_cert_der.clone())?;
+        root_store
+            .add(ca_cert_der.clone())
+            .map_err(|e| PulsingError::from(RuntimeError::tls_error(e.to_string())))?;
 
         let client_verifier = WebPkiClientVerifier::builder(Arc::new(root_store.clone()))
             .build()
-            .map_err(|e| anyhow::anyhow!("Failed to build client verifier: {}", e))?;
+            .map_err(|e| PulsingError::from(RuntimeError::tls_error(e.to_string())))?;
 
         let server_config = ServerConfig::builder()
             .with_client_cert_verifier(client_verifier)
             .with_single_cert(vec![node_cert_der.clone()], node_key_der.clone_key())
-            .map_err(|e| anyhow::anyhow!("Failed to build server config: {}", e))?;
+            .map_err(|e| PulsingError::from(RuntimeError::tls_error(e.to_string())))?;
 
         let client_config = ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_client_auth_cert(vec![node_cert_der], node_key_der)
-            .map_err(|e| anyhow::anyhow!("Failed to build client config: {}", e))?;
+            .map_err(|e| PulsingError::from(RuntimeError::tls_error(e.to_string())))?;
 
         let hash = Sha256::digest(passphrase.as_bytes());
         let hash_slice = hash.as_slice();
@@ -89,24 +94,24 @@ impl TlsConfig {
         &self,
         stream: tokio::net::TcpStream,
         _server_name: &str,
-    ) -> anyhow::Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>> {
+    ) -> Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>> {
         let server_name = ServerName::try_from("pulsing.internal".to_string())
-            .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?;
+            .map_err(|e| PulsingError::from(RuntimeError::tls_error(e.to_string())))?;
 
         self.connector
             .connect(server_name, stream)
             .await
-            .map_err(|e| anyhow::anyhow!("TLS connect failed: {}", e))
+            .map_err(|e| PulsingError::from(RuntimeError::tls_error(e.to_string())))
     }
 
     pub async fn accept(
         &self,
         stream: tokio::net::TcpStream,
-    ) -> anyhow::Result<tokio_rustls::server::TlsStream<tokio::net::TcpStream>> {
+    ) -> Result<tokio_rustls::server::TlsStream<tokio::net::TcpStream>> {
         self.acceptor
             .accept(stream)
             .await
-            .map_err(|e| anyhow::anyhow!("TLS accept failed: {}", e))
+            .map_err(|e| PulsingError::from(RuntimeError::tls_error(e.to_string())))
     }
 }
 

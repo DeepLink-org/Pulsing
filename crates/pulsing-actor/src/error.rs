@@ -15,6 +15,49 @@
 //!     - Timeout errors (operation timeouts)
 //!     - Unsupported errors (unsupported operations)
 //!       → Maps to Python: PulsingActorError (and subclasses)
+//!
+//! # Examples
+//!
+//! ## Error Classification
+//!
+//! ```
+//! use pulsing_actor::error::{PulsingError, RuntimeError, ActorError};
+//!
+//! // Create a runtime error
+//! let err = PulsingError::from(RuntimeError::ActorNotFound {
+//!     name: "my_actor".into(),
+//! });
+//!
+//! assert!(err.is_runtime());
+//! assert!(!err.is_actor());
+//!
+//! // Create an actor error
+//! let actor_err = PulsingError::from(ActorError::Timeout {
+//!     operation: "ask".into(),
+//!     duration_ms: 30000,
+//! });
+//!
+//! assert!(!actor_err.is_runtime());
+//! assert!(actor_err.is_actor());
+//! ```
+//!
+//! ## Converting Errors
+//!
+//! ```
+//! use pulsing_actor::error::{PulsingError, RuntimeError};
+//!
+//! fn do_something() -> Result<(), PulsingError> {
+//!     // Automatic conversion from RuntimeError
+//!     Err(RuntimeError::ActorNotFound {
+//!         name: "test".into(),
+//!     }.into())
+//! }
+//!
+//! match do_something() {
+//!     Err(e) => println!("Error: {}", e),
+//!     Ok(_) => unreachable!(),
+//! }
+//! ```
 
 use thiserror::Error;
 

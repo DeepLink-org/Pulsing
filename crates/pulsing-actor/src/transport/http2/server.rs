@@ -107,9 +107,13 @@ impl Http2Server {
         handler: Arc<dyn Http2ServerHandler>,
         config: Http2Config,
         cancel: CancellationToken,
-    ) -> anyhow::Result<Self> {
-        let listener = TcpListener::bind(bind_addr).await?;
-        let local_addr = listener.local_addr()?;
+    ) -> Result<Self> {
+        let listener = TcpListener::bind(bind_addr)
+            .await
+            .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
+        let local_addr = listener
+            .local_addr()
+            .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
 
         tracing::info!(addr = %local_addr, "Starting HTTP/2 server");
 
@@ -185,7 +189,10 @@ impl Http2Server {
         #[cfg(feature = "tls")]
         if let Some(ref tls_config) = config.tls {
             // TLS mode: accept TLS handshake first
-            let tls_stream = tls_config.accept(stream).await?;
+            let tls_stream = tls_config
+                .accept(stream)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             let io = TokioIo::new(tls_stream);
 
             // TLS connections always use HTTP/2 (no HTTP/1.1 fallback)

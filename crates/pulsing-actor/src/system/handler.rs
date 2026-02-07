@@ -147,11 +147,7 @@ impl Http2ServerHandler for SystemMessageHandler {
             if let Some(gossip_backend) = backend.as_any().downcast_ref::<GossipBackend>() {
                 let msg: GossipMessage = bincode::deserialize(&payload)
                     .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string())))?;
-                let response = gossip_backend
-                    .inner()
-                    .handle_gossip(msg, peer_addr)
-                    .await
-                    .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
+                let response = gossip_backend.inner().handle_gossip(msg, peer_addr).await?;
                 if let Some(resp) = response {
                     Ok(Some(bincode::serialize(&resp).map_err(|e| {
                         PulsingError::from(RuntimeError::Serialization(e.to_string()))

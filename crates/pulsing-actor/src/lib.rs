@@ -6,37 +6,129 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,ignore
-//! use pulsing_actor::prelude::*;
+//! Create your first actor and send messages:
 //!
-//! #[derive(Serialize, Deserialize)]
+//! ```no_run
+//! use pulsing_actor::prelude::*;
+//! use pulsing_actor::error::PulsingError;
+//! use serde::{Deserialize, Serialize};
+//!
+//! // Define messages
+//! #[derive(Serialize, Deserialize, Debug)]
 //! struct Ping { value: i32 }
-//! #[derive(Serialize, Deserialize)]
+//!
+//! #[derive(Serialize, Deserialize, Debug)]
 //! struct Pong { result: i32 }
 //!
+//! // Define actor state
 //! struct Counter { count: i32 }
 //!
 //! #[async_trait]
 //! impl Actor for Counter {
-//!     async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext)
-//!         -> anyhow::Result<Message>
-//!     {
-//!         if msg.msg_type().ends_with("Ping") {
-//!             let ping: Ping = msg.unpack()?;
+//!     async fn receive(
+//!         &mut self,
+//!         msg: Message,
+//!         _ctx: &mut ActorContext,
+//!     ) -> Result<Message, PulsingError> {
+//!         if let Ok(ping) = msg.unpack::<Ping>() {
 //!             self.count += ping.value;
 //!             return Message::pack(&Pong { result: self.count });
 //!         }
-//!         Err(anyhow::anyhow!("Unknown message"))
+//!         Err(PulsingError::from(
+//!             pulsing_actor::error::RuntimeError::Other("Unknown message type".into())
+//!         ))
 //!     }
 //! }
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     let system = ActorSystem::builder().build().await?;
-//!     let actor_ref = system.spawn_named("services/counter", Counter { count: 0 }).await?;
+//!     // Create actor system
+//!     let system = ActorSystem::new(SystemConfig::standalone()).await?;
+//!
+//!     // Spawn a named actor
+//!     let actor_ref = system
+//!         .spawn_named("services/counter", Counter { count: 0 })
+//!         .await?;
+//!
+//!     // Send message and await response
 //!     let pong: Pong = actor_ref.ask(Ping { value: 42 }).await?;
 //!     println!("Result: {}", pong.result);
+//!
+//!     // Clean shutdown
 //!     system.shutdown().await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Using the Behavior API
+//!
+//! For simpler actors, use the Behavior API with closures:
+//!
+//! ```no_run
+//! use pulsing_actor::prelude::*;
+//! use pulsing_actor::behavior::stateful;
+//! use serde::{Deserialize, Serialize};
+//!
+//! #[derive(Serialize, Deserialize, Debug, Clone)]
+//! enum CounterMsg {
+//!     Increment(i32),
+//!     Get,
+//! }
+//!
+//! #[derive(Serialize, Deserialize, Debug)]
+//! struct Count(i32);
+//!
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     let system = ActorSystem::new(SystemConfig::standalone()).await?;
+//!
+//!     // Create a stateful behavior with closure
+//!     let counter = stateful(0i32, |count, msg: CounterMsg, _ctx| {
+//!         match msg {
+//!             CounterMsg::Increment(n) => {
+//!                 *count += n;
+//!                 pulsing_actor::behavior::BehaviorAction::Same
+//!             }
+//!             CounterMsg::Get => {
+//!                 // Return current count without changing state
+//!                 let _ = count;
+//!                 pulsing_actor::behavior::BehaviorAction::Same
+//!             }
+//!         }
+//!     });
+//!
+//!     let actor_ref = system.spawn(counter).await?;
+//!     actor_ref.tell(CounterMsg::Increment(10)).await?;
+//!
+//!     system.shutdown().await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Cluster Mode
+//!
+//! Run actors across multiple nodes:
+//!
+//! ```no_run
+//! use pulsing_actor::prelude::*;
+//!
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     // Node 1: Seed node
+//!     let addr: std::net::SocketAddr = "0.0.0.0:8000".parse()?;
+//!     let config = SystemConfig::with_addr(addr);
+//!     let system1 = ActorSystem::new(config).await?;
+//!
+//!     // Node 2: Join the cluster
+//!     let addr: std::net::SocketAddr = "0.0.0.0:8001".parse()?;
+//!     let seed: std::net::SocketAddr = "127.0.0.1:8000".parse()?;
+//!     let config = SystemConfig::with_addr(addr)
+//!         .with_seeds(vec![seed]);
+//!     let system2 = ActorSystem::new(config).await?;
+//!
+//!     // Actors can now communicate across nodes
+//!     println!("Cluster formed with 2 nodes");
+//!
 //!     Ok(())
 //! }
 //! ```

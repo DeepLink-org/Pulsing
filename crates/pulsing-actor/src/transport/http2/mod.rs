@@ -48,11 +48,7 @@ impl Http2Transport {
         let client = Arc::new(Http2Client::new(config.clone()));
         client.start_background_tasks();
 
-        let server = Http2Server::new(bind_addr, handler, config.clone(), cancel.clone())
-            .await
-            .map_err(|e| {
-                crate::error::PulsingError::from(crate::error::RuntimeError::Other(e.to_string()))
-            })?;
+        let server = Http2Server::new(bind_addr, handler, config.clone(), cancel.clone()).await?;
         let local_addr = server.local_addr();
 
         let transport = Arc::new(Self {

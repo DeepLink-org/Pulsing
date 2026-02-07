@@ -423,7 +423,7 @@ impl GossipCluster {
         &self,
         msg: GossipMessage,
         peer_addr: SocketAddr,
-    ) -> anyhow::Result<Option<GossipMessage>> {
+    ) -> Result<Option<GossipMessage>> {
         match msg {
             GossipMessage::Meet {
                 from,

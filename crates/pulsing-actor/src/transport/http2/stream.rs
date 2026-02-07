@@ -1,6 +1,7 @@
 //! Streaming support for HTTP/2 transport.
 
 use crate::actor::Message;
+use crate::error::{PulsingError, Result, RuntimeError};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::Stream;
 use std::pin::Pin;
@@ -124,17 +125,19 @@ impl StreamFrame {
         buf.freeze()
     }
 
-    pub fn from_binary(mut buf: &[u8]) -> anyhow::Result<Self> {
+    pub fn from_binary(mut buf: &[u8]) -> Result<Self> {
         if buf.remaining() < 4 {
-            return Err(anyhow::anyhow!("Buffer too short for length"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Buffer too short for length".into(),
+            )));
         }
 
         let total_len = buf.get_u32() as usize;
         if buf.remaining() < total_len {
-            return Err(anyhow::anyhow!(
+            return Err(PulsingError::from(RuntimeError::Other(format!(
                 "Incomplete frame: expected {} bytes",
                 total_len
-            ));
+            ))));
         }
 
         let flags = buf.get_u8();
@@ -143,18 +146,28 @@ impl StreamFrame {
 
         let msg_type_len = buf.get_u16() as usize;
         if buf.remaining() < msg_type_len {
-            return Err(anyhow::anyhow!("Invalid msg_type length"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Invalid msg_type length".into(),
+            )));
         }
-        let msg_type = String::from_utf8(buf[..msg_type_len].to_vec())
-            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in msg_type: {}", e))?;
+        let msg_type = String::from_utf8(buf[..msg_type_len].to_vec()).map_err(|e| {
+            PulsingError::from(RuntimeError::Other(format!(
+                "Invalid UTF-8 in msg_type: {}",
+                e
+            )))
+        })?;
         buf.advance(msg_type_len);
 
         if buf.remaining() < 4 {
-            return Err(anyhow::anyhow!("Missing data length"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Missing data length".into(),
+            )));
         }
         let data_len = buf.get_u32() as usize;
         if buf.remaining() < data_len {
-            return Err(anyhow::anyhow!("Invalid data length"));
+            return Err(PulsingError::from(RuntimeError::Other(
+                "Invalid data length".into(),
+            )));
         }
         let data = buf[..data_len].to_vec();
         buf.advance(data_len);
@@ -163,10 +176,12 @@ impl StreamFrame {
         let error = if has_error && buf.remaining() >= 2 {
             let error_len = buf.get_u16() as usize;
             if buf.remaining() >= error_len {
-                Some(
-                    String::from_utf8(buf[..error_len].to_vec())
-                        .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in error: {}", e))?,
-                )
+                Some(String::from_utf8(buf[..error_len].to_vec()).map_err(|e| {
+                    PulsingError::from(RuntimeError::Other(format!(
+                        "Invalid UTF-8 in error: {}",
+                        e
+                    )))
+                })?)
             } else {
                 None
             }
@@ -258,7 +273,7 @@ impl BinaryFrameParser {
     }
 
     /// Try to parse a complete frame from the buffer
-    pub fn try_parse(&mut self) -> Option<anyhow::Result<StreamFrame>> {
+    pub fn try_parse(&mut self) -> Option<Result<StreamFrame>> {
         if self.buffer.len() < 4 {
             return None;
         }
@@ -282,7 +297,7 @@ impl BinaryFrameParser {
     }
 
     /// Parse all available frames
-    pub fn parse_all(&mut self) -> Vec<anyhow::Result<StreamFrame>> {
+    pub fn parse_all(&mut self) -> Vec<Result<StreamFrame>> {
         let mut frames = Vec::new();
         while let Some(result) = self.try_parse() {
             frames.push(result);

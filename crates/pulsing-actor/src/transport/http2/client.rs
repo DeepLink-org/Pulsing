@@ -620,7 +620,11 @@ impl Http2Client {
                     let mut parser = parser.lock().await;
                     parser.push(&data);
 
-                    let frames = parser.parse_all();
+                    let frames = parser
+                        .parse_all()
+                        .into_iter()
+                        .map(|r| r.map_err(|e| anyhow::anyhow!("{}", e)))
+                        .collect::<Vec<_>>();
                     Ok::<_, anyhow::Error>(futures::stream::iter(frames))
                 }
             })
@@ -651,12 +655,7 @@ impl Http2Client {
         );
         let _enter = span.enter();
 
-        let conn_guard = self.pool.get_connection(addr).await.map_err(|e| {
-            PulsingError::from(RuntimeError::connection_failed(
-                addr.to_string(),
-                e.to_string(),
-            ))
-        })?;
+        let conn_guard = self.pool.get_connection(addr).await?;
         let mut conn = conn_guard.get().await;
 
         // Build request with trace context header

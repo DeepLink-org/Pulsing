@@ -5,6 +5,72 @@
 //! - [`SystemConfig`] - Configuration for the actor system
 //! - [`SpawnOptions`] - Options for spawning actors
 //! - [`ResolveOptions`] - Options for resolving named actors
+//!
+//! # Examples
+//!
+//! ## Creating a Standalone System
+//!
+//! For single-node development and testing:
+//!
+//! ```no_run
+//! use pulsing_actor::prelude::*;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> anyhow::Result<()> {
+//! // Create a standalone system (no network)
+//! let system = ActorSystem::new(SystemConfig::standalone()).await?;
+//!
+//! // The system is ready to spawn actors
+//! println!("System started on node: {}", system.node_id());
+//!
+//! // Clean shutdown when done
+//! system.shutdown().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Creating a Cluster Node
+//!
+//! For production multi-node deployment:
+//!
+//! ```no_run
+//! use pulsing_actor::prelude::*;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> anyhow::Result<()> {
+//! // Seed node (first node in cluster)
+//! let addr: std::net::SocketAddr = "0.0.0.0:8000".parse()?;
+//! let config = SystemConfig::with_addr(addr);
+//! let seed_system = ActorSystem::new(config).await?;
+//!
+//! // Worker node joining the cluster
+//! let addr: std::net::SocketAddr = "0.0.0.0:8001".parse()?;
+//! let seed: std::net::SocketAddr = "127.0.0.1:8000".parse()?;
+//! let config = SystemConfig::with_addr(addr)
+//!     .with_seeds(vec![seed]);
+//! let worker_system = ActorSystem::new(config).await?;
+//!
+//! println!("Cluster formed with 2 nodes");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Listing Local Actors
+//!
+//! ```no_run
+//! use pulsing_actor::prelude::*;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> anyhow::Result<()> {
+//! # let system = ActorSystem::new(SystemConfig::standalone()).await?;
+//! // Get all named actors in this system
+//! let names = system.local_actor_names();
+//! for name in names {
+//!     println!("Actor: {}", name);
+//! }
+//! # Ok(())
+//! # }
+//! ```
 
 mod config;
 mod handle;

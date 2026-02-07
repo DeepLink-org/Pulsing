@@ -1,6 +1,7 @@
 //! Connection pool management for HTTP/2 transport.
 
 use super::config::Http2Config;
+use crate::error::{PulsingError, Result, RuntimeError};
 use bytes::Bytes;
 use http_body_util::Full;
 use hyper::client::conn::http2;
@@ -235,7 +236,7 @@ impl ConnectionPool {
     }
 
     /// Get or create a connection to the given address
-    pub async fn get_connection(&self, addr: SocketAddr) -> anyhow::Result<ConnectionGuard> {
+    pub async fn get_connection(&self, addr: SocketAddr) -> Result<ConnectionGuard> {
         // Try to get an existing healthy connection first
         if let Some(conn) = self.try_get_existing(addr).await {
             self.stats
@@ -245,7 +246,12 @@ impl ConnectionPool {
         }
 
         // Create a new connection
-        self.create_new_connection(addr).await
+        self.create_new_connection(addr).await.map_err(|e| {
+            PulsingError::from(RuntimeError::connection_failed(
+                addr.to_string(),
+                e.to_string(),
+            ))
+        })
     }
 
     /// Try to get an existing healthy connection
@@ -362,7 +368,10 @@ impl ConnectionPool {
         if let Some(ref tls_config) = self.http2_config.tls {
             // TLS mode: wrap TCP stream with TLS
             let server_name = addr.ip().to_string();
-            let tls_stream = tls_config.connect(stream, &server_name).await?;
+            let tls_stream = tls_config
+                .connect(stream, &server_name)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             let io = TokioIo::new(tls_stream);
             let (sender, conn) = http2::handshake(TokioExecutor::new(), io)
                 .await
