@@ -296,6 +296,7 @@ jobs:
             -v ${{ github.workspace }}:/workspace -w /workspace \
             python:${{ matrix.python-version }}-slim \
             bash -c "
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates && \
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-debian && \
               just ci-test
