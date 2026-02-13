@@ -118,6 +118,7 @@ plugins:
             HTTP2 Transport: HTTP2 传输
             Load Sync: 负载同步
             AS Actor Decorator: AS Actor 装饰器
+            Communication Evolution: 集群内通信技术演进
   - mkdocstrings:
       handlers:
         python:
@@ -174,6 +175,7 @@ nav:
     - HTTP2 Transport: design/http2-transport.md
     - Load Sync: design/load_sync.md
     - AS Actor Decorator: design/as-actor-decorator.md
+    - Communication Evolution: design/cluster-communication-evolution.md
 
 extra:
   generator: false
