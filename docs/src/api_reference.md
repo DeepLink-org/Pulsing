@@ -346,8 +346,8 @@ Distributed queue for data pipelines.
 
 ```python
 # Write
-writer = await system.queue.write(
-    topic="my_queue",
+writer = await pul.queue.write(
+    "my_queue",
     bucket_column="user_id",
     num_buckets=4,
 )
@@ -355,7 +355,7 @@ await writer.put({"user_id": "u1", "data": "hello"})
 await writer.flush()
 
 # Read
-reader = await system.queue.read("my_queue")
+reader = await pul.queue.read("my_queue")
 records = await reader.get(limit=100)
 ```
 

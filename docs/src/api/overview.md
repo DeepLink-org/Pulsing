@@ -4,8 +4,6 @@ Pulsing is a distributed actor framework that provides a communication backbone 
 
 ## Core Concepts
 
-### Actor System
-
 Pulsing is built around the [Actor Model](https://en.wikipedia.org/wiki/Actor_model), where actors are the fundamental units of computation. Actors communicate via asynchronous message passing, providing:
 
 - **Location Transparency**: Same API for local and remote actors
@@ -19,112 +17,94 @@ Pulsing is built around the [Actor Model](https://en.wikipedia.org/wiki/Actor_mo
 - **Streaming Support**: Native support for streaming requests/responses
 - **Multi-Language**: Python-first with Rust core, extensible to other languages
 
-## Python API
-
-### Global Async API
+## Quick Start
 
 ```python
 import pulsing as pul
 
-await pul.init(addr="0.0.0.0:8000")
+await pul.init()
 
 @pul.remote
-class MyActor:
-    def process(self, data):
-        return f"Processed: {data}"
+class Counter:
+    def __init__(self): self.value = 0
+    def incr(self): self.value += 1; return self.value
 
-actor = await MyActor.spawn(name="my_actor")
-response = await actor.process("hello")
+counter = await Counter.spawn(name="counter")
+print(await counter.incr())  # 1
 
-# Shutdown
+counter2 = await Counter.resolve("counter")
+print(await counter2.incr())  # 2
+
 await pul.shutdown()
 ```
 
-### Under the Hood: Actor System API (Explicit Management)
+## Python API
+
+You must call `await pul.init()` before using `spawn`, `resolve`, or other APIs.
+
+### Lifecycle
 
 ```python
 import pulsing as pul
 
-# Create and manage actor system explicitly
-system = await pul.actor_system(addr="0.0.0.0:8000")
+await pul.init(
+    addr=None,          # Bind address, None for standalone
+    seeds=None,         # Seed nodes for cluster
+    passphrase=None,    # TLS passphrase
+)
 
-class MyActor:
-    async def receive(self, msg):
-        return f"echo: {msg}"
-
-# Spawn actor object directly (low-level)
-actor = await system.spawn(MyActor(), name="my_actor")
-
-# Communicate
-response = await actor.ask({"message": "hello"})
-
-# Shutdown
-await system.shutdown()
+await pul.shutdown()
 ```
 
-### Actor Patterns
+### Define Actor
 
-#### Remote Decorator (Recommended)
+Use `@pul.remote` to turn any class into a distributed actor:
 
 ```python
-import pulsing as pul
-
 @pul.remote
 class Counter:
     def __init__(self, init=0):
         self.value = init
 
-    # Synchronous method - serial execution
-    def incr(self):
+    def incr(self):                       # sync method — serial execution
         self.value += 1
         return self.value
 
-    # Asynchronous method - concurrent execution
-    async def fetch_and_add(self, url):
+    async def fetch_and_add(self, url):   # async method — concurrent during await
         data = await http_get(url)
         self.value += data
         return self.value
-
-# Usage
-counter = await Counter.spawn(name="counter")
-result = await counter.incr()
 ```
 
-#### Base Actor Class
+### Create and Call
+
+`Class.spawn()` creates an actor and returns a typed proxy:
 
 ```python
-from pulsing.actor import Actor
-
-class MyActor(Actor):
-    async def receive(self, msg):
-        if msg.get("action") == "greet":
-            return f"Hello, {msg.get('name', 'World')}!"
-        return "Unknown action"
-
-# Usage
-system = await pul.actor_system()
-actor = await system.spawn(MyActor(), name="greeter")
-response = await actor.ask({"action": "greet", "name": "Alice"})
+counter = await Counter.spawn(name="counter", init=10)
+result = await counter.incr()             # direct method call
 ```
 
-### Message Passing
-
-#### Ask vs Tell
-
-- **`ask(msg)`**: Request/response pattern, waits for and returns a response
-- **`tell(msg)`**: Fire-and-forget pattern, sends message without waiting
+### Resolve Existing Actor
 
 ```python
-# Ask - get response
-response = await actor.ask({"action": "compute", "data": [1, 2, 3]})
+# Typed proxy — when you know the class
+proxy = await Counter.resolve("counter")
+result = await proxy.incr()
 
-# Tell - no response expected
-await actor.tell({"action": "log", "level": "info", "message": "Event occurred"})
+# Typed proxy — manual bind
+ref = await pul.resolve("counter", timeout=30)
+proxy = ref.as_type(Counter)
+
+# Untyped proxy — when remote type is unknown
+ref = await pul.resolve("service_name")
+proxy = ref.as_any()
+result = await proxy.any_method(args)
 ```
 
 ### Streaming
 
-Pulsing supports streaming responses for large data or continuous generation:
+Return a generator for streaming responses:
 
 ```python
 @pul.remote
@@ -133,45 +113,78 @@ class StreamingService:
         for token in generate_tokens(prompt):
             yield token
 
-# Usage
 service = await StreamingService.spawn()
 async for token in service.generate_tokens("Hello world"):
     print(token, end="")
 ```
 
-### Supervision & Fault Tolerance
-
-Actors can be configured with restart policies for fault tolerance:
+### Supervision
 
 ```python
 @pul.remote(
     restart_policy="on_failure",  # "never", "on_failure", "always"
     max_restarts=3,
     min_backoff=0.1,
-    max_backoff=30.0
+    max_backoff=30.0,
 )
 class ResilientWorker:
     def process(self, data):
-        # If this raises an exception, the actor will be restarted
         return risky_computation(data)
 ```
 
-### Under the Hood: Distributed Queues
+### Queue
 
-Pulsing includes a distributed queue system for data pipelines:
+Distributed queue with bucket-based partitioning:
 
 ```python
-# Writer
-writer = await system.queue.write("my_topic", bucket_column="user_id")
+writer = await pul.queue.write("my_queue", bucket_column="user_id")
 await writer.put({"user_id": "u1", "data": "hello"})
 await writer.flush()
 
-# Reader
-reader = await system.queue.read("my_topic")
+reader = await pul.queue.read("my_queue")
 records = await reader.get(limit=100)
 ```
 
-## Rust APIs
+### Topic
+
+Lightweight pub/sub for real-time messaging:
+
+```python
+writer = await pul.topic.write("events")
+await writer.publish({"type": "user_login", "user": "alice"})
+
+reader = await pul.topic.read("events")
+
+@reader.on_message
+async def handle(msg):
+    print(f"Received: {msg}")
+
+await reader.start()
+```
+
+### Under the Hood
+
+#### ActorSystem (Explicit Management)
+
+```python
+import pulsing as pul
+
+system = await pul.actor_system(addr="0.0.0.0:8000")
+
+class MyActor:
+    async def receive(self, msg):
+        return f"echo: {msg}"
+
+actor = await system.spawn(MyActor(), name="my_actor")
+response = await actor.ask({"message": "hello"})
+await actor.tell({"event": "fire_and_forget"})
+
+await system.shutdown()
+```
+
+---
+
+## Rust API
 
 ### Core Traits
 
@@ -200,7 +213,6 @@ struct MyActor;
 #[async_trait]
 impl Actor for MyActor {
     async fn receive(&mut self, msg: Message, _ctx: &mut ActorContext) -> anyhow::Result<Message> {
-        // Process message and return response
         Message::pack(&Pong(42))
     }
 }
@@ -218,26 +230,30 @@ fn counter(init: i32) -> Behavior<i32> {
     })
 }
 
-// Usage
 let counter = system.spawn(counter(0)).await?;
 ```
+
+---
 
 ## Error Handling
 
 ### Python
 
 ```python
+from pulsing.exceptions import (
+    PulsingBusinessError,
+    PulsingSystemError,
+    PulsingRuntimeError,
+)
+
 try:
-    response = await actor.ask({"action": "process", "data": data})
-except RuntimeError as e:
-    # Actor-side exceptions are wrapped as RuntimeError
-    print(f"Actor error: {e}")
-except ConnectionError as e:
-    # Network errors
-    print(f"Connection error: {e}")
-except asyncio.TimeoutError as e:
-    # Timeout errors
-    print(f"Timeout: {e}")
+    result = await service.process(data)
+except PulsingBusinessError as e:
+    print(f"Business error [{e.code}]: {e.message}")
+except PulsingSystemError as e:
+    print(f"System error: {e.error}, recoverable: {e.recoverable}")
+except PulsingRuntimeError as e:
+    print(f"Framework error: {e}")
 ```
 
 ### Rust
@@ -253,20 +269,12 @@ match actor.ask(Ping(42)).await {
 
 ## Security Considerations
 
-### Trust Boundaries
-
 - **Pickle payloads** in Python-Python communication can lead to RCE if untrusted
 - Use TLS in production deployments
 - Treat the cluster as an authenticated trust boundary
 
-### Network Security
-
 ```python
-# Enable TLS
-system = await pul.actor_system(
-    addr="0.0.0.0:8000",
-    passphrase="your-secret-passphrase"
-)
+await pul.init(addr="0.0.0.0:8000", passphrase="your-secret-passphrase")
 ```
 
 ## Performance Characteristics

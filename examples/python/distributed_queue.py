@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Distributed memory queue example
 
-Demonstrates how to use system.queue.write/read for basic data read/write operations.
+Demonstrates how to use pul.queue.write/read for basic data read/write operations.
 
 Architecture features:
 - Each bucket corresponds to an independent BucketStorage Actor
@@ -24,12 +24,11 @@ async def main():
     logger.info("=== Distributed Memory Queue Example ===\n")
 
     await pul.init()
-    system = pul.ActorSystem(pul.get_system())
     logger.info("✓ Global system initialized\n")
 
     try:
         # Producer: open queue for writing
-        writer = await system.queue.write(
+        writer = await pul.queue.write(
             "my_queue",
             bucket_column="user_id",  # Bucket by user_id
             num_buckets=4,
@@ -38,7 +37,7 @@ async def main():
         logger.info("✓ Queue created (one Actor per bucket)\n")
 
         # Consumer: open queue for reading
-        reader = await system.queue.read("my_queue")
+        reader = await pul.queue.read("my_queue")
         logger.info("✓ Queue opened\n")
 
         # Write data (data immediately visible to consumers, no need to wait for persistence)

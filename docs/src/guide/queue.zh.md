@@ -65,15 +65,15 @@ import pulsing as pul
 
 
 async def main():
-    system = await pul.actor_system()
+    await pul.init()
     try:
-        writer = await system.queue.write(
+        writer = await pul.queue.write(
             "my_queue",
             bucket_column="user_id",
             num_buckets=4,
             batch_size=10,
         )
-        reader = await system.queue.read("my_queue")
+        reader = await pul.queue.read("my_queue")
 
         # 写入
         await writer.put({"user_id": "u1", "payload": "hello"})
@@ -85,7 +85,7 @@ async def main():
         # 持久化缓冲区
         await writer.flush()
     finally:
-        await system.shutdown()
+        await pul.shutdown()
 
 
 asyncio.run(main())
@@ -96,8 +96,8 @@ asyncio.run(main())
 如果你需要阻塞式 API（例如在线程里调用），用 `.sync()`：
 
 ```python
-writer = (await system.queue.write("my_queue")).sync()
-reader = (await system.queue.read("my_queue")).sync()
+writer = (await pul.queue.write("my_queue")).sync()
+reader = (await pul.queue.read("my_queue")).sync()
 
 writer.put({"id": "1", "value": 100})
 records = reader.get(limit=10)
@@ -114,7 +114,7 @@ writer.flush()
 
 ## 读取模式
 
-`system.queue.read()` 支持：
+`pul.queue.read()` 支持：
 
 - **读取所有 bucket**（默认）
 - **读取指定 bucket**：`bucket_id=` / `bucket_ids=`
@@ -123,8 +123,8 @@ writer.flush()
 例子：
 
 ```python
-reader0 = await system.queue.read("q", rank=0, world_size=2, num_buckets=4)  # [0, 2]
-reader1 = await system.queue.read("q", rank=1, world_size=2, num_buckets=4)  # [1, 3]
+reader0 = await pul.queue.read("q", rank=0, world_size=2, num_buckets=4)  # [0, 2]
+reader1 = await pul.queue.read("q", rank=1, world_size=2, num_buckets=4)  # [1, 3]
 ```
 
 ## 流式读取与阻塞等待
@@ -167,7 +167,7 @@ flowchart LR
 默认的 `MemoryBackend` 将数据存储在内存中，无持久化：
 
 ```python
-writer = await system.queue.write(
+writer = await pul.queue.write(
     "my_queue",
     backend="memory",  # 默认，可省略
 )
@@ -186,17 +186,17 @@ import persisting as pst
 register_backend("lance", pst.queue.LanceBackend)
 register_backend("persisting", pst.queue.PersistingBackend)
 
-system = await pul.actor_system()
+await pul.init()
 
 # 使用 Lance 后端实现持久化
-writer = await system.queue.write(
+writer = await pul.queue.write(
     "my_queue",
     backend="lance",
     storage_path="/data/queues",
 )
 
 # 或使用增强版 Persisting 后端（支持 WAL）
-writer = await system.queue.write(
+writer = await pul.queue.write(
     "my_queue",
     backend="persisting",
     storage_path="/data/queues",
@@ -218,7 +218,7 @@ class MyBackend:
     # ... 其他方法
 
 register_backend("my_backend", MyBackend)
-writer = await system.queue.write("topic", backend="my_backend")
+writer = await pul.queue.write("topic", backend="my_backend")
 ```
 
 ## 多消费者 offset：策略与局限

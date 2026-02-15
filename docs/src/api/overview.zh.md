@@ -4,9 +4,7 @@ Pulsing 是一个分布式 actor 框架，为构建分布式系统提供通信�
 
 ## 核心概念
 
-### Actor 系统
-
-Pulsing 基于[Actor 模型](https://en.wikipedia.org/wiki/Actor_model)构建，其中 actor 是计算的基本单位。Actor 通过异步消息传递进行通信，提供：
+Pulsing 基于 [Actor 模型](https://en.wikipedia.org/wiki/Actor_model)构建，actor 是计算的基本单位，通过异步消息传递通信：
 
 - **位置透明性**：本地和远程 actor 使用相同 API
 - **容错性**：Actor 可以独立失败，不会影响其他 actor
@@ -19,112 +17,94 @@ Pulsing 基于[Actor 模型](https://en.wikipedia.org/wiki/Actor_model)构建，
 - **流式支持**：原生支持流式请求/响应
 - **多语言**：Python 优先，Rust 核心，可扩展到其他语言
 
-## Python API
-
-### 全局异步 API
+## Quick Start
 
 ```python
 import pulsing as pul
 
-await pul.init(addr="0.0.0.0:8000")
+await pul.init()
 
 @pul.remote
-class MyActor:
-    def process(self, data):
-        return f"Processed: {data}"
+class Counter:
+    def __init__(self): self.value = 0
+    def incr(self): self.value += 1; return self.value
 
-actor = await MyActor.spawn(name="my_actor")
-response = await actor.process("hello")
+counter = await Counter.spawn(name="counter")
+print(await counter.incr())  # 1
 
-# 关闭
+counter2 = await Counter.resolve("counter")
+print(await counter2.incr())  # 2
+
 await pul.shutdown()
 ```
 
-### Under the Hood：Actor System API（显式管理）
+## Python API
+
+使用任何 API 之前，必须先调用 `await pul.init()`。
+
+### 生命周期
 
 ```python
 import pulsing as pul
 
-# 显式创建和管理 actor 系统
-system = await pul.actor_system(addr="0.0.0.0:8000")
+await pul.init(
+    addr=None,          # 绑定地址，单机模式为 None
+    seeds=None,         # 集群种子节点
+    passphrase=None,    # TLS 密码短语
+)
 
-class MyActor:
-    async def receive(self, msg):
-        return f"echo: {msg}"
-
-# 直接生成 actor 对象（低层）
-actor = await system.spawn(MyActor(), name="my_actor")
-
-# 通信
-response = await actor.ask({"message": "hello"})
-
-# 关闭
-await system.shutdown()
+await pul.shutdown()
 ```
 
-### Actor 模式
+### 定义 Actor
 
-#### Remote 装饰器（推荐）
+使用 `@pul.remote` 将任意类变为分布式 actor：
 
 ```python
-import pulsing as pul
-
 @pul.remote
 class Counter:
     def __init__(self, init=0):
         self.value = init
 
-    # 同步方法 - 串行执行
-    def incr(self):
+    def incr(self):                       # 同步方法 — 串行执行
         self.value += 1
         return self.value
 
-    # 异步方法 - 并发执行
-    async def fetch_and_add(self, url):
+    async def fetch_and_add(self, url):   # 异步方法 — await 期间可并发
         data = await http_get(url)
         self.value += data
         return self.value
-
-# 使用
-counter = await Counter.spawn(name="counter")
-result = await counter.incr()
 ```
 
-#### 基础 Actor 类
+### 创建与调用
+
+`Class.spawn()` 创建 actor 并返回类型化代理：
 
 ```python
-from pulsing.actor import Actor
-
-class MyActor(Actor):
-    async def receive(self, msg):
-        if msg.get("action") == "greet":
-            return f"Hello, {msg.get('name', 'World')}!"
-        return "Unknown action"
-
-# 使用
-system = await pul.actor_system()
-actor = await system.spawn(MyActor(), name="greeter")
-response = await actor.ask({"action": "greet", "name": "Alice"})
+counter = await Counter.spawn(name="counter", init=10)
+result = await counter.incr()             # 直接方法调用
 ```
 
-### 消息传递
-
-#### Ask vs Tell
-
-- **`ask(msg)`**：请求/响应模式，等待并返回响应
-- **`tell(msg)`**：发射后不管模式，发送消息不等待
+### 解析已有 Actor
 
 ```python
-# Ask - 获取响应
-response = await actor.ask({"action": "compute", "data": [1, 2, 3]})
+# 类型化代理 — 已知 actor 类型时
+proxy = await Counter.resolve("counter")
+result = await proxy.incr()
 
-# Tell - 无需响应
-await actor.tell({"action": "log", "level": "info", "message": "Event occurred"})
+# 类型化代理 — 手动绑定
+ref = await pul.resolve("counter", timeout=30)
+proxy = ref.as_type(Counter)
+
+# 无类型代理 — 远端类型未知时
+ref = await pul.resolve("service_name")
+proxy = ref.as_any()
+result = await proxy.any_method(args)
 ```
 
 ### 流式响应
 
-Pulsing 支持流式响应，用于大数据或持续生成：
+远程方法返回生成器即可进行流式传输：
 
 ```python
 @pul.remote
@@ -133,7 +113,6 @@ class StreamingService:
         for token in generate_tokens(prompt):
             yield token
 
-# 使用
 service = await StreamingService.spawn()
 async for token in service.generate_tokens("Hello world"):
     print(token, end="")
@@ -141,35 +120,69 @@ async for token in service.generate_tokens("Hello world"):
 
 ### 监督与容错
 
-Actor 可以配置重启策略以实现容错：
-
 ```python
 @pul.remote(
     restart_policy="on_failure",  # "never", "on_failure", "always"
     max_restarts=3,
     min_backoff=0.1,
-    max_backoff=30.0
+    max_backoff=30.0,
 )
 class ResilientWorker:
     def process(self, data):
-        # 如果抛出异常，Actor 会自动重启
         return risky_computation(data)
 ```
 
-### Under the Hood：分布式队列
+### 队列 (Queue)
 
-Pulsing 包含分布式队列系统，用于数据管道：
+分布式队列，支持 bucket 分区：
 
 ```python
-# 写入
-writer = await system.queue.write("my_topic", bucket_column="user_id")
+writer = await pul.queue.write("my_queue", bucket_column="user_id")
 await writer.put({"user_id": "u1", "data": "hello"})
 await writer.flush()
 
-# 读取
-reader = await system.queue.read("my_topic")
+reader = await pul.queue.read("my_queue")
 records = await reader.get(limit=100)
 ```
+
+### 主题 (Topic)
+
+轻量级发布/订阅，用于实时消息分发：
+
+```python
+writer = await pul.topic.write("events")
+await writer.publish({"type": "user_login", "user": "alice"})
+
+reader = await pul.topic.read("events")
+
+@reader.on_message
+async def handle(msg):
+    print(f"Received: {msg}")
+
+await reader.start()
+```
+
+### Under the Hood
+
+#### ActorSystem（显式管理）
+
+```python
+import pulsing as pul
+
+system = await pul.actor_system(addr="0.0.0.0:8000")
+
+class MyActor:
+    async def receive(self, msg):
+        return f"echo: {msg}"
+
+actor = await system.spawn(MyActor(), name="my_actor")
+response = await actor.ask({"message": "hello"})
+await actor.tell({"event": "fire_and_forget"})
+
+await system.shutdown()
+```
+
+---
 
 ## Rust API
 
@@ -197,7 +210,6 @@ Factory 模式生成，支持监督重启（仅命名 actor）：
 let options = SpawnOptions::default()
     .supervision(SupervisionSpec::on_failure().max_restarts(3));
 
-// 仅命名 actor 支持 supervision
 system.spawn_named_factory("services/worker", || Ok(Worker::new()), options).await?;
 ```
 
@@ -219,56 +231,27 @@ system.shutdown().await?;
 - **核心**：`Behavior<M>` + `TypedRef<M>` + `BehaviorAction (Same/Become/Stop)`
 - **约定**：`TypedRef<M>` 要求 `M: Serialize + DeserializeOwned + Send + 'static`
 
+---
+
 ## 错误处理
 
 ### Python
 
-Pulsing 提供了统一的错误类型系统，区分框架错误和 Actor 执行错误：
-
 ```python
 from pulsing.exceptions import (
-    PulsingActorError,
-    PulsingRuntimeError,
     PulsingBusinessError,
     PulsingSystemError,
+    PulsingRuntimeError,
 )
 
 try:
-    response = await actor.ask({"action": "process", "data": data})
+    result = await service.process(data)
 except PulsingBusinessError as e:
-    # 业务错误：用户输入验证失败等
     print(f"业务错误 [{e.code}]: {e.message}")
 except PulsingSystemError as e:
-    # 系统错误：内部处理失败（可能触发 Actor 重启）
     print(f"系统错误: {e.error}, 可恢复: {e.recoverable}")
-except PulsingActorError as e:
-    # 其他 Actor 执行错误
-    print(f"Actor 错误: {e}")
 except PulsingRuntimeError as e:
-    # 框架错误：网络、集群、Actor 系统等
     print(f"框架错误: {e}")
-except asyncio.TimeoutError as e:
-    # 超时错误（使用 ask_with_timeout 时）
-    print(f"超时: {e}")
-```
-
-#### 在 Actor 中抛出错误
-
-```python
-from pulsing.exceptions import PulsingBusinessError, PulsingSystemError
-
-@pul.remote
-class Processor:
-    async def process(self, data: str) -> str:
-        if not data:
-            # 抛出业务错误
-            raise PulsingBusinessError(400, "数据不能为空")
-
-        try:
-            return expensive_operation(data)
-        except Exception as e:
-            # 抛出系统错误
-            raise PulsingSystemError(f"处理失败: {e}", recoverable=True)
 ```
 
 ### Rust
@@ -284,20 +267,12 @@ match actor.ask(Ping(42)).await {
 
 ## 安全考虑
 
-### 信任边界
-
 - **Pickle 载荷**在 Python-Python 通信中可能导致 RCE
 - 生产环境使用 TLS
 - 将集群视为经过认证的信任边界
 
-### 网络安全
-
 ```python
-# 启用 TLS
-system = await pul.actor_system(
-    addr="0.0.0.0:8000",
-    passphrase="your-secret-passphrase"
-)
+await pul.init(addr="0.0.0.0:8000", passphrase="your-secret-passphrase")
 ```
 
 ## 性能特性
@@ -309,7 +284,7 @@ system = await pul.actor_system(
 
 ## 后续步骤
 
-- **[Python API](python.md)**: Python 接口完整文档
-- **[Rust API](rust.md)**: Rust 接口完整文档
-- **[示例](../../examples/)**: 工作代码示例
-- **[指南](../../guide/)**: 深入指南和教程
+- **[Python API](python.md)**：Python 接口完整文档
+- **[Rust API](rust.md)**：Rust 接口完整文档
+- **[示例](../../examples/)**：工作代码示例
+- **[指南](../../guide/)**：深入指南和教程

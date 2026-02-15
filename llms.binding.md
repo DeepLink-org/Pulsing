@@ -186,31 +186,11 @@ await actorref.tell(msg: Any) -> None
 counter = await Counter.local(system, name="counter")  # spawn on explicit system
 result = await counter.incr()
 
-# Queue API (on system)
-writer = await system.queue.write(
-    topic: str,
-    *,
-    bucket_column: str = "id",
-    num_buckets: int = 4,
-    batch_size: int = 100,
-    storage_path: str | None = None,
-    backend: str = "memory",
-) -> QueueWriter
-
-await writer.put(record: dict | list[dict]) -> None
-await writer.flush() -> None
-
-reader = await system.queue.read(
-    topic: str,
-    *,
-    bucket_id: int | None = None,
-    bucket_ids: list[int] | None = None,
-    rank: int | None = None,
-    world_size: int | None = None,
-    num_buckets: int = 4,
-) -> QueueReader
-
-records = await reader.get(limit: int = 100, wait: bool = False) -> list[dict]
+# Queue / Topic on explicit system (same API as pul.queue / pul.topic)
+writer = await system.queue.write("my_queue")
+reader = await system.queue.read("my_queue")
+writer = await system.topic.write("events")
+reader = await system.topic.read("events")
 ```
 
 ### Actor Behavior
@@ -350,6 +330,67 @@ async for chunk in service.generate_stream(10):
 ```
 
 **Note:** For `@pul.remote` classes, simply return a generator (sync or async) and Pulsing auto-detects and handles it as a streaming response.
+
+### Queue API
+
+Distributed queue with bucket-based partitioning, for data pipelines:
+
+```python
+import pulsing as pul
+
+await pul.init()
+
+# ── Write ──
+writer = await pul.queue.write(
+    "my_queue",
+    *,
+    bucket_column: str = "id",      # Column for partitioning
+    num_buckets: int = 4,
+    batch_size: int = 100,
+    storage_path: str | None = None,
+    backend: str = "memory",        # Pluggable: "memory" or custom
+) -> QueueWriter
+
+await writer.put({"id": "u1", "data": "hello"})
+await writer.put([{"id": "u1", "data": "a"}, {"id": "u2", "data": "b"}])
+await writer.flush()
+
+# ── Read ──
+reader = await pul.queue.read(
+    "my_queue",
+    *,
+    bucket_id: int | None = None,
+    bucket_ids: list[int] | None = None,
+    rank: int | None = None,        # For distributed consumption
+    world_size: int | None = None,
+    num_buckets: int = 4,
+) -> QueueReader
+
+records = await reader.get(limit=100, wait=False)
+```
+
+### Topic API
+
+Lightweight pub/sub for real-time message distribution:
+
+```python
+import pulsing as pul
+
+await pul.init()
+
+# ── Publish ──
+writer = await pul.topic.write("events")
+await writer.publish({"type": "user_login", "user": "alice"})
+
+# ── Subscribe ──
+reader = await pul.topic.read("events")
+
+@reader.on_message
+async def handle(msg):
+    print(f"Received: {msg}")
+
+await reader.start()
+```
 
 ## Rust API
 

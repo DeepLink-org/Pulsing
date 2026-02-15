@@ -368,8 +368,8 @@ response = await actor.ask({"action": "add", "n": 10})
 
 ```python
 # 写入
-writer = await system.queue.write(
-    topic="my_queue",
+writer = await pul.queue.write(
+    "my_queue",
     bucket_column="user_id",
     num_buckets=4,
 )
@@ -377,7 +377,7 @@ await writer.put({"user_id": "u1", "data": "hello"})
 await writer.flush()
 
 # 读取
-reader = await system.queue.read("my_queue")
+reader = await pul.queue.read("my_queue")
 records = await reader.get(limit=100)
 ```
 

@@ -65,15 +65,15 @@ import pulsing as pul
 
 
 async def main():
-    system = await pul.actor_system()
+    await pul.init()
     try:
-        writer = await system.queue.write(
+        writer = await pul.queue.write(
             "my_queue",
             bucket_column="user_id",
             num_buckets=4,
             batch_size=10,
         )
-        reader = await system.queue.read("my_queue")
+        reader = await pul.queue.read("my_queue")
 
         # write
         await writer.put({"user_id": "u1", "payload": "hello"})
@@ -85,7 +85,7 @@ async def main():
         # persist buffered records
         await writer.flush()
     finally:
-        await system.shutdown()
+        await pul.shutdown()
 
 
 asyncio.run(main())
@@ -96,8 +96,8 @@ asyncio.run(main())
 If you need a blocking API (e.g. called from a thread), use `.sync()`:
 
 ```python
-writer = (await system.queue.write("my_queue")).sync()
-reader = (await system.queue.read("my_queue")).sync()
+writer = (await pul.queue.write("my_queue")).sync()
+reader = (await pul.queue.read("my_queue")).sync()
 
 writer.put({"id": "1", "value": 100})
 records = reader.get(limit=10)
@@ -114,7 +114,7 @@ Note: don't call the sync wrapper **inside** an async function (it blocks).
 
 ## Reading modes
 
-`system.queue.read()` supports:
+`pul.queue.read()` supports:
 
 - **All buckets** (default): one reader iterates all buckets
 - **Specific buckets**: `bucket_id=` or `bucket_ids=`
@@ -123,8 +123,8 @@ Note: don't call the sync wrapper **inside** an async function (it blocks).
 Example:
 
 ```python
-reader0 = await system.queue.read("q", rank=0, world_size=2, num_buckets=4)  # [0, 2]
-reader1 = await system.queue.read("q", rank=1, world_size=2, num_buckets=4)  # [1, 3]
+reader0 = await pul.queue.read("q", rank=0, world_size=2, num_buckets=4)  # [0, 2]
+reader1 = await pul.queue.read("q", rank=1, world_size=2, num_buckets=4)  # [1, 3]
 ```
 
 ## Streaming & blocking reads
@@ -167,7 +167,7 @@ flowchart LR
 The default `MemoryBackend` stores data in memory without persistence:
 
 ```python
-writer = await system.queue.write(
+writer = await pul.queue.write(
     "my_queue",
     backend="memory",  # default, can be omitted
 )
@@ -186,17 +186,17 @@ import persisting as pst
 register_backend("lance", pst.queue.LanceBackend)
 register_backend("persisting", pst.queue.PersistingBackend)
 
-system = await pul.actor_system()
+await pul.init()
 
 # Use Lance backend for persistence
-writer = await system.queue.write(
+writer = await pul.queue.write(
     "my_queue",
     backend="lance",
     storage_path="/data/queues",
 )
 
 # Or use enhanced Persisting backend with WAL
-writer = await system.queue.write(
+writer = await pul.queue.write(
     "my_queue",
     backend="persisting",
     storage_path="/data/queues",
@@ -218,7 +218,7 @@ class MyBackend:
     # ... other methods
 
 register_backend("my_backend", MyBackend)
-writer = await system.queue.write("topic", backend="my_backend")
+writer = await pul.queue.write("topic", backend="my_backend")
 ```
 
 ## Multi-consumer offsets: strategy & limitations
