@@ -15,23 +15,19 @@ import asyncio
 import pulsing as pul
 
 
+@pul.remote
 class SharedCounter:
     def __init__(self, node_id: str):
         self.count = 0
         self.node_id = node_id
 
-    def on_start(self, actor_id):
-        print(f"[{actor_id}] Started on {self.node_id}")
+    def get(self) -> dict[str, int | str]:
+        return {"count": self.count, "from_node": self.node_id}
 
-    async def receive(self, msg):
-        if msg.get("action") == "get":
-            return {"count": self.count, "from_node": self.node_id}
-        elif msg.get("action") == "incr":
-            n = msg.get("n", 1)
-            self.count += n
-            print(f"[{self.node_id}] +{n} -> {self.count}")
-            return {"count": self.count, "from_node": self.node_id}
-        return {"error": "unknown action"}
+    def incr(self, n: int = 1) -> dict[str, int | str]:
+        self.count += n
+        print(f"[{self.node_id}] +{n} -> {self.count}")
+        return {"count": self.count, "from_node": self.node_id}
 
 
 async def run_node(port: int, seed: str | None):
@@ -40,59 +36,52 @@ async def run_node(port: int, seed: str | None):
     addr = f"127.0.0.1:{port}"
     seeds = [seed] if seed else None
 
-    system = await pul.actor_system(addr, seeds=seeds)
-    print(f"✓ Started: {system.node_id} @ {system.addr}")
-    if seed:
-        print(f"  Joined via: {seed}")
-    print()
+    await pul.init(addr=addr, seeds=seeds)
+    try:
+        print(f"✓ Started: {addr}")
+        if seed:
+            print(f"  Joined via: {seed}")
+        print()
 
-    if seed is None:
-        # Node 1: Create actor
-        await system.spawn(
-            SharedCounter(str(system.node_id)),
-            name="counter",
-        )
-        print("✓ Created: counter")
-        print("Start node 2: python cluster.py --port 8001 --seed 127.0.0.1:8000\n")
+        if seed is None:
+            await SharedCounter.spawn(str(port), name="counter")
+            print("✓ Created: counter")
+            print("Start node 2: python cluster.py --port 8001 --seed 127.0.0.1:8000\n")
 
-        try:
-            while True:
-                await asyncio.sleep(5)
-                members = await system.members()
-                print(f"Cluster: {len(members)} members")
-        except asyncio.CancelledError:
-            pass
-        await system.shutdown()
-    else:
-        # Node 2: Join and interact
-        await asyncio.sleep(2)
-
-        # Resolve remote actor
-        actor = None
-        for _ in range(10):
             try:
-                actor = await system.resolve("counter")
-                break
-            except Exception:
-                print(".", end="", flush=True)
-                await asyncio.sleep(0.5)
+                while True:
+                    await asyncio.sleep(5)
+                    print("Cluster running... (press Ctrl+C to stop)")
+            except asyncio.CancelledError:
+                pass
+        else:
+            await asyncio.sleep(2)
 
-        if not actor:
-            print("\n✗ Failed to resolve actor")
-            return
+            actor = None
+            for _ in range(10):
+                try:
+                    actor = await SharedCounter.resolve("counter")
+                    break
+                except Exception:
+                    print(".", end="", flush=True)
+                    await asyncio.sleep(0.5)
 
-        print("✓ Resolved\n")
+            if not actor:
+                print("\n✗ Failed to resolve actor")
+                return
 
-        # Interact using simple Python dicts
-        resp = await actor.ask({"action": "get"})
-        print(f"Initial: {resp['count']} (from {resp['from_node']})")
+            print("✓ Resolved\n")
 
-        for i in range(1, 4):
-            resp = await actor.ask({"action": "incr", "n": i * 10})
-            print(f"After +{i * 10}: {resp['count']} (from {resp['from_node']})")
+            resp = await actor.get()
+            print(f"Initial: {resp['count']} (from {resp['from_node']})")
 
-        print("\n✓ Done!")
-        await system.shutdown()
+            for i in range(1, 4):
+                resp = await actor.incr(i * 10)
+                print(f"After +{i * 10}: {resp['count']} (from {resp['from_node']})")
+
+            print("\n✓ Done!")
+    finally:
+        await pul.shutdown()
 
 
 def main():

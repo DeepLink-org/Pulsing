@@ -6,10 +6,10 @@ Demonstrates how to properly handle scenarios of repeatedly creating and destroy
 
 import asyncio
 
-from pulsing.agent import agent, cleanup, runtime
+import pulsing as pul
 
 
-@agent(role="Counter", goal="Accumulate numbers")
+@pul.remote
 class Counter:
     def __init__(self, initial: int = 0):
         self.value = initial
@@ -25,11 +25,14 @@ class Counter:
 async def example_simple():
     """Example 1: Simple scenario (no cleanup needed)"""
     print("\n=== Example 1: Simple Scenario ===")
-    async with runtime():
+    await pul.init()
+    try:
         counter = await Counter.spawn(name="counter", initial=0)
         for _ in range(5):
             value = await counter.increment()
             print(f"Current value: {value}")
+    finally:
+        await pul.shutdown()
 
 
 async def example_repeated_with_cleanup():
@@ -38,31 +41,29 @@ async def example_repeated_with_cleanup():
 
     for i in range(3):
         try:
-            async with runtime():
-                counter = await Counter.spawn(name=f"counter_{i}", initial=i * 10)
-                value = await counter.increment()
-                print(f"Task {i}: result = {value}")
+            await pul.init()
+            counter = await Counter.spawn(name=f"counter_{i}", initial=i * 10)
+            value = await counter.increment()
+            print(f"Task {i}: result = {value}")
         finally:
-            cleanup()  # ⭐ Ensure cleanup each time
+            await pul.shutdown()
             print(f"Task {i}: cleaned up")
 
 
 async def example_batch_processing():
     """Example 3: Batch processing (shared runtime)"""
     print("\n=== Example 3: Batch Processing (shared runtime) ===")
+    await pul.init()
     try:
-        async with runtime():
-            # Create multiple counters
-            counters = []
-            for i in range(5):
-                counter = await Counter.spawn(name=f"counter_{i}", initial=i)
-                counters.append(counter)
+        counters = []
+        for i in range(5):
+            counter = await Counter.spawn(name=f"counter_{i}", initial=i)
+            counters.append(counter)
 
-            # Concurrent processing
-            results = await asyncio.gather(*[c.increment() for c in counters])
-            print(f"Results: {results}")
+        results = await asyncio.gather(*[c.increment() for c in counters])
+        print(f"Results: {results}")
     finally:
-        cleanup()
+        await pul.shutdown()
 
 
 async def example_error_handling():
@@ -71,19 +72,18 @@ async def example_error_handling():
 
     for i in range(2):
         try:
-            async with runtime():
-                counter = await Counter.spawn(name=f"counter_{i}", initial=i)
-                await counter.increment()
+            await pul.init()
+            counter = await Counter.spawn(name=f"counter_{i}", initial=i)
+            await counter.increment()
 
-                if i == 0:
-                    # Simulate error
-                    raise ValueError("Simulated error")
+            if i == 0:
+                raise ValueError("Simulated error")
 
-                print(f"Task {i} succeeded")
+            print(f"Task {i} succeeded")
         except ValueError as e:
             print(f"Task {i} failed: {e}")
         finally:
-            cleanup()  # ⭐ Clean up even on error
+            await pul.shutdown()
             print(f"Task {i} cleaned up")
 
 
@@ -92,15 +92,15 @@ async def example_helper_pattern():
     print("\n=== Example 5: Helper Function Pattern ===")
 
     async def run_counter_task(task_id: int, increments: int) -> int:
-        """Encapsulated task function (auto cleanup)"""
+        """Encapsulated task function"""
         try:
-            async with runtime():
-                counter = await Counter.spawn(name=f"task_{task_id}", initial=0)
-                for _ in range(increments):
-                    await counter.increment()
-                return await counter.get_value()
+            await pul.init()
+            counter = await Counter.spawn(name=f"task_{task_id}", initial=0)
+            for _ in range(increments):
+                await counter.increment()
+            return await counter.get_value()
         finally:
-            cleanup()
+            await pul.shutdown()
 
     # Run multiple tasks
     tasks = [run_counter_task(i, i + 1) for i in range(3)]

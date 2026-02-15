@@ -1,11 +1,10 @@
 import asyncio
 import os
 import time
-from pulsing.actor import remote
-from pulsing.agent import runtime
+import pulsing as pul
 
 
-@remote
+@pul.remote
 class Worker:
     async def run(self, x: int) -> int:
         await asyncio.sleep(0.02)  # simulate I/O
@@ -15,7 +14,8 @@ class Worker:
 async def main():
     n = int(os.getenv("WORKERS", "8"))
     m = int(os.getenv("ITEMS", "200"))
-    async with runtime():
+    await pul.init()
+    try:
         ws = [await Worker.spawn(name=f"w{i}") for i in range(n)]
         t0 = time.perf_counter()
         res = await asyncio.gather(*(ws[i % n].run(i) for i in range(m)))
@@ -30,6 +30,8 @@ async def main():
         print("=" * 50)
         print("✅ Same code, more workers = higher throughput")
         print("=" * 50 + "\n")
+    finally:
+        await pul.shutdown()
 
 
 if __name__ == "__main__":

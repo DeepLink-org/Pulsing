@@ -7,11 +7,10 @@ You will see two agents greeting each other!
 """
 
 import asyncio
-from pulsing.actor import remote
-from pulsing.agent import runtime
+import pulsing as pul
 
 
-@remote
+@pul.remote
 class Greeter:
     """A simple greeting agent"""
 
@@ -39,7 +38,8 @@ async def main():
     print("🎉 Pulsing Multi-Agent Quick Start")
     print("=" * 50)
 
-    async with runtime():
+    await pul.init()
+    try:
         # Create two agents
         alice = await Greeter.spawn(display_name="Alice", name="alice")
         bob = await Greeter.spawn(display_name="Bob", name="bob")
@@ -53,6 +53,8 @@ async def main():
 
         # Bob greets Alice
         await bob.say_hello_to("alice")
+    finally:
+        await pul.shutdown()
 
     print("\n" + "=" * 50)
     print("✅ Done! You've created your first Multi-Agent application")

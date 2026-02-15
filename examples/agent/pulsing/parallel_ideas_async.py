@@ -15,8 +15,8 @@ import asyncio
 import json
 import random
 import time
-from pulsing.actor import remote, resolve
-from pulsing.agent import runtime, llm, parse_json
+import pulsing as pul
+from pulsing.agent import llm, parse_json
 
 # ============================================================================
 # Configuration
@@ -86,7 +86,7 @@ async def get_llm():
 # ============================================================================
 
 
-@remote
+@pul.remote
 class JudgeActor:
     def __init__(self, timeout: float, mock: bool):
         self.timeout = timeout
@@ -132,7 +132,7 @@ class JudgeActor:
         # Stop all agents
         for name in self._agents:
             try:
-                agent = await resolve(name)
+                agent = await IdeaAgent.resolve(name)
                 await agent.stop()
             except Exception as e:
                 print(f"[Judge] Error stopping agent '{name}': {e}")
@@ -173,7 +173,7 @@ class JudgeActor:
 # ============================================================================
 
 
-@remote
+@pul.remote
 class IdeaAgent:
     def __init__(
         self,
@@ -293,7 +293,7 @@ class IdeaAgent:
         elapsed = time.time() - start
         print(f"  [{self.persona}] 📤 Submitted ({elapsed:.1f}s)")
 
-        judge = await resolve(self.judge_name)
+        judge = await JudgeActor.resolve(self.judge_name)
         result = await judge.submit(self.idea, self.iterations)
 
         return {
@@ -460,7 +460,7 @@ Output JSON (no markdown):
 
             print(f"  [{self.persona}] 🤝 Requesting [{expert}]")
             try:
-                peer = await asyncio.wait_for(resolve(peer_name), timeout=5)
+                peer = await asyncio.wait_for(IdeaAgent.resolve(peer_name), timeout=5)
                 resp = await asyncio.wait_for(
                     peer.assist(from_agent=self.persona, context={"idea": self.idea}),
                     timeout=10,
@@ -511,7 +511,8 @@ async def run(
     )
     print("=" * 50)
 
-    async with runtime():
+    await pul.init()
+    try:
         # Create Judge
         judge = await JudgeActor.spawn(timeout=timeout, mock=mock, name="judge")
 
@@ -563,6 +564,8 @@ async def run(
                 )
 
         return {"final": final, "agents": results}
+    finally:
+        await pul.shutdown()
 
 
 if __name__ == "__main__":

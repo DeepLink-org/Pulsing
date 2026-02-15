@@ -37,6 +37,10 @@ await asyncio.sleep(1.0)
 # 按名称查找 actor（搜索整个集群）
 remote_ref = await system.resolve("worker")
 response = await remote_ref.ask({"action": "process", "data": "hello"})
+
+# 将 ActorRef 转换为代理
+any_proxy = remote_ref.as_any()           # 未知类型时使用
+typed_proxy = remote_ref.as_type(Worker)  # 已知类型时使用
 ```
 
 ### 使用 @remote 类的 resolve()
@@ -50,6 +54,9 @@ class Worker:
 worker = await Worker.resolve("worker")
 result = await worker.process("hello")  # 直接调用方法
 ```
+
+!!! note
+    新代码优先使用 `Class.resolve(name)`（typed proxy）。仅在只有运行时名称时使用 `system.resolve(name)`，随后对返回的 `ActorRef` 调用 `.as_type()` / `.as_any()`。
 
 ## 命名 vs 匿名 Actor
 

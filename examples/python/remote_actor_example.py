@@ -14,13 +14,13 @@ Usage: python examples/python/remote_actor_example.py
 import asyncio
 import logging
 
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-@remote
+@pul.remote
 class Counter:
     """Distributed counter"""
 
@@ -39,7 +39,7 @@ class Counter:
         return self.value
 
 
-@remote
+@pul.remote
 class KeyValueStore:
     """Distributed key-value store"""
 
@@ -56,7 +56,7 @@ class KeyValueStore:
         return list(self.store.keys())
 
 
-@remote
+@pul.remote
 class AsyncWorker:
     """Supports async methods"""
 
@@ -79,7 +79,7 @@ async def main():
     print("=" * 60)
 
     # Simple initialization
-    await init()
+    await pul.init()
 
     # --- Counter ---
     print("\n--- Counter ---")
@@ -125,7 +125,7 @@ async def main():
     print("\n✓ Done!")
 
     # Shutdown
-    await shutdown()
+    await pul.shutdown()
 
 
 if __name__ == "__main__":

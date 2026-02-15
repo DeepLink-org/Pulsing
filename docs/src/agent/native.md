@@ -18,7 +18,7 @@ The `@agent` decorator is equivalent to `@remote`, but attaches metadata for vis
 
 ```python
 import pulsing as pul
-from pulsing.agent import agent, runtime, llm, get_agent_meta, list_agents
+from pulsing.agent import agent, llm, get_agent_meta, list_agents
 
 # @pul.remote: Basic Actor
 @pul.remote
@@ -38,7 +38,8 @@ class Researcher:
 ### Metadata Access
 
 ```python
-async with runtime():
+await pul.init()
+try:
     r = await Researcher.spawn(name="researcher")
 
     # Get metadata by name
@@ -50,6 +51,8 @@ async with runtime():
     # List all agents
     for name, meta in list_agents().items():
         print(f"{name}: {meta.role}")
+finally:
+    await pul.shutdown()
 ```
 
 ### `@pul.remote` vs `@agent`
@@ -64,28 +67,36 @@ async with runtime():
 ## Runtime Management
 
 ```python
-from pulsing.agent import runtime, cleanup
+import pulsing as pul
 
-async with runtime():
+await pul.init()
+try:
     # Create and use agents
     agent = await MyAgent.spawn(name="agent")
     await agent.work()
-
-# Optional: cleanup global state
-cleanup()
+finally:
+    await pul.shutdown()
 ```
+
+`runtime()` is still available as a convenience context manager, but the primary recommended style is explicit `await pul.init()` / `await pul.shutdown()`.
 
 ### Distributed Mode
 
 ```python
 # Node A
-async with runtime(addr="0.0.0.0:8001"):
+await pul.init(addr="0.0.0.0:8001")
+try:
     await JudgeActor.spawn(name="judge")
+finally:
+    await pul.shutdown()
 
 # Node B (auto-discovers Node A)
-async with runtime(addr="0.0.0.0:8002", seeds=["node_a:8001"]):
+await pul.init(addr="0.0.0.0:8002", seeds=["node_a:8001"])
+try:
     judge = await JudgeActor.resolve("judge")  # Cross-node transparent call
     await judge.submit(idea)
+finally:
+    await pul.shutdown()
 ```
 
 ## LLM Integration
@@ -125,7 +136,7 @@ value = extract_field(response, "answer", default="unknown")
 ```python
 import asyncio
 import pulsing as pul
-from pulsing.agent import agent, runtime, llm, parse_json, get_agent_meta, list_agents
+from pulsing.agent import agent, llm, parse_json, get_agent_meta, list_agents
 
 @pul.remote
 class Moderator:
@@ -165,7 +176,8 @@ class Analyst:
         return opinion
 
 async def main():
-    async with runtime():
+    await pul.init()
+    try:
         # Create moderator
         moderator = await Moderator.spawn(topic="AI Trends", name="moderator")
 
@@ -192,6 +204,8 @@ async def main():
         # Get summary
         result = await moderator.summarize()
         print(f"Summary: {result}")
+    finally:
+        await pul.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main())

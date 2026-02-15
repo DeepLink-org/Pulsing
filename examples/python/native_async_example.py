@@ -9,11 +9,10 @@ Usage: python examples/python/native_async_example.py
 
 import asyncio
 
-# Pulsing native API
-from pulsing.actor import init, shutdown, remote
+import pulsing as pul
 
 
-@remote
+@pul.remote
 class Counter:
     """Distributed counter"""
 
@@ -28,7 +27,7 @@ class Counter:
         return self.value
 
 
-@remote
+@pul.remote
 class Calculator:
     """Distributed calculator"""
 
@@ -39,7 +38,7 @@ class Calculator:
         return a * b
 
 
-@remote
+@pul.remote
 class AsyncWorker:
     """Async Worker"""
 
@@ -64,7 +63,7 @@ async def main():
     print("=" * 60)
 
     # Initialize (simple!)
-    await init()
+    await pul.init()
     print("✓ Pulsing initialized")
 
     # --- Counter ---
@@ -99,7 +98,7 @@ async def main():
     print(f"Process result: {result}")
 
     # --- Shutdown ---
-    await shutdown()
+    await pul.shutdown()
     print("\n✓ Done!")
 
 
@@ -113,12 +112,12 @@ if __name__ == "__main__":
 #
 # | Operation      | Pulsing Native (async)      | Ray Compat Layer (sync)     |
 # |----------------|-----------------------------|-----------------------------|
-# | Initialize     | await init()                | ray.init()                  |
-# | Decorator      | @remote                     | @ray.remote                 |
+# | Initialize     | await pul.init()            | ray.init()                  |
+# | Decorator      | @pul.remote                 | @ray.remote                 |
 # | Create actor   | await Counter.spawn()       | Counter.remote()            |
 # | Call method    | await counter.incr()        | counter.incr.remote()       |
 # | Get result     | Direct return               | ray.get(ref)                |
-# | Shutdown       | await shutdown()            | ray.shutdown()              |
+# | Shutdown       | await pul.shutdown()        | ray.shutdown()              |
 #
 # Recommended to use native API:
 # - More Pythonic (standard async/await)

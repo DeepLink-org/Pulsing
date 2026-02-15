@@ -23,9 +23,9 @@ async def main():
     """Main function"""
     logger.info("=== Distributed Memory Queue Example ===\n")
 
-    # Create Actor system
-    system = await pul.actor_system()
-    logger.info("✓ Actor system started\n")
+    await pul.init()
+    system = pul.ActorSystem(pul.get_system())
+    logger.info("✓ Global system initialized\n")
 
     try:
         # Producer: open queue for writing
@@ -66,7 +66,7 @@ async def main():
         logger.info("✓ Example completed!")
 
     finally:
-        await system.shutdown()
+        await pul.shutdown()
         logger.info("System shutdown")
 
 

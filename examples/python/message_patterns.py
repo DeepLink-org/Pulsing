@@ -10,42 +10,13 @@ import asyncio
 import pulsing as pul
 
 
-class PatternDemo:
-    """Base Actor with various message patterns."""
-
-    def __init__(self):
-        self.value = 0
-
-    async def receive(self, msg):
-        # Pattern 1: Simple object messaging (dict, list, string, etc.)
-        if isinstance(msg, dict):
-            if msg.get("action") == "add":
-                self.value += msg.get("n", 1)
-                return {"value": self.value}
-            if msg.get("action") == "get":
-                return {"value": self.value}
-
-        # Pattern 2: Streaming response - just return a generator!
-        if msg == "stream":
-
-            async def generate():
-                for token in ["Hello", " ", "World", "!"]:
-                    yield {"token": token}
-                    await asyncio.sleep(0.1)
-
-            return generate()
-
-        return f"unknown: {msg}"
-
-
 @pul.remote
-class RemotePatternDemo:
-    """@pul.remote Actor with cleaner API (recommended)."""
+class PatternDemo:
+    """Actor with various message patterns."""
 
     def __init__(self):
         self.value = 0
 
-    # Sync method - simple request/response
     def add(self, n: int = 1) -> dict:
         self.value += n
         return {"value": self.value}
@@ -61,44 +32,35 @@ class RemotePatternDemo:
 
 
 async def main():
-    system = await pul.actor_system()
+    await pul.init()
+    try:
+        print("=" * 50)
+        print("Pattern 1: Simple method calls")
+        print("=" * 50)
 
-    print("=" * 50)
-    print("Pattern 1: Base Actor with dict messages")
-    print("=" * 50)
+        demo = await PatternDemo.spawn(name="demo")
 
-    actor = await system.spawn(PatternDemo(), name="demo")
+        print(await demo.add(10))  # {'value': 10}
+        print(await demo.add(5))  # {'value': 15}
+        print(await demo.get())  # {'value': 15}
 
-    print(await actor.ask({"action": "add", "n": 10}))  # {'value': 10}
-    print(await actor.ask({"action": "add", "n": 5}))  # {'value': 15}
-    print(await actor.ask({"action": "get"}))  # {'value': 15}
+        print("\n" + "=" * 50)
+        print("Pattern 2: Typed resolve")
+        print("=" * 50)
 
-    print("\n" + "=" * 50)
-    print("Pattern 2: Base Actor streaming (return generator)")
-    print("=" * 50)
+        resolved = await PatternDemo.resolve("demo")
+        print(await resolved.get())
 
-    response = await actor.ask("stream")
-    async for chunk in response.stream_reader():
-        print(chunk["token"], end="")
-    print()
+        print("\n" + "=" * 50)
+        print("Pattern 3: Async generator streaming")
+        print("=" * 50)
 
-    print("\n" + "=" * 50)
-    print("Pattern 3: @pul.remote (recommended)")
-    print("=" * 50)
+        async for chunk in demo.stream():
+            print(chunk["token"], end="")
+        print()
+    finally:
+        await pul.shutdown()
 
-    service = await RemotePatternDemo.local(system)
-
-    # Direct method calls - no need for ask/tell!
-    print(await service.add(10))  # {'value': 10}
-    print(await service.add(5))  # {'value': 15}
-    print(await service.get())  # {'value': 15}
-
-    print("\n--- Async generator streaming ---")
-    async for chunk in service.stream():
-        print(chunk["token"], end="")
-    print()
-
-    await system.shutdown()
     print("\n✓ Done!")
 
 

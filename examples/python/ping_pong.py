@@ -9,23 +9,26 @@ import asyncio
 import pulsing as pul
 
 
+@pul.remote
 class PingPong:
-    async def receive(self, msg):
-        if msg == "ping":
-            return "pong"
+    def ping(self) -> str:
+        return "pong"
+
+    def echo(self, msg: str) -> str:
         return f"echo: {msg}"
 
 
 async def main():
-    system = await pul.actor_system()
-    actor = await system.spawn(PingPong())
+    await pul.init()
+    try:
+        actor = await PingPong.spawn()
 
-    # Simple string message
-    print(await actor.ask("ping"))  # -> pong
-    print(await actor.ask("hello"))  # -> echo: hello
+        print(await actor.ping())  # -> pong
+        print(await actor.echo("hello"))  # -> echo: hello
 
-    await asyncio.sleep(1)  # Allow background tasks to complete
-    await system.shutdown()
+        await asyncio.sleep(1)  # Allow background tasks to complete
+    finally:
+        await pul.shutdown()
 
 
 if __name__ == "__main__":

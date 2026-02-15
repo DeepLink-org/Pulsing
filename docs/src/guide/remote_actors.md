@@ -37,6 +37,10 @@ await asyncio.sleep(1.0)
 # Find actor by name (searches entire cluster)
 remote_ref = await system.resolve("worker")
 response = await remote_ref.ask({"action": "process", "data": "hello"})
+
+# Convert ActorRef to proxy
+any_proxy = remote_ref.as_any()         # Unspecified/unknown type
+typed_proxy = remote_ref.as_type(Worker)  # Typed proxy when class is known
 ```
 
 ### Using @remote Class.resolve()
@@ -50,6 +54,9 @@ class Worker:
 worker = await Worker.resolve("worker")
 result = await worker.process("hello")  # Direct method call
 ```
+
+!!! note
+    For new code, prefer `Class.resolve(name)` (typed proxy). Use `system.resolve(name)` when you only have a runtime name and then call `.as_type()` / `.as_any()` on the returned `ActorRef`.
 
 ## Named vs Anonymous Actors
 

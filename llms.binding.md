@@ -4,12 +4,145 @@
 
 `Pulsing` is a distributed actor framework that provides a communication backbone for building distributed systems, with specialized support for AI applications.
 
-## Python API
-
-### Actor System Style
+## Quick Start
 
 ```python
 import pulsing as pul
+
+await pul.init()
+
+@pul.remote
+class Counter:
+    def __init__(self): self.value = 0
+    def incr(self): self.value += 1; return self.value
+
+# Create actor
+counter = await Counter.spawn(name="counter")
+print(await counter.incr())  # 1
+
+# Resolve from another process / node
+counter2 = await Counter.resolve("counter")
+print(await counter2.incr())  # 2
+
+await pul.shutdown()
+```
+
+## Python API
+
+You must call `await pul.init()` before using `spawn`, `resolve`, or other APIs.
+
+```python
+import pulsing as pul
+
+# ── Lifecycle ──
+
+await pul.init(
+    addr: str | None = None,
+    *,
+    seeds: list[str] | None = None,
+    passphrase: str | None = None
+)
+
+await pul.shutdown()
+
+# ── Define actor with @pul.remote ──
+
+@pul.remote
+class Counter:
+    def __init__(self, init=0): self.value = init
+
+    def incr(self):                     # sync method
+        self.value += 1
+        return self.value
+
+    async def fetch_and_add(self, url):  # async method
+        data = await http_get(url)
+        self.value += data
+        return self.value
+
+# ── Create and call ──
+
+counter = await Counter.spawn(name="counter")   # create actor, returns typed proxy
+result = await counter.incr()                    # call method directly
+
+# ── Resolve existing actor (e.g. from another process / node) ──
+# Prefer typed proxy via Counter.resolve() when you know the actor type.
+# Fall back to ref.as_any() when the remote type is unknown.
+
+# 1. Typed proxy (recommended)
+proxy = await Counter.resolve("counter")
+result = await proxy.incr()
+
+# 2. Typed proxy — manual bind
+ref = await pul.resolve("counter", timeout=30)
+proxy = ref.as_type(Counter)
+result = await proxy.incr()
+
+# 3. Untyped proxy — when remote type is unknown
+ref = await pul.resolve("service_name")
+proxy = ref.as_any()
+result = await proxy.any_method(args)
+
+```
+
+### Ray Integration
+
+`pul.mount` registers any Python object as a Pulsing actor, enabling tight integration between Ray actors and Pulsing.
+
+**Running Pulsing in a Ray cluster:** Every process (driver and workers) must initialize Pulsing. Use `pulsing.ray.init_in_ray()` and pass it in `ray.init(runtime_env={"worker_process_setup_hook": init_in_ray})` so workers call it on startup; the driver must call `init_in_ray()` once in code. See the `pulsing.ray` module for details.
+
+```python
+import pulsing as pul
+
+# Mount object onto Pulsing network (sync, can be called in __init__)
+pul.mount(
+    instance: Any,            # Object to mount
+    *,
+    name: str,                # Pulsing name, used for resolve discovery
+    public: bool = True,      # Whether discoverable by other cluster nodes
+) -> None
+# Internally:
+#   1. Initialize Pulsing (if not yet initialized in this process)
+#   2. Wrap instance as a Pulsing actor
+#   3. Register on Pulsing network, gossip broadcasts the name
+
+# Unmount (call when actor is destroyed)
+pul.unmount(name: str) -> None
+
+# Cleanup Pulsing state in Ray environment (call before ray.shutdown())
+pul.cleanup_ray() -> None
+```
+Example: Ray handles process scheduling, Pulsing handles inter-actor communication.
+
+```python
+import ray, pulsing as pul
+
+@ray.remote
+class Worker:
+    def __init__(self, name):
+        pul.mount(self, name=name)              # One line to join Pulsing
+
+    async def call_peer(self, peer_name, msg):
+        proxy = (await pul.resolve(peer_name, timeout=30)).as_any()
+        return await proxy.greet(msg)           # Cross-process Pulsing call
+
+    async def greet(self, msg):
+        return f"hello from {self.name}: {msg}"
+
+ray.init()
+workers = [Worker.remote(f"w{i}") for i in range(3)]
+ray.get(workers[0].call_peer.remote("w1", "hi"))  # => "hello from w1: hi"
+pul.cleanup_ray()
+```
+
+### Under the Hood: Actor System & Low-level APIs
+
+The global API is backed by an `ActorSystem` instance. You can create one explicitly when you need multiple systems or finer control. The low-level `spawn`/`refer`/`resolve` APIs operate on `ActorRef` (not typed proxy) and require actors to implement a `receive(self, msg)` method.
+
+```python
+import pulsing as pul
+
+# ── Explicit ActorSystem ──
 
 system = await pul.actor_system(
     addr: str | None = None,
@@ -20,12 +153,10 @@ system = await pul.actor_system(
 
 await system.shutdown()
 
-class MyActor:
-    async def receive(self, msg: Any) -> Any:
-        ...
+# ── Low-level spawn (actor must have receive method) ──
 
-actorref = await system.spawn(
-    actor: Actor, # MyActor()
+actorref = await pul.spawn(       # global system
+    actor: Actor,
     *,
     name: str | None = None,
     public: bool = False,
@@ -35,34 +166,27 @@ actorref = await system.spawn(
     max_backoff: float = 30.0
 ) -> ActorRef
 
-actorref = await system.refer(actorid: ActorId | str) -> ActorRef
-
-actorref = await system.resolve(
-    name: str,
-    *,
-    node_id: int | None = None
+actorref = await system.spawn(    # explicit system, same signature
+    actor: Actor, ...
 ) -> ActorRef
 
-response = await actorref.ask(request: Any) -> Any
+# ── Low-level resolve / refer ──
 
+actorref = await pul.refer(actorid: ActorId | str) -> ActorRef
+actorref = await pul.resolve(name: str, *, node_id=None, timeout=None) -> ActorRef
+actorref = await system.resolve(name: str, *, node_id=None) -> ActorRef
+
+# ── ActorRef message passing ──
+
+response = await actorref.ask(request: Any) -> Any
 await actorref.tell(msg: Any) -> None
 
+# ── @pul.remote with explicit system ──
 
-@pul.remote
-class Counter:
-    # Synchronous handler
-    def incr(self):
-        ...
+counter = await Counter.local(system, name="counter")  # spawn on explicit system
+result = await counter.incr()
 
-    # Asynchronous handler
-    async def desc(self):
-        ...
-
-# Usage
-counter = await Counter.spawn(name="counter")
-result = await counter.incr()  # Returns ActorProxy, call methods directly
-
-# Queue API
+# Queue API (on system)
 writer = await system.queue.write(
     topic: str,
     *,
@@ -87,191 +211,6 @@ reader = await system.queue.read(
 ) -> QueueReader
 
 records = await reader.get(limit: int = 100, wait: bool = False) -> list[dict]
-
-# Queue usage example
-writer = await system.queue.write("my_queue", bucket_column="user_id")
-await writer.put({"user_id": "u1", "data": "hello"})
-
-reader = await system.queue.read("my_queue")
-records = await reader.get(limit=10)
-```
-
-### Async API with Global System
-
-```python
-import pulsing as pul
-
-# Initialize global system
-await pul.init(
-    addr: str | None = None,
-    *,
-    seeds: list[str] | None = None,
-    passphrase: str | None = None
-) -> ActorSystem
-
-await pul.shutdown()
-
-# Spawn actor (using global system)
-actorref = await pul.spawn(
-    actor: Actor,
-    *,
-    name: str | None = None,
-    public: bool = False,
-    restart_policy: str = "never",
-    max_restarts: int = 3,
-    min_backoff: float = 0.1,
-    max_backoff: float = 30.0
-) -> ActorRef
-
-# Get reference by ActorId (using global system)
-actorref = await pul.refer(actorid: ActorId | str) -> ActorRef
-
-# Resolve actor by name (using global system)
-ref = await pul.resolve(
-    name: str,
-    *,
-    node_id: int | None = None,
-    timeout: float | None = None   # Seconds to wait for name to appear (gossip convergence)
-) -> ActorRefView
-
-# Send message and wait for response
-response = await ref.ask(request: Any) -> Any
-
-# Send message without waiting (fire-and-forget)
-await ref.tell(msg: Any) -> None
-
-# ── Proxy Generation ──
-
-# Untyped proxy (no need to know actor type, call any method by name)
-ref = await pul.resolve("service_name")
-proxy = ref.as_any()                      # Untyped proxy
-result = await proxy.any_method(args)     # Call any remote method
-value = await proxy.some_attr             # Read remote attribute (no parentheses)
-
-# Typed proxy (generated from local class definition, with method signature validation)
-ref = await pul.resolve("counter", timeout=30)
-proxy = ref.as_type(Counter)              # Bind to Counter type
-result = await proxy.incr()               # With type checking
-
-# @pul.remote classes can also resolve directly to a typed proxy
-typed_proxy = await Counter.resolve("counter")
-any_proxy = typed_proxy.as_any()          # typed → untyped conversion
-
-@pul.remote
-class Counter:
-    def __init__(self, init=0): self.value = init
-
-    # Synchronous handler
-    def incr(self):
-        ...
-
-    # Asynchronous handler
-    async def desc(self):
-        ...
-
-# Usage 1: Create via spawn
-counter = await Counter.spawn(name="counter")
-result = await counter.incr()  # Returns ActorProxy, call methods directly
-
-# Usage 2: Resolve an existing actor
-proxy = await Counter.resolve("counter")
-result = await proxy.incr()
-
-```
-
-### Ray Integration
-
-`pul.mount` registers any Python object as a Pulsing actor, enabling tight integration between Ray actors and Pulsing.
-
-```python
-import pulsing as pul
-
-# Mount object onto Pulsing network (sync, can be called in __init__)
-pul.mount(
-    instance: Any,            # Object to mount
-    *,
-    name: str,                # Pulsing name, used for resolve discovery
-    public: bool = True,      # Whether discoverable by other cluster nodes
-) -> None
-# Internally:
-#   1. Initialize Pulsing (if not yet initialized in this process)
-#   2. Wrap instance as a Pulsing actor
-#   3. Register on Pulsing network, gossip broadcasts the name
-
-# Unmount (call when actor is destroyed)
-pul.unmount(name: str) -> None
-```
-Example: Ray handles process scheduling, Pulsing handles inter-actor communication.
-
-```python
-import ray, pulsing as pul
-
-@ray.remote
-class Worker:
-    def __init__(self, name):
-        pul.mount(self, name=name)              # One line to join Pulsing
-
-    async def call_peer(self, peer_name, msg):
-        proxy = (await pul.resolve(peer_name, timeout=30)).as_type(Worker)
-        return await proxy.greet(msg)           # Cross-process Pulsing call
-
-    async def greet(self, msg):
-        return f"hello from {self.name}: {msg}"
-
-ray.init()
-workers = [Worker.remote(f"w{i}") for i in range(3)]
-ray.get(workers[0].call_peer.remote("w1", "hi"))  # => "hello from w1: hi"
-pul.cleanup_ray()
-```
-
-### Ray-Compatible API
-
-```python
-from pulsing.compat import ray
-
-# Initialize (sync interface, async internally)
-ray.init(
-    address: str | None = None,
-    *,
-    ignore_reinit_error: bool = False,
-    **kwargs
-) -> None
-
-# Shutdown
-ray.shutdown() -> None
-
-# Check initialization status
-ray.is_initialized() -> bool
-
-# Decorator: convert class to Actor
-@ray.remote
-class MyActor:
-    def __init__(self, ...): ...
-    def method(self, ...): ...
-
-# Create Actor (sync interface)
-actor_handle = MyActor.remote(...) -> _ActorHandle
-
-# Call method (returns ObjectRef)
-result_ref = actor_handle.method.remote(...) -> ObjectRef
-
-# Get result (sync, supports single or list)
-result = ray.get(
-    refs: ObjectRef | list[ObjectRef],
-    *,
-    timeout: float | None = None
-) -> Any | list[Any]
-
-# Wrap value as ObjectRef (for API compatibility)
-ref = ray.put(value: Any) -> ObjectRef
-
-# Wait for multiple ObjectRefs
-ready, remaining = ray.wait(
-    refs: list[ObjectRef],
-    *,
-    num_returns: int = 1,
-    timeout: float | None = None
-) -> tuple[list[ObjectRef], list[ObjectRef]]
 ```
 
 ### Actor Behavior

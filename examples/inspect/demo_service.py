@@ -24,6 +24,7 @@ import time
 import pulsing as pul
 
 
+@pul.remote
 class WorkerActor:
     """A simple worker actor that processes tasks"""
 
@@ -31,25 +32,17 @@ class WorkerActor:
         self.worker_id = worker_id
         self.tasks_processed = 0
 
-    def on_start(self, actor_id):
-        print(f"[Worker {self.worker_id}] Started")
+    async def process(self, task: str) -> dict[str, str | int]:
+        self.tasks_processed += 1
+        result = f"Processed: {task} (total: {self.tasks_processed})"
+        print(f"[Worker {self.worker_id}] {result}")
+        return {"result": result, "worker": self.worker_id}
 
-    async def receive(self, msg):
-        action = msg.get("action") if isinstance(msg, dict) else None
-
-        if action == "process":
-            task = msg.get("task", "")
-            self.tasks_processed += 1
-            result = f"Processed: {task} (total: {self.tasks_processed})"
-            print(f"[Worker {self.worker_id}] {result}")
-            return {"result": result, "worker": self.worker_id}
-
-        if action == "stats":
-            return {"worker_id": self.worker_id, "tasks": self.tasks_processed}
-
-        return {"error": "unknown action"}
+    def stats(self) -> dict[str, str | int]:
+        return {"worker_id": self.worker_id, "tasks": self.tasks_processed}
 
 
+@pul.remote
 class DispatcherActor:
     """A dispatcher actor that distributes tasks to workers (for demo purposes)"""
 
@@ -57,56 +50,36 @@ class DispatcherActor:
         self.workers = []
         self.tasks_dispatched = 0
 
-    def on_start(self, actor_id):
-        print("[Dispatcher] Started")
+    def route(self, task: str) -> dict[str, str | int | bool]:
+        self.tasks_dispatched += 1
+        worker_id = f"worker-{random.randint(1, 3)}"
+        return {
+            "task": task,
+            "worker": worker_id,
+            "dispatched": self.tasks_dispatched,
+        }
 
-    async def receive(self, msg):
-        action = msg.get("action") if isinstance(msg, dict) else None
-
-        if action == "route":
-            self.tasks_dispatched += 1
-            task = msg.get("task", "")
-            # Simulate routing logic
-            worker_id = f"worker-{random.randint(1, 3)}"
-            return {
-                "task": task,
-                "worker": worker_id,
-                "dispatched": self.tasks_dispatched,
-            }
-
-        if action == "stats":
-            return {"dispatcher": True, "tasks_dispatched": self.tasks_dispatched}
-
-        return {"error": "unknown action"}
+    def stats(self) -> dict[str, int | bool]:
+        return {"dispatcher": True, "tasks_dispatched": self.tasks_dispatched}
 
 
+@pul.remote
 class CacheActor:
     """A cache actor that stores key-value pairs"""
 
     def __init__(self):
         self.cache = {}
 
-    def on_start(self, actor_id):
-        print("[Cache] Started")
+    def get(self, key: str) -> dict[str, object]:
+        value = self.cache.get(key, None)
+        return {"key": key, "value": value, "found": value is not None}
 
-    async def receive(self, msg):
-        action = msg.get("action") if isinstance(msg, dict) else None
+    def set(self, key: str, value: object) -> dict[str, str | bool]:
+        self.cache[key] = value
+        return {"key": key, "success": True}
 
-        if action == "get":
-            key = msg.get("key", "")
-            value = self.cache.get(key, None)
-            return {"key": key, "value": value, "found": value is not None}
-
-        if action == "set":
-            key = msg.get("key", "")
-            value = msg.get("value", "")
-            self.cache[key] = value
-            return {"key": key, "success": True}
-
-        if action == "stats":
-            return {"cache_size": len(self.cache)}
-
-        return {"error": "unknown action"}
+    def stats(self) -> dict[str, int]:
+        return {"cache_size": len(self.cache)}
 
 
 async def run_node(port: int, seed: str | None):
@@ -118,8 +91,9 @@ async def run_node(port: int, seed: str | None):
     addr = f"127.0.0.1:{port}"
     seeds = [seed] if seed else None
 
-    system = await pul.actor_system(addr, seeds=seeds)
-    print(f"✓ System started: {system.node_id} @ {system.addr}")
+    await pul.init(addr=addr, seeds=seeds)
+    system = pul.ActorSystem(pul.get_system())
+    print(f"✓ System started: {addr}")
     if seed:
         print(f"  Joined via: {seed}")
     print()
@@ -128,12 +102,12 @@ async def run_node(port: int, seed: str | None):
     if seed is None:
         # Node 1: Create dispatcher and some workers
         print("Creating actors on node 1...")
-        await system.spawn(DispatcherActor(), name="dispatcher")
+        await DispatcherActor.spawn(name="dispatcher")
         print("  ✓ actors/dispatcher")
 
         for i in range(1, 3):
             worker_name = f"worker-{i}"
-            await system.spawn(WorkerActor(worker_name), name=worker_name)
+            await WorkerActor.spawn(worker_name, name=worker_name)
             print(f"  ✓ actors/{worker_name}")
 
         print("\n✓ Node 1 ready!")
@@ -156,7 +130,7 @@ async def run_node(port: int, seed: str | None):
         print("Creating actors on node 2...")
         for i in range(3, 5):
             worker_name = f"worker-{i}"
-            await system.spawn(WorkerActor(worker_name), name=worker_name)
+            await WorkerActor.spawn(worker_name, name=worker_name)
             print(f"  ✓ actors/{worker_name}")
         print("\n✓ Node 2 ready!")
 
@@ -164,7 +138,7 @@ async def run_node(port: int, seed: str | None):
         # Node 3: Add cache
         await asyncio.sleep(1)
         print("Creating actors on node 3...")
-        await system.spawn(CacheActor(), name="cache")
+        await CacheActor.spawn(name="cache")
         print("  ✓ actors/cache")
         print("\n✓ Node 3 ready!")
 
@@ -182,7 +156,7 @@ async def run_node(port: int, seed: str | None):
     except KeyboardInterrupt:
         print("\n\nShutting down...")
     finally:
-        await system.shutdown()
+        await pul.shutdown()
         print("✓ Shutdown complete")
 
 

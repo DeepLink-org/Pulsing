@@ -417,3 +417,67 @@ async def test_base_actor_async_generator_stream(system):
         items.append(response)
 
     assert len(items) >= 1  # At least one item
+
+
+# ============================================================================
+# Test: on_stop lifecycle hook
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_actor_on_stop():
+    """Test on_stop lifecycle hook is called when actor system shuts down."""
+    # Use a separate system so shutdown doesn't affect other tests
+    sys = await pul.actor_system()
+
+    LifecycleActor.stopped = False
+    await sys.spawn(LifecycleActor(), name="on_stop_actor")
+    await asyncio.sleep(0.1)
+
+    await sys.shutdown()
+    await asyncio.sleep(0.1)
+
+    assert LifecycleActor.stopped is True
+
+
+# ============================================================================
+# Test: @pul.remote metadata() delegation via _WrappedActor
+# ============================================================================
+
+
+@pul.remote
+class _MetadataService:
+    """Remote service with custom metadata."""
+
+    def metadata(self) -> dict[str, str]:
+        return {"service": "metadata_test", "version": "2.0"}
+
+    def ping(self):
+        return "pong"
+
+
+@pytest.mark.asyncio
+async def test_remote_metadata_delegation():
+    """_WrappedActor delegates metadata() to user instance."""
+    from pulsing.actor.remote import _WrappedActor
+
+    # Create raw instance and wrap it
+    instance = object.__new__(_MetadataService._cls)
+    instance.__init__()
+    wrapped = _WrappedActor(instance)
+    meta = wrapped.metadata()
+    assert meta == {"service": "metadata_test", "version": "2.0"}
+
+
+@pytest.mark.asyncio
+async def test_remote_metadata_delegation_no_metadata():
+    """_WrappedActor returns empty dict when user instance has no metadata()."""
+    from pulsing.actor.remote import _WrappedActor
+
+    class _NoMeta:
+        def ping(self):
+            return "pong"
+
+    wrapped = _WrappedActor(_NoMeta())
+    meta = wrapped.metadata()
+    assert meta == {}

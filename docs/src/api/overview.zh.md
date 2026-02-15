@@ -61,25 +61,6 @@ response = await actor.ask({"message": "hello"})
 await pul.shutdown()
 ```
 
-#### 3. Ray 兼容 API（迁移）
-
-```python
-from pulsing.compat import ray
-
-# Ray 兼容 API，方便迁移
-ray.init(address="0.0.0.0:8000")
-
-@ray.remote
-class MyActor:
-    def process(self, data):
-        return f"Processed: {data}"
-
-actor = MyActor.remote()
-result = ray.get(actor.process.remote("hello"))
-
-ray.shutdown()
-```
-
 ### Actor 模式
 
 #### Remote 装饰器（推荐）
@@ -174,7 +155,7 @@ class ResilientWorker:
         return risky_computation(data)
 ```
 
-### 分布式队列
+### Under the Hood：分布式队列
 
 Pulsing 包含分布式队列系统，用于数据管道：
 

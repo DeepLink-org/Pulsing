@@ -13,8 +13,7 @@ Optional arguments:
 import argparse
 import asyncio
 import random
-from pulsing.actor import remote
-from pulsing.agent import runtime
+import pulsing as pul
 
 # AI persona configuration
 AI_PERSONAS = {
@@ -57,7 +56,7 @@ AI_PERSONAS = {
 }
 
 
-@remote
+@pul.remote
 class ChatRoom:
     """Chat room - coordinates agent conversations"""
 
@@ -94,7 +93,7 @@ class ChatRoom:
         return self.messages
 
 
-@remote
+@pul.remote
 class ChatAgent:
     """AI agent in the chat room"""
 
@@ -141,7 +140,8 @@ async def main(topic: str, rounds: int):
     print(f"🔄 Discussion rounds: {rounds}")
     print("\n--- Participants entering ---\n")
 
-    async with runtime():
+    await pul.init()
+    try:
         # Create chat room
         room = await ChatRoom.spawn(topic=topic, name="chat_room")
 
@@ -181,6 +181,8 @@ async def main(topic: str, rounds: int):
         print(f"  Total messages: {len(history)}")
         print(f"  Participants: {len(agents)} AIs")
         print(f"  Discussion rounds: {rounds}")
+    finally:
+        await pul.shutdown()
 
     print("\n" + "=" * 60)
     print("✅ Chat ended!")

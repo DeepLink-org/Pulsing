@@ -4,11 +4,10 @@
 
 import asyncio
 import random
-from pulsing.actor import remote
-from pulsing.agent import runtime
+import pulsing as pul
 
 
-@remote(restart_policy="on_failure", max_restarts=50)
+@pul.remote(restart_policy="on_failure", max_restarts=50)
 class FlakyWorker:
     def __init__(self):
         self.call_count = 0
@@ -21,7 +20,8 @@ class FlakyWorker:
 
 
 async def main():
-    async with runtime():
+    await pul.init()
+    try:
         w = await FlakyWorker.spawn(name="flaky")
 
         results, retries = [], 0
@@ -50,6 +50,8 @@ async def main():
         else:
             print(f"⚠️  {50 - ok} tasks failed")
         print("=" * 50 + "\n")
+    finally:
+        await pul.shutdown()
 
 
 if __name__ == "__main__":

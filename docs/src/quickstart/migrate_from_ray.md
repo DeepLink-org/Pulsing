@@ -1,36 +1,35 @@
 # Tutorial: Migrate from Ray
 
-Replace Ray with Pulsing in **5 minutes**. One import change, zero external dependencies.
+Migrate Ray actor code to Pulsing's native async API.
 
 ---
 
-## Why Migrate?
+## Why This Migration Changed
 
-| | Ray | Pulsing |
-|---|-----|---------|
-| **Dependencies** | Ray cluster, Redis, GCS | None |
-| **Startup time** | Seconds | Milliseconds |
-| **Memory overhead** | High | Low |
-| **Actor model** | Stateful remote objects | Classical (mailbox, FIFO) |
-| **Streaming** | Manual | Native |
+This project no longer recommends the Ray-compatible layer (`pulsing.compat.ray`).
+Use Pulsing's primary API directly:
 
----
-
-## Step 1: Change the Import
-
-```python
-# Before (Ray)
-import ray
-
-# After (Pulsing)
-from pulsing.compat import ray
-```
-
-**That's it.** Your existing code works.
+- `import pulsing as pul`
+- `@pul.remote`
+- `await pul.init()` / `await pul.shutdown()`
+- `await Class.spawn()` / `await Class.resolve()`
 
 ---
 
-## Step 2: Run Your Code
+## API Mapping (Ray -> Pulsing)
+
+| Ray | Pulsing |
+|---|---|
+| `ray.init()` | `await pul.init()` |
+| `ray.shutdown()` | `await pul.shutdown()` |
+| `@ray.remote` | `@pul.remote` |
+| `Actor.remote(args...)` | `await Actor.spawn(args...)` |
+| `ray.get(actor.method.remote(args...))` | `await actor.method(args...)` |
+| `ray.get_actor(name)` | `await Actor.resolve(name)` or `await pul.resolve(name)` |
+
+---
+
+## Minimal Example
 
 ### Before (Ray)
 
@@ -43,96 +42,16 @@ ray.init()
 class Counter:
     def __init__(self):
         self.value = 0
-
     def inc(self):
         self.value += 1
         return self.value
 
 counter = Counter.remote()
-print(ray.get(counter.inc.remote()))  # 1
-print(ray.get(counter.inc.remote()))  # 2
-
+print(ray.get(counter.inc.remote()))
 ray.shutdown()
 ```
 
 ### After (Pulsing)
-
-```python
-from pulsing.compat import ray  # ← only this line changed
-
-ray.init()
-
-@ray.remote
-class Counter:
-    def __init__(self):
-        self.value = 0
-
-    def inc(self):
-        self.value += 1
-        return self.value
-
-counter = Counter.remote()
-print(ray.get(counter.inc.remote()))  # 1
-print(ray.get(counter.inc.remote()))  # 2
-
-ray.shutdown()
-```
-
----
-
-## Supported APIs
-
-| API | Status |
-|-----|--------|
-| `ray.init()` | ✅ |
-| `ray.shutdown()` | ✅ |
-| `@ray.remote` (class) | ✅ |
-| `@ray.remote` (function) | ✅ |
-| `ray.get()` | ✅ |
-| `ray.put()` | ✅ |
-| `ray.wait()` | ✅ |
-| `ActorClass.remote()` | ✅ |
-| `actor.method.remote()` | ✅ |
-
----
-
-## Distributed Mode
-
-Ray requires a cluster. Pulsing just needs `--addr` and `--seeds`:
-
-### Node 1 (seed)
-
-```python
-from pulsing.compat import ray
-
-ray.init(address="0.0.0.0:8000")
-
-@ray.remote
-class Worker:
-    def process(self, data):
-        return f"processed: {data}"
-
-worker = Worker.remote()
-# Keep running...
-```
-
-### Node 2 (join)
-
-```python
-from pulsing.compat import ray
-
-ray.init(address="0.0.0.0:8001", seeds=["192.168.1.1:8000"])
-
-# Find remote actor
-worker = ray.get_actor("Worker")
-result = ray.get(worker.process.remote("hello"))
-```
-
----
-
-## Native Async API (Optional)
-
-For new code, consider the native async API:
 
 ```python
 import pulsing as pul
@@ -141,38 +60,51 @@ import pulsing as pul
 class Counter:
     def __init__(self):
         self.value = 0
-
     def inc(self):
         self.value += 1
         return self.value
 
 async def main():
     await pul.init()
-    counter = await Counter.spawn()
-    print(await counter.inc())  # 1
+    counter = await Counter.spawn(name="counter")
+    print(await counter.inc())
     await pul.shutdown()
 ```
 
-**Benefits:**
+---
 
-- Cleaner `async/await` syntax
-- No `ray.get()` boilerplate
-- IDE autocompletion works
-- Access to streaming messages
+## Distributed Mode Mapping
+
+### Node 1 (seed)
+
+```python
+import pulsing as pul
+
+@pul.remote
+class Worker:
+    def process(self, data: str) -> str:
+        return f"processed: {data}"
+
+await pul.init(addr="0.0.0.0:8000")
+await Worker.spawn(name="worker")
+```
+
+### Node 2 (join + resolve)
+
+```python
+import pulsing as pul
+
+await pul.init(addr="0.0.0.0:8001", seeds=["192.168.1.1:8000"])
+worker = await Worker.resolve("worker")
+result = await worker.process("hello")
+```
 
 ---
 
-## Limitations
+## Notes
 
-The Ray-compatible API does not support:
-
-- Ray Serve
-- Ray Tune
-- Ray Data
-- Object Store (large objects)
-- Placement Groups
-
-For these features, continue using Ray. Pulsing focuses on the Actor model.
+- Prefer typed proxy: `await Class.resolve(name)`.
+- If only a runtime name is available: `ref = await pul.resolve(name)` then `ref.as_type(Class)` / `ref.as_any()`.
 
 ---
 

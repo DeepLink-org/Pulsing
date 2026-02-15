@@ -1,13 +1,7 @@
 """
 Multi-Agent Discussion and Voting Example Based on MBTI Personality Types
 
-Demonstrates the difference between @remote and @agent:
-  - @remote: Basic Actor decorator
-  - @agent: Actor with metadata (for visualization/debugging)
-
-In this example:
-  - ModeratorActor: Uses @remote (regular Actor)
-  - MBTIAgent: Uses @agent (with MBTI role metadata)
+This example uses `@pul.remote` for all actors.
 
 Usage:
   python mbti_discussion.py --mock --topic "Remote work vs On-site work"
@@ -21,8 +15,8 @@ import asyncio
 import random
 from collections import Counter
 
-from pulsing.actor import remote, resolve
-from pulsing.agent import agent, runtime, llm, parse_json, list_agents
+import pulsing as pul
+from pulsing.agent import llm, parse_json
 
 # ============================================================================
 # MBTI Personality Configuration
@@ -154,13 +148,13 @@ def sample_mbti_group(size: int) -> list[str]:
 
 
 # ============================================================================
-# Moderator - Uses @remote (Regular Actor, no metadata)
+# Moderator Actor
 # ============================================================================
 
 
-@remote
+@pul.remote
 class ModeratorActor:
-    """Moderator Actor: Coordinates the entire discussion process (uses @remote)"""
+    """Moderator Actor: Coordinates the entire discussion process."""
 
     def __init__(self, topic: str, rounds: int, debate_time: float, mock: bool):
         self.topic = topic
@@ -200,7 +194,7 @@ class ModeratorActor:
             print(f"{'=' * 60}")
 
             for agent_info in self.agents:
-                proxy = await resolve(agent_info["name"])
+                proxy = await MBTIAgent.resolve(agent_info["name"])
                 await proxy.form_opinion(self.opinions[-10:])
 
             print(f"\n{'=' * 60}")
@@ -228,7 +222,7 @@ class ModeratorActor:
                     continue
 
                 target = random.choice(opponents)
-                proxy = await resolve(agent_info["name"])
+                proxy = await MBTIAgent.resolve(agent_info["name"])
                 result = await proxy.debate(target)
 
                 if result.get("success"):
@@ -244,7 +238,7 @@ class ModeratorActor:
         print(f"{'=' * 60}")
 
         for agent_info in self.agents:
-            proxy = await resolve(agent_info["name"])
+            proxy = await MBTIAgent.resolve(agent_info["name"])
             await proxy.vote()
 
         return self._summarize()
@@ -277,17 +271,13 @@ class ModeratorActor:
 
 
 # ============================================================================
-# MBTI Agent - Uses @agent (with metadata, can be used for visualization)
+# MBTI Agent
 # ============================================================================
 
 
-@agent(
-    role="MBTI Participant",
-    goal="Participate in discussion based on personality traits",
-    backstory="Express views according to MBTI personality type",
-)
+@pul.remote
 class MBTIAgent:
-    """MBTI Agent: Autonomous Actor participating in discussion (uses @agent, with metadata)"""
+    """MBTI Agent: Autonomous actor participating in discussion."""
 
     def __init__(
         self, agent_name: str, mbti: str, topic: str, moderator: str, mock: bool
@@ -336,7 +326,7 @@ Please express your view on the topic based on your personality traits. Output J
             self.stance = data.get("stance", "Neutral")
             self.argument = data.get("argument", "Needs discussion")
 
-        moderator = await resolve(self.moderator_name)
+        moderator = await ModeratorActor.resolve(self.moderator_name)
         await moderator.submit_opinion(self.name, self.mbti, self.stance, self.argument)
         return {"mbti": self.mbti, "stance": self.stance}
 
@@ -390,7 +380,7 @@ Based on your personality traits ({target_info["traits"]}), would you be persuad
     async def vote(self) -> dict:
         if self.mock:
             await asyncio.sleep(random.uniform(0.02, 0.05))
-        moderator = await resolve(self.moderator_name)
+        moderator = await ModeratorActor.resolve(self.moderator_name)
         await moderator.submit_vote(self.mbti, self.stance or "Abstain")
         return {"mbti": self.mbti, "vote": self.stance}
 
@@ -416,14 +406,15 @@ async def run(
     )
     print(f"Mode: {'Mock' if mock else 'LLM'}")
 
-    async with runtime():
+    await pul.init()
+    try:
         mbti_group = sample_mbti_group(group_size)
         dist = Counter(mbti_group)
         print("\nGroup:")
         for mbti, count in sorted(dist.items(), key=lambda x: -x[1]):
             print(f"  {mbti} ({MBTI_TYPES[mbti]['name']}): {count}")
 
-        # Create moderator (@remote)
+        # Create moderator
         moderator = await ModeratorActor.spawn(
             topic=topic,
             rounds=rounds,
@@ -432,7 +423,7 @@ async def run(
             name="moderator",
         )
 
-        # Create participants (@agent, with metadata)
+        # Create participants
         for i, mbti in enumerate(mbti_group):
             agent_name = f"agent_{i}_{mbti}"
             await MBTIAgent.spawn(
@@ -445,14 +436,13 @@ async def run(
             )
             await moderator.register_agent(agent_name, mbti)
 
-        # Show @agent metadata functionality
-        print("\nRegistered Agents (via metadata):")
-        for name, meta in list_agents().items():
-            print(f"  {name}: {meta.role}")
+        print(f"\nRegistered Agents: {len(mbti_group)}")
 
         # Start discussion
         result = await moderator.start_discussion()
         return result
+    finally:
+        await pul.shutdown()
 
 
 if __name__ == "__main__":

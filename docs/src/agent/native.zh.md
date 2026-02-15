@@ -18,7 +18,7 @@ Pulsing 提供轻量的原生 Agent 工具箱，用于构建多智能体应用�
 
 ```python
 import pulsing as pul
-from pulsing.agent import agent, runtime, llm, get_agent_meta, list_agents
+from pulsing.agent import agent, llm, get_agent_meta, list_agents
 
 # @pul.remote: 基础 Actor
 @pul.remote
@@ -38,7 +38,8 @@ class Researcher:
 ### 元信息访问
 
 ```python
-async with runtime():
+await pul.init()
+try:
     r = await Researcher.spawn(name="researcher")
 
     # 通过名称获取元信息
@@ -50,6 +51,8 @@ async with runtime():
     # 列出所有 Agent
     for name, meta in list_agents().items():
         print(f"{name}: {meta.role}")
+finally:
+    await pul.shutdown()
 ```
 
 ### `@pul.remote` vs `@agent`
@@ -64,28 +67,36 @@ async with runtime():
 ## 运行时管理
 
 ```python
-from pulsing.agent import runtime, cleanup
+import pulsing as pul
 
-async with runtime():
+await pul.init()
+try:
     # 创建和使用 Agent
     agent = await MyAgent.spawn(name="agent")
     await agent.work()
-
-# 可选：清理全局状态
-cleanup()
+finally:
+    await pul.shutdown()
 ```
+
+`runtime()` 仍可作为便捷 context manager 使用，但推荐主路径是显式 `await pul.init()` / `await pul.shutdown()`。
 
 ### 分布式模式
 
 ```python
 # 节点 A
-async with runtime(addr="0.0.0.0:8001"):
+await pul.init(addr="0.0.0.0:8001")
+try:
     await JudgeActor.spawn(name="judge")
+finally:
+    await pul.shutdown()
 
 # 节点 B（自动发现节点 A）
-async with runtime(addr="0.0.0.0:8002", seeds=["node_a:8001"]):
+await pul.init(addr="0.0.0.0:8002", seeds=["node_a:8001"])
+try:
     judge = await JudgeActor.resolve("judge")  # 跨节点透明调用
     await judge.submit(idea)
+finally:
+    await pul.shutdown()
 ```
 
 ## LLM 集成
@@ -125,7 +136,7 @@ value = extract_field(response, "answer", default="unknown")
 ```python
 import asyncio
 import pulsing as pul
-from pulsing.agent import agent, runtime, llm, parse_json, list_agents
+from pulsing.agent import agent, llm, parse_json, list_agents
 
 @pul.remote
 class Moderator:
@@ -165,7 +176,8 @@ class Analyst:
         return opinion
 
 async def main():
-    async with runtime():
+    await pul.init()
+    try:
         # 创建协调者
         moderator = await Moderator.spawn(topic="AI 趋势", name="moderator")
 
@@ -192,6 +204,8 @@ async def main():
         # 获取总结
         result = await moderator.summarize()
         print(f"总结: {result}")
+    finally:
+        await pul.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main())

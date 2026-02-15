@@ -1,9 +1,10 @@
 """
-Tests for resolve().as_any() and as_any(ref): untyped proxy that forwards any method call.
+Tests for resolve().as_any() / .as_type() and as_any(ref): proxy generation on ActorRef.
 
 Covers:
-- resolve(name) returns an object with .as_any()
-- ref.as_any() returns a proxy; await proxy.method(...) works without knowing the actor type
+- resolve(name) returns ActorRef with .as_any() and .as_type()
+- ref.as_any() returns an untyped proxy
+- ref.as_type(cls) returns a typed proxy
 - as_any(ref) function works with ref from resolve() or raw ActorRef
 - typed_proxy.as_any() returns an any proxy with the same underlying ref
 - ref.ask() / ref.tell() still work (backward compatibility)
@@ -14,7 +15,7 @@ import asyncio
 import pytest
 
 import pulsing as pul
-from pulsing.actor import Actor, ActorRefView, as_any, remote
+from pulsing.actor import Actor, ActorRef, as_any, remote
 
 
 # ============================================================================
@@ -55,12 +56,14 @@ async def test_resolve_returns_ref_view_with_as_any(initialized_pul):
 
 
 @pytest.mark.asyncio
-async def test_resolve_returns_actor_ref_view(initialized_pul):
-    """resolve(name) returns ActorRefView (or equivalent with .as_any())."""
+async def test_resolve_returns_actor_ref(initialized_pul):
+    """resolve(name) returns ActorRef with .as_any() and .as_type()."""
     await pul.spawn(_EchoActor(), name="ref_view_echo", public=True)
 
     ref = await pul.resolve("ref_view_echo")
-    assert isinstance(ref, ActorRefView)
+    assert isinstance(ref, ActorRef)
+    assert hasattr(ref, "as_any")
+    assert hasattr(ref, "as_type")
 
 
 # ============================================================================
@@ -204,7 +207,7 @@ async def test_typed_proxy_as_any(initialized_pul):
 
 @pytest.mark.asyncio
 async def test_resolve_ref_ask_still_works(initialized_pul):
-    """After resolve(), ref.ask(msg) still works (ActorRefView delegates to _ref)."""
+    """After resolve(), ref.ask(msg) still works."""
     await pul.spawn(_EchoActor(), name="compat_ask_echo", public=True)
 
     ref = await pul.resolve("compat_ask_echo")
@@ -234,3 +237,75 @@ async def test_resolve_ref_tell_still_works(initialized_pul):
     await asyncio.sleep(0.05)
     result = await ref.ask("get")
     assert result == 3
+
+
+# ============================================================================
+# Test: ref.as_type(cls) — typed proxy from ActorRef
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_as_type_on_actor_ref(initialized_pul):
+    """ref.as_type(cls) returns a typed proxy with method validation."""
+    await _ServiceWithMethods.spawn(name="as_type_svc", public=True)
+
+    ref = await pul.resolve("as_type_svc")
+    proxy = ref.as_type(_ServiceWithMethods)
+
+    result = await proxy.get_value()
+    assert result == 0
+
+    result = await proxy.set_value(99)
+    assert result == 99
+
+    result = await proxy.get_value()
+    assert result == 99
+
+
+@pytest.mark.asyncio
+async def test_as_type_rejects_invalid_method(initialized_pul):
+    """Typed proxy from as_type() rejects methods not on the class."""
+    await _ServiceWithMethods.spawn(name="as_type_reject_svc", public=True)
+
+    ref = await pul.resolve("as_type_reject_svc")
+    proxy = ref.as_type(_ServiceWithMethods)
+
+    with pytest.raises(AttributeError, match="No method"):
+        proxy.nonexistent_method  # Access triggers __getattr__ validation
+
+
+@pytest.mark.asyncio
+async def test_as_type_async_method(initialized_pul):
+    """as_type() proxy correctly handles async methods."""
+    await _ServiceWithMethods.spawn(name="as_type_async_svc", public=True)
+
+    ref = await pul.resolve("as_type_async_svc")
+    proxy = ref.as_type(_ServiceWithMethods)
+
+    result = await proxy.async_incr()
+    assert result == 1
+    result = await proxy.async_incr()
+    assert result == 2
+
+
+# ============================================================================
+# Test: Counter.resolve(name, timeout=...)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_counter_resolve_with_timeout(initialized_pul):
+    """Counter.resolve(name, timeout=...) passes timeout to underlying resolve."""
+    await _ServiceWithMethods.spawn(name="timeout_svc", public=True)
+
+    # Should succeed with timeout (actor already exists)
+    proxy = await _ServiceWithMethods.resolve("timeout_svc", timeout=5)
+    result = await proxy.get_value()
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_counter_resolve_timeout_not_found(initialized_pul):
+    """Counter.resolve(name, timeout=...) raises after timeout if not found."""
+    with pytest.raises(RuntimeError):
+        await _ServiceWithMethods.resolve("nonexistent_actor", timeout=0.3)

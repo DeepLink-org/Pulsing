@@ -713,6 +713,26 @@ impl PyActorRef {
         })
     }
 
+    /// Return an untyped proxy that forwards any method call to the remote actor.
+    fn as_any(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let remote = py.import("pulsing.actor.remote")?;
+        let proxy_cls = remote.getattr("ActorProxy")?;
+        let proxy = proxy_cls.call1((self.clone(), py.None(), py.None()))?;
+        Ok(proxy.unbind())
+    }
+
+    /// Return a typed proxy based on the given class definition.
+    fn as_type(&self, py: Python<'_>, cls: PyObject) -> PyResult<PyObject> {
+        let remote = py.import("pulsing.actor.remote")?;
+        let extract_fn = remote.getattr("_extract_methods")?;
+        let result = extract_fn.call1((&cls,))?;
+        let methods = result.get_item(0)?;
+        let async_methods = result.get_item(1)?;
+        let proxy_cls = remote.getattr("ActorProxy")?;
+        let proxy = proxy_cls.call1((self.clone(), methods, async_methods))?;
+        Ok(proxy.unbind())
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "ActorRef(id={}, local={})",

@@ -175,23 +175,26 @@ if __name__ == "__main__":
 
 ### pul.init / pul.shutdown
 
-全局系统初始化（Ray 风格异步 API）。
+全局系统初始化（推荐主 API）。
 
 ```python
 import asyncio
 import pulsing as pul
-
-class MyActor:
-    async def receive(self, msg):
-        return f"echo: {msg}"
 
 async def main():
     # 初始化全局系统
     await pul.init(addr=None, seeds=None, passphrase=None)
 
     # 使用全局系统
-    actor = await pul.spawn(MyActor())
-    ref = await pul.resolve("actor_name")
+    @pul.remote
+    class Counter:
+        def __init__(self): self.value = 0
+        def incr(self): self.value += 1; return self.value
+
+    counter = await Counter.spawn(name="counter")
+    ref = await pul.resolve("counter")
+    proxy = ref.as_type(Counter)
+    await proxy.incr()
 
     # 关闭
     await pul.shutdown()
@@ -285,6 +288,14 @@ class ActorRef:
     async def tell(self, msg):
         """发送消息但不等待响应（fire-and-forget）。"""
         pass
+
+    def as_any(self):
+        """在未知远端类型时，返回无类型 ActorProxy。"""
+        pass
+
+    def as_type(self, cls):
+        """绑定类元数据并返回有类型 ActorProxy。"""
+        pass
 ```
 
 ### ActorProxy
@@ -359,7 +370,7 @@ class ResilientWorker:
     def work(self, data): ...
 ```
 
-## 基础 Actor
+## Under the Hood：基础 Actor
 
 需要底层控制时，可使用基础 Actor 类。
 
@@ -404,29 +415,6 @@ await writer.flush()
 # 读取
 reader = await system.queue.read("my_queue")
 records = await reader.get(limit=100)
-```
-
-## Ray 兼容
-
-Ray 的直接替换。
-
-```python
-from pulsing.compat import ray
-
-ray.init()
-
-@ray.remote
-class Counter:
-    def __init__(self):
-        self.value = 0
-    def incr(self):
-        self.value += 1
-        return self.value
-
-counter = Counter.remote()
-result = ray.get(counter.incr.remote())
-
-ray.shutdown()
 ```
 
 ## Rust API

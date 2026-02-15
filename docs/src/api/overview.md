@@ -61,25 +61,6 @@ response = await actor.ask({"message": "hello"})
 await pul.shutdown()
 ```
 
-#### 3. Ray-Compatible API (Migration)
-
-```python
-from pulsing.compat import ray
-
-# Ray-compatible API for easy migration
-ray.init(address="0.0.0.0:8000")
-
-@ray.remote
-class MyActor:
-    def process(self, data):
-        return f"Processed: {data}"
-
-actor = MyActor.remote()
-result = ray.get(actor.process.remote("hello"))
-
-ray.shutdown()
-```
-
 ### Actor Patterns
 
 #### Remote Decorator (Recommended)
@@ -174,7 +155,7 @@ class ResilientWorker:
         return risky_computation(data)
 ```
 
-### Distributed Queues
+### Under the Hood: Distributed Queues
 
 Pulsing includes a distributed queue system for data pipelines:
 

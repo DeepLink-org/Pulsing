@@ -304,14 +304,17 @@ def get_actor_metadata(name: str) -> dict[str, str] | None:
 def _extract_methods(cls: type) -> tuple[list[str], set[str]]:
     """Extract public method names and async method set from a class.
 
-    Handles Ray-wrapped classes by unwrapping to the original class first.
+    Handles @pul.remote ActorClass and Ray-wrapped classes by unwrapping first.
     """
+    # If it's an ActorClass (@pul.remote decorated), extract the original class
+    if isinstance(cls, ActorClass):
+        cls = cls._cls
+
     # 如果是 Ray ActorClass，提取原始类
     try:
         from ray.actor import ActorClass as RayActorClass
 
         if isinstance(cls, RayActorClass):
-            # Ray ActorClass 的 __ray_metadata__ 有原始类引用
             if hasattr(cls, "__ray_metadata__"):
                 meta = cls.__ray_metadata__
                 if hasattr(meta, "modified_class"):
@@ -328,42 +331,6 @@ def _extract_methods(cls: type) -> tuple[list[str], set[str]]:
         if inspect.iscoroutinefunction(method) or inspect.isasyncgenfunction(method):
             async_methods.add(name)
     return methods, async_methods
-
-
-class ActorRefView:
-    """Wrapper around ActorRef that adds .as_any() / .as_type() for proxy generation.
-
-    Returned by resolve(name). Delegates .ask(), .tell(), and other
-    ActorRef attributes to the underlying ref.
-    """
-
-    __slots__ = ("_ref",)
-
-    def __init__(self, ref: ActorRef):
-        self._ref = ref
-
-    def as_any(self) -> "ActorProxy":
-        """Return an untyped proxy that forwards any method call to the remote actor."""
-        return ActorProxy(self._ref, method_names=None, async_methods=None)
-
-    def as_type(self, cls: type) -> "ActorProxy":
-        """Return a typed proxy based on the given class definition.
-
-        Inspects ``cls`` for public methods and generates a proxy with
-        method name validation and correct sync/async detection.
-        Type info comes from the local class definition, not from the network.
-
-        Example::
-
-            ref = await pul.resolve("counter", timeout=30)
-            proxy = ref.as_type(Counter)
-            await proxy.incr()
-        """
-        methods, async_methods = _extract_methods(cls)
-        return ActorProxy(self._ref, methods, async_methods)
-
-    def __getattr__(self, name: str):
-        return getattr(self._ref, name)
 
 
 PYTHON_ACTOR_SERVICE_NAME = "system/python_actor_service"
@@ -688,6 +655,11 @@ class _WrappedActor(_ActorBase):
     def on_stop(self) -> None:
         if hasattr(self._instance, "on_stop"):
             self._instance.on_stop()
+
+    def metadata(self) -> dict[str, str]:
+        if hasattr(self._instance, "metadata") and callable(self._instance.metadata):
+            return self._instance.metadata()
+        return {}
 
     async def receive(self, msg) -> Any:
         # Handle dict-based call format (supporting both v1 and v2)
@@ -1259,6 +1231,7 @@ class ActorClass:
         *,
         system: ActorSystem | None = None,
         node_id: int | None = None,
+        timeout: float | None = None,
     ) -> ActorProxy:
         """Resolve actor by name, return typed ActorProxy
 
@@ -1266,6 +1239,8 @@ class ActorClass:
             name: Actor name
             system: ActorSystem instance, uses global system if not provided
             node_id: Target node ID, searches in cluster if not provided
+            timeout: Seconds to wait for the name to appear (gossip convergence).
+                     None means no wait (error immediately if not found).
 
         Returns:
             ActorProxy: Proxy with method type information
@@ -1298,7 +1273,7 @@ class ActorClass:
                 )
             system = _global_system
 
-        actor_ref = await system.resolve_named(name, node_id=node_id)
+        actor_ref = await system.resolve_named(name, node_id=node_id, timeout=timeout)
         return ActorProxy(actor_ref, self._methods, self._async_methods)
 
 
@@ -1569,19 +1544,20 @@ async def resolve(
 ):
     """Resolve a named actor by name.
 
-    Returns an object that supports .ask(), .tell(), and .as_any().
+    Returns an ActorRef that supports .ask(), .tell(), .as_any(), and .as_type().
     Use .as_any() to get an untyped proxy that forwards any method call.
+    Use .as_type(Counter) to get a typed proxy with method validation.
 
     For typed ActorProxy with method calls, use Counter.resolve(name) instead.
 
     Args:
         name: Actor name
         node_id: Target node ID, searches in cluster if not provided
-        timeout: 等待名字出现的超时秒数。None 表示不等待（找不到立刻报错）。
-                 设置后内部在 Rust 层重试，等待 gossip 收敛。
+        timeout: Seconds to wait for the name to appear (gossip convergence).
+                 None means no wait (error immediately if not found).
 
     Returns:
-        ActorRefView: Ref-like object with .as_any() for untyped proxy.
+        ActorRef: Actor reference with .as_any() / .as_type() for proxy generation.
 
     Example:
         from pulsing.actor import init, remote, resolve
@@ -1606,29 +1582,26 @@ async def resolve(
         raise RuntimeError("Actor system not initialized. Call 'await init()' first.")
 
     try:
-        ref = await _global_system.resolve(name, node_id=node_id, timeout=timeout)
-        return ActorRefView(ref)
+        return await _global_system.resolve(name, node_id=node_id, timeout=timeout)
     except RuntimeError as e:
         raise _convert_rust_error(e) from e
 
 
-def as_any(ref: ActorRef | ActorRefView) -> ActorProxy:
+def as_any(ref: ActorRef) -> ActorProxy:
     """Return an untyped proxy that forwards any method call to the remote actor.
 
-    Use when you have an ActorRef (or ref from resolve()) and want to call
-    methods by name without the typed class.
+    Use when you have an ActorRef and want to call methods by name
+    without the typed class.
 
     Args:
-        ref: ActorRef from resolve(name), or raw ActorRef from system.resolve_named().
+        ref: ActorRef from resolve(name).
 
     Example:
         ref = await resolve("channel.discord")
         proxy = as_any(ref)  # or proxy = ref.as_any()
         await proxy.send_text(chat_id, content)
     """
-    if isinstance(ref, ActorRefView):
-        return ref.as_any()
-    return ActorProxy(ref, method_names=None, async_methods=None)
+    return ref.as_any()
 
 
 def mount(instance: Any, *, name: str, public: bool = True) -> None:

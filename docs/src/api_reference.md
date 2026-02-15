@@ -174,23 +174,26 @@ if __name__ == "__main__":
 
 ### pul.init / pul.shutdown
 
-Global system initialization (Ray-style async API).
+Global system initialization (recommended primary API).
 
 ```python
 import asyncio
 import pulsing as pul
-
-class MyActor:
-    async def receive(self, msg):
-        return f"echo: {msg}"
 
 async def main():
     # Initialize global system
     await pul.init(addr=None, seeds=None, passphrase=None)
 
     # Use global system
-    actor = await pul.spawn(MyActor())
-    ref = await pul.resolve("actor_name")
+    @pul.remote
+    class Counter:
+        def __init__(self): self.value = 0
+        def incr(self): self.value += 1; return self.value
+
+    counter = await Counter.spawn(name="counter")
+    ref = await pul.resolve("counter")
+    proxy = ref.as_type(Counter)
+    await proxy.incr()
 
     # Shutdown
     await pul.shutdown()
@@ -261,6 +264,14 @@ class ActorRef:
 
     async def tell(self, msg):
         """Send a message without waiting for response (fire-and-forget)."""
+        pass
+
+    def as_any(self):
+        """Get untyped ActorProxy when remote class is unknown."""
+        pass
+
+    def as_type(self, cls):
+        """Get typed ActorProxy bound to class metadata."""
         pass
 ```
 
@@ -336,7 +347,7 @@ class ResilientWorker:
     def work(self, data): ...
 ```
 
-## Base Actor
+## Under the Hood: Base Actor
 
 For low-level control, inherit from Actor base class.
 
@@ -381,29 +392,6 @@ await writer.flush()
 # Read
 reader = await system.queue.read("my_queue")
 records = await reader.get(limit=100)
-```
-
-## Ray Compatibility
-
-Drop-in replacement for Ray.
-
-```python
-from pulsing.compat import ray
-
-ray.init()
-
-@ray.remote
-class Counter:
-    def __init__(self):
-        self.value = 0
-    def incr(self):
-        self.value += 1
-        return self.value
-
-counter = Counter.remote()
-result = ray.get(counter.incr.remote())
-
-ray.shutdown()
 ```
 
 ## Rust API
