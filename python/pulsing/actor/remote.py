@@ -301,12 +301,40 @@ def get_actor_metadata(name: str) -> dict[str, str] | None:
     return _actor_metadata_registry.get(name)
 
 
+def _extract_methods(cls: type) -> tuple[list[str], set[str]]:
+    """Extract public method names and async method set from a class.
+
+    Handles Ray-wrapped classes by unwrapping to the original class first.
+    """
+    # 如果是 Ray ActorClass，提取原始类
+    try:
+        from ray.actor import ActorClass as RayActorClass
+
+        if isinstance(cls, RayActorClass):
+            # Ray ActorClass 的 __ray_metadata__ 有原始类引用
+            if hasattr(cls, "__ray_metadata__"):
+                meta = cls.__ray_metadata__
+                if hasattr(meta, "modified_class"):
+                    cls = meta.modified_class
+    except ImportError:
+        pass
+
+    methods = []
+    async_methods = set()
+    for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
+        if name.startswith("_"):
+            continue
+        methods.append(name)
+        if inspect.iscoroutinefunction(method) or inspect.isasyncgenfunction(method):
+            async_methods.add(name)
+    return methods, async_methods
+
+
 class ActorRefView:
-    """Wrapper around ActorRef that adds .as_any() for an untyped proxy.
+    """Wrapper around ActorRef that adds .as_any() / .as_type() for proxy generation.
 
     Returned by resolve(name). Delegates .ask(), .tell(), and other
-    ActorRef attributes to the underlying ref. Use .as_any() to get
-    a proxy that forwards any method call to the remote actor.
+    ActorRef attributes to the underlying ref.
     """
 
     __slots__ = ("_ref",)
@@ -317,6 +345,22 @@ class ActorRefView:
     def as_any(self) -> "ActorProxy":
         """Return an untyped proxy that forwards any method call to the remote actor."""
         return ActorProxy(self._ref, method_names=None, async_methods=None)
+
+    def as_type(self, cls: type) -> "ActorProxy":
+        """Return a typed proxy based on the given class definition.
+
+        Inspects ``cls`` for public methods and generates a proxy with
+        method name validation and correct sync/async detection.
+        Type info comes from the local class definition, not from the network.
+
+        Example::
+
+            ref = await pul.resolve("counter", timeout=30)
+            proxy = ref.as_type(Counter)
+            await proxy.incr()
+        """
+        methods, async_methods = _extract_methods(cls)
+        return ActorProxy(self._ref, methods, async_methods)
 
     def __getattr__(self, name: str):
         return getattr(self._ref, name)
@@ -369,7 +413,10 @@ class ActorProxy:
 
 
 class _MethodCaller:
-    """Method caller."""
+    """Method caller. 支持两种用法:
+    - await proxy.method(args)  — 方法调用
+    - await proxy.attr          — 属性读取（无参调用）
+    """
 
     def __init__(self, actor_ref: ActorRef, method_name: str, is_async: bool = False):
         self._ref = actor_ref
@@ -381,6 +428,10 @@ class _MethodCaller:
             return _AsyncMethodCall(self._ref, self._method, args, kwargs)
         else:
             return self._sync_call(*args, **kwargs)
+
+    def __await__(self):
+        """支持 await proxy.attr 直接读取属性"""
+        return self().__await__()
 
     async def _sync_call(self, *args, **kwargs) -> Any:
         """Synchronous method call."""
@@ -651,12 +702,21 @@ class _WrappedActor(_ActorBase):
                     return _wrap_response_v2(error=error_msg)
                 return _wrap_response_v1(error=error_msg)
 
-            func = getattr(self._instance, method, None)
-            if func is None or not callable(func):
+            _MISSING = object()
+            attr = getattr(self._instance, method, _MISSING)
+            if attr is _MISSING:
                 error_msg = f"Not found: {method}"
                 if version == 2:
                     return _wrap_response_v2(error=error_msg)
                 return _wrap_response_v1(error=error_msg)
+
+            if not callable(attr):
+                # 属性读取：直接返回值
+                if version == 2:
+                    return _wrap_response_v2(result=attr)
+                return _wrap_response_v1(result=attr)
+
+            func = attr
 
             # Detect if it's an async method (including async generators)
             is_async_method = (
@@ -921,6 +981,19 @@ class ActorClass:
         counter = await Counter.local(system, init=10)
     """
 
+    @staticmethod
+    def _unwrap_ray_class(cls):
+        """如果 cls 是 Ray ActorClass，提取原始用户类"""
+        try:
+            from ray.actor import ActorClass as RayActorClass
+        except ImportError:
+            return cls
+        if isinstance(cls, RayActorClass):
+            for base in type(cls).__bases__:
+                if base is not RayActorClass and base.__name__ != "Generic":
+                    return base
+        return cls
+
     def __init__(
         self,
         cls: type,
@@ -929,6 +1002,10 @@ class ActorClass:
         min_backoff: float = 0.1,
         max_backoff: float = 30.0,
     ):
+        unwrapped = self._unwrap_ray_class(cls)
+        # 保留 Ray handle，使 .remote() 可用
+        self._ray_cls = cls if unwrapped is not cls else None
+        cls = unwrapped
         self._cls = cls
         self._class_name = f"{cls.__module__}.{cls.__name__}"
         self._restart_policy = restart_policy
@@ -952,6 +1029,10 @@ class ActorClass:
 
         # Register class
         _actor_class_registry[self._class_name] = cls
+
+        # 如果原始类被 @ray.remote 装饰，用 Ray 的 .remote() 覆盖实例方法
+        if self._ray_cls is not None:
+            self.remote = self._ray_cls.remote
 
     async def spawn(
         self,
@@ -1484,6 +1565,7 @@ async def resolve(
     name: str,
     *,
     node_id: int | None = None,
+    timeout: float | None = None,
 ):
     """Resolve a named actor by name.
 
@@ -1495,6 +1577,8 @@ async def resolve(
     Args:
         name: Actor name
         node_id: Target node ID, searches in cluster if not provided
+        timeout: 等待名字出现的超时秒数。None 表示不等待（找不到立刻报错）。
+                 设置后内部在 Rust 层重试，等待 gossip 收敛。
 
     Returns:
         ActorRefView: Ref-like object with .as_any() for untyped proxy.
@@ -1509,6 +1593,9 @@ async def resolve(
         proxy = ref.as_any()
         await proxy.send_text(chat_id, content)
 
+        # 等待名字出现（gossip 收敛）
+        ref = await resolve("peer_node", timeout=30)
+
         # Low-level ask
         ref = await resolve("my_counter")
         result = await ref.ask({"__call__": "increment", "args": [], "kwargs": {}})
@@ -1519,7 +1606,7 @@ async def resolve(
         raise RuntimeError("Actor system not initialized. Call 'await init()' first.")
 
     try:
-        ref = await _global_system.resolve(name, node_id=node_id)
+        ref = await _global_system.resolve(name, node_id=node_id, timeout=timeout)
         return ActorRefView(ref)
     except RuntimeError as e:
         raise _convert_rust_error(e) from e
@@ -1542,6 +1629,122 @@ def as_any(ref: ActorRef | ActorRefView) -> ActorProxy:
     if isinstance(ref, ActorRefView):
         return ref.as_any()
     return ActorProxy(ref, method_names=None, async_methods=None)
+
+
+def mount(instance: Any, *, name: str, public: bool = True) -> None:
+    """将已有 Python 对象挂载到 Pulsing 通信网络。
+
+    同步接口，可在 ``__init__`` 中调用。内部自动完成：
+      1. 初始化 Pulsing（如果当前进程还没有，自动检测 Ray 环境）
+      2. 将 instance 包装为 Pulsing actor
+      3. 注册到 Pulsing 网络，其他节点可通过 ``pul.resolve(name)`` 发现
+
+    Args:
+        instance: 要挂载的对象（任意 Python 实例）
+        name: Pulsing 名称，其他节点通过此名字 resolve
+        public: 是否可被集群其他节点发现（默认 True）
+
+    Example::
+
+        @ray.remote
+        class Counter:
+            def __init__(self, name, peers):
+                self.name = name
+                self.peers = sorted(peers)
+                pul.mount(self, name=name)
+
+            async def greet(self, msg):
+                return f"Hello from {self.name}: {msg}"
+    """
+    from . import _global_system
+
+    # 自动初始化 Pulsing
+    if _global_system is None:
+        _auto_init_pulsing()
+
+    from . import _global_system as system
+
+    if system is None:
+        raise RuntimeError(
+            "Pulsing 初始化失败。请确保已调用 pul.init() 或在 Ray 环境中运行。"
+        )
+
+    actor_name = name if "/" in name else f"actors/{name}"
+    wrapped = _WrappedActor(instance)
+
+    async def _do_mount():
+        ref = await system.spawn(wrapped, name=actor_name, public=public)
+        return ref
+
+    actor_ref = _run_sync_on_pulsing_loop(_do_mount())
+    wrapped._inject_delayed(actor_ref)
+    _register_actor_metadata(actor_name, type(instance))
+
+
+def unmount(name: str) -> None:
+    """从 Pulsing 网络卸载一个已挂载的 actor。
+
+    Args:
+        name: 挂载时使用的名称
+    """
+    from . import _global_system
+
+    if _global_system is None:
+        return
+
+    actor_name = name if "/" in name else f"actors/{name}"
+
+    async def _do_unmount():
+        await _global_system.stop(actor_name)
+
+    _run_sync_on_pulsing_loop(_do_unmount())
+
+
+def _auto_init_pulsing():
+    """自动检测环境并初始化 Pulsing。"""
+    try:
+        import ray
+
+        if ray.is_initialized():
+            from pulsing.ray import init_in_ray
+
+            init_in_ray()
+            return
+    except ImportError:
+        pass
+
+    raise RuntimeError(
+        "Pulsing 未初始化。请先调用 await pul.init() 或确保在 Ray 环境中运行。"
+    )
+
+
+def _run_sync_on_pulsing_loop(coro):
+    """在 Pulsing 的后台事件循环上同步执行协程。"""
+    import asyncio
+    import concurrent.futures
+
+    # 尝试使用 pulsing.ray 的后台 loop（Ray 环境）
+    try:
+        from pulsing.ray import _loop
+
+        if _loop is not None:
+            fut = asyncio.run_coroutine_threadsafe(coro, _loop)
+            return fut.result(timeout=30)
+    except ImportError:
+        pass
+
+    # 非 Ray 环境：尝试在当前线程创建新 loop
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is None:
+        return asyncio.run(coro)
+
+    # 已有 running loop（比如 async context），在新线程运行
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result(timeout=30)
 
 
 RemoteClass = ActorClass

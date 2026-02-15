@@ -70,6 +70,9 @@ from pulsing.actor import (
     # Resolve function
     resolve,
     as_any,
+    # Mount (attach existing object to Pulsing network)
+    mount,
+    unmount,
     # Types
     Actor,
     ActorSystem as _ActorSystem,
@@ -84,6 +87,27 @@ from pulsing.actor import (
     PythonActorService,
     PYTHON_ACTOR_SERVICE_NAME,
 )
+
+
+# Ray integration (lazy import — 仅在 Ray 环境下可用)
+def init_inside_ray():
+    """在 Ray worker 中初始化 Pulsing 并加入集群（async 版本）。
+
+    用法::
+
+        await pul.init_inside_ray()
+    """
+    from pulsing.ray import async_init_in_ray
+
+    return async_init_in_ray()
+
+
+def cleanup_ray():
+    """清理 Pulsing 在 Ray KV store 中的状态"""
+    from pulsing.ray import cleanup
+
+    return cleanup()
+
 
 # Import exceptions
 from pulsing.exceptions import (
@@ -280,6 +304,12 @@ __all__ = [
     "is_initialized",
     # Decorator
     "remote",
+    # Mount (attach existing object to Pulsing network)
+    "mount",
+    "unmount",
+    # Ray integration
+    "init_inside_ray",
+    "cleanup_ray",
     # Types
     "Actor",
     "ActorSystem",

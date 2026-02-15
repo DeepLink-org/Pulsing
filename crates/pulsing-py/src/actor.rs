@@ -1600,12 +1600,16 @@ impl PyActorSystem {
     }
 
     /// Resolve a named actor (selects one instance using load balancing)
-    #[pyo3(signature = (name, node_id=None))]
+    ///
+    /// When `timeout` is provided, retries resolution until the name appears
+    /// or the timeout expires (useful for waiting on gossip propagation).
+    #[pyo3(signature = (name, node_id=None, timeout=None))]
     fn resolve_named<'py>(
         &self,
         py: Python<'py>,
         name: String,
         node_id: Option<u128>,
+        timeout: Option<f64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let system = self.inner.clone();
 
@@ -1623,23 +1627,44 @@ impl PyActorSystem {
                 ActorPath::new(&name).map_err(to_py_value_err)?
             };
             let node = node_id.map(NodeId::new);
-            let actor_ref = system
-                .resolve_named(&path, node.as_ref())
-                .await
-                .map_err(to_pyerr)?;
-            Ok(PyActorRef { inner: actor_ref })
+
+            match timeout {
+                None => {
+                    // 无 timeout：找不到立刻报错（原有行为）
+                    let actor_ref = system
+                        .resolve_named(&path, node.as_ref())
+                        .await
+                        .map_err(to_pyerr)?;
+                    Ok(PyActorRef { inner: actor_ref })
+                }
+                Some(secs) => {
+                    // 带 timeout：重试直到名字出现或超时
+                    let deadline =
+                        tokio::time::Instant::now() + std::time::Duration::from_secs_f64(secs);
+                    let mut last_err = None;
+                    while tokio::time::Instant::now() < deadline {
+                        match system.resolve_named(&path, node.as_ref()).await {
+                            Ok(actor_ref) => return Ok(PyActorRef { inner: actor_ref }),
+                            Err(e) => last_err = Some(e),
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                    Err(to_pyerr(last_err.unwrap()))
+                }
+            }
         })
     }
 
     /// Alias for resolve_named - resolve actor by name
-    #[pyo3(signature = (name, *, node_id=None))]
+    #[pyo3(signature = (name, *, node_id=None, timeout=None))]
     fn resolve<'py>(
         &self,
         py: Python<'py>,
         name: String,
         node_id: Option<u128>,
+        timeout: Option<f64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.resolve_named(py, name, node_id)
+        self.resolve_named(py, name, node_id, timeout)
     }
 
     fn stop<'py>(&self, py: Python<'py>, actor_name: String) -> PyResult<Bound<'py, PyAny>> {
