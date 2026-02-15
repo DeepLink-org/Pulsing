@@ -49,4 +49,5 @@ This guide covers **how to build** with Pulsing. For design rationale, see [Desi
 | Reliability patterns | [Reliability](reliability.md) |
 | Secure your cluster | [Security](security.md) |
 | Run LLM inference | [LLM Inference](../examples/llm_inference.md) |
-| API details | [API Reference](../api_reference.md) |
+| API details | [API Overview](../api/overview.md) |
+| Full API contract | [Complete Reference](../api_reference.md) |

@@ -78,7 +78,7 @@ finally:
     await pul.shutdown()
 ```
 
-`runtime()` 仍可作为便捷 context manager 使用，但推荐主路径是显式 `await pul.init()` / `await pul.shutdown()`。
+`runtime()` 仍可作为便捷 context manager 使用。本文统一使用显式 `await pul.init()` / `await pul.shutdown()`。
 
 ### 分布式模式
 

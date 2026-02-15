@@ -83,9 +83,9 @@ plugins:
           site_name: "Pulsing 文档"
           nav_translations:
             Home: 首页
-            Home: 首页
             Getting Started: 开始使用
             Overview: 概述
+            Complete Reference: 完整参考
             LLM Inference: LLM 推理
             Distributed Agents: 分布式 Agent
             Migrate from Ray: 从 Ray 迁移
@@ -163,6 +163,7 @@ nav:
       - Distributed Counter: examples/distributed_counter.md
   - API Reference:
     - Overview: api/overview.md
+    - Complete Reference: api_reference.md
     - Python: api/python.md
     - Rust: api/rust.md
   - FAQ: faq.md

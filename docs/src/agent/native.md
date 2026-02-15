@@ -78,7 +78,7 @@ finally:
     await pul.shutdown()
 ```
 
-`runtime()` is still available as a convenience context manager, but the primary recommended style is explicit `await pul.init()` / `await pul.shutdown()`.
+`runtime()` is still available as a convenience context manager. This page uses explicit `await pul.init()` / `await pul.shutdown()`.
 
 ### Distributed Mode
 

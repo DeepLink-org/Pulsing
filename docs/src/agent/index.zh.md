@@ -23,7 +23,8 @@ Pulsing 原生支持主流 Agent 框架，让您的应用轻松从单进程扩�
 从零构建多智能体应用时，使用 Pulsing 原生的 `@agent` 装饰器：
 
 ```python
-from pulsing.agent import agent, runtime, llm, list_agents
+import pulsing as pul
+from pulsing.agent import agent, llm, list_agents
 
 @agent(role="研究员", goal="深入分析")
 class Researcher:
@@ -31,13 +32,16 @@ class Researcher:
         client = await llm()
         return await client.ainvoke(f"分析: {topic}")
 
-async with runtime():
+await pul.init()
+try:
     r = await Researcher.spawn(name="researcher")
     result = await r.analyze("AI 趋势")
 
     # 访问元信息用于可视化
     for name, meta in list_agents().items():
         print(f"{name}: {meta.role}")
+finally:
+    await pul.shutdown()
 ```
 
 **核心特点：**

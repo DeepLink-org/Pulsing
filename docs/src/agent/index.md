@@ -23,7 +23,8 @@ Pulsing provides native support for popular agent frameworks, enabling seamless 
 For building multi-agent applications from scratch, use Pulsing's native `@agent` decorator:
 
 ```python
-from pulsing.agent import agent, runtime, llm, list_agents
+import pulsing as pul
+from pulsing.agent import agent, llm, list_agents
 
 @agent(role="Researcher", goal="Deep analysis")
 class Researcher:
@@ -31,13 +32,16 @@ class Researcher:
         client = await llm()
         return await client.ainvoke(f"Analyze: {topic}")
 
-async with runtime():
+await pul.init()
+try:
     r = await Researcher.spawn(name="researcher")
     result = await r.analyze("AI trends")
 
     # Access metadata for visualization
     for name, meta in list_agents().items():
         print(f"{name}: {meta.role}")
+finally:
+    await pul.shutdown()
 ```
 
 **Key features:**

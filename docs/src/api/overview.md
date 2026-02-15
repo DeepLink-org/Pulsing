@@ -19,13 +19,28 @@ Pulsing is built around the [Actor Model](https://en.wikipedia.org/wiki/Actor_mo
 - **Streaming Support**: Native support for streaming requests/responses
 - **Multi-Language**: Python-first with Rust core, extensible to other languages
 
-## API Styles
+## Python API
 
-### Python APIs
+### Global Async API
 
-Pulsing provides multiple API styles to fit different use cases:
+```python
+import pulsing as pul
 
-#### 1. Actor System Style (Explicit Management)
+await pul.init(addr="0.0.0.0:8000")
+
+@pul.remote
+class MyActor:
+    def process(self, data):
+        return f"Processed: {data}"
+
+actor = await MyActor.spawn(name="my_actor")
+response = await actor.process("hello")
+
+# Shutdown
+await pul.shutdown()
+```
+
+### Under the Hood: Actor System API (Explicit Management)
 
 ```python
 import pulsing as pul
@@ -33,7 +48,11 @@ import pulsing as pul
 # Create and manage actor system explicitly
 system = await pul.actor_system(addr="0.0.0.0:8000")
 
-# Spawn actors
+class MyActor:
+    async def receive(self, msg):
+        return f"echo: {msg}"
+
+# Spawn actor object directly (low-level)
 actor = await system.spawn(MyActor(), name="my_actor")
 
 # Communicate
@@ -41,24 +60,6 @@ response = await actor.ask({"message": "hello"})
 
 # Shutdown
 await system.shutdown()
-```
-
-#### 2. Ray-Style Global API (Convenience)
-
-```python
-import pulsing as pul
-
-# Initialize global system
-await pul.init(addr="0.0.0.0:8000")
-
-# Spawn actors using global system
-actor = await pul.spawn(MyActor(), name="my_actor")
-
-# Communicate
-response = await actor.ask({"message": "hello"})
-
-# Shutdown
-await pul.shutdown()
 ```
 
 ### Actor Patterns

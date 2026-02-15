@@ -120,22 +120,17 @@ Note: Error type information is preserved for both local and remote calls. Remot
 
 ## Core Functions
 
-### pul.actor_system
+### pul.init / pul.shutdown
 
-Create a new Actor System instance.
+Global system initialization.
 
 ```python
 import asyncio
 import pulsing as pul
 
 async def example():
-    system = await pul.actor_system(
-        addr=None,               # Bind address, None for standalone
-        # Keyword-only arguments follow
-        seeds=None,             # Seed nodes for cluster (list[str] or None)
-        passphrase=None,        # TLS passphrase (str or None)
-    )
-    return system
+    await pul.init(addr=None, seeds=None, passphrase=None)
+    await pul.shutdown()
 
 # Usage example
 if __name__ == "__main__":
@@ -144,9 +139,14 @@ if __name__ == "__main__":
     pass
 ```
 
-**Returns:** `ActorSystem` instance
+**Parameters:**
+- `addr`: Bind address (str or None for standalone)
+- `seeds`: Seed nodes to join cluster (list[str] or None)
+- `passphrase`: TLS passphrase (str or None)
 
-**Example:**
+### Under the Hood: pul.actor_system
+
+Create a new explicit `ActorSystem` instance when you need low-level control.
 
 ```python
 import asyncio
@@ -171,41 +171,6 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
-
-### pul.init / pul.shutdown
-
-Global system initialization (recommended primary API).
-
-```python
-import asyncio
-import pulsing as pul
-
-async def main():
-    # Initialize global system
-    await pul.init(addr=None, seeds=None, passphrase=None)
-
-    # Use global system
-    @pul.remote
-    class Counter:
-        def __init__(self): self.value = 0
-        def incr(self): self.value += 1; return self.value
-
-    counter = await Counter.spawn(name="counter")
-    ref = await pul.resolve("counter")
-    proxy = ref.as_type(Counter)
-    await proxy.incr()
-
-    # Shutdown
-    await pul.shutdown()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-**Parameters:**
-- `addr`: Bind address (str or None for standalone)
-- `seeds`: Seed nodes to join cluster (list[str] or None)
-- `passphrase`: TLS passphrase (str or None)
 
 ## Core Classes
 

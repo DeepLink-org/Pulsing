@@ -67,7 +67,7 @@ hide: toc
 
     ---
 
-    兼容 API，一行导入即可从 Ray 迁移。
+    将 Ray Actor 迁移到 Pulsing 原生异步 API。
 
     [:octicons-arrow-right-24: 从 Ray 迁移](quickstart/migrate_from_ray.zh.md)
 
@@ -116,7 +116,8 @@ asyncio.run(main())
 | 构建集群 | [指南：远程 Actor](guide/remote_actors.zh.md) |
 | 运维系统 | [指南：CLI 操作](guide/operations.zh.md) |
 | 深入设计 | [设计文档](design/architecture.md) |
-| API 详情 | [API 参考](api_reference.md) |
+| API 详情 | [API 概述](api/overview.zh.md) |
+| 完整 API 契约 | [完整参考](api_reference.zh.md) |
 
 ---
 

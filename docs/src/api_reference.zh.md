@@ -120,23 +120,17 @@ except PulsingRuntimeError as e:
 
 ## 核心函数
 
-### pul.actor_system
+### pul.init / pul.shutdown
 
-创建新的 Actor System 实例。
+全局系统初始化。
 
 ```python
 import asyncio
 import pulsing as pul
 
 async def example():
-    # 函数签名: actor_system(addr=None, *, seeds=None, passphrase=None) -> ActorSystem
-    system = await pul.actor_system(
-        addr=None,               # 绑定地址（str 或 None 表示单机模式）
-#        # 关键字参数开始                       # 关键字参数开始
-        seeds=None,              # 集群种子节点（list[str] 或 None）
-        passphrase=None,         # TLS 密码短语（str 或 None）
-    )
-    return system
+    await pul.init(addr=None, seeds=None, passphrase=None)
+    await pul.shutdown()
 
 # 使用示例
 if __name__ == "__main__":
@@ -145,9 +139,14 @@ if __name__ == "__main__":
     pass
 ```
 
-**返回:** `ActorSystem` 实例
+**参数:**
+- `addr`: 绑定地址（str 或 None 表示单机模式）
+- `seeds`: 加入集群的种子节点（list[str] 或 None）
+- `passphrase`: TLS 密码短语（str 或 None）
 
-**示例：**
+### Under the Hood：pul.actor_system
+
+当需要低层控制时，创建显式 `ActorSystem` 实例。
 
 ```python
 import asyncio
@@ -172,41 +171,6 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
-
-### pul.init / pul.shutdown
-
-全局系统初始化（推荐主 API）。
-
-```python
-import asyncio
-import pulsing as pul
-
-async def main():
-    # 初始化全局系统
-    await pul.init(addr=None, seeds=None, passphrase=None)
-
-    # 使用全局系统
-    @pul.remote
-    class Counter:
-        def __init__(self): self.value = 0
-        def incr(self): self.value += 1; return self.value
-
-    counter = await Counter.spawn(name="counter")
-    ref = await pul.resolve("counter")
-    proxy = ref.as_type(Counter)
-    await proxy.incr()
-
-    # 关闭
-    await pul.shutdown()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-**参数:**
-- `addr`: 绑定地址（str 或 None 表示单机模式）
-- `seeds`: 加入集群的种子节点（list[str] 或 None）
-- `passphrase`: TLS 密码短语（str 或 None）
 
 ## 核心类
 

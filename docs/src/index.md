@@ -67,7 +67,7 @@ A **distributed actor framework** that provides a communication backbone for bui
 
     ---
 
-    Drop-in compatible API. Migrate from Ray with one import change.
+    Migrate Ray actors to Pulsing's native async API.
 
     [:octicons-arrow-right-24: Migrate from Ray](quickstart/migrate_from_ray.md)
 
@@ -116,7 +116,8 @@ asyncio.run(main())
 | Build a cluster | [Guide: Remote Actors](guide/remote_actors.md) |
 | Operate your system | [Guide: CLI Operations](guide/operations.md) |
 | Deep dive into design | [Design Documents](design/architecture.md) |
-| API details | [API Reference](api/overview.md) |
+| API details | [API Overview](api/overview.md) |
+| Full API contract | [Complete Reference](api_reference.md) |
 
 ---
 

@@ -19,13 +19,28 @@ Pulsing 基于[Actor 模型](https://en.wikipedia.org/wiki/Actor_model)构建，
 - **流式支持**：原生支持流式请求/响应
 - **多语言**：Python 优先，Rust 核心，可扩展到其他语言
 
-## API 风格
+## Python API
 
-### Python API
+### 全局异步 API
 
-Pulsing 提供多种 API 风格来适应不同用例：
+```python
+import pulsing as pul
 
-#### 1. Actor System 风格（显式管理）
+await pul.init(addr="0.0.0.0:8000")
+
+@pul.remote
+class MyActor:
+    def process(self, data):
+        return f"Processed: {data}"
+
+actor = await MyActor.spawn(name="my_actor")
+response = await actor.process("hello")
+
+# 关闭
+await pul.shutdown()
+```
+
+### Under the Hood：Actor System API（显式管理）
 
 ```python
 import pulsing as pul
@@ -33,7 +48,11 @@ import pulsing as pul
 # 显式创建和管理 actor 系统
 system = await pul.actor_system(addr="0.0.0.0:8000")
 
-# 生成 actor
+class MyActor:
+    async def receive(self, msg):
+        return f"echo: {msg}"
+
+# 直接生成 actor 对象（低层）
 actor = await system.spawn(MyActor(), name="my_actor")
 
 # 通信
@@ -41,24 +60,6 @@ response = await actor.ask({"message": "hello"})
 
 # 关闭
 await system.shutdown()
-```
-
-#### 2. Ray 风格全局 API（便捷）
-
-```python
-import pulsing as pul
-
-# 初始化全局系统
-await pul.init(addr="0.0.0.0:8000")
-
-# 使用全局系统生成 actor
-actor = await pul.spawn(MyActor(), name="my_actor")
-
-# 通信
-response = await actor.ask({"message": "hello"})
-
-# 关闭
-await pul.shutdown()
 ```
 
 ### Actor 模式

@@ -30,10 +30,6 @@ pip install -e .
 
 ::: pulsing.agent
 
-## Compatibility Module
-
-::: pulsing.compat
-
 ## Queue Module
 
 ::: pulsing.queue

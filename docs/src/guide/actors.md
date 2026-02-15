@@ -57,13 +57,9 @@ Pulsing follows the **classical Actor model** (like Erlang/Akka):
 
 ---
 
-## Two API Styles
+## Python API
 
-| API | Import | Style | Best For |
-|-----|--------|-------|----------|
-| **Native Async** | `import pulsing as pul` | `async/await` | New projects, maximum performance |
-
-### Native Async API (Recommended)
+### Global Async API
 
 ```python
 import pulsing as pul

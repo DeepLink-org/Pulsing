@@ -30,10 +30,6 @@ pip install -e .
 
 ::: pulsing.agent
 
-## 兼容性模块
-
-::: pulsing.compat
-
 ## 队列模块
 
 ::: pulsing.queue

@@ -57,13 +57,9 @@ Pulsing 遵循**经典 Actor 模型**（类似 Erlang/Akka）：
 
 ---
 
-## 两种 API 风格
+## Python API
 
-| API | 导入方式 | 风格 | 适用场景 |
-|-----|---------|------|----------|
-| **原生异步** | `import pulsing as pul` | `async/await` | 新项目，追求极致性能 |
-
-### 原生异步 API（推荐）
+### 全局异步 API
 
 ```python
 import pulsing as pul
