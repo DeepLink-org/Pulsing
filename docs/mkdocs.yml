@@ -114,6 +114,7 @@ plugins:
             Actor System: Actor 系统
             Behavior API: Behavior API
             Node Discovery: 节点发现
+            Cluster Networking: 集群组网
             Actor Addressing: Actor 寻址
             HTTP2 Transport: HTTP2 传输
             Load Sync: 负载同步
@@ -172,6 +173,7 @@ nav:
     - Actor System: design/actor-system.md
     - Behavior API: design/behavior.md
     - Node Discovery: design/node-discovery.md
+    - Cluster Networking: design/cluster-networking.md
     - Actor Addressing: design/actor-addressing.md
     - HTTP2 Transport: design/http2-transport.md
     - Load Sync: design/load_sync.md

@@ -110,7 +110,8 @@ sequenceDiagram
 
 ## 更多详情
 
-- [Actor 系统设计](../design/actor-system.md)
-- [节点发现](../design/node-discovery.md)
-- [Actor 寻址](../design/actor-addressing.md)
-- [HTTP2 传输](../design/http2-transport.md)
+- [Actor 系统设计](actor-system.md)
+- [节点发现](node-discovery.md)
+- [集群组网](cluster-networking.zh.md)
+- [Actor 寻址](actor-addressing.md)
+- [HTTP2 传输](http2-transport.md)

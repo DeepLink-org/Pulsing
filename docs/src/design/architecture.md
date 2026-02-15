@@ -110,7 +110,8 @@ sequenceDiagram
 
 ## For More Details
 
-- [Actor System Design](../design/actor-system.md)
-- [Node Discovery](../design/node-discovery.md)
-- [Actor Addressing](../design/actor-addressing.md)
-- [HTTP2 Transport](../design/http2-transport.md)
+- [Actor System Design](actor-system.md)
+- [Node Discovery](node-discovery.md)
+- [Cluster Networking](cluster-networking.md)
+- [Actor Addressing](actor-addressing.md)
+- [HTTP2 Transport](http2-transport.md)
