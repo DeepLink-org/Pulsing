@@ -115,7 +115,7 @@ async def run_with_rank(
     rank: int, world_size: int, master_addr: str, pulsing_base_port: int
 ):
     """Run corresponding role based on rank"""
-    from pulsing.autogen import PulsingRuntime
+    from pulsing.integrations.autogen import PulsingRuntime
 
     my_addr, seeds = get_pulsing_config(rank, master_addr, pulsing_base_port)
     role_name, agent_class = ROLE_MAP.get(rank, (f"worker_{rank}", None))
@@ -171,7 +171,7 @@ async def run_manager_logic(runtime):
 
 async def run_standalone():
     """Standalone mode"""
-    from pulsing.autogen import PulsingRuntime
+    from pulsing.integrations.autogen import PulsingRuntime
 
     print("Running in standalone mode")
     runtime = PulsingRuntime()
@@ -190,7 +190,7 @@ async def run_standalone():
 
 
 async def run_writer():
-    from pulsing.autogen import PulsingRuntime
+    from pulsing.integrations.autogen import PulsingRuntime
 
     runtime = PulsingRuntime(addr="0.0.0.0:8001", seeds=[])
     await runtime.start()
@@ -200,7 +200,7 @@ async def run_writer():
 
 
 async def run_editor():
-    from pulsing.autogen import PulsingRuntime
+    from pulsing.integrations.autogen import PulsingRuntime
 
     runtime = PulsingRuntime(addr="0.0.0.0:8002", seeds=["127.0.0.1:8001"])
     await runtime.start()
@@ -210,7 +210,7 @@ async def run_editor():
 
 
 async def run_manager():
-    from pulsing.autogen import PulsingRuntime
+    from pulsing.integrations.autogen import PulsingRuntime
 
     runtime = PulsingRuntime(addr="0.0.0.0:8003", seeds=["127.0.0.1:8001"])
     await runtime.start()

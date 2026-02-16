@@ -25,7 +25,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_proxy_method_validation():
     """Test that proxy validates method names when methods list is provided."""
-    from pulsing.actor import init, shutdown, remote, ActorProxy, get_system
+    from pulsing.core import init, shutdown, remote, ActorProxy, get_system
 
     @remote
     class Service:
@@ -66,7 +66,7 @@ async def test_proxy_method_validation():
 @pytest.mark.asyncio
 async def test_sync_method_error_handling():
     """Test error handling in sync methods."""
-    from pulsing.actor import init, shutdown, remote
+    from pulsing.core import init, shutdown, remote
 
     @remote
     class ErrorService:
@@ -90,7 +90,7 @@ async def test_sync_method_error_handling():
 @pytest.mark.asyncio
 async def test_async_method_error_handling():
     """Test error handling in async methods."""
-    from pulsing.actor import init, shutdown, remote
+    from pulsing.core import init, shutdown, remote
 
     @remote
     class AsyncErrorService:
@@ -120,7 +120,7 @@ async def test_async_method_error_handling():
 @pytest.mark.asyncio
 async def test_actor_proxy_from_ref_dynamic_mode():
     """Test ActorProxy.from_ref in dynamic mode (no method list)."""
-    from pulsing.actor import init, shutdown, remote, ActorProxy, get_system
+    from pulsing.core import init, shutdown, remote, ActorProxy, get_system
 
     @remote
     class DynamicService:
@@ -152,7 +152,7 @@ async def test_actor_proxy_from_ref_dynamic_mode():
 @pytest.mark.asyncio
 async def test_actor_proxy_from_ref_with_async_methods():
     """Test ActorProxy.from_ref with explicit async_methods set."""
-    from pulsing.actor import init, shutdown, remote, ActorProxy, get_system
+    from pulsing.core import init, shutdown, remote, ActorProxy, get_system
 
     @remote
     class HybridService:
@@ -197,7 +197,7 @@ async def test_actor_proxy_from_ref_with_async_methods():
 @pytest.mark.asyncio
 async def test_remote_delayed_call():
     """Test self.delayed(sec).method(...) schedules a tell after delay."""
-    from pulsing.actor import init, shutdown, remote
+    from pulsing.core import init, shutdown, remote
 
     @remote
     class DelayedCallService:
@@ -237,7 +237,7 @@ async def test_remote_delayed_call():
 @pytest.mark.asyncio
 async def test_remote_delayed_call_cancel():
     """Test that the task returned by delayed().method() can be cancelled."""
-    from pulsing.actor import init, shutdown, remote
+    from pulsing.core import init, shutdown, remote
 
     @remote
     class DelayedCancelService:
@@ -278,7 +278,7 @@ async def test_remote_delayed_call_cancel():
 @pytest.mark.asyncio
 async def test_async_method_does_not_block_actor():
     """Test that async methods don't block the actor from receiving new messages."""
-    from pulsing.actor import init, shutdown, remote
+    from pulsing.core import init, shutdown, remote
 
     @remote
     class NonBlockingService:

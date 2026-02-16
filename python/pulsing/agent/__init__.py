@@ -1,7 +1,7 @@
 """
 Pulsing Agent Toolbox
 
-Lightweight multi-agent development tools, fully compatible with pulsing.actor.
+Lightweight multi-agent development tools, fully compatible with pulsing.core.
 
 Core APIs:
 - runtime(): Actor system lifecycle management
@@ -10,7 +10,7 @@ Core APIs:
 - parse_json(): JSON parsing
 
 Example:
-    from pulsing.actor import remote, resolve
+    from pulsing.core import remote, resolve
     from pulsing.agent import agent, runtime, llm, get_agent_meta
 
     # @remote: Basic Actor

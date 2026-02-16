@@ -16,7 +16,7 @@ import shutil
 import pytest
 
 import pulsing as pul
-from pulsing.actor import Actor, ActorId
+from pulsing.core import Actor, ActorId
 
 
 # ============================================================================

@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 import pulsing as pul
-from pulsing.actor import Actor, StreamMessage, SystemConfig
+from pulsing.core import Actor, StreamMessage, SystemConfig
 
 
 # ============================================================================

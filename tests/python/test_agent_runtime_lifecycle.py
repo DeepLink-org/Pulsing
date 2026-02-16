@@ -13,7 +13,7 @@ import weakref
 
 import pytest
 
-from pulsing.actor import get_system, remote
+from pulsing.core import get_system, remote
 from pulsing.agent import (
     agent,
     cleanup,

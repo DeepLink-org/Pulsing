@@ -3,7 +3,7 @@
 import asyncio
 import pytest
 import json
-from pulsing.actor import init, remote, get_system, list_actors
+from pulsing.core import init, remote, get_system, list_actors
 from pulsing.cli.inspect import _print_actors_table
 import io
 import sys

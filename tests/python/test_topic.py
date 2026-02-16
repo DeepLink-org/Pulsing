@@ -16,7 +16,7 @@ import time
 import pytest
 
 import pulsing as pul
-from pulsing.topic import (
+from pulsing.streaming import (
     PublishMode,
     PublishResult,
     TopicReader,
@@ -728,7 +728,7 @@ async def test_double_start_stop(actor_system):
 @pytest.mark.asyncio
 async def test_topic_broker_via_storage_manager(actor_system):
     """Test that topic broker is created via StorageManager."""
-    from pulsing.queue.manager import get_storage_manager
+    from pulsing.streaming.manager import get_storage_manager
 
     # Ensure StorageManager exists
     manager = await get_storage_manager(actor_system)
@@ -748,7 +748,7 @@ async def test_topic_broker_via_storage_manager(actor_system):
 @pytest.mark.asyncio
 async def test_list_topics(actor_system):
     """Test listing topics via StorageManager."""
-    from pulsing.queue.manager import get_storage_manager
+    from pulsing.streaming.manager import get_storage_manager
 
     # Create some topics
     await write_topic(actor_system, "list_topic_1")
@@ -868,7 +868,7 @@ async def test_publish_wait_any_ack_with_timeout(actor_system):
 @pytest.mark.asyncio
 async def test_publish_timeout_error(actor_system):
     """Test that publish raises TimeoutError when timeout expires."""
-    from pulsing.actor import Actor, ActorId
+    from pulsing.core import Actor, ActorId
 
     # Create an intentionally slow subscriber
     class SlowSubscriber(Actor):
@@ -891,7 +891,7 @@ async def test_publish_timeout_error(actor_system):
     await actor_system.spawn(slow_actor, name=actor_name, public=True)
 
     # Register with broker using helper function
-    from pulsing.topic import subscribe_to_topic
+    from pulsing.streaming import subscribe_to_topic
 
     await subscribe_to_topic(
         actor_system, "timeout_error_topic", "slow_sub", actor_name
@@ -909,7 +909,7 @@ async def test_publish_timeout_error(actor_system):
 @pytest.mark.asyncio
 async def test_ask_with_timeout_success(actor_system):
     """Test ask_with_timeout helper function (success case)."""
-    from pulsing.actor import Actor, ActorId, ask_with_timeout
+    from pulsing.core import Actor, ActorId, ask_with_timeout
 
     class EchoActor(Actor):
         def on_start(self, actor_id: ActorId) -> None:
@@ -932,7 +932,7 @@ async def test_ask_with_timeout_success(actor_system):
 @pytest.mark.asyncio
 async def test_ask_with_timeout_error(actor_system):
     """Test ask_with_timeout raises TimeoutError when timeout expires."""
-    from pulsing.actor import Actor, ActorId, ask_with_timeout
+    from pulsing.core import Actor, ActorId, ask_with_timeout
 
     class SlowActor(Actor):
         def on_start(self, actor_id: ActorId) -> None:
@@ -956,7 +956,7 @@ async def test_ask_with_timeout_error(actor_system):
 @pytest.mark.asyncio
 async def test_tell_with_timeout_success(actor_system):
     """Test tell_with_timeout helper function (success case)."""
-    from pulsing.actor import Actor, ActorId, tell_with_timeout
+    from pulsing.core import Actor, ActorId, tell_with_timeout
 
     received = []
 
@@ -985,7 +985,7 @@ async def test_tell_with_timeout_success(actor_system):
 @pytest.mark.asyncio
 async def test_default_publish_timeout():
     """Test that DEFAULT_PUBLISH_TIMEOUT is reasonable."""
-    from pulsing.topic.topic import DEFAULT_PUBLISH_TIMEOUT
+    from pulsing.streaming.pubsub import DEFAULT_PUBLISH_TIMEOUT
 
     # Default timeout should be a reasonable value (30 seconds)
     assert DEFAULT_PUBLISH_TIMEOUT == 30.0
@@ -994,7 +994,7 @@ async def test_default_publish_timeout():
 @pytest.mark.asyncio
 async def test_default_ask_timeout():
     """Test that DEFAULT_ASK_TIMEOUT is reasonable."""
-    from pulsing.actor import DEFAULT_ASK_TIMEOUT
+    from pulsing.core import DEFAULT_ASK_TIMEOUT
 
     # Default timeout should be a reasonable value (30 seconds)
     assert DEFAULT_ASK_TIMEOUT == 30.0
@@ -1011,8 +1011,8 @@ async def test_subscriber_failure_threshold_eviction(actor_system):
 
     Verify P0-3 fix: Subscribers are automatically evicted after 3 consecutive failures.
     """
-    from pulsing.actor import Actor, ActorId
-    from pulsing.topic.broker import MAX_CONSECUTIVE_FAILURES
+    from pulsing.core import Actor, ActorId
+    from pulsing.streaming.broker import MAX_CONSECUTIVE_FAILURES
 
     # Verify configuration constants
     assert MAX_CONSECUTIVE_FAILURES == 3
@@ -1035,7 +1035,7 @@ async def test_subscriber_failure_threshold_eviction(actor_system):
     await actor_system.spawn(failing_actor, name=actor_name, public=True)
 
     # Register failing subscriber with broker using helper function
-    from pulsing.topic import subscribe_to_topic
+    from pulsing.streaming import subscribe_to_topic
 
     await subscribe_to_topic(
         actor_system, "eviction_test_topic", "failing_sub", actor_name
@@ -1069,7 +1069,7 @@ async def test_subscriber_ttl_config():
 
     Verify P0-3 fix: TTL re-resolve configuration.
     """
-    from pulsing.topic.broker import REF_TTL_SECONDS, MAX_CONSECUTIVE_FAILURES
+    from pulsing.streaming.broker import REF_TTL_SECONDS, MAX_CONSECUTIVE_FAILURES
 
     # Verify configuration is reasonable
     assert REF_TTL_SECONDS == 60.0, "TTL should be 60 seconds"
@@ -1120,7 +1120,7 @@ async def test_default_mailbox_capacity_config():
     Verify P1-1 fix: SystemConfig's default mailbox capacity.
     """
     # Python side uses through Rust bindings, verify default value exists
-    from pulsing.actor import SystemConfig
+    from pulsing.core import SystemConfig
 
     config = SystemConfig.standalone()
     # Verify config can be created normally
@@ -1138,7 +1138,7 @@ async def test_resolve_named_returns_actor(actor_system):
 
     Verify P1-2 fix: resolve_named basic functionality.
     """
-    from pulsing.actor import Actor, ActorId
+    from pulsing.core import Actor, ActorId
 
     class TestActor(Actor):
         def on_start(self, actor_id: ActorId) -> None:
@@ -1170,7 +1170,7 @@ async def test_resolve_named_multiple_calls(actor_system):
     Verify P1-2 fix: Multiple resolves should return valid ActorRefs.
     Note: RoundRobin cannot be verified in single-node environment, but basic functionality can be verified.
     """
-    from pulsing.actor import Actor, ActorId
+    from pulsing.core import Actor, ActorId
 
     class CounterActor(Actor):
         def __init__(self):

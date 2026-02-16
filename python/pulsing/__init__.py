@@ -22,8 +22,8 @@ from typing import Any
 
 __version__ = "0.1.0"
 
-# Import from pulsing.actor
-from pulsing.actor import (
+# Import from pulsing.core
+from pulsing.core import (
     # Global system functions
     init,
     shutdown,
@@ -60,14 +60,14 @@ def init_inside_ray():
 
         await pul.init_inside_ray()
     """
-    from pulsing.ray import async_init_in_ray
+    from pulsing.integrations.ray import async_init_in_ray
 
     return async_init_in_ray()
 
 
 def cleanup_ray():
     """清理 Pulsing 在 Ray KV store 中的状态"""
-    from pulsing.ray import cleanup
+    from pulsing.integrations.ray import cleanup
 
     return cleanup()
 
@@ -93,8 +93,7 @@ class ActorSystem:
 
     def __init__(self, inner: _ActorSystem):
         self._inner = inner
-        from pulsing.queue import QueueAPI
-        from pulsing.topic import TopicAPI
+        from pulsing.streaming import QueueAPI, TopicAPI
 
         self.queue = QueueAPI(inner)
         self.topic = TopicAPI(inner)
@@ -257,13 +256,13 @@ class _GlobalQueueAPI:
 
     async def write(self, topic, **kwargs):
         """Open queue for writing. See QueueAPI.write() for args."""
-        from pulsing.queue import QueueAPI
+        from pulsing.streaming import QueueAPI
 
         return await QueueAPI(get_system()).write(topic, **kwargs)
 
     async def read(self, topic, **kwargs):
         """Open queue for reading. See QueueAPI.read() for args."""
-        from pulsing.queue import QueueAPI
+        from pulsing.streaming import QueueAPI
 
         return await QueueAPI(get_system()).read(topic, **kwargs)
 
@@ -273,13 +272,13 @@ class _GlobalTopicAPI:
 
     async def write(self, topic, **kwargs):
         """Open topic for writing. See TopicAPI.write() for args."""
-        from pulsing.topic import TopicAPI
+        from pulsing.streaming import TopicAPI
 
         return await TopicAPI(get_system()).write(topic, **kwargs)
 
     async def read(self, topic, **kwargs):
         """Open topic for reading. See TopicAPI.read() for args."""
-        from pulsing.topic import TopicAPI
+        from pulsing.streaming import TopicAPI
 
         return await TopicAPI(get_system()).read(topic, **kwargs)
 

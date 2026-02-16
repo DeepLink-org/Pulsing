@@ -15,7 +15,7 @@ import asyncio
 import pytest
 
 import pulsing as pul
-from pulsing.actor import Actor, ActorRef, as_any, remote
+from pulsing.core import Actor, ActorRef, as_any, remote
 
 
 # ============================================================================
@@ -166,7 +166,7 @@ async def test_as_any_function_with_ref_from_resolve(initialized_pul):
 @pytest.mark.asyncio
 async def test_as_any_function_with_raw_ref(initialized_pul):
     """as_any(ref) works when ref is raw ActorRef from system.resolve()."""
-    from pulsing.actor import get_system
+    from pulsing.core import get_system
 
     await _ServiceWithMethods.spawn(name="as_any_raw_svc", public=True)
 

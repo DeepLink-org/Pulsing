@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 import pulsing as pul
-from pulsing.queue import (
+from pulsing.streaming import (
     BucketStorage,
     Queue,
     QueueReader,
@@ -1054,7 +1054,7 @@ def test_sync_queue_standalone():
             # Setup in background loop
             async def setup():
                 import pulsing as pul
-                from pulsing.queue import write_queue, read_queue
+                from pulsing.streaming import write_queue, read_queue
 
                 system = await pul.actor_system()
                 writer = await write_queue(
@@ -1121,7 +1121,7 @@ def test_sync_writer_reader_standalone():
 
             async def setup():
                 import pulsing as pul
-                from pulsing.queue import write_queue, read_queue
+                from pulsing.streaming import write_queue, read_queue
 
                 system = await pul.actor_system()
                 writer = await write_queue(
@@ -1188,7 +1188,7 @@ def test_sync_reader_offset_standalone():
 
             async def setup():
                 import pulsing as pul
-                from pulsing.queue import write_queue, read_queue
+                from pulsing.streaming import write_queue, read_queue
 
                 system = await pul.actor_system()
                 writer = await write_queue(

@@ -19,7 +19,7 @@ from typing import Any, AsyncIterator
 import pytest
 
 import pulsing as pul
-from pulsing.queue import (
+from pulsing.streaming import (
     BucketStorage,
     MemoryBackend,
     Queue,

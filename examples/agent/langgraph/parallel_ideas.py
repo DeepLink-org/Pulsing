@@ -760,7 +760,7 @@ async def main():
         os.environ["LLM_MODEL"] = args.model
 
     try:
-        from pulsing.langgraph import with_pulsing
+        from pulsing.integrations.langgraph import with_pulsing
     except ImportError:
         with_pulsing = None
 

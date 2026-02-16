@@ -30,8 +30,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 import pulsing as pul
-from pulsing.actor import SystemConfig
-from pulsing.queue import read_queue, write_queue
+from pulsing.core import SystemConfig
+from pulsing.streaming import read_queue, write_queue
 
 
 # ============================================================================

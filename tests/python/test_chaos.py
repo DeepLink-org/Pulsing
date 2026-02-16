@@ -1,7 +1,7 @@
 import asyncio
 import random
 import pytest
-from pulsing.actor import (
+from pulsing.core import (
     Actor,
     ActorId,
     Message,

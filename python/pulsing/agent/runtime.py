@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from pulsing.actor import get_system, init, shutdown
+from pulsing.core import get_system, init, shutdown
 
 
 @asynccontextmanager

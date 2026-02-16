@@ -14,7 +14,7 @@ import asyncio
 import pytest
 
 import pulsing as pul
-from pulsing.actor import Actor, ActorId
+from pulsing.core import Actor, ActorId
 
 
 # ============================================================================
@@ -459,7 +459,7 @@ class _MetadataService:
 @pytest.mark.asyncio
 async def test_remote_metadata_delegation():
     """_WrappedActor delegates metadata() to user instance."""
-    from pulsing.actor.remote import _WrappedActor
+    from pulsing.core.remote import _WrappedActor
 
     # Create raw instance and wrap it
     instance = object.__new__(_MetadataService._cls)
@@ -472,7 +472,7 @@ async def test_remote_metadata_delegation():
 @pytest.mark.asyncio
 async def test_remote_metadata_delegation_no_metadata():
     """_WrappedActor returns empty dict when user instance has no metadata()."""
-    from pulsing.actor.remote import _WrappedActor
+    from pulsing.core.remote import _WrappedActor
 
     class _NoMeta:
         def ping(self):

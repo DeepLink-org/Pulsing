@@ -18,36 +18,36 @@ ray = pytest.importorskip("ray")
 
 def _reset_pulsing_state():
     """Reset all Pulsing module state (system, background loop, KV)."""
-    import pulsing.actor as pa
-    import pulsing.ray as pr
+    import pulsing.core as pc
+    import pulsing.integrations.ray as pray
 
     # Shutdown Pulsing system via background loop
-    if pa._global_system is not None and pr._loop is not None:
+    if pc._global_system is not None and pray._loop is not None:
         try:
-            pr._run_sync(pr._do_shutdown())
+            pray._run_sync(pray._do_shutdown())
         except Exception:
             pass
 
     # Force clear global system (safety net)
-    pa._global_system = None
+    pc._global_system = None
 
     # Stop background event loop
-    if pr._loop is not None:
+    if pray._loop is not None:
         try:
-            pr._loop.call_soon_threadsafe(pr._loop.stop)
+            pray._loop.call_soon_threadsafe(pray._loop.stop)
         except Exception:
             pass
-    if pr._thread is not None:
+    if pray._thread is not None:
         try:
-            pr._thread.join(timeout=5)
+            pray._thread.join(timeout=5)
         except Exception:
             pass
-    pr._loop = None
-    pr._thread = None
+    pray._loop = None
+    pray._thread = None
 
     # Clean KV store
     try:
-        pr.cleanup()
+        pray.cleanup()
     except Exception:
         pass
 
@@ -72,7 +72,7 @@ def ray_env():
 
 def test_init_returns_system(ray_env):
     """init_in_ray() returns a Pulsing ActorSystem."""
-    from pulsing.ray import init_in_ray
+    from pulsing.integrations.ray import init_in_ray
 
     system = init_in_ray()
     assert system is not None
@@ -81,7 +81,7 @@ def test_init_returns_system(ray_env):
 
 def test_init_stores_seed_in_kv(ray_env):
     """First caller's address is stored as seed in Ray KV."""
-    from pulsing.ray import _get_seed, init_in_ray
+    from pulsing.integrations.ray import _get_seed, init_in_ray
 
     system = init_in_ray()
     seed_addr = _get_seed()
@@ -91,8 +91,8 @@ def test_init_stores_seed_in_kv(ray_env):
 
 def test_init_sets_global_system(ray_env):
     """init_in_ray() sets pulsing.actor global system."""
-    from pulsing.actor import is_initialized
-    from pulsing.ray import init_in_ray
+    from pulsing.core import is_initialized
+    from pulsing.integrations.ray import init_in_ray
 
     assert not is_initialized()
     init_in_ray()
@@ -106,7 +106,7 @@ def test_init_sets_global_system(ray_env):
 
 def test_init_raises_without_ray():
     """init_in_ray() raises when Ray is not initialized."""
-    from pulsing.ray import init_in_ray
+    from pulsing.integrations.ray import init_in_ray
 
     with pytest.raises(RuntimeError, match="Ray 未初始化"):
         init_in_ray()
@@ -114,7 +114,7 @@ def test_init_raises_without_ray():
 
 async def test_async_init_raises_without_ray():
     """async_init_in_ray() raises when Ray is not initialized."""
-    from pulsing.ray import async_init_in_ray
+    from pulsing.integrations.ray import async_init_in_ray
 
     with pytest.raises(RuntimeError, match="Ray 未初始化"):
         await async_init_in_ray()
@@ -127,7 +127,7 @@ async def test_async_init_raises_without_ray():
 
 def test_cleanup_clears_kv(ray_env):
     """cleanup() removes seed from KV store."""
-    from pulsing.ray import _get_seed, cleanup, init_in_ray
+    from pulsing.integrations.ray import _get_seed, cleanup, init_in_ray
 
     init_in_ray()
     assert _get_seed() is not None
@@ -147,7 +147,7 @@ def test_init_in_ray_actor(ray_env):
     @ray.remote
     class Worker:
         def setup(self):
-            from pulsing.ray import init_in_ray
+            from pulsing.integrations.ray import init_in_ray
 
             system = init_in_ray()
             return str(system.addr)
@@ -168,7 +168,7 @@ def test_multi_actor_same_seed(ray_env):
     """All workers in separate processes discover the same seed."""
     import os
 
-    from pulsing.ray import _get_seed, init_in_ray
+    from pulsing.integrations.ray import _get_seed, init_in_ray
 
     driver_pid = os.getpid()
 
@@ -181,13 +181,13 @@ def test_multi_actor_same_seed(ray_env):
         def setup(self):
             import os
 
-            from pulsing.ray import init_in_ray
+            from pulsing.integrations.ray import init_in_ray
 
             init_in_ray()
             return os.getpid()
 
         def get_seed(self):
-            from pulsing.ray import _get_seed
+            from pulsing.integrations.ray import _get_seed
 
             return _get_seed()
 
@@ -219,13 +219,13 @@ def test_concurrent_init_without_driver(ray_env):
         def setup(self):
             import os
 
-            from pulsing.ray import init_in_ray
+            from pulsing.integrations.ray import init_in_ray
 
             system = init_in_ray()
             return os.getpid(), str(system.addr)
 
         def get_seed(self):
-            from pulsing.ray import _get_seed
+            from pulsing.integrations.ray import _get_seed
 
             return _get_seed()
 
@@ -264,13 +264,13 @@ def test_actor_becomes_seed_without_driver(ray_env):
     @ray.remote
     class Worker:
         def setup(self):
-            from pulsing.ray import init_in_ray
+            from pulsing.integrations.ray import init_in_ray
 
             system = init_in_ray()
             return str(system.addr)
 
         def get_seed(self):
-            from pulsing.ray import _get_seed
+            from pulsing.integrations.ray import _get_seed
 
             return _get_seed()
 
@@ -294,7 +294,7 @@ def test_actor_becomes_seed_without_driver(ray_env):
 
 async def test_async_init_returns_system(ray_env):
     """async_init_in_ray() returns a system."""
-    from pulsing.ray import async_init_in_ray
+    from pulsing.integrations.ray import async_init_in_ray
 
     system = await async_init_in_ray()
     assert system is not None
@@ -303,7 +303,7 @@ async def test_async_init_returns_system(ray_env):
 
 async def test_async_init_stores_seed(ray_env):
     """async_init_in_ray() stores seed in KV."""
-    from pulsing.ray import _get_seed, async_init_in_ray
+    from pulsing.integrations.ray import _get_seed, async_init_in_ray
 
     system = await async_init_in_ray()
     assert _get_seed() == str(system.addr)

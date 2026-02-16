@@ -15,7 +15,7 @@ Covers:
 import pytest
 import time
 
-from pulsing.compat import ray
+from pulsing.integrations.ray_compat import ray
 
 
 # ============================================================================

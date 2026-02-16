@@ -58,7 +58,7 @@ def build_graph():
 
 
 async def main():
-    from pulsing.langgraph import with_pulsing
+    from pulsing.integrations.langgraph import with_pulsing
 
     print("=" * 50)
     print("LangGraph + Pulsing Standalone Mode")

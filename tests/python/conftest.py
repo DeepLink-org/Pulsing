@@ -22,7 +22,7 @@ async def cleanup_global_system():
 
     # Clean up after test
     try:
-        from pulsing.actor import _global_system, shutdown
+        from pulsing.core import _global_system, shutdown
 
         if _global_system is not None:
             await shutdown()

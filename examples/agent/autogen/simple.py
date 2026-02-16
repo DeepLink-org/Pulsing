@@ -18,7 +18,7 @@ from autogen_core import (
     SingleThreadedAgentRuntime,
     message_handler,
 )
-from pulsing.autogen import PulsingRuntime
+from pulsing.integrations.autogen import PulsingRuntime
 
 
 # Define message types

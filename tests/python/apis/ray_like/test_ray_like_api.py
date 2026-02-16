@@ -12,7 +12,7 @@ import asyncio
 import pytest
 
 import pulsing as pul
-from pulsing.actor import Actor
+from pulsing.core import Actor
 
 
 # ============================================================================

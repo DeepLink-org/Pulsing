@@ -66,7 +66,7 @@ def build_graph():
 
 async def run_distributed():
     """Distributed main program"""
-    from pulsing.langgraph import with_pulsing
+    from pulsing.integrations.langgraph import with_pulsing
 
     print("=" * 50)
     print("LangGraph + Pulsing Distributed Mode")
@@ -100,7 +100,7 @@ async def run_distributed():
 
 async def run_worker(node_name: str, port: int, seed_port: int | None = None):
     """Start Worker"""
-    from pulsing.langgraph import start_worker
+    from pulsing.integrations.langgraph import start_worker
 
     nodes = {"llm": llm_node, "tool": tool_node}
     if node_name not in nodes:

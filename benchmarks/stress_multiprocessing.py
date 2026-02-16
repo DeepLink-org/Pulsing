@@ -21,8 +21,13 @@ import time
 from multiprocessing import Queue
 
 import pulsing as pul
-from pulsing.queue import read_queue, write_queue
-from pulsing.topic import PublishMode, read_topic, write_topic
+from pulsing.streaming import (
+    read_queue,
+    write_queue,
+    PublishMode,
+    read_topic,
+    write_topic,
+)
 
 
 # =============================================================================

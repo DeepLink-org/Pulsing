@@ -33,4 +33,4 @@ class TestActorCLI:
         with pytest.raises(ValueError) as exc_info:
             actor_cli(actor_type="router")
         assert "full class path" in str(exc_info.value)
-        assert "pulsing.actors.worker.TransformersWorker" in str(exc_info.value)
+        assert "pulsing.serving.worker.TransformersWorker" in str(exc_info.value)

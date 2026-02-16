@@ -9,7 +9,7 @@ Covers:
 import asyncio
 import pytest
 import pulsing as pul
-from pulsing.actor import (
+from pulsing.core import (
     get_python_actor_service,
     get_system_actor,
     remote,

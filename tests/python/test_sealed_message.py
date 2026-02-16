@@ -13,7 +13,7 @@ import asyncio
 from dataclasses import dataclass
 
 import pytest
-from pulsing.actor import (
+from pulsing.core import (
     Actor,
     Message,
     SealedPyMessage,

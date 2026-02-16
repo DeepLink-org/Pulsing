@@ -15,14 +15,14 @@ def start_generic_actor(
     """Start a generic Actor class by full module path
 
     Args:
-        actor_type: Full class path, e.g., 'pulsing.actors.worker.TransformersWorker'
+        actor_type: Full class path, e.g., 'pulsing.serving.worker.TransformersWorker'
         addr: Actor System bind address
         seeds: List of seed node addresses
         name: Actor name
         extra_kwargs: Additional CLI arguments to pass to Actor constructor
     """
     import inspect
-    from pulsing.actor.helpers import spawn_and_run
+    from pulsing.core.helpers import spawn_and_run
 
     print(f"Loading Actor class: {actor_type}")
 

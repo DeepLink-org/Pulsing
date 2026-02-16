@@ -7,7 +7,7 @@ def test_ray_compat_init_inside_running_loop():
     This covers environments like Jupyter or pytest-asyncio where an event loop
     is already running on the main thread.
     """
-    from pulsing.compat import ray
+    from pulsing.integrations.ray_compat import ray
 
     async def main():
         ray.init()

@@ -5,7 +5,7 @@ import hyperparameter as hp
 
 @hp.param("actor")
 def actor(
-    actor_type: str,  # Positional argument: full class path (e.g., 'pulsing.actors.worker.TransformersWorker')
+    actor_type: str,  # Positional argument: full class path (e.g., 'pulsing.serving.worker.TransformersWorker')
     addr: str | None = None,
     seeds: str | None = None,
     name: str = "worker",  # Actor name (default: "worker")
@@ -18,9 +18,9 @@ def actor(
 
     Actor type must be a full class path:
     - Format: 'module.path.ClassName'
-    - Example: 'pulsing.actors.Router'
-    - Example: 'pulsing.actors.TransformersWorker'
-    - Example: 'pulsing.actors.VllmWorker'
+    - Example: 'pulsing.serving.Router'
+    - Example: 'pulsing.serving.TransformersWorker'
+    - Example: 'pulsing.serving.VllmWorker'
     - Example: 'my_module.my_actor.MyCustomActor'
 
     Pass constructor parameters directly as command-line arguments.
@@ -29,7 +29,7 @@ def actor(
     Note: To list actors, use 'pulsing inspect actors' instead.
 
     Args:
-        actor_type: Full class path (positional argument), e.g., 'pulsing.actors.worker.TransformersWorker'
+        actor_type: Full class path (positional argument), e.g., 'pulsing.serving.worker.TransformersWorker'
         addr: Actor System bind address (e.g., '0.0.0.0:8000')
         seeds: Comma-separated list of seed nodes (e.g., '192.168.1.1:8000,192.168.1.2:8000')
         name: Actor name. Default: 'worker'. Use different names to run multiple workers in the same cluster.
@@ -38,17 +38,17 @@ def actor(
 
     Examples:
         # Start a Transformers worker
-        pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --device cpu --name my-worker
+        pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --device cpu --name my-worker
 
         # Start a vLLM worker
-        pulsing actor pulsing.actors.VllmWorker --model Qwen/Qwen2 --role aggregated --max_new_tokens 512 --name vllm-worker
+        pulsing actor pulsing.serving.VllmWorker --model Qwen/Qwen2 --role aggregated --max_new_tokens 512 --name vllm-worker
 
         # Start a Router with OpenAI-compatible API
-        pulsing actor pulsing.actors.Router --http_host 0.0.0.0 --http_port 8080 --model_name my-llm --worker_name worker
+        pulsing actor pulsing.serving.Router --http_host 0.0.0.0 --http_port 8080 --model_name my-llm --worker_name worker
 
         # Start multiple workers with different names
-        pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --name worker-1 --seeds 127.0.0.1:8000
-        pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --name worker-2 --seeds 127.0.0.1:8000
+        pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --name worker-1 --seeds 127.0.0.1:8000
+        pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --name worker-2 --seeds 127.0.0.1:8000
     """
     from .actors import start_generic_actor
 
@@ -63,9 +63,9 @@ def actor(
     # Check if actor_type is a valid class path (must contain dots)
     if "." not in actor_type:
         raise ValueError(
-            f"Error: Actor type must be a full class path (e.g., 'pulsing.actors.worker.TransformersWorker').\n"
+            f"Error: Actor type must be a full class path (e.g., 'pulsing.serving.worker.TransformersWorker').\n"
             f"Received: '{actor_type}'\n"
-            f"Example: pulsing actor pulsing.actors.worker.TransformersWorker --model_name gpt2"
+            f"Example: pulsing actor pulsing.serving.worker.TransformersWorker --model_name gpt2"
         )
 
     # Parse seeds
