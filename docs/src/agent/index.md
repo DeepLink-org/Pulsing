@@ -84,7 +84,7 @@ finally:
 ### AutoGen
 
 ```python
-from pulsing.autogen import PulsingRuntime
+from pulsing.integrations.autogen import PulsingRuntime
 
 # Replace SingleThreadedAgentRuntime
 runtime = PulsingRuntime(addr="0.0.0.0:8000")
@@ -95,7 +95,7 @@ await runtime.register_factory("agent", lambda: MyAgent())
 ### LangGraph
 
 ```python
-from pulsing.langgraph import with_pulsing
+from pulsing.integrations.langgraph import with_pulsing
 
 app = graph.compile()
 distributed_app = with_pulsing(

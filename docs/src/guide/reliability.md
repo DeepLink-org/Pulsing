@@ -13,7 +13,7 @@ This page collects **practical reliability rules** for building production syste
 Prefer explicit timeouts on `ask`:
 
 ```python
-from pulsing.actor import ask_with_timeout
+from pulsing.core import ask_with_timeout
 
 result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
 ```

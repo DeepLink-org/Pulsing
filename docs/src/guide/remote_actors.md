@@ -172,7 +172,7 @@ except PulsingRuntimeError as e:
 Use timeouts for remote calls to avoid indefinite waits:
 
 ```python
-from pulsing.actor import ask_with_timeout
+from pulsing.core import ask_with_timeout
 
 try:
     response = await ask_with_timeout(remote_ref, msg, timeout=10.0)

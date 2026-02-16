@@ -179,7 +179,7 @@ For persistent storage, use backends from [Persisting](https://github.com/DeepLi
 
 ```python
 import pulsing as pul
-from pulsing.queue import register_backend
+from pulsing.streaming import register_backend
 import persisting as pst
 
 # Register backends from Persisting
@@ -209,7 +209,7 @@ writer = await pul.queue.write(
 Implement the `StorageBackend` protocol and register:
 
 ```python
-from pulsing.queue import register_backend
+from pulsing.streaming import register_backend
 
 class MyBackend:
     async def put(self, record): ...

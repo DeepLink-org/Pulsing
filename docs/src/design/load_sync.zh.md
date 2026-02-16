@@ -58,7 +58,7 @@ worker_ref = await scheduler.select_worker()  # 选择负载最低的
 ### 启动 Router (默认使用 StreamLoadScheduler)
 
 ```python
-from pulsing.actors import start_router
+from pulsing.serving import start_router
 
 runner = await start_router(
     system,

@@ -12,7 +12,7 @@ Pulsing provides `with_pulsing()`, a one-line wrapper for distributed LangGraph 
 ## Quick Start
 
 ```python
-from pulsing.langgraph import with_pulsing
+from pulsing.integrations.langgraph import with_pulsing
 from langgraph.graph import StateGraph
 
 # Build graph as usual
@@ -53,7 +53,7 @@ node_mapping={
 ## Starting Workers
 
 ```python
-from pulsing.langgraph import start_worker
+from pulsing.integrations.langgraph import start_worker
 
 # GPU server
 await start_worker("llm", llm_node, addr="0.0.0.0:8001")

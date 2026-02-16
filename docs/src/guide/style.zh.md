@@ -17,9 +17,9 @@
 
 | 组件 | CLI actor 类路径 | 说明 |
 |------|------------------|------|
-| Router | `pulsing.actors.Router` | OpenAI 兼容 HTTP 路由 |
-| TransformersWorker | `pulsing.actors.TransformersWorker` | Transformers 推理 Worker |
-| VllmWorker | `pulsing.actors.VllmWorker` | vLLM 推理 Worker |
+| Router | `pulsing.serving.Router` | OpenAI 兼容 HTTP 路由 |
+| TransformersWorker | `pulsing.serving.TransformersWorker` | Transformers 推理 Worker |
+| VllmWorker | `pulsing.serving.VllmWorker` | vLLM 推理 Worker |
 
 **注意**：文档中提到"Router"时，通常指 LLM 推理服务的 HTTP 路由组件。示例代码中若需要任务分发逻辑，应使用 `Dispatcher` 等名称以避免混淆。
 
@@ -31,8 +31,8 @@
 pulsing actor <完整类路径> [选项]
 
 # 示例
-pulsing actor pulsing.actors.Router --http_port 8080 --model_name my-llm
-pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --device cpu
+pulsing actor pulsing.serving.Router --http_port 8080 --model_name my-llm
+pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --device cpu
 ```
 
 ### 检查命令（观察者模式）

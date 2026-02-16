@@ -53,7 +53,7 @@ pip install pulsing
 打开**终端 A**：
 
 ```bash
-pulsing actor pulsing.actors.Router \
+pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
   --http_port 8080 \
   --model_name my-llm
@@ -74,7 +74,7 @@ pulsing actor pulsing.actors.Router \
 === "Transformers (CPU)"
 
     ```bash
-    pulsing actor pulsing.actors.TransformersWorker \
+    pulsing actor pulsing.serving.TransformersWorker \
       --model_name gpt2 \
       --device cpu \
       --addr 0.0.0.0:8001 \
@@ -84,7 +84,7 @@ pulsing actor pulsing.actors.Router \
 === "vLLM (GPU)"
 
     ```bash
-    pulsing actor pulsing.actors.VllmWorker \
+    pulsing actor pulsing.serving.VllmWorker \
       --model Qwen/Qwen2.5-0.5B \
       --addr 0.0.0.0:8002 \
       --seeds 127.0.0.1:8000
@@ -145,10 +145,10 @@ curl -N http://localhost:8080/v1/chat/completions \
 
 ```bash
 # 终端 C
-pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --addr 0.0.0.0:8003 --seeds 127.0.0.1:8000
+pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --addr 0.0.0.0:8003 --seeds 127.0.0.1:8000
 
 # 终端 D
-pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --addr 0.0.0.0:8004 --seeds 127.0.0.1:8000
+pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --addr 0.0.0.0:8004 --seeds 127.0.0.1:8000
 ```
 
 Router 会自动在所有 Worker 间负载均衡。

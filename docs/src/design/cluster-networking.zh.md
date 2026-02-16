@@ -73,7 +73,7 @@ Gossip 的节奏与行为由 `GossipConfig` 控制：`gossip_interval`、`fanout
 - **Seed 发现**使用 Ray 的 **internal KV**：
   - 第一个调用 `init_in_ray()` 的进程以**无 seed** 方式启动 Pulsing，得到本机地址后将该地址**写入** Ray KV 的固定 key（如 `pulsing:seed_addr`），成为初始 “seed” 节点。
   - 之后任意进程读取该 key，得到 seed 地址，并以该 seed 启动 Pulsing，从而加入同一集群。底层仍是 **Gossip + seed**，首个写入者的地址即 seed。
-- 若两进程竞争写 key，实现上会对其中一个实例做 shutdown 并用胜出者地址重新 join（见 `pulsing.ray`）。
+- 若两进程竞争写 key，实现上会对其中一个实例做 shutdown 并用胜出者地址重新 join（见 `pulsing.integrations.ray`）。
 
 因此：**Ray KV 仅提供首个 seed**；之后集群行为与普通 Gossip 集群一致，没有单独的 “Ray 后端”，只是 Gossip 的另一种启动来源。
 

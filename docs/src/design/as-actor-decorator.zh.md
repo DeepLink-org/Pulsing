@@ -165,7 +165,7 @@ html = await worker.fetch_data("https://example.com")
 counter = await Counter.spawn(name="global_counter", init_value=0)
 
 # 其他地方可以通过名称解析
-from pulsing.actor import get_system
+from pulsing.core import get_system
 ref = await get_system().resolve("global_counter")
 ```
 

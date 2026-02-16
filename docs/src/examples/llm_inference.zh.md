@@ -19,7 +19,7 @@
 Router 需要指定 **actor system 地址**，以便其它进程启动的 workers 加入同一集群：
 
 ```bash
-pulsing actor pulsing.actors.Router \
+pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
   --http_host 0.0.0.0 \
   --http_port 8080 \
@@ -34,7 +34,7 @@ pulsing actor pulsing.actors.Router \
 ### 方案 A：Transformers Worker（终端 B）
 
 ```bash
-pulsing actor pulsing.actors.worker.TransformersWorker \
+pulsing actor pulsing.serving.worker.TransformersWorker \
   --model_name gpt2 \
   --device cpu \
   --addr 0.0.0.0:8001 \
@@ -45,7 +45,7 @@ pulsing actor pulsing.actors.worker.TransformersWorker \
 ### 方案 B：vLLM Worker（终端 C）
 
 ```bash
-pulsing actor pulsing.actors.vllm.VllmWorker \
+pulsing actor pulsing.serving.vllm.VllmWorker \
   --model Qwen/Qwen2.5-0.5B \
   --addr 0.0.0.0:8002 \
   --seeds 127.0.0.1:8000 \

@@ -172,7 +172,7 @@ except PulsingRuntimeError as e:
 为远程调用使用超时，避免无限等待：
 
 ```python
-from pulsing.actor import ask_with_timeout
+from pulsing.core import ask_with_timeout
 
 try:
     response = await ask_with_timeout(remote_ref, msg, timeout=10.0)

@@ -5,7 +5,7 @@
 - Actor 执行语义
 - 远程消息（`ask` / `tell`）
 - 流式响应（`StreamMessage`）
-- 分布式内存队列（`pulsing.queue`）
+- 分布式内存队列（`pulsing.streaming`）
 
 ## TL;DR（快速结论）
 
@@ -114,7 +114,7 @@ async for chunk in response.stream_reader():
 - 流式 chunk 是 best-effort，可能出现"部分输出后中断"。
 - 建议每个 chunk 带上 `seq` / offset / id，让消费端可恢复/去重。
 
-## 队列语义（`pulsing.queue`）
+## 队列语义（`pulsing.streaming`）
 
 队列按 bucket 分片：
 

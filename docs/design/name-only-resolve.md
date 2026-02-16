@@ -75,7 +75,7 @@
 ## 建议
 
 - **短期**：采用 **方案 A（`get_actor(name)` + 动态 Proxy）**，并在 Proxy 内采用 **A1**（`async_methods is None` 时全部按 async），这样：
-  - 只在一个地方（如 `pulsing.actor`）增加 `get_actor(name)`（及可选 `node_id`）。
+  - 只在一个地方（如 `pulsing.core`）增加 `get_actor(name)`（及可选 `node_id`）。
   - 对 `ActorProxy` 做最小改动：在 `__getattr__` 里当 `self._async_methods is None` 时令 `is_async=True`。
 - **命名**：`get_actor(name)` 与现有 `resolve(name)`（返回 ref）区分清晰；若希望更短，可再提供 `pul.actor(name)` 作为别名。
 - **文档**：说明「无类型、无补全；流式优先用类型化 resolve」即可。

@@ -73,7 +73,7 @@ In Rust, `ActorSystem::new(config)` builds a `NamingBackend`: if `config.head_ad
 - **Seed discovery** uses Ray’s **internal KV store**:
   - The first process to call `init_in_ray()` starts Pulsing with **no seeds**, gets its bind address, and **writes** that address into Ray KV under a fixed key (e.g. `pulsing:seed_addr`). It is the initial “seed” node.
   - Any later process reads that key, gets the seed address, and starts Pulsing **with that seed**. So all processes join the same Pulsing cluster; under the hood it is still **Gossip + seed**, with the first writer’s address as the seed.
-- If two processes race to write the key, the implementation may shut down one Pulsing instance and re-join using the winner’s address (see `pulsing.ray`).
+- If two processes race to write the key, the implementation may shut down one Pulsing instance and re-join using the winner’s address (see `pulsing.integrations.ray`).
 
 So: **Ray KV only provides the first seed**. After that, the cluster behaves like a normal Gossip cluster. There is no separate “Ray backend”; it is Gossip with a different bootstrap source.
 

@@ -876,12 +876,12 @@ print(f"Cluster size: {len(members)}")</code></pre>
         <div class="pulsing-feature-demo">
           <div class="code-preview">
             <pre><code class="language-bash"># Start OpenAI-compatible Router
-pulsing actor pulsing.actors.Router \
+pulsing actor pulsing.serving.Router \
     --addr 0.0.0.0:8000 \
     --http_port 8080 --model_name my-llm
 
 # Start vLLM Worker
-pulsing actor pulsing.actors.VllmWorker \
+pulsing actor pulsing.serving.VllmWorker \
     --model Qwen/Qwen2.5-0.5B \
     --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000
 

@@ -5,7 +5,7 @@ This page defines what Pulsing **guarantees** (and does **not** guarantee) for:
 - Actor execution
 - Remote messaging (`ask` / `tell`)
 - Streaming responses (`StreamMessage`)
-- Distributed memory queue (`pulsing.queue`)
+- Distributed memory queue (`pulsing.streaming`)
 
 The goal is to make it safe to build production systems without assuming stronger semantics than Pulsing actually provides.
 
@@ -120,7 +120,7 @@ Recommendation:
 
 - Make each chunk independently meaningful (include `seq` / offsets / ids) so consumers can resume or deduplicate if needed.
 
-## Queue semantics (`pulsing.queue`)
+## Queue semantics (`pulsing.streaming`)
 
 The distributed queue is **sharded** into buckets:
 

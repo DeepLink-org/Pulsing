@@ -236,7 +236,7 @@ Pulsing integrates with popular agent frameworks. See [Agent Integration](../age
 Use `PulsingRuntime` as a drop-in replacement for AutoGen's runtime:
 
 ```python
-from pulsing.autogen import PulsingRuntime
+from pulsing.integrations.autogen import PulsingRuntime
 
 runtime = PulsingRuntime(addr="0.0.0.0:8000")
 await runtime.start()
@@ -254,7 +254,7 @@ cd examples/agent/autogen && ./run_distributed.sh
 Use `with_pulsing()` to enable distributed execution:
 
 ```python
-from pulsing.langgraph import with_pulsing
+from pulsing.integrations.langgraph import with_pulsing
 
 app = graph.compile()
 distributed_app = with_pulsing(

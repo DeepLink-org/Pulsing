@@ -61,7 +61,7 @@ agent = AssistantAgent("assistant", model_client=model)
 用 `PulsingRuntime` 替换 `SingleThreadedAgentRuntime`：
 
 ```python
-from pulsing.autogen import PulsingRuntime
+from pulsing.integrations.autogen import PulsingRuntime
 
 # 单进程（默认）
 runtime = PulsingRuntime()
@@ -90,7 +90,7 @@ import asyncio
 from autogen_agentchat.agents import AssistantAgent
 from autogen_core import AgentId
 from autogen_ext.models.openai import OpenAIChatCompletionClient
-from pulsing.autogen import PulsingRuntime
+from pulsing.integrations.autogen import PulsingRuntime
 
 async def main():
     model = OpenAIChatCompletionClient(model="gpt-4o-mini")
@@ -136,7 +136,7 @@ app = graph.compile()
 ### 步骤 2：用 Pulsing 包装
 
 ```python
-from pulsing.langgraph import with_pulsing
+from pulsing.integrations.langgraph import with_pulsing
 
 distributed_app = with_pulsing(
     app,

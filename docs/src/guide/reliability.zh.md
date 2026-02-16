@@ -13,7 +13,7 @@
 对 `ask` 建议显式加超时：
 
 ```python
-from pulsing.actor import ask_with_timeout
+from pulsing.core import ask_with_timeout
 
 result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
 ```

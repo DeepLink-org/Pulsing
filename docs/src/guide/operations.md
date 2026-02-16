@@ -12,9 +12,9 @@ The `pulsing actor` command starts actors by providing their full class path. Th
 
 Actor type must be a full class path:
 - Format: `module.path.ClassName`
-- Example: `pulsing.actors.Router`
-- Example: `pulsing.actors.TransformersWorker`
-- Example: `pulsing.actors.VllmWorker`
+- Example: `pulsing.serving.Router`
+- Example: `pulsing.serving.TransformersWorker`
+- Example: `pulsing.serving.VllmWorker`
 - Example: `my_module.my_actor.MyCustomActor`
 
 ### Examples
@@ -22,7 +22,7 @@ Actor type must be a full class path:
 #### Router (OpenAI-compatible HTTP API)
 
 ```bash
-pulsing actor pulsing.actors.Router \
+pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
   --http_host 0.0.0.0 \
   --http_port 8080 \
@@ -34,7 +34,7 @@ pulsing actor pulsing.actors.Router \
 #### Transformers Worker
 
 ```bash
-pulsing actor pulsing.actors.worker.TransformersWorker \
+pulsing actor pulsing.serving.worker.TransformersWorker \
   --model_name gpt2 \
   --device cpu \
   --addr 0.0.0.0:8001 \
@@ -45,7 +45,7 @@ pulsing actor pulsing.actors.worker.TransformersWorker \
 #### vLLM Worker
 
 ```bash
-pulsing actor pulsing.actors.vllm.VllmWorker \
+pulsing actor pulsing.serving.vllm.VllmWorker \
   --model Qwen/Qwen2 \
   --addr 0.0.0.0:8002 \
   --seeds 127.0.0.1:8000 \
@@ -58,18 +58,18 @@ pulsing actor pulsing.actors.vllm.VllmWorker \
 
 ```bash
 # Start multiple workers with different names
-pulsing actor pulsing.actors.worker.TransformersWorker \
+pulsing actor pulsing.serving.worker.TransformersWorker \
   --model_name gpt2 \
   --name worker-1 \
   --seeds 127.0.0.1:8000
 
-pulsing actor pulsing.actors.worker.TransformersWorker \
+pulsing actor pulsing.serving.worker.TransformersWorker \
   --model_name gpt2 \
   --name worker-2 \
   --seeds 127.0.0.1:8000
 
 # Router targeting specific worker name
-pulsing actor pulsing.actors.Router \
+pulsing actor pulsing.serving.Router \
   --worker_name worker-1 \
   --seeds 127.0.0.1:8000
 ```
@@ -85,7 +85,7 @@ pulsing actor pulsing.actors.Router \
 
 ```bash
 # Pass parameters directly as command-line arguments
-pulsing actor pulsing.actors.worker.TransformersWorker \
+pulsing actor pulsing.serving.worker.TransformersWorker \
   --model_name gpt2 \
   --device cpu \
   --preload true \
@@ -93,7 +93,7 @@ pulsing actor pulsing.actors.worker.TransformersWorker \
   --seeds 127.0.0.1:8000
 
 # Start vLLM worker with all parameters
-pulsing actor pulsing.actors.vllm.VllmWorker \
+pulsing actor pulsing.serving.vllm.VllmWorker \
   --model Qwen/Qwen2 \
   --role aggregated \
   --max_new_tokens 512 \
@@ -109,7 +109,7 @@ Options:
 
 The Actor class must:
 - Be importable from the specified module path
-- Inherit from `pulsing.actor.Actor`
+- Inherit from `pulsing.core.Actor`
 - Have a constructor with named parameters (the CLI automatically matches arguments to constructor parameters)
 
 **How it works:**
@@ -227,10 +227,10 @@ pulsing bench gpt2 --url http://localhost:8080
 
 | Task | Command |
 |------|---------|
-| Start router | `pulsing actor pulsing.actors.Router --addr 0.0.0.0:8000 --http_port 8080` |
-| Start worker | `pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --seeds ...` |
-| Start multiple workers | `pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --name worker-1 --seeds ...` |
-| Router with custom worker | `pulsing actor pulsing.actors.Router --worker_name worker-1 --seeds ...` |
+| Start router | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --http_port 8080` |
+| Start worker | `pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --seeds ...` |
+| Start multiple workers | `pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --name worker-1 --seeds ...` |
+| Router with custom worker | `pulsing actor pulsing.serving.Router --worker_name worker-1 --seeds ...` |
 | List actors | `pulsing inspect actors --endpoint 127.0.0.1:8000` |
 | Inspect cluster | `pulsing inspect cluster --seeds 127.0.0.1:8000` |
 | Inspect actors | `pulsing inspect actors --seeds 127.0.0.1:8000 --top 10` |

@@ -17,9 +17,9 @@ This page defines terminology and style conventions for Pulsing documentation an
 
 | Component | CLI Actor Class Path | Description |
 |-----------|---------------------|-------------|
-| Router | `pulsing.actors.Router` | OpenAI-compatible HTTP router |
-| TransformersWorker | `pulsing.actors.TransformersWorker` | Transformers inference worker |
-| VllmWorker | `pulsing.actors.VllmWorker` | vLLM inference worker |
+| Router | `pulsing.serving.Router` | OpenAI-compatible HTTP router |
+| TransformersWorker | `pulsing.serving.TransformersWorker` | Transformers inference worker |
+| VllmWorker | `pulsing.serving.VllmWorker` | vLLM inference worker |
 
 **Note**: When documentation mentions "Router", it typically refers to the HTTP routing component for LLM inference services. Example code requiring task dispatch logic should use names like `Dispatcher` to avoid confusion.
 
@@ -31,8 +31,8 @@ This page defines terminology and style conventions for Pulsing documentation an
 pulsing actor <full.class.Path> [options]
 
 # Examples
-pulsing actor pulsing.actors.Router --http_port 8080 --model_name my-llm
-pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --device cpu
+pulsing actor pulsing.serving.Router --http_port 8080 --model_name my-llm
+pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --device cpu
 ```
 
 ### Inspect Commands (Observer Mode)

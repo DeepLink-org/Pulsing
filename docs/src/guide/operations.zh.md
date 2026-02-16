@@ -12,9 +12,9 @@ Pulsing 内置 CLI 工具，用于启动 actors、检查系统和基准测试分
 
 Actor 类型必须是完整的类路径：
 - 格式: `module.path.ClassName`
-- 示例: `pulsing.actors.Router`
-- 示例: `pulsing.actors.TransformersWorker`
-- 示例: `pulsing.actors.VllmWorker`
+- 示例: `pulsing.serving.Router`
+- 示例: `pulsing.serving.TransformersWorker`
+- 示例: `pulsing.serving.VllmWorker`
 - 示例: `my_module.my_actor.MyCustomActor`
 
 ### 示例
@@ -22,7 +22,7 @@ Actor 类型必须是完整的类路径：
 #### Router（OpenAI 兼容 HTTP API）
 
 ```bash
-pulsing actor pulsing.actors.Router \
+pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
   --http_host 0.0.0.0 \
   --http_port 8080 \
@@ -34,7 +34,7 @@ pulsing actor pulsing.actors.Router \
 #### Transformers Worker
 
 ```bash
-pulsing actor pulsing.actors.worker.TransformersWorker \
+pulsing actor pulsing.serving.worker.TransformersWorker \
   --model_name gpt2 \
   --device cpu \
   --addr 0.0.0.0:8001 \
@@ -45,7 +45,7 @@ pulsing actor pulsing.actors.worker.TransformersWorker \
 #### vLLM Worker
 
 ```bash
-pulsing actor pulsing.actors.vllm.VllmWorker \
+pulsing actor pulsing.serving.vllm.VllmWorker \
   --model Qwen/Qwen2 \
   --addr 0.0.0.0:8002 \
   --seeds 127.0.0.1:8000 \
@@ -58,18 +58,18 @@ pulsing actor pulsing.actors.vllm.VllmWorker \
 
 ```bash
 # 启动多个不同名称的 worker
-pulsing actor pulsing.actors.worker.TransformersWorker \
+pulsing actor pulsing.serving.worker.TransformersWorker \
   --model_name gpt2 \
   --name worker-1 \
   --seeds 127.0.0.1:8000
 
-pulsing actor pulsing.actors.worker.TransformersWorker \
+pulsing actor pulsing.serving.worker.TransformersWorker \
   --model_name gpt2 \
   --name worker-2 \
   --seeds 127.0.0.1:8000
 
 # Router 路由到特定 worker 名称
-pulsing actor pulsing.actors.Router \
+pulsing actor pulsing.serving.Router \
   --worker_name worker-1 \
   --seeds 127.0.0.1:8000
 ```
@@ -87,7 +87,7 @@ CLI 会检查 Actor 类的构造函数签名，并自动从命令行参数中提
 
 Actor 类必须：
 - 可以从指定的模块路径导入
-- 继承自 `pulsing.actor.Actor`
+- 继承自 `pulsing.core.Actor`
 - 具有带命名参数的构造函数（CLI 会自动将参数匹配到构造函数参数）
 
 ---
@@ -209,10 +209,10 @@ pulsing bench gpt2 --url http://localhost:8080
 
 | 任务 | 命令 |
 |------|------|
-| 启动 router | `pulsing actor pulsing.actors.Router --addr 0.0.0.0:8000 --http_port 8080` |
-| 启动 worker | `pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --seeds ...` |
-| 启动多个 worker | `pulsing actor pulsing.actors.TransformersWorker --model_name gpt2 --name worker-1 --seeds ...` |
-| Router 指定 worker | `pulsing actor pulsing.actors.Router --worker_name worker-1 --seeds ...` |
+| 启动 router | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --http_port 8080` |
+| 启动 worker | `pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --seeds ...` |
+| 启动多个 worker | `pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --name worker-1 --seeds ...` |
+| Router 指定 worker | `pulsing actor pulsing.serving.Router --worker_name worker-1 --seeds ...` |
 | 列出 actors | `pulsing inspect actors --endpoint 127.0.0.1:8000` |
 | 检查集群 | `pulsing inspect cluster --seeds 127.0.0.1:8000` |
 | 检查 actors | `pulsing inspect actors --seeds 127.0.0.1:8000 --top 10` |

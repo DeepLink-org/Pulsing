@@ -12,7 +12,7 @@ Pulsing implements `PulsingRuntime`, a distributed runtime for Microsoft AutoGen
 ## Quick Start
 
 ```python
-from pulsing.autogen import PulsingRuntime
+from pulsing.integrations.autogen import PulsingRuntime
 from autogen_core import AgentId, RoutedAgent, message_handler
 
 class MyAgent(RoutedAgent):

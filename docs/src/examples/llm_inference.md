@@ -19,7 +19,7 @@ This guide shows how to run a **router + worker** LLM service with Pulsing, and 
 The router needs an **actor system address** so workers can join the same cluster:
 
 ```bash
-pulsing actor pulsing.actors.Router \
+pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
   --http_host 0.0.0.0 \
   --http_port 8080 \
@@ -34,7 +34,7 @@ You can run **one or more** workers. Each worker should join the router node via
 ### Option A: Transformers worker (Terminal B)
 
 ```bash
-pulsing actor pulsing.actors.worker.TransformersWorker \
+pulsing actor pulsing.serving.worker.TransformersWorker \
   --model_name gpt2 \
   --device cpu \
   --addr 0.0.0.0:8001 \
@@ -45,7 +45,7 @@ pulsing actor pulsing.actors.worker.TransformersWorker \
 ### Option B: vLLM worker (Terminal C)
 
 ```bash
-pulsing actor pulsing.actors.vllm.VllmWorker \
+pulsing actor pulsing.serving.vllm.VllmWorker \
   --model Qwen/Qwen2.5-0.5B \
   --addr 0.0.0.0:8002 \
   --seeds 127.0.0.1:8000 \

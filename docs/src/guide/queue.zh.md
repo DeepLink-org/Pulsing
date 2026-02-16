@@ -179,7 +179,7 @@ writer = await pul.queue.write(
 
 ```python
 import pulsing as pul
-from pulsing.queue import register_backend
+from pulsing.streaming import register_backend
 import persisting as pst
 
 # 从 Persisting 注册后端
@@ -209,7 +209,7 @@ writer = await pul.queue.write(
 实现 `StorageBackend` 协议并注册：
 
 ```python
-from pulsing.queue import register_backend
+from pulsing.streaming import register_backend
 
 class MyBackend:
     async def put(self, record): ...

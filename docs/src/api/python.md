@@ -24,7 +24,7 @@ pip install -e .
 
 ## Actor Module
 
-::: pulsing.actor
+::: pulsing.core
 
 ## Agent Module
 
@@ -32,4 +32,4 @@ pip install -e .
 
 ## Queue Module
 
-::: pulsing.queue
+::: pulsing.streaming

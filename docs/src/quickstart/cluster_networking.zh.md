@@ -127,7 +127,7 @@ await pul.init(addr="0.0.0.0:8001", head_addr="192.168.1.10:8000")
 
 ```python
 import ray
-from pulsing.ray import init_in_ray
+from pulsing.integrations.ray import init_in_ray
 
 # 推荐：用 hook 让每个 worker 启动时执行 init_in_ray
 ray.init(runtime_env={"worker_process_setup_hook": init_in_ray})
@@ -147,14 +147,14 @@ actor = await MyActor.spawn(name="my_actor")
 **异步**（如 async Ray actor）：
 
 ```python
-from pulsing.ray import async_init_in_ray
+from pulsing.integrations.ray import async_init_in_ray
 await async_init_in_ray()
 ```
 
 **清理**（如测试）：
 
 ```python
-from pulsing.ray import cleanup
+from pulsing.integrations.ray import cleanup
 cleanup()
 ```
 

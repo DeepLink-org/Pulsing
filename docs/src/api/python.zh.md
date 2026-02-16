@@ -24,7 +24,7 @@ pip install -e .
 
 ## Actor 模块
 
-::: pulsing.actor
+::: pulsing.core
 
 ## Agent 模块
 
@@ -32,4 +32,4 @@ pip install -e .
 
 ## 队列模块
 
-::: pulsing.queue
+::: pulsing.streaming

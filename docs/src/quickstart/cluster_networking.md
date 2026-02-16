@@ -127,7 +127,7 @@ You can also use `SystemConfig.with_head_node()` / `.with_head_addr(addr)` and p
 
 ```python
 import ray
-from pulsing.ray import init_in_ray
+from pulsing.integrations.ray import init_in_ray
 
 # Recommended: hook so every worker runs init_in_ray at startup
 ray.init(runtime_env={"worker_process_setup_hook": init_in_ray})
@@ -147,14 +147,14 @@ actor = await MyActor.spawn(name="my_actor")
 **Async** (e.g. async Ray actors):
 
 ```python
-from pulsing.ray import async_init_in_ray
+from pulsing.integrations.ray import async_init_in_ray
 await async_init_in_ray()
 ```
 
 **Cleanup** (e.g. tests):
 
 ```python
-from pulsing.ray import cleanup
+from pulsing.integrations.ray import cleanup
 cleanup()
 ```
 

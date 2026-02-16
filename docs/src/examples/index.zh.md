@@ -199,7 +199,7 @@ Pulsing 集成主流 Agent 框架。详见 [Agent 框架支持](../agent/index.z
 使用 `PulsingRuntime` 替代 AutoGen 默认运行时：
 
 ```python
-from pulsing.autogen import PulsingRuntime
+from pulsing.integrations.autogen import PulsingRuntime
 
 runtime = PulsingRuntime(addr="0.0.0.0:8000")
 await runtime.start()
@@ -217,7 +217,7 @@ cd examples/agent/autogen && ./run_distributed.sh
 使用 `with_pulsing()` 实现分布式执行：
 
 ```python
-from pulsing.langgraph import with_pulsing
+from pulsing.integrations.langgraph import with_pulsing
 
 app = graph.compile()
 distributed_app = with_pulsing(
