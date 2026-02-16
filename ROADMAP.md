@@ -108,7 +108,7 @@
 
 ## 贡献
 
-欢迎社区贡献！如果你对某个功能感兴趣，请在 [GitHub Issues](https://github.com/reiase/pulsing/issues) 中讨论。
+欢迎社区贡献！如果你对某个功能感兴趣，请在 [GitHub Issues](https://github.com/DeepLink-org/Pulsing/issues) 中讨论。
 
 ## 参考
 

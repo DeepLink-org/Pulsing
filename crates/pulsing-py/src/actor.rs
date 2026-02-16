@@ -774,6 +774,21 @@ impl PySystemConfig {
         })
     }
 
+    /// Run this node as the head node (workers will register with it).
+    fn with_head_node(&self) -> Self {
+        Self {
+            inner: self.inner.clone().with_head_node(),
+        }
+    }
+
+    /// Connect to a head node at the given address (makes this node a worker).
+    fn with_head_addr(&self, addr: String) -> PyResult<Self> {
+        let socket_addr: SocketAddr = addr.parse().map_err(to_py_value_err)?;
+        Ok(Self {
+            inner: self.inner.clone().with_head_addr(socket_addr),
+        })
+    }
+
     /// Enable TLS with passphrase-derived certificates
     ///
     /// All nodes using the same passphrase will be able to communicate securely.

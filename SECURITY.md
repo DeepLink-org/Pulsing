@@ -13,7 +13,7 @@
 ### 报告方式
 
 1. **GitHub Private Vulnerability Reporting**（推荐）
-   - 访问 [Security Advisories](https://github.com/reiase/pulsing/security/advisories)
+   - 访问 [Security Advisories](https://github.com/DeepLink-org/Pulsing/security/advisories)
    - 点击 "Report a vulnerability"
 
 2. **邮件**

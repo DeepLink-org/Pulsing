@@ -6,31 +6,38 @@
 
 ### 什么是 Pulsing？
 
-Pulsing 是一个分布式 actor 框架，为构建分布式系统提供通信骨干，并为 AI 应用提供专门支持。
+Pulsing 是分布式 AI 系统的通信骨干——一个用 Rust 构建、为 Python 设计的分布式 Actor 运行时。流式优先、零依赖、内置发现。无需 Redis、etcd 或 YAML，即可跨机器连接 AI Agent 和服务。
 
-### Pulsing 与 Ray 有何区别？
+### Pulsing 与 Ray 是什么关系？
 
-Ray 专注于通用分布式计算和基于任务的并行性，而 Pulsing 专门针对 Actor 模型：
+Pulsing 和 Ray 是互补的。Ray 擅长分布式调度和资源管理。Pulsing 提供 Ray 没有内置的通信能力：
 
-- **位置透明性**：本地和远程 actor 使用相同 API
-- **真正的 actor 语义**：Actor 一次处理一条消息
-- **零外部依赖**：纯 Rust + Tokio 实现
-- **流式支持**：原生支持流式响应
+- **流式**：原生 `async for` 流式支持，适配 LLM token 生成
+- **Actor 发现**：内置 gossip 协议，跨节点命名 Actor 解析
+- **直接 Actor 通信**：Actor 间直接调用，不经过对象存储
+- **零外部依赖**：通信层不需要 GCS、Redis 或其他额外服务
 
-### 何时应该使用 Pulsing 而不是 Ray？
+### 如何在 Ray 中使用 Pulsing？
 
-当你需要以下特性时选择 Pulsing：
+通过 `pul.mount()` 将 Ray Actor 接入 Pulsing 网络。Ray 负责调度，Pulsing 负责通信：
 
-- 基于 actor 的编程和位置透明性
+```python
+@ray.remote
+class Worker:
+    def __init__(self, name):
+        pul.mount(self, name=name)  # 接入 Pulsing 网络
+```
+
+完整示例见 [Ray + Pulsing 教程](quickstart/migrate_from_ray.zh.md)。
+
+### 何时应该独立使用 Pulsing（不搭配 Ray）？
+
+当你需要以下特性时选择 Pulsing 独立使用：
+
+- 轻量级 Actor 通信，无需完整的集群管理器
 - 流式响应（LLM 应用）
-- 最小的运维复杂度（无需外部服务）
-- 高性能 actor 通信
-
-当你需要以下特性时选择 Ray：
-
-- 通用分布式计算任务
-- 复杂的依赖管理
-- 与现有 Ray 生态系统集成
+- 最小运维复杂度（零外部服务）
+- 通过内置 gossip 实现自包含集群
 
 ## 安装问题
 
@@ -276,9 +283,9 @@ class GoodActor:
    print(f"Cluster has {len(members)} nodes")
    ```
 
-## 迁移问题
+## Ray 集成问题
 
-### 从 Ray 迁移
+### 在 Ray 中使用 Pulsing
 
 **常见问题**：
 

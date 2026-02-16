@@ -1,7 +1,7 @@
 [project]
 name = "pulsing"
 version = "0.1.0"
-description = "Pulsing - Distributed Actor Framework"
+description = "Pulsing: Backbone for distributed AI systems. Actor runtime with streaming, zero dependencies, and built-in discovery."
 readme = "README.md"
 authors = [
     { name = "Reiase", email = "reiase@gmail.com" }
@@ -31,11 +31,11 @@ classifiers = [
 keywords = ["actor", "distributed", "async", "llm", "inference"]
 
 [project.urls]
-Homepage = "https://github.com/reiase/pulsing"
-Repository = "https://github.com/reiase/pulsing"
-Documentation = "https://github.com/reiase/pulsing#readme"
-Issues = "https://github.com/reiase/pulsing/issues"
-Changelog = "https://github.com/reiase/pulsing/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/DeepLink-org/Pulsing"
+Repository = "https://github.com/DeepLink-org/Pulsing"
+Documentation = "https://github.com/DeepLink-org/Pulsing#readme"
+Issues = "https://github.com/DeepLink-org/Pulsing/issues"
+Changelog = "https://github.com/DeepLink-org/Pulsing/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 storage = [

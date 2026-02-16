@@ -7,17 +7,19 @@
 
 **[English](README.md)**
 
-**Pulsing 是一个分布式 actor 框架，为构建分布式系统提供通信骨干，并为 AI 应用提供专门支持。**
+**分布式 AI 系统的通信骨干。**
+
+**Actor 运行时。流式优先。零依赖。内置发现。**
+
+Pulsing 是一个用 Rust 构建、为 Python 设计的分布式 Actor 运行时。跨机器连接 AI Agent 和服务——不需要 Redis，不需要 etcd，不需要 YAML。只需 `pip install pulsing`。
 
 🚀 **零外部依赖** — 纯 Rust + Tokio，无需 NATS/etcd/Redis
 
-🌐 **自动发现** — 内置 Gossip 协议管理集群
+⚡ **流式优先** — 原生流式响应支持，为 LLM token 生成而设计
 
-🔀 **位置透明** — 本地和远程 Actor 使用相同 API
+🌐 **内置发现** — SWIM/Gossip 协议实现自动集群管理
 
-⚡ **流式支持** — 原生支持 LLM 流式响应
-
-🤖 **Agent 友好** — 开箱即用集成 AutoGen、LangGraph
+🔀 **统一 API** — 本地和远程 Actor 使用相同的 `await actor.method()`
 
 ## 🚀 5分钟快速体验
 

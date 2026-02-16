@@ -1,7 +1,7 @@
 ---
 template: home.html
-title: Pulsing - Lightweight Distributed Actor Framework for AI
-description: Pulsing is a distributed actor framework that provides a communication backbone for building distributed systems, with specialized support for AI applications.
+title: Pulsing - Backbone for Distributed AI Systems
+description: "Pulsing: Backbone for distributed AI systems. Actor runtime. Streaming-first. Zero dependencies. Built-in discovery."
 hide: toc
 ---
 
@@ -9,35 +9,39 @@ hide: toc
 
 # Pulsing
 
-A **distributed actor framework** that provides a communication backbone for building distributed systems, with specialized support for AI applications.
+**Backbone for distributed AI systems.**
+
+Actor runtime. Streaming-first. Zero dependencies. Built-in discovery.
+
+A distributed actor runtime built in Rust, designed for Python. Connect AI agents and services across machines — no Redis, no etcd, no YAML.
 
 ## Why Pulsing?
 
 <div class="grid cards" markdown>
 
--   :material-package-variant-closed:{ .lg .middle } **Zero External Dependencies**
+-   :material-package-variant-closed:{ .lg .middle } **Zero Dependencies**
 
     ---
 
-    Pure Rust + Tokio. No etcd, NATS, Redis, or Consul required.
+    Pure Rust + Tokio. No etcd, NATS, Redis, or Consul. Just `pip install pulsing`.
 
--   :material-radar:{ .lg .middle } **Built-in Cluster Discovery**
-
-    ---
-
-    SWIM/Gossip protocol for automatic node discovery and failure detection.
-
--   :material-lightning-bolt:{ .lg .middle } **High Performance**
+-   :material-lightning-bolt:{ .lg .middle } **Streaming-first**
 
     ---
 
-    Async runtime with HTTP/2 transport and native streaming support.
+    Native streaming support built for LLM token generation and real-time communication.
 
--   :material-language-python:{ .lg .middle } **Python First**
+-   :material-radar:{ .lg .middle } **Built-in Discovery**
 
     ---
 
-    Full Python API via PyO3. `@remote` decorator turns any class into an Actor.
+    SWIM/Gossip protocol for automatic node discovery and failure detection. No configuration needed.
+
+-   :material-language-python:{ .lg .middle } **Built in Rust, Designed for Python**
+
+    ---
+
+    Full async Python API via PyO3. `@remote` decorator turns any class into a distributed Actor.
 
 </div>
 
@@ -63,13 +67,13 @@ A **distributed actor framework** that provides a communication backbone for bui
 
     [:octicons-arrow-right-24: Distributed Agents](quickstart/agent.md)
 
--   :material-swap-horizontal:{ .lg .middle } **Replace Ray**
+-   :material-swap-horizontal:{ .lg .middle } **Works with Ray**
 
     ---
 
-    Migrate Ray actors to Pulsing's native async API.
+    Use Pulsing as the communication layer for Ray actors. Streaming, discovery, and cross-cluster calls — built in.
 
-    [:octicons-arrow-right-24: Migrate from Ray](quickstart/migrate_from_ray.md)
+    [:octicons-arrow-right-24: Ray + Pulsing](quickstart/migrate_from_ray.md)
 
 </div>
 
@@ -104,7 +108,7 @@ async def main():
 asyncio.run(main())
 ```
 
-[:octicons-arrow-right-24: Getting Started](quickstart/index.md){ .md-button }
+[:octicons-arrow-right-24: Quick Start](quickstart/index.md){ .md-button }
 
 ---
 
@@ -112,10 +116,11 @@ asyncio.run(main())
 
 | Goal | Link |
 |------|------|
-| Understand the Actor model | [Guide: Actors](guide/actors.md) |
-| Build a cluster | [Guide: Remote Actors](guide/remote_actors.md) |
-| Operate your system | [Guide: CLI Operations](guide/operations.md) |
-| Deep dive into design | [Design Documents](design/architecture.md) |
+| What is Pulsing / who is it for? | [Overview](overview.md) |
+| Understand the Actor model | [Actor Basics](guide/actors.md) |
+| Build a cluster | [Remote Actors](guide/remote_actors.md) |
+| Operate your system | [CLI Operations](guide/operations.md) |
+| Architecture and design | [Architecture & Design](design/architecture.md) |
 | API details | [API Overview](api/overview.md) |
 | Full API contract | [Complete Reference](api_reference.md) |
 

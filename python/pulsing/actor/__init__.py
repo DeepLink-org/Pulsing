@@ -50,13 +50,17 @@ async def init(
     *,
     seeds: list[str] = None,
     passphrase: str = None,
+    head_addr: str = None,
+    is_head_node: bool = False,
 ) -> ActorSystem:
     """Initialize Pulsing actor system
 
     Args:
         addr: Bind address (e.g., "0.0.0.0:8000"). None for standalone mode.
-        seeds: Seed nodes to join cluster
-        passphrase: Enable TLS with this passphrase
+        seeds: Seed nodes to join cluster (Gossip mode).
+        passphrase: Enable TLS with this passphrase.
+        head_addr: Address of head node (worker mode). Mutually exclusive with is_head_node.
+        is_head_node: If True, this node runs as head. Mutually exclusive with head_addr.
 
     Returns:
         ActorSystem instance
@@ -65,16 +69,22 @@ async def init(
         # Standalone mode
         await init()
 
-        # Cluster mode with TLS
-        await init(addr="0.0.0.0:8000", passphrase="my-secret")
-
-        # Join existing cluster
+        # Cluster mode (Gossip + seed)
         await init(addr="0.0.0.0:8001", seeds=["192.168.1.1:8000"])
+
+        # Head node
+        await init(addr="0.0.0.0:8000", is_head_node=True)
+
+        # Worker node
+        await init(addr="0.0.0.0:8001", head_addr="192.168.1.1:8000")
     """
     global _global_system
 
     if _global_system is not None:
         return _global_system
+
+    if is_head_node and head_addr:
+        raise ValueError("Cannot set both is_head_node and head_addr")
 
     # Build config
     if addr:
@@ -84,6 +94,10 @@ async def init(
 
     if seeds:
         config = config.with_seeds(seeds)
+    if is_head_node:
+        config = config.with_head_node()
+    elif head_addr:
+        config = config.with_head_addr(head_addr)
 
     if passphrase:
         config = config.with_passphrase(passphrase)

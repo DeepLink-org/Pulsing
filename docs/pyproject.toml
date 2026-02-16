@@ -1,7 +1,7 @@
 [project]
 name = "pulsing-docs"
 version = "0.1.0"
-description = "Documentation for Pulsing - Lightweight Distributed Actor Framework"
+description = "Documentation for Pulsing - Backbone for Distributed AI Systems"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

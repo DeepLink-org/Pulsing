@@ -1,22 +1,51 @@
-# 教程：从 Ray 迁移
+# 教程：Ray + Pulsing
 
-将 Ray Actor 代码迁移到 Pulsing 原生异步 API。
-
----
-
-## 为什么这篇迁移说明改了
-
-当前项目不再推荐 Ray 兼容层（`pulsing.compat.ray`）。
-请直接使用 Pulsing 主 API：
-
-- `import pulsing as pul`
-- `@pul.remote`
-- `await pul.init()` / `await pul.shutdown()`
-- `await Class.spawn()` / `await Class.resolve()`
+用 Pulsing 作为 Ray Actor 的通信骨干——增加流式、Actor 发现和跨集群调用能力，无需替换 Ray。
 
 ---
 
-## API 对照表（Ray -> Pulsing）
+## 两种使用方式
+
+1. **桥接模式** — 保留 Ray Actor，通过 `pul.mount()` 接入 Pulsing 通信
+2. **独立模式** — 直接使用 Pulsing 原生 API（适合新项目或完全迁移）
+
+---
+
+## 桥接模式：为 Ray Actor 增加 Pulsing 通信
+
+最简单的路径——Ray 负责调度，Pulsing 负责通信：
+
+```python
+import ray
+import pulsing as pul
+
+@ray.remote
+class Worker:
+    def __init__(self, name):
+        pul.mount(self, name=name)  # 一行代码：接入 Pulsing 网络
+
+    async def call_peer(self, peer_name, msg):
+        proxy = (await pul.resolve(peer_name, timeout=30)).as_any()
+        return await proxy.greet(msg)  # 跨进程 Pulsing 调用
+
+    async def greet(self, msg):
+        return f"hello: {msg}"
+
+ray.init()
+workers = [Worker.remote(f"w{i}") for i in range(3)]
+ray.get(workers[0].call_peer.remote("w1", "hi"))  # => "hello: hi"
+pul.cleanup_ray()
+```
+
+**你获得的能力：** Ray 处理进程调度和资源管理。Pulsing 增加流式、命名 Actor 发现和直接的 Actor 间通信——不经过 Ray 的对象存储。
+
+---
+
+## 独立模式：Pulsing 原生 API
+
+适合新项目或需要 Pulsing 完整特性的场景：
+
+### API 对照表（Ray -> Pulsing）
 
 | Ray | Pulsing |
 |---|---|
@@ -27,11 +56,9 @@
 | `ray.get(actor.method.remote(args...))` | `await actor.method(args...)` |
 | `ray.get_actor(name)` | `await Actor.resolve(name)` 或 `await pul.resolve(name)` |
 
----
+### 最小示例
 
-## 最小迁移示例
-
-### 之前（Ray）
+**Ray：**
 
 ```python
 import ray
@@ -51,7 +78,7 @@ print(ray.get(counter.inc.remote()))
 ray.shutdown()
 ```
 
-### 之后（Pulsing）
+**Pulsing：**
 
 ```python
 import pulsing as pul
@@ -70,6 +97,18 @@ async def main():
     print(await counter.inc())
     await pul.shutdown()
 ```
+
+**关键差异：**
+
+| 方面 | Ray | Pulsing |
+|------|-----|---------|
+| 创建 Actor | `Counter.remote()` | `await Counter.spawn()` — 原生 async |
+| 调用方法 | `ray.get(counter.inc.remote())` | `await counter.inc()` — 直接 await |
+| 按名获取 | `ray.get_actor("counter")` | `await Counter.resolve("counter")` — 带类型代理 |
+| 流式 | 非内置 | 原生 `async for chunk in actor.stream()` |
+| 发现 | 需要 GCS | 内置 gossip，零外部依赖 |
+
+心智模型一致（远程类、spawn、方法调用）。Pulsing 增加了原生 async、流式和自包含集群能力。
 
 ---
 

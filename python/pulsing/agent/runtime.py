@@ -13,9 +13,17 @@ async def runtime(
     addr: str | None = None,
     seeds: list[str] | None = None,
     passphrase: str | None = None,
+    head_addr: str | None = None,
+    is_head_node: bool = False,
 ):
     """Actor system runtime context manager."""
-    await init(addr=addr, seeds=seeds, passphrase=passphrase)
+    await init(
+        addr=addr,
+        seeds=seeds,
+        passphrase=passphrase,
+        head_addr=head_addr,
+        is_head_node=is_head_node,
+    )
     try:
         yield get_system()
     finally:

@@ -1,6 +1,6 @@
 # API Overview
 
-Pulsing is a distributed actor framework that provides a communication backbone for building distributed systems and applications.
+Pulsing is the backbone for distributed AI systems — a distributed actor runtime with streaming, zero dependencies, and built-in discovery.
 
 ## Core Concepts
 

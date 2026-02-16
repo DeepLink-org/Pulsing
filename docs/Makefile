@@ -2,11 +2,14 @@
 
 help:
 	@echo "Available commands:"
-	@echo "  make serve        - Serve documentation locally (auto-installs deps)"
+	@echo "  make serve        - Serve documentation locally (auto-installs deps, livereload on)"
 	@echo "  make build        - Build documentation (auto-installs deps)"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make check-links  - Check for broken links"
 	@echo "  make sync         - Sync dependencies with pyproject.toml"
+	@echo ""
+	@echo "  If livereload does not refresh on file change, try:"
+	@echo "    WATCHDOG_USE_POLLING=1 make serve"
 
 sync:
 	uv sync --all-extras
@@ -14,7 +17,7 @@ sync:
 serve:
 	@echo "Installing Pulsing in development mode..."
 	cd .. && uv run maturin develop
-	uv run mkdocs serve
+	uv run mkdocs serve --livereload -w src -w mkdocs.yml -w overrides
 
 build:
 	@echo "Installing Pulsing in development mode..."

@@ -5,7 +5,7 @@ edition = "2021"
 description = "Lightweight distributed actor framework for Pulsing"
 authors.workspace = true
 license.workspace = true
-repository = "https://github.com/reiase/pulsing"
+repository = "https://github.com/DeepLink-org/Pulsing"
 keywords = ["actor", "distributed", "cluster", "gossip"]
 
 [features]

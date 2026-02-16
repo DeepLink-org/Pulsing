@@ -12,7 +12,7 @@ edition = "2021"
 description = "Pulsing - Distributed Actor Framework"
 authors = ["Reiase <reiase@gmail.com>"]
 license = "Apache-2.0"
-repository = "https://github.com/reiase/pulsing"
+repository = "https://github.com/DeepLink-org/Pulsing"
 keywords = ["actor", "distributed", "async", "inference"]
 
 [workspace.dependencies]

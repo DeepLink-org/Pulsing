@@ -14,7 +14,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/reiase/pulsing.git
+git clone https://github.com/DeepLink-org/Pulsing.git
 cd pulsing
 
 # 安装 Python 依赖
@@ -38,7 +38,7 @@ pytest tests/
 ```bash
 git clone https://github.com/YOUR_USERNAME/pulsing.git
 cd pulsing
-git remote add upstream https://github.com/reiase/pulsing.git
+git remote add upstream https://github.com/DeepLink-org/Pulsing.git
 ```
 
 ### 3. 创建分支
@@ -136,4 +136,4 @@ pytest tests/actor_system/
 
 ## 问题？
 
-如果你有任何问题，请通过 [GitHub Issues](https://github.com/reiase/pulsing/issues) 联系我们。
+如果你有任何问题，请通过 [GitHub Issues](https://github.com/DeepLink-org/Pulsing/issues) 联系我们。

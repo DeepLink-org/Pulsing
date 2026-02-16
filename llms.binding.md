@@ -2,7 +2,9 @@
 
 ## Overview
 
-`Pulsing` is a distributed actor framework that provides a communication backbone for building distributed systems, with specialized support for AI applications.
+**Pulsing: Backbone for distributed AI systems.**
+
+Pulsing is a distributed actor runtime built in Rust, designed for Python. Actor runtime. Streaming-first. Zero dependencies. Built-in discovery. Connect AI agents and services across machines — no Redis, no etcd, no YAML.
 
 ## Quick Start
 

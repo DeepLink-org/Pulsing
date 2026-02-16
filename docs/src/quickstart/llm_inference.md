@@ -2,6 +2,16 @@
 
 Build a **scalable LLM inference backend** with Pulsing in 10 minutes.
 
+**Before / After:**
+
+| | Before (single process or ad‑hoc script) | After (Pulsing) |
+|---|------------------------------------------|-----------------|
+| **API** | Your own HTTP or in-process only | OpenAI-compatible HTTP API (`/v1/chat/completions`) |
+| **Scaling** | One process, one model | Router + N workers; add nodes and workers as needed |
+| **Streaming** | Hand-rolled if any | Native streaming from Router to client |
+
+You get a **Router** (HTTP API + load balancing) and **Workers** (model backends). Same Actor model; add more workers or nodes without changing client code.
+
 **What you'll build:**
 
 - A Router that exposes an **OpenAI-compatible HTTP API**

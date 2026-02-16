@@ -1,7 +1,7 @@
 ---
 template: home.html
-title: Pulsing - 轻量级分布式 Actor 框架
-description: Pulsing 是一个分布式 actor 框架，为构建分布式系统提供通信骨干，并为 AI 应用提供专门支持。
+title: Pulsing - 分布式 AI 系统的通信骨干
+description: "Pulsing：分布式 AI 系统的通信骨干。Actor 运行时。流式优先。零依赖。内置发现。"
 hide: toc
 ---
 
@@ -9,35 +9,39 @@ hide: toc
 
 # Pulsing
 
-一个**分布式 actor 框架**，为构建分布式系统提供通信骨干，并为 AI 应用提供专门支持。
+**分布式 AI 系统的通信骨干。**
+
+Actor 运行时。流式优先。零依赖。内置发现。
+
+用 Rust 构建、为 Python 设计的分布式 Actor 运行时。跨机器连接 AI Agent 和服务——不需要 Redis，不需要 etcd，不需要 YAML。
 
 ## 为什么选择 Pulsing？
 
 <div class="grid cards" markdown>
 
--   :material-package-variant-closed:{ .lg .middle } **零外部依赖**
+-   :material-package-variant-closed:{ .lg .middle } **零依赖**
 
     ---
 
-    纯 Rust + Tokio 实现。无需 etcd、NATS、Redis 或 Consul。
+    纯 Rust + Tokio 实现。无需 etcd、NATS、Redis 或 Consul。只需 `pip install pulsing`。
 
--   :material-radar:{ .lg .middle } **内置集群发现**
-
-    ---
-
-    SWIM/Gossip 协议实现自动节点发现和故障检测。
-
--   :material-lightning-bolt:{ .lg .middle } **高性能**
+-   :material-lightning-bolt:{ .lg .middle } **流式优先**
 
     ---
 
-    异步运行时 + HTTP/2 传输 + 原生流式支持。
+    原生流式支持，为 LLM token 生成和实时通信而设计。
 
--   :material-language-python:{ .lg .middle } **Python 优先**
+-   :material-radar:{ .lg .middle } **内置发现**
 
     ---
 
-    通过 PyO3 提供完整 Python API。`@remote` 装饰器将任意类变成 Actor。
+    SWIM/Gossip 协议实现自动节点发现和故障检测。无需配置。
+
+-   :material-language-python:{ .lg .middle } **Rust 构建，Python 设计**
+
+    ---
+
+    通过 PyO3 提供完整异步 Python API。`@remote` 装饰器将任意类变成分布式 Actor。
 
 </div>
 
@@ -63,13 +67,13 @@ hide: toc
 
     [:octicons-arrow-right-24: 分布式 Agent](quickstart/agent.zh.md)
 
--   :material-swap-horizontal:{ .lg .middle } **替代 Ray**
+-   :material-swap-horizontal:{ .lg .middle } **与 Ray 协同**
 
     ---
 
-    将 Ray Actor 迁移到 Pulsing 原生异步 API。
+    用 Pulsing 作为 Ray Actor 的通信层。流式、发现、跨集群调用——开箱即用。
 
-    [:octicons-arrow-right-24: 从 Ray 迁移](quickstart/migrate_from_ray.zh.md)
+    [:octicons-arrow-right-24: Ray + Pulsing](quickstart/migrate_from_ray.zh.md)
 
 </div>
 
@@ -112,10 +116,11 @@ asyncio.run(main())
 
 | 目标 | 链接 |
 |------|------|
-| 理解 Actor 模型 | [指南：Actor](guide/actors.zh.md) |
-| 构建集群 | [指南：远程 Actor](guide/remote_actors.zh.md) |
-| 运维系统 | [指南：CLI 操作](guide/operations.zh.md) |
-| 深入设计 | [设计文档](design/architecture.md) |
+| Pulsing 是什么 / 适合谁？ | [概述](overview.zh.md) |
+| 理解 Actor 模型 | [Actor 基础](guide/actors.zh.md) |
+| 构建集群 | [远程 Actor](guide/remote_actors.zh.md) |
+| 运维系统 | [CLI 运维](guide/operations.zh.md) |
+| 架构与设计 | [架构与设计](design/architecture.zh.md) |
 | API 详情 | [API 概述](api/overview.zh.md) |
 | 完整 API 契约 | [完整参考](api_reference.zh.md) |
 

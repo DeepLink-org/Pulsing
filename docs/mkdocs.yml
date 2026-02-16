@@ -1,5 +1,5 @@
 site_name: Pulsing
-site_description: Pulsing is a distributed actor framework that provides a communication backbone for building distributed systems, with specialized support for AI applications.
+site_description: "Pulsing: Backbone for distributed AI systems. Actor runtime. Streaming-first. Zero dependencies. Built-in discovery."
 # Docs may be hosted elsewhere, but repo is the canonical entry point.
 site_url: https://github.com/DeepLink-org/pulsing
 docs_dir: src
@@ -83,12 +83,23 @@ plugins:
           site_name: "Pulsing 文档"
           nav_translations:
             Home: 首页
-            Getting Started: 开始使用
             Overview: 概述
+            Quick Start: 快速开始
+            First Actor: 第一个 Actor
+            Actor Patterns: Actor 模式
+            Cluster Setup: 集群组网
+            Get Started: 入门
+            Getting Started: 开始使用
+            Core Concepts: 核心概念
+            Architecture Overview: 架构概览
+            Cluster & Network: 集群与网络
+            Implementation: 实现细节
+            User Guides: 用户指南
+            Architecture & Design: 架构与设计
             Complete Reference: 完整参考
             LLM Inference: LLM 推理
             Distributed Agents: 分布式 Agent
-            Migrate from Ray: 从 Ray 迁移
+            Ray + Pulsing: Ray + Pulsing
             User Guide: 用户指南
             Guide: 指南
             Actors: Actor 指南
@@ -105,11 +116,12 @@ plugins:
             Ping-Pong: Ping-Pong
             Distributed Counter: 分布式计数器
             API Reference: API 参考
-            Overview: API 概述
+            API Overview: API 概述
             Python: Python API
             Rust: Rust API
             FAQ: 常见问题
             Design: 设计文档
+            Actor Basics: Actor 基础
             Architecture: 架构概览
             Actor System: Actor 系统
             Behavior API: Behavior API
@@ -137,18 +149,21 @@ plugins:
 
 nav:
   - Home: index.md
-  - Getting Started:
-    - Overview: quickstart/index.md
+  - Overview: overview.md
+  - Quick Start:
+    - First Actor: quickstart/index.md
+    - Actor Patterns: quickstart/patterns.md
+    - Cluster Setup: quickstart/cluster_networking.md
     - LLM Inference: quickstart/llm_inference.md
     - Distributed Agents: quickstart/agent.md
-    - Migrate from Ray: quickstart/migrate_from_ray.md
-  - User Guide:
-    - Guide: guide/index.md
-    - Actors: guide/actors.md
+    - Ray + Pulsing: quickstart/migrate_from_ray.md
+  - Core Concepts:
+    - Actor Basics: guide/actors.md
     - Communication Patterns: guide/communication_patterns.md
     - Remote Actors: guide/remote_actors.md
-    - Operations: guide/operations.md
     - Reliability: guide/reliability.md
+  - User Guides:
+    - Operations: guide/operations.md
     - Security: guide/security.md
     - Distributed Queue: guide/queue.md
     - Semantics: guide/semantics.md
@@ -163,28 +178,31 @@ nav:
       - Ping-Pong: examples/ping_pong.md
       - Distributed Counter: examples/distributed_counter.md
   - API Reference:
-    - Overview: api/overview.md
+    - API Overview: api/overview.md
     - Complete Reference: api_reference.md
     - Python: api/python.md
     - Rust: api/rust.md
   - FAQ: faq.md
-  - Design:
-    - Architecture: design/architecture.md
-    - Actor System: design/actor-system.md
-    - Behavior API: design/behavior.md
-    - Node Discovery: design/node-discovery.md
-    - Cluster Networking: design/cluster-networking.md
-    - Actor Addressing: design/actor-addressing.md
-    - HTTP2 Transport: design/http2-transport.md
-    - Load Sync: design/load_sync.md
-    - AS Actor Decorator: design/as-actor-decorator.md
-    - Communication Evolution: design/cluster-communication-evolution.md
+  - Architecture & Design:
+    - Architecture Overview: design/architecture.md
+    - Actor System:
+      - Actor System: design/actor-system.md
+      - Behavior API: design/behavior.md
+    - Cluster & Network:
+      - Cluster Networking: design/cluster-networking.md
+      - Node Discovery: design/node-discovery.md
+      - HTTP2 Transport: design/http2-transport.md
+      - Actor Addressing: design/actor-addressing.md
+      - Load Sync: design/load_sync.md
+    - Implementation:
+      - AS Actor Decorator: design/as-actor-decorator.md
+      - Communication Evolution: design/cluster-communication-evolution.md
 
 extra:
   generator: false
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/reiase/pulsing
+      link: https://github.com/DeepLink-org/Pulsing
 
 extra_css:
   - assets/stylesheets/home.css

@@ -2,6 +2,16 @@
 
 10 分钟内用 Pulsing 构建一个**可扩展的 LLM 推理后端**。
 
+**前后对比：**
+
+| | 之前（单进程或临时脚本） | 之后（Pulsing） |
+|---|--------------------------|-----------------|
+| **API** | 自建 HTTP 或仅进程内 | OpenAI 兼容 HTTP API（`/v1/chat/completions`） |
+| **扩展** | 单进程、单模型 | Router + N 个 Worker；按需增加节点与 Worker |
+| **流式** | 若有则手写 | Router 到客户端的原生流式 |
+
+你会得到一个 **Router**（HTTP API + 负载均衡）和若干 **Worker**（模型后端）。同一套 Actor 模型；增加 Worker 或节点无需改客户端代码。
+
 **你将构建：**
 
 - 一个暴露 **OpenAI 兼容 HTTP API** 的 Router

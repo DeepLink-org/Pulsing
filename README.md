@@ -7,17 +7,19 @@
 
 **[中文文档](README.zh.md)**
 
-**Pulsing is a distributed actor framework that provides a communication backbone for building distributed systems, with specialized support for AI applications.**
+**Backbone for distributed AI systems.**
+
+**Actor runtime. Streaming-first. Zero dependencies. Built-in discovery.**
+
+Pulsing is a distributed actor runtime built in Rust, designed for Python. Connect AI agents and services across machines — no Redis, no etcd, no YAML. Just `pip install pulsing`.
 
 🚀 **Zero Dependencies** — Pure Rust + Tokio, no NATS/etcd/Redis
 
-🌐 **Auto Discovery** — Built-in Gossip protocol for cluster management
+⚡ **Streaming-first** — Native support for streaming responses, built for LLM token generation
 
-🔀 **Location Transparent** — Same API for local and remote Actors
+🌐 **Built-in Discovery** — SWIM/Gossip protocol for automatic cluster management
 
-⚡ **Streaming Ready** — Native support for LLM streaming responses
-
-🤖 **Agent Friendly** — Integrates with AutoGen, LangGraph out of the box
+🔀 **Same API Everywhere** — Same `await actor.method()` for local and remote Actors
 
 ## 🚀 Get Started in 5 Minutes
 

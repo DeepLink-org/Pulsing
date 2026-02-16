@@ -6,31 +6,38 @@ This page addresses common questions and issues users encounter when working wit
 
 ### What is Pulsing?
 
-Pulsing is a distributed actor framework that provides a communication backbone for building distributed systems, with specialized support for AI applications.
+Pulsing is the backbone for distributed AI systems — a distributed actor runtime built in Rust, designed for Python. Streaming-first, zero dependencies, built-in discovery. Connect AI agents and services across machines without Redis, etcd, or YAML.
 
-### How does Pulsing differ from Ray?
+### How does Pulsing relate to Ray?
 
-While Ray focuses on general distributed computing with task-based parallelism, Pulsing specializes in the Actor model with:
+Pulsing and Ray are complementary. Ray excels at distributed scheduling and resource management. Pulsing provides a communication backbone with capabilities Ray doesn't have built-in:
 
-- **Location transparency**: Same API for local and remote actors
-- **True actor semantics**: Actors process messages one at a time
-- **Zero external dependencies**: Pure Rust + Tokio implementation
-- **Streaming support**: Native support for streaming responses
+- **Streaming**: Native `async for` streaming for LLM token generation
+- **Actor discovery**: Built-in gossip protocol for named actor resolution across nodes
+- **Direct actor communication**: Actor-to-actor calls without going through an object store
+- **Zero external dependencies**: No GCS, Redis, or additional services needed for communication
 
-### When should I use Pulsing vs Ray?
+### How do I use Pulsing with Ray?
 
-Choose Pulsing if you need:
+Use `pul.mount()` to bridge Ray actors onto the Pulsing network. Ray handles scheduling, Pulsing handles communication:
 
-- Actor-based programming with location transparency
+```python
+@ray.remote
+class Worker:
+    def __init__(self, name):
+        pul.mount(self, name=name)  # Join Pulsing network
+```
+
+See [Ray + Pulsing tutorial](quickstart/migrate_from_ray.md) for a full example.
+
+### When should I use Pulsing standalone (without Ray)?
+
+Choose Pulsing standalone if you need:
+
+- Lightweight actor communication without a full cluster manager
 - Streaming responses (LLM applications)
-- Minimal operational complexity (no external services)
-- High-performance actor communication
-
-Choose Ray if you need:
-
-- General distributed computing tasks
-- Complex dependency management
-- Integration with existing Ray ecosystem
+- Minimal operational complexity (zero external services)
+- Self-contained clustering via built-in gossip
 
 ## Installation Issues
 
@@ -276,9 +283,9 @@ class GoodActor:
    print(f"Cluster has {len(members)} nodes")
    ```
 
-## Migration Issues
+## Ray Integration Issues
 
-### Migrating from Ray
+### Using Pulsing with Ray
 
 **Common issues**:
 

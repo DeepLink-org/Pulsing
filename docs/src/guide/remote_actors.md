@@ -1,6 +1,20 @@
 # Remote Actors Guide
 
-Guide to using actors across a cluster with location transparency.
+Guide to running and discovering actors across a cluster: setup, named actors, resolve.
+
+## Before / After: Single Node vs Cluster
+
+**Same Actor code.** Only initialization and how you get a reference change.
+
+| | Single node (standalone) | Cluster (two nodes) |
+|---|--------------------------|----------------------|
+| **Init** | `await pul.init()` | Node 1: `await pul.init(addr="0.0.0.0:8000")`<br/>Node 2: `await pul.init(addr="0.0.0.0:8001", seeds=["127.0.0.1:8000"])` |
+| **Get actor** | `await Counter.spawn(value=0)` | Node 1: `await Counter.spawn(value=0, name="counter")`<br/>Node 2: `await Counter.resolve("counter")` |
+| **Call** | `await counter.inc()` | Same: `await counter.inc()` — location transparent |
+
+Once you have a proxy (from `spawn` or `resolve`), the API is identical. No “remote” vs “local” branches in your logic.
+
+---
 
 ## Cluster Setup
 

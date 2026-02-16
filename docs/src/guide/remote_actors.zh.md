@@ -1,6 +1,20 @@
 # 远程 Actor 指南
 
-在集群中使用 Actor 的指南，支持位置透明。
+在集群中运行与发现 Actor 的指南：集群搭建、命名 Actor、resolve。
+
+## 前后对比：单节点 vs 集群
+
+**同一套 Actor 代码。** 只有初始化以及获取引用的方式不同。
+
+| | 单节点（独立） | 集群（两节点） |
+|---|----------------|----------------|
+| **初始化** | `await pul.init()` | 节点 1：`await pul.init(addr="0.0.0.0:8000")`<br/>节点 2：`await pul.init(addr="0.0.0.0:8001", seeds=["127.0.0.1:8000"])` |
+| **获取 Actor** | `await Counter.spawn(value=0)` | 节点 1：`await Counter.spawn(value=0, name="counter")`<br/>节点 2：`await Counter.resolve("counter")` |
+| **调用** | `await counter.inc()` | 相同：`await counter.inc()` — 位置透明 |
+
+一旦拿到 proxy（来自 `spawn` 或 `resolve`），API 完全一致，业务逻辑无需区分“远程”和“本地”。
+
+---
 
 ## 集群设置
 
