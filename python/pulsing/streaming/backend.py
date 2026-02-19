@@ -76,6 +76,25 @@ class StorageBackend(Protocol):
         """Total record count"""
         ...
 
+    async def put_tensor(self, data: Any, **kwargs: Any) -> Any:
+        """Optional tensor-native put API."""
+        raise NotImplementedError
+
+    async def get_data(self, batch_meta: Any, fields: list[str] | None = None) -> Any:
+        """Optional tensor-native batch data API."""
+        raise NotImplementedError
+
+    async def get_meta(
+        self,
+        fields: list[str],
+        batch_size: int,
+        task_name: str = "default",
+        sampler: Any = None,
+        **sampling_kwargs: Any,
+    ) -> Any:
+        """Optional tensor-native metadata API."""
+        raise NotImplementedError
+
 
 class MemoryBackend:
     """Pure In-Memory Backend - Built-in Default Implementation
@@ -162,6 +181,59 @@ class MemoryBackend:
 
     def total_count(self) -> int:
         return len(self.buffer)
+
+    async def put_tensor(self, data: Any, **kwargs: Any) -> Any:
+        if isinstance(data, list):
+            await self.put_batch(data)
+            return {"size": len(data)}
+        if isinstance(data, dict):
+            await self.put(data)
+            return {"size": 1}
+        raise TypeError("MemoryBackend.put_tensor expects dict or list[dict]")
+
+    async def get_data(self, batch_meta: Any, fields: list[str] | None = None) -> Any:
+        if isinstance(batch_meta, dict):
+            indexes = batch_meta.get("global_indexes", [])
+        else:
+            indexes = getattr(batch_meta, "global_indexes", [])
+        rows = [self.buffer[i] for i in indexes if 0 <= i < len(self.buffer)]
+        if not fields:
+            return rows
+        return [{k: v for k, v in row.items() if k in fields} for row in rows]
+
+    async def get_meta(
+        self,
+        fields: list[str],
+        batch_size: int,
+        task_name: str = "default",
+        sampler: Any = None,
+        **sampling_kwargs: Any,
+    ) -> Any:
+        total = len(self.buffer)
+        ready = list(range(total))
+        if sampler is not None:
+            sampled, _ = sampler.sample(ready, batch_size, **sampling_kwargs)
+        else:
+            sampled = ready[:batch_size]
+        return {
+            "samples": [
+                {
+                    "partition_id": sampling_kwargs.get("partition_id", "default"),
+                    "global_index": idx,
+                    "fields": {
+                        field: {
+                            "name": field,
+                            "dtype": None,
+                            "shape": None,
+                            "production_status": "ready",
+                        }
+                        for field in fields
+                    },
+                }
+                for idx in sampled
+            ],
+            "global_indexes": sampled,
+        }
 
 
 # ============================================================

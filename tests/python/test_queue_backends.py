@@ -448,6 +448,24 @@ class TestCustomBackendProtocol:
             def total_count(self) -> int:
                 return len(self.data)
 
+            async def put_tensor(self, data: Any, **kwargs: Any) -> Any:
+                raise NotImplementedError
+
+            async def get_data(
+                self, batch_meta: Any, fields: list[str] | None = None
+            ) -> Any:
+                raise NotImplementedError
+
+            async def get_meta(
+                self,
+                fields: list[str],
+                batch_size: int,
+                task_name: str = "default",
+                sampler: Any = None,
+                **sampling_kwargs: Any,
+            ) -> Any:
+                raise NotImplementedError
+
         # Verify it satisfies protocol (duck typing)
         backend = MinimalBackend(bucket_id=0)
         assert isinstance(backend, StorageBackend)

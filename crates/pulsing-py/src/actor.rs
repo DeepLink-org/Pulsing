@@ -7,6 +7,8 @@ use pulsing_actor::supervision::{BackoffStrategy, RestartPolicy, SupervisionSpec
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use serde::{Deserialize, Serialize};
+use std::cmp::min;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -19,6 +21,43 @@ use crate::python_executor::python_executor;
 
 /// Special message type identifier for pickle-encoded Python objects
 const SEALED_PY_MSG_TYPE: &str = "__sealed_py_message__";
+/// Special message type identifier for zerocopy descriptor payloads (small, single message)
+const SEALED_ZEROCOPY_MSG_TYPE: &str = "__sealed_zerocopy_message__";
+/// Stream frame: descriptor header (metadata only, no bulk data)
+const ZC_DESCRIPTOR_MSG_TYPE: &str = "__zc_descriptor__";
+/// Stream frame: raw data chunk
+const ZC_CHUNK_MSG_TYPE: &str = "__zc_chunk__";
+
+/// Zerocopy metadata header — the single wire format for both single-message and stream paths.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ZeroCopyDescriptorHeader {
+    version: u32,
+    buffer_count: usize,
+    buffer_lengths: Vec<usize>,
+    dtype: Option<String>,
+    shape: Option<Vec<usize>>,
+    strides: Option<Vec<isize>>,
+    transport: Option<String>,
+    checksum: Option<String>,
+}
+
+fn zerocopy_chunk_bytes() -> usize {
+    const DEFAULT: usize = 1024 * 1024;
+    const MIN: usize = 4 * 1024;
+    std::env::var("PULSING_ZEROCOPY_CHUNK_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|v| v.max(MIN))
+        .unwrap_or(DEFAULT)
+}
+
+fn zerocopy_stream_threshold() -> usize {
+    const DEFAULT: usize = 64 * 1024;
+    std::env::var("PULSING_ZEROCOPY_STREAM_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(DEFAULT)
+}
 
 /// Convert PulsingError to Python exception (used for actor system APIs that return Result<_, PulsingError>).
 fn to_pyerr(err: pulsing_actor::error::PulsingError) -> PyErr {
@@ -404,12 +443,439 @@ impl PySealedMessage {
     }
 }
 
+/// Descriptor object for optional zerocopy payload transport.
+#[pyclass(name = "ZeroCopyDescriptor")]
+#[derive(Clone)]
+pub struct PyZeroCopyDescriptor {
+    #[pyo3(get)]
+    version: u32,
+    #[pyo3(get)]
+    buffers: Vec<PyObject>,
+    #[pyo3(get)]
+    dtype: Option<String>,
+    #[pyo3(get)]
+    shape: Option<Vec<usize>>,
+    #[pyo3(get)]
+    strides: Option<Vec<isize>>,
+    #[pyo3(get)]
+    transport: Option<String>,
+    #[pyo3(get)]
+    checksum: Option<String>,
+}
+
+/// Validate that a Python object exposes a contiguous buffer.
+/// If it's not directly extractable as &[u8] (e.g. memoryview), convert via bytes().
+fn ensure_contiguous_buffer(py: Python<'_>, item: &Bound<'_, pyo3::PyAny>) -> PyResult<PyObject> {
+    if item.extract::<&[u8]>().is_ok() {
+        return Ok(item.clone().unbind());
+    }
+    // Try converting via bytes() for memoryview and other buffer-protocol objects
+    let builtins = py.import("builtins")?;
+    let bytes_obj = builtins.getattr("bytes")?.call1((item,)).map_err(|_| {
+        PyValueError::new_err(
+            "ZeroCopyDescriptor.buffers items must expose a contiguous Python buffer (bytes/bytearray/memoryview/tensor)",
+        )
+    })?;
+    // Verify the result is extractable
+    bytes_obj.extract::<&[u8]>().map_err(|_| {
+        PyValueError::new_err(
+            "ZeroCopyDescriptor.buffers items must expose a contiguous Python buffer (bytes/bytearray/memoryview/tensor)",
+        )
+    })?;
+    Ok(bytes_obj.unbind())
+}
+
+impl PyZeroCopyDescriptor {
+    /// Total byte size of all buffers.
+    fn total_buffer_bytes(&self, py: Python<'_>) -> usize {
+        self.buffers
+            .iter()
+            .filter_map(|buf_obj| buf_obj.bind(py).extract::<&[u8]>().ok().map(|s| s.len()))
+            .sum()
+    }
+
+    /// Build a descriptor header (metadata only, no data).
+    fn to_header(&self, py: Python<'_>) -> ZeroCopyDescriptorHeader {
+        ZeroCopyDescriptorHeader {
+            version: self.version,
+            buffer_count: self.buffers.len(),
+            buffer_lengths: self
+                .buffers
+                .iter()
+                .filter_map(|b| b.bind(py).extract::<&[u8]>().ok().map(|s| s.len()))
+                .collect(),
+            dtype: self.dtype.clone(),
+            shape: self.shape.clone(),
+            strides: self.strides.clone(),
+            transport: self.transport.clone(),
+            checksum: self.checksum.clone(),
+        }
+    }
+
+    /// Serialize for single-message path: [4-byte header_len LE] ++ header_bytes ++ raw_data.
+    fn serialize_single(&self, py: Python<'_>) -> PyResult<Vec<u8>> {
+        let header = self.to_header(py);
+        let header_bytes = bincode::serialize(&header).map_err(to_py_value_err)?;
+        let header_len = header_bytes.len() as u32;
+        let total_data: usize = header.buffer_lengths.iter().sum();
+        let mut out = Vec::with_capacity(4 + header_bytes.len() + total_data);
+        out.extend_from_slice(&header_len.to_le_bytes());
+        out.extend_from_slice(&header_bytes);
+        for buf_obj in &self.buffers {
+            let bound = buf_obj.bind(py);
+            let data = bound.extract::<&[u8]>()?;
+            out.extend_from_slice(data);
+        }
+        Ok(out)
+    }
+
+    /// Reconstruct from header + raw buffer data (shared by single and stream paths).
+    fn from_wire(
+        py: Python<'_>,
+        header: ZeroCopyDescriptorHeader,
+        raw_buffers: Vec<Vec<u8>>,
+    ) -> Self {
+        Self {
+            version: header.version,
+            buffers: raw_buffers
+                .into_iter()
+                .map(|b| PyBytes::new(py, &b).into_any().unbind())
+                .collect(),
+            dtype: header.dtype,
+            shape: header.shape,
+            strides: header.strides,
+            transport: header.transport,
+            checksum: header.checksum,
+        }
+    }
+}
+
+#[pymethods]
+impl PyZeroCopyDescriptor {
+    #[new]
+    #[pyo3(signature = (
+        buffers,
+        *,
+        dtype=None,
+        shape=None,
+        strides=None,
+        transport=None,
+        checksum=None,
+        version=1
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        py: Python<'_>,
+        buffers: Vec<PyObject>,
+        dtype: Option<String>,
+        shape: Option<Vec<usize>>,
+        strides: Option<Vec<isize>>,
+        transport: Option<String>,
+        checksum: Option<String>,
+        version: u32,
+    ) -> PyResult<Self> {
+        if buffers.is_empty() {
+            return Err(PyValueError::new_err(
+                "ZeroCopyDescriptor requires at least one buffer",
+            ));
+        }
+        let normalized: Vec<PyObject> = buffers
+            .into_iter()
+            .map(|item| ensure_contiguous_buffer(py, item.bind(py)))
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            version,
+            buffers: normalized,
+            dtype,
+            shape,
+            strides,
+            transport,
+            checksum,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ZeroCopyDescriptor(version={}, buffers={}, transport={:?})",
+            self.version,
+            self.buffers.len(),
+            self.transport
+        )
+    }
+}
+
 /// Helper function to pickle a Python object in Rust
 fn pickle_object(py: Python<'_>, obj: &PyObject) -> PyResult<Vec<u8>> {
     let pickle = py.import("pickle")?;
     let dumped = pickle.call_method1("dumps", (obj,))?;
     let bytes = dumped.downcast::<PyBytes>()?;
     Ok(bytes.as_bytes().to_vec())
+}
+
+/// Try to extract a `PyZeroCopyDescriptor` from a Python object via `__zerocopy__(ctx)`.
+///
+/// Returns `Ok(None)` if the object does not implement the protocol.
+fn try_zerocopy_descriptor<'py>(
+    py: Python<'py>,
+    obj: &PyObject,
+) -> PyResult<Option<PyRef<'py, PyZeroCopyDescriptor>>> {
+    let bound = obj.bind(py);
+    let zc_method = match bound.getattr("__zerocopy__") {
+        Ok(m) => m,
+        Err(_) => return Ok(None),
+    };
+    if !zc_method.is_callable() {
+        return Ok(None);
+    }
+    let descriptor = zc_method.call1((py.None(),))?;
+    if !descriptor.is_instance_of::<PyZeroCopyDescriptor>() {
+        return Err(PyValueError::new_err(
+            "__zerocopy__ must return ZeroCopyDescriptor",
+        ));
+    }
+    Ok(Some(descriptor.extract()?))
+}
+
+/// Parse single-message zerocopy payload: [4-byte header_len LE] ++ header ++ raw_data.
+fn parse_zerocopy_single(py: Python<'_>, data: &[u8]) -> PyResult<PyObject> {
+    if data.len() < 4 {
+        return Err(PyValueError::new_err("Zerocopy payload too short"));
+    }
+    let header_len = u32::from_le_bytes(data[..4].try_into().unwrap()) as usize;
+    if data.len() < 4 + header_len {
+        return Err(PyValueError::new_err("Zerocopy payload truncated"));
+    }
+    let header: ZeroCopyDescriptorHeader =
+        bincode::deserialize(&data[4..4 + header_len]).map_err(to_py_value_err)?;
+    let mut offset = 4 + header_len;
+    let raw_buffers: Vec<Vec<u8>> = header
+        .buffer_lengths
+        .iter()
+        .map(|&len| {
+            let buf = data[offset..offset + len].to_vec();
+            offset += len;
+            buf
+        })
+        .collect();
+    let desc = PyZeroCopyDescriptor::from_wire(py, header, raw_buffers);
+    let obj = Py::new(py, desc)?;
+    Ok(obj.into_pyobject(py)?.into_any().unbind())
+}
+
+fn zerocopy_mode() -> String {
+    std::env::var("PULSING_ZEROCOPY")
+        .unwrap_or_else(|_| "auto".to_string())
+        .to_ascii_lowercase()
+}
+
+/// Build a `Message::Stream` for a large zerocopy payload: descriptor header + data chunks.
+fn encode_zerocopy_stream(py: Python<'_>, zc: &PyZeroCopyDescriptor) -> PyResult<Message> {
+    let chunk_len = zerocopy_chunk_bytes();
+    let header = zc.to_header(py);
+    let header_bytes = bincode::serialize(&header).map_err(to_py_value_err)?;
+
+    let (tx, rx) = mpsc::channel::<pulsing_actor::error::Result<Message>>(32);
+
+    // Collect buffer data now (we hold the GIL) to avoid crossing thread boundary with PyObject
+    let buffer_data: Vec<Vec<u8>> = zc
+        .buffers
+        .iter()
+        .map(|buf_obj| {
+            let bound = buf_obj.bind(py);
+            let data = bound.extract::<&[u8]>()?;
+            Ok(data.to_vec())
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+
+    std::thread::spawn(move || {
+        if tx
+            .blocking_send(Ok(Message::single(ZC_DESCRIPTOR_MSG_TYPE, header_bytes)))
+            .is_err()
+        {
+            return;
+        }
+        for buf in &buffer_data {
+            let mut offset = 0;
+            while offset < buf.len() {
+                let end = min(offset + chunk_len, buf.len());
+                let chunk = buf[offset..end].to_vec();
+                if tx
+                    .blocking_send(Ok(Message::single(ZC_CHUNK_MSG_TYPE, chunk)))
+                    .is_err()
+                {
+                    return;
+                }
+                offset = end;
+            }
+        }
+    });
+
+    Ok(Message::from_channel(ZC_DESCRIPTOR_MSG_TYPE, rx))
+}
+
+/// Reassemble a zerocopy stream (descriptor header already parsed).
+/// Reads remaining data chunks from the stream and fills pre-allocated buffers.
+async fn reassemble_zerocopy_stream(
+    header: ZeroCopyDescriptorHeader,
+    stream: &mut std::pin::Pin<
+        Box<dyn futures::Stream<Item = pulsing_actor::error::Result<Message>> + Send>,
+    >,
+) -> pulsing_actor::error::Result<(ZeroCopyDescriptorHeader, Vec<Vec<u8>>)> {
+    let mut raw_buffers: Vec<Vec<u8>> = header
+        .buffer_lengths
+        .iter()
+        .map(|&len| Vec::with_capacity(len))
+        .collect();
+    let total_expected: usize = header.buffer_lengths.iter().sum();
+
+    let mut buf_idx = 0;
+    let mut received = 0usize;
+
+    while received < total_expected {
+        let frame = stream.next().await.ok_or_else(|| {
+            pulsing_actor::error::PulsingError::from(pulsing_actor::error::RuntimeError::Other(
+                "Zerocopy stream ended before all data received".into(),
+            ))
+        })??;
+
+        match frame {
+            Message::Single {
+                ref msg_type,
+                ref data,
+            } if msg_type == ZC_CHUNK_MSG_TYPE => {
+                let remaining_in_buf = header.buffer_lengths[buf_idx] - raw_buffers[buf_idx].len();
+                if data.len() <= remaining_in_buf {
+                    raw_buffers[buf_idx].extend_from_slice(data);
+                } else {
+                    // Chunk spans buffer boundary: split across buffers
+                    let first_part = &data[..remaining_in_buf];
+                    raw_buffers[buf_idx].extend_from_slice(first_part);
+                    let mut rest = &data[remaining_in_buf..];
+                    buf_idx += 1;
+                    while !rest.is_empty() && buf_idx < raw_buffers.len() {
+                        let can_take = min(
+                            rest.len(),
+                            header.buffer_lengths[buf_idx] - raw_buffers[buf_idx].len(),
+                        );
+                        raw_buffers[buf_idx].extend_from_slice(&rest[..can_take]);
+                        rest = &rest[can_take..];
+                        if raw_buffers[buf_idx].len() == header.buffer_lengths[buf_idx] {
+                            buf_idx += 1;
+                        }
+                    }
+                }
+                received += data.len();
+                if buf_idx < raw_buffers.len()
+                    && raw_buffers[buf_idx].len() == header.buffer_lengths[buf_idx]
+                {
+                    buf_idx += 1;
+                }
+            }
+            _ => {
+                return Err(pulsing_actor::error::PulsingError::from(
+                    pulsing_actor::error::RuntimeError::Other(format!(
+                        "Unexpected frame in zerocopy stream: {:?}",
+                        frame.msg_type()
+                    )),
+                ));
+            }
+        }
+    }
+
+    Ok((header, raw_buffers))
+}
+
+/// Encode a Python object into a `Message`.
+///
+/// Small zerocopy payloads → `Message::Single`; large ones → `Message::Stream`
+/// (descriptor-first + chunked data). Non-zerocopy objects → pickle.
+fn encode_python_payload(py: Python<'_>, obj: &PyObject) -> PyResult<Message> {
+    match zerocopy_mode().as_str() {
+        "off" => Ok(Message::single(SEALED_PY_MSG_TYPE, pickle_object(py, obj)?)),
+        "force" => {
+            let zc = try_zerocopy_descriptor(py, obj)?.ok_or_else(|| {
+                PyValueError::new_err(
+                    "PULSING_ZEROCOPY=force but object does not provide __zerocopy__",
+                )
+            })?;
+            encode_zerocopy_message(py, &zc)
+        }
+        _ => match try_zerocopy_descriptor(py, obj)? {
+            Some(zc) => encode_zerocopy_message(py, &zc),
+            None => Ok(Message::single(SEALED_PY_MSG_TYPE, pickle_object(py, obj)?)),
+        },
+    }
+}
+
+/// Decide between single-message or stream encoding based on total buffer size.
+fn encode_zerocopy_message(
+    py: Python<'_>,
+    zc: &PyRef<'_, PyZeroCopyDescriptor>,
+) -> PyResult<Message> {
+    let total = zc.total_buffer_bytes(py);
+    if total >= zerocopy_stream_threshold() {
+        encode_zerocopy_stream(py, zc)
+    } else {
+        let bytes = zc.serialize_single(py)?;
+        Ok(Message::single(SEALED_ZEROCOPY_MSG_TYPE, bytes))
+    }
+}
+
+/// Unified decoder: converts any `Message` (pickle / zerocopy-single / zerocopy-stream / other)
+/// into a Python object.
+async fn decode_message_to_pyobject(msg: Message) -> PyResult<PyObject> {
+    match msg {
+        Message::Single {
+            ref msg_type,
+            ref data,
+        } if msg_type == SEALED_PY_MSG_TYPE => Python::with_gil(|py| unpickle_object(py, data)),
+        Message::Single {
+            ref msg_type,
+            ref data,
+        } if msg_type == SEALED_ZEROCOPY_MSG_TYPE => {
+            Python::with_gil(|py| parse_zerocopy_single(py, data))
+        }
+        Message::Stream {
+            ref default_msg_type,
+            ..
+        } if default_msg_type == ZC_DESCRIPTOR_MSG_TYPE => {
+            let Message::Stream { mut stream, .. } = msg else {
+                unreachable!()
+            };
+            let first = stream
+                .next()
+                .await
+                .ok_or_else(|| PyRuntimeError::new_err("Empty zerocopy stream"))?
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            let header_data = match first {
+                Message::Single {
+                    ref msg_type,
+                    ref data,
+                } if msg_type == ZC_DESCRIPTOR_MSG_TYPE => data.clone(),
+                _ => {
+                    return Err(PyRuntimeError::new_err(
+                        "First frame of zerocopy stream must be descriptor",
+                    ));
+                }
+            };
+            let header: ZeroCopyDescriptorHeader =
+                bincode::deserialize(&header_data).map_err(to_py_value_err)?;
+            let (header, raw_buffers) = reassemble_zerocopy_stream(header, &mut stream)
+                .await
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            Python::with_gil(|py| {
+                let desc = PyZeroCopyDescriptor::from_wire(py, header, raw_buffers);
+                let obj = Py::new(py, desc)?;
+                Ok(obj.into_pyobject(py)?.into_any().unbind())
+            })
+        }
+        _ => Python::with_gil(|py| {
+            Ok(PyMessage::from_rust_message(msg)
+                .into_pyobject(py)?
+                .into_any()
+                .unbind())
+        }),
+    }
 }
 
 /// Helper function to unpickle bytes back to a Python object
@@ -446,22 +912,19 @@ impl PyStreamReader {
             let mut guard = stream.lock().await;
             if let Some(ref mut s) = *guard {
                 match s.next().await {
-                    Some(Ok(msg)) => Python::with_gil(|py| {
-                        // Auto unpickle if it's a sealed Python message
-                        match &msg {
-                            Message::Single { msg_type, data }
-                                if msg_type == SEALED_PY_MSG_TYPE =>
-                            {
-                                unpickle_object(py, data)
-                            }
-                            _ => {
-                                // Return as PyMessage for JSON/other types
-                                Ok(PyMessage::from_rust_message(msg)
-                                    .into_pyobject(py)?
-                                    .into_any()
-                                    .unbind())
-                            }
+                    Some(Ok(msg)) => Python::with_gil(|py| match &msg {
+                        Message::Single { msg_type, data } if msg_type == SEALED_PY_MSG_TYPE => {
+                            unpickle_object(py, data)
                         }
+                        Message::Single { msg_type, data }
+                            if msg_type == SEALED_ZEROCOPY_MSG_TYPE =>
+                        {
+                            parse_zerocopy_single(py, data)
+                        }
+                        _ => Ok(PyMessage::from_rust_message(msg)
+                            .into_pyobject(py)?
+                            .into_any()
+                            .unbind()),
                     }),
                     Some(Err(e)) => Err(PyRuntimeError::new_err(e.to_string())),
                     None => {
@@ -510,13 +973,12 @@ impl PyStreamWriter {
     /// This is the recommended method for Python-to-Python streaming.
     /// Objects are automatically pickled and will be unpickled on the reader side.
     fn write<'py>(&self, py: Python<'py>, obj: PyObject) -> PyResult<Bound<'py, PyAny>> {
-        let pickled = pickle_object(py, &obj)?;
+        let msg = encode_python_payload(py, &obj)?;
         let sender = self.sender.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = sender.lock().await;
             if let Some(ref tx) = *guard {
-                let msg = Message::single(SEALED_PY_MSG_TYPE, pickled);
                 tx.send(Ok(msg))
                     .await
                     .map_err(|_| PyRuntimeError::new_err("Stream closed"))?;
@@ -614,8 +1076,8 @@ enum PyActorResponse {
         String,
         mpsc::Receiver<pulsing_actor::error::Result<Message>>,
     ),
-    /// Pickled Python object for Python-to-Python communication
-    Sealed(Vec<u8>),
+    /// Pre-encoded Message (pickle single, zerocopy single, or zerocopy stream)
+    Encoded(Message),
     /// Generator (async or sync) to be iterated
     Generator(PyObject, PyObject, bool), // (generator, event_loop, is_async)
 }
@@ -658,33 +1120,12 @@ impl PyActorRef {
             let py_msg: PyMessage = msg_bound.extract()?;
             py_msg.to_message()
         } else {
-            // Pickle any other Python object
-            let pickled = pickle_object(py, &msg)?;
-            Message::single(SEALED_PY_MSG_TYPE, pickled)
+            encode_python_payload(py, &msg)?
         };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
-
-            // Check if response is a sealed message
-            Python::with_gil(|py| {
-                match response {
-                    Message::Single {
-                        ref msg_type,
-                        ref data,
-                    } if msg_type == SEALED_PY_MSG_TYPE => {
-                        // Unpickle and return the original Python object
-                        unpickle_object(py, data)
-                    }
-                    _ => {
-                        // Return as PyMessage for non-sealed responses
-                        Ok(PyMessage::from_rust_message(response)
-                            .into_pyobject(py)?
-                            .into_any()
-                            .unbind())
-                    }
-                }
-            })
+            decode_message_to_pyobject(response).await
         })
     }
 
@@ -702,9 +1143,7 @@ impl PyActorRef {
             let py_msg: PyMessage = msg_bound.extract()?;
             py_msg.to_message()
         } else {
-            // Pickle any other Python object
-            let pickled = pickle_object(py, &msg)?;
-            Message::single(SEALED_PY_MSG_TYPE, pickled)
+            encode_python_payload(py, &msg)?
         };
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -989,36 +1428,20 @@ impl Actor for PythonActorWrapper {
         let (handler, event_loop) =
             Python::with_gil(|py| (self.handler.clone_ref(py), self.event_loop.clone_ref(py)));
 
-        // Check if this is a sealed Python message
-        let is_sealed_msg = msg.msg_type() == SEALED_PY_MSG_TYPE;
-        let py_msg = PyMessage::from_rust_message(msg);
+        // Decode-first: convert any message format to a Python object
+        let call_arg = decode_message_to_pyobject(msg).await.map_err(|e| {
+            pulsing_actor::error::PulsingError::from(pulsing_actor::error::RuntimeError::Other(
+                e.to_string(),
+            ))
+        })?;
 
         let response: Result<PyActorResponse, PyErr> = python_executor()
             .execute(move || {
                 Python::with_gil(|py| -> PyResult<PyActorResponse> {
                     let receive_method = handler.getattr(py, "receive")?;
-
-                    // If sealed message, unpickle and pass the original Python object
-                    let call_arg: PyObject = if is_sealed_msg {
-                        let payload = py_msg.payload.as_ref().ok_or_else(|| {
-                            pyo3::exceptions::PyValueError::new_err("Expected payload for sealed message")
-                        })?;
-                        unpickle_object(py, payload)?
-                    } else {
-                        py_msg.into_pyobject(py)?.into_any().unbind()
-                    };
-
-                    let result = receive_method.call1(py, (call_arg,));
-
-                    // Handle Python exceptions and convert to ActorError
-                    let result = match result {
+                    let result = match receive_method.call1(py, (&call_arg,)) {
                         Ok(value) => value,
-                        Err(py_err) => {
-                            // Convert Python exception to ActorError
-                            // We need to return this as an error in the Python execution context
-                            // The error will be caught and converted at the Rust level
-                            return Err(py_err);
-                        }
+                        Err(py_err) => return Err(py_err),
                     };
 
                     let asyncio = py.import("asyncio")?;
@@ -1040,32 +1463,25 @@ impl Actor for PythonActorWrapper {
                         return Ok(PyActorResponse::Single(PyMessage::empty()));
                     }
 
-                    // Check for generator (sync or async) - fast path using type name
                     let type_name = py_result_bound
                         .get_type()
                         .qualname()
                         .map(|s| s.to_string())
                         .unwrap_or_default();
-                    let is_gen = type_name == "generator";
-                    let is_async_gen = type_name == "async_generator";
-
-                    if is_async_gen || is_gen {
+                    if type_name == "async_generator" || type_name == "generator" {
                         return Ok(PyActorResponse::Generator(
                             py_result.clone_ref(py),
                             event_loop.clone_ref(py),
-                            is_async_gen,
+                            type_name == "async_generator",
                         ));
                     }
 
-                    // Handle StreamMessage
                     if py_result_bound.is_instance_of::<PyStreamMessage>() {
                         let stream_msg_cell = py_result_bound.downcast::<PyStreamMessage>()?;
-
                         let borrowed = stream_msg_cell.borrow();
                         let default_msg_type = borrowed.default_msg_type.clone();
                         let receiver_arc = borrowed.receiver.clone();
                         drop(borrowed);
-
                         let receiver = {
                             let mut guard = receiver_arc.lock().map_err(|e| {
                                 pyo3::exceptions::PyRuntimeError::new_err(format!(
@@ -1075,7 +1491,6 @@ impl Actor for PythonActorWrapper {
                             })?;
                             guard.take()
                         };
-
                         if let Some(rx) = receiver {
                             return Ok(PyActorResponse::StreamChannel(default_msg_type, rx));
                         } else {
@@ -1085,21 +1500,18 @@ impl Actor for PythonActorWrapper {
                         }
                     }
 
-                    // Handle PyMessage (for Rust actor communication)
                     if py_result_bound.is_instance_of::<PyMessage>() {
                         let msg: PyMessage = py_result_bound.extract()?;
                         if msg.is_stream() {
                             return Err(pyo3::exceptions::PyValueError::new_err(
                                 "PyMessage with stream cannot be returned from receive(), use StreamMessage instead"
                             ));
-                        } else {
-                            return Ok(PyActorResponse::Single(msg));
                         }
+                        return Ok(PyActorResponse::Single(msg));
                     }
 
-                    // For any other Python object, pickle it and return as SealedPyMessage
-                    let pickled = pickle_object(py, &py_result)?;
-                    Ok(PyActorResponse::Sealed(pickled))
+                    let msg = encode_python_payload(py, &py_result)?;
+                    Ok(PyActorResponse::Encoded(msg))
                 })
             })
             .await
@@ -1111,7 +1523,6 @@ impl Actor for PythonActorWrapper {
                 )
             })?;
 
-        // Convert Python exceptions to ActorError
         let response = match response {
             Ok(resp) => resp,
             Err(py_err) => {
@@ -1132,21 +1543,16 @@ impl Actor for PythonActorWrapper {
             PyActorResponse::StreamChannel(default_msg_type, rx) => {
                 Ok(Message::from_channel(&default_msg_type, rx))
             }
-            PyActorResponse::Sealed(data) => Ok(Message::single(SEALED_PY_MSG_TYPE, data)),
+            PyActorResponse::Encoded(msg) => Ok(msg),
             PyActorResponse::Generator(generator, event_loop, is_async) => {
-                // Create channel for streaming generator values
                 let (tx, rx) = mpsc::channel::<pulsing_actor::error::Result<Message>>(32);
-
-                // Spawn background task to iterate generator
                 tokio::spawn(async move {
                     let result = python_executor()
                         .execute(move || {
                             Python::with_gil(|py| -> PyResult<()> {
                                 let gen = generator.bind(py);
                                 let asyncio = py.import("asyncio")?;
-
                                 if is_async {
-                                    // Async generator: iterate using anext()
                                     let run_coroutine_threadsafe =
                                         asyncio.getattr("run_coroutine_threadsafe")?;
                                     loop {
@@ -1155,15 +1561,13 @@ impl Actor for PythonActorWrapper {
                                             .call1((&anext_coro, &event_loop))?;
                                         match future.call_method0("result") {
                                             Ok(item) => {
-                                                let pickled = pickle_object(py, &item.unbind())?;
-                                                let msg =
-                                                    Message::single(SEALED_PY_MSG_TYPE, pickled);
+                                                let item_obj = item.unbind();
+                                                let msg = encode_python_payload(py, &item_obj)?;
                                                 if tx.blocking_send(Ok(msg)).is_err() {
                                                     break;
                                                 }
                                             }
                                             Err(e) => {
-                                                // Check if StopAsyncIteration
                                                 if e.is_instance_of::<pyo3::exceptions::PyStopAsyncIteration>(py) {
                                                     break;
                                                 }
@@ -1179,19 +1583,16 @@ impl Actor for PythonActorWrapper {
                                         }
                                     }
                                 } else {
-                                    // Sync generator: iterate using next()
                                     loop {
                                         match gen.call_method0("__next__") {
                                             Ok(item) => {
-                                                let pickled = pickle_object(py, &item.unbind())?;
-                                                let msg =
-                                                    Message::single(SEALED_PY_MSG_TYPE, pickled);
+                                                let item_obj = item.unbind();
+                                                let msg = encode_python_payload(py, &item_obj)?;
                                                 if tx.blocking_send(Ok(msg)).is_err() {
                                                     break;
                                                 }
                                             }
                                             Err(e) => {
-                                                // Check if StopIteration
                                                 if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) {
                                                     break;
                                                 }
@@ -1211,12 +1612,10 @@ impl Actor for PythonActorWrapper {
                             })
                         })
                         .await;
-
                     if let Err(e) = result {
                         tracing::error!("Generator iteration error: {:?}", e);
                     }
                 });
-
                 Ok(Message::from_channel(SEALED_PY_MSG_TYPE, rx))
             }
         }
@@ -1767,5 +2166,6 @@ pub fn add_to_module(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyStreamMessage>()?;
     // Sealed message support (for Python-to-Python communication)
     m.add_class::<PySealedMessage>()?;
+    m.add_class::<PyZeroCopyDescriptor>()?;
     Ok(())
 }

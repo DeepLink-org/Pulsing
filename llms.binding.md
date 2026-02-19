@@ -271,6 +271,51 @@ response = await actorref.ask({"action": "get"})
 await actorref.tell({"action": "log", "data": "hello"})
 ```
 
+#### Optional Zerocopy Descriptor Protocol
+
+Pulsing supports an optional zerocopy fast path to bypass pickle serialization for eligible
+Python objects. If the object does not provide the protocol, Pulsing falls back to existing
+pickle-based transport automatically.
+
+```python
+from pulsing.core import ZeroCopyDescriptor
+
+class MyTensorLike:
+    def __zerocopy__(self, ctx):
+        return ZeroCopyDescriptor(
+            buffers=[memoryview(self.buffer)],
+            dtype="float32",
+            shape=[1024],
+            strides=[4],
+            transport="inline",   # e.g. inline/shm
+            checksum=None,        # optional
+            version=1,
+        )
+```
+
+Rules:
+
+- `__zerocopy__(ctx)` is optional; missing protocol means fallback to pickle.
+- Descriptor is the single source of truth (no separate `__metadata__`).
+- Zerocopy is an optimization path for reduced serialization and buffer copies.
+- `buffers` should provide contiguous Python buffer views (e.g. `memoryview`, tensor buffer, `bytearray`) to avoid extra Python-side copy.
+- Payload validation failure or unsupported descriptor always falls back to pickle unless explicitly forced by runtime config.
+
+**Automatic stream transfer for large payloads:**
+
+When the total buffer size exceeds a threshold (default 64 KB), Pulsing automatically uses a descriptor-first stream transfer instead of packing everything into a single message:
+
+1. A lightweight descriptor header (dtype, shape, strides, buffer lengths) is sent as the first stream frame.
+2. Buffer data follows as a sequence of raw chunk frames, each up to `PULSING_ZEROCOPY_CHUNK_BYTES` (default 1 MB).
+3. The receiver pre-allocates buffers based on the descriptor and fills them incrementally as chunks arrive.
+
+Small payloads below the threshold are still sent as a single message with descriptor + data packed together. This is transparent to the user — `actor.receive()` always gets a `ZeroCopyDescriptor` regardless of the transfer mode.
+
+Environment variables:
+- `PULSING_ZEROCOPY`: `auto` (default) / `off` / `force`
+- `PULSING_ZEROCOPY_STREAM_THRESHOLD`: minimum buffer size in bytes to trigger stream transfer (default 65536)
+- `PULSING_ZEROCOPY_CHUNK_BYTES`: chunk size in bytes for stream transfer (default 1048576, minimum 4096)
+
 #### Actor Lifecycle
 
 ```python
@@ -497,6 +542,7 @@ system.shutdown().await?;
 ### Key Conventions
 
 - **Message encoding**: `Message::pack(&T)` uses bincode + `type_name::<T>()`; for cross-version protocols use `Message::single("TypeV1", bytes)`.
+- **Optional zerocopy**: when payload objects implement `__zerocopy__(ctx)`, Pulsing may bypass pickle and send descriptor + buffers directly; otherwise it uses normal pickle/bytes paths.
 - **Naming and resolution**:
   - `spawn_named(name, actor)`: Creates a discoverable actor, name is the resolution path
   - `resolve(name)`: One-shot resolve (may become stale after migration)

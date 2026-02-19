@@ -10,6 +10,7 @@ Covers:
 """
 
 import asyncio
+import os
 from dataclasses import dataclass
 
 import pytest
@@ -17,6 +18,7 @@ from pulsing.core import (
     Actor,
     Message,
     SealedPyMessage,
+    ZeroCopyDescriptor,
 )
 import pulsing as pul
 
@@ -141,6 +143,54 @@ class ComplexObjectActor(Actor):
             return result
 
         return {"received": msg}
+
+
+class ZeroCopyPayload:
+    """Object implementing Pulsing zerocopy descriptor protocol."""
+
+    def __init__(self, raw: bytes):
+        self.raw = raw
+
+    def __zerocopy__(self, _ctx):
+        return ZeroCopyDescriptor(
+            buffers=[memoryview(self.raw)],
+            dtype="u8",
+            shape=[len(self.raw)],
+            strides=[1],
+            transport="inline",
+            checksum=None,
+            version=1,
+        )
+
+
+class ZeroCopyInspectorActor(Actor):
+    async def receive(self, msg):
+        if isinstance(msg, ZeroCopyDescriptor):
+            buffers = msg.buffers
+            return {
+                "is_descriptor": True,
+                "buffer_count": len(buffers),
+                "size": len(buffers[0]),
+                "dtype": msg.dtype,
+            }
+        return {"is_descriptor": False, "type": type(msg).__name__}
+
+
+class NonContiguousZeroCopyPayload:
+    def __init__(self, raw: bytes):
+        self.raw = raw
+
+    def __zerocopy__(self, _ctx):
+        view = memoryview(self.raw)[::2]
+        return ZeroCopyDescriptor(
+            buffers=[view],
+            dtype="u8",
+            shape=[len(view)],
+            strides=[2],
+            transport="inline",
+            checksum=None,
+            version=1,
+        )
 
 
 # ============================================================================
@@ -410,6 +460,117 @@ async def test_tell_with_dict(actor_system):
 
     response = await actor_ref.ask({"action": "get"})
     assert response["value"] == 8
+
+
+@pytest.mark.asyncio
+async def test_ask_with_zerocopy_descriptor(actor_system):
+    """ask() should use zerocopy when object defines __zerocopy__."""
+    os.environ["PULSING_ZEROCOPY"] = "auto"
+    actor_ref = await actor_system.spawn(ZeroCopyInspectorActor(), name="zc-inspector")
+    response = await actor_ref.ask(ZeroCopyPayload(b"abcdef"))
+    assert response["is_descriptor"] is True
+    assert response["buffer_count"] == 1
+    assert response["size"] == 6
+    assert response["dtype"] == "u8"
+
+
+@pytest.mark.asyncio
+async def test_ask_with_zerocopy_force(actor_system):
+    """force mode should reject payloads without __zerocopy__."""
+    os.environ["PULSING_ZEROCOPY"] = "force"
+    actor_ref = await actor_system.spawn(EchoAnyActor(), name="zc-force")
+    with pytest.raises(Exception):
+        await actor_ref.ask({"not": "zerocopy"})
+    os.environ["PULSING_ZEROCOPY"] = "auto"
+
+
+@pytest.mark.asyncio
+async def test_ask_with_zerocopy_large_buffer(actor_system):
+    """Large payload (>= stream threshold) goes through descriptor-first stream path."""
+    os.environ["PULSING_ZEROCOPY"] = "auto"
+    os.environ["PULSING_ZEROCOPY_STREAM_THRESHOLD"] = "65536"
+    os.environ["PULSING_ZEROCOPY_CHUNK_BYTES"] = "65536"
+    try:
+        actor_ref = await actor_system.spawn(ZeroCopyInspectorActor(), name="zc-large")
+        payload = bytearray(8 * 1024 * 1024)
+        response = await actor_ref.ask(ZeroCopyPayload(payload))
+        assert response["is_descriptor"] is True
+        assert response["buffer_count"] == 1
+        assert response["size"] == len(payload)
+    finally:
+        os.environ.pop("PULSING_ZEROCOPY_CHUNK_BYTES", None)
+        os.environ.pop("PULSING_ZEROCOPY_STREAM_THRESHOLD", None)
+
+
+@pytest.mark.asyncio
+async def test_ask_with_zerocopy_small_buffer_single_path(actor_system):
+    """Small payload (< stream threshold) stays on single-message path."""
+    os.environ["PULSING_ZEROCOPY"] = "auto"
+    os.environ["PULSING_ZEROCOPY_STREAM_THRESHOLD"] = "1048576"
+    try:
+        actor_ref = await actor_system.spawn(ZeroCopyInspectorActor(), name="zc-small")
+        payload = b"small_payload_1234"
+        response = await actor_ref.ask(ZeroCopyPayload(payload))
+        assert response["is_descriptor"] is True
+        assert response["buffer_count"] == 1
+        assert response["size"] == len(payload)
+        assert response["dtype"] == "u8"
+    finally:
+        os.environ.pop("PULSING_ZEROCOPY_STREAM_THRESHOLD", None)
+
+
+@pytest.mark.asyncio
+async def test_ask_with_zerocopy_stream_threshold_boundary(actor_system):
+    """Payload exactly at stream threshold goes through stream path."""
+    threshold = 4096
+    os.environ["PULSING_ZEROCOPY"] = "auto"
+    os.environ["PULSING_ZEROCOPY_STREAM_THRESHOLD"] = str(threshold)
+    os.environ["PULSING_ZEROCOPY_CHUNK_BYTES"] = "4096"
+    try:
+        actor_ref = await actor_system.spawn(
+            ZeroCopyInspectorActor(), name="zc-boundary"
+        )
+        payload = bytearray(threshold)
+        response = await actor_ref.ask(ZeroCopyPayload(payload))
+        assert response["is_descriptor"] is True
+        assert response["buffer_count"] == 1
+        assert response["size"] == threshold
+    finally:
+        os.environ.pop("PULSING_ZEROCOPY_STREAM_THRESHOLD", None)
+        os.environ.pop("PULSING_ZEROCOPY_CHUNK_BYTES", None)
+
+
+@pytest.mark.asyncio
+async def test_ask_with_zerocopy_stream_multi_chunk(actor_system):
+    """Large buffer is transmitted in multiple chunks and reassembled correctly."""
+    os.environ["PULSING_ZEROCOPY"] = "auto"
+    os.environ["PULSING_ZEROCOPY_STREAM_THRESHOLD"] = "4096"
+    os.environ["PULSING_ZEROCOPY_CHUNK_BYTES"] = "4096"
+    try:
+        actor_ref = await actor_system.spawn(
+            ZeroCopyInspectorActor(), name="zc-multichunk"
+        )
+        # 5 chunks worth of data
+        payload = bytearray(range(256)) * 80  # 20480 bytes
+        response = await actor_ref.ask(ZeroCopyPayload(bytes(payload)))
+        assert response["is_descriptor"] is True
+        assert response["buffer_count"] == 1
+        assert response["size"] == len(payload)
+    finally:
+        os.environ.pop("PULSING_ZEROCOPY_STREAM_THRESHOLD", None)
+        os.environ.pop("PULSING_ZEROCOPY_CHUNK_BYTES", None)
+
+
+@pytest.mark.asyncio
+async def test_zerocopy_force_rejects_non_contiguous_buffer(actor_system):
+    """Force mode rejects non-contiguous buffer views."""
+    os.environ["PULSING_ZEROCOPY"] = "force"
+    actor_ref = await actor_system.spawn(
+        ZeroCopyInspectorActor(), name="zc-noncontiguous"
+    )
+    with pytest.raises(Exception):
+        await actor_ref.ask(NonContiguousZeroCopyPayload(b"0123456789"))
+    os.environ["PULSING_ZEROCOPY"] = "auto"
 
 
 # ============================================================================
