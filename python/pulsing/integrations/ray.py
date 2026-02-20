@@ -1,15 +1,15 @@
 """
-pulsing.ray - 在 Ray 集群中初始化 Pulsing
+pulsing.ray - Initialize Pulsing in Ray cluster
 
-每个 Ray worker 进程调用 init_in_ray() 即可启动 Pulsing 并自动加入集群。
-通过 Ray 的 internal KV store 协调 seed 节点发现。
+Each Ray worker process can call init_in_ray() to start Pulsing and auto-join the cluster.
+Uses Ray's internal KV store to coordinate seed node discovery.
 
-推荐用法:
+Recommended usage:
     import ray
     from pulsing.integrations.ray import init_in_ray
 
     ray.init(runtime_env={"worker_process_setup_hook": init_in_ray})
-    init_in_ray()  # driver 进程也需要初始化
+    init_in_ray()  # driver process also needs initialization
 """
 
 try:
@@ -29,23 +29,23 @@ import threading
 
 _SEED_KEY = "pulsing:seed_addr"
 
-# 后台事件循环（供 sync init 使用）
+# Background event loop (for sync init)
 _loop = None
 _thread = None
 
 
 def _get_node_ip():
-    """获取当前 Ray 节点 IP"""
+    """Get current Ray node IP"""
     ctx = ray.get_runtime_context()
     node_id = ctx.get_node_id()
     for node in ray.nodes():
         if node["NodeID"] == node_id and node["Alive"]:
             return node["NodeManagerAddress"]
-    raise RuntimeError("无法获取当前 Ray 节点 IP")
+    raise RuntimeError("Cannot get current Ray node IP")
 
 
 def _start_background_loop():
-    """启动后台事件循环线程"""
+    """Start background event loop thread"""
     global _loop, _thread
     if _thread is not None:
         return
@@ -66,7 +66,7 @@ def _start_background_loop():
 
 
 def _run_sync(coro):
-    """在后台事件循环中同步执行协程"""
+    """Execute coroutine synchronously in background event loop"""
     fut = asyncio.run_coroutine_threadsafe(coro, _loop)
     return fut.result(timeout=30)
 
@@ -84,60 +84,60 @@ async def _do_shutdown():
 
 
 def _get_seed():
-    """从 Ray KV store 获取 seed 地址"""
+    """Get seed address from Ray KV store"""
     data = _internal_kv_get(_SEED_KEY)
     return data.decode() if data else None
 
 
 def _try_set_seed(addr):
-    """原子写入 seed 地址，返回 True 表示写入成功（我是 seed）。
+    """Atomically write seed address, returns True if write succeeded (I am seed).
 
-    _internal_kv_put(overwrite=False) 返回值语义：
-        False = key 不存在，已写入（成功）
-        True  = key 已存在，未覆盖（失败）
+    _internal_kv_put(overwrite=False) return value semantics:
+        False = key doesn't exist, written (success)
+        True  = key already exists, not overwritten (failure)
     """
     already_exists = _internal_kv_put(_SEED_KEY, addr.encode(), overwrite=False)
     return not already_exists
 
 
 def init_in_ray():
-    """在当前进程初始化 Pulsing 并加入集群。
+    """Initialize Pulsing in current process and join cluster.
 
-    可直接调用，也可作为 Ray worker_process_setup_hook:
+    Can be called directly or used as Ray worker_process_setup_hook:
 
         ray.init(runtime_env={"worker_process_setup_hook": init_in_ray})
-        init_in_ray()  # driver 也需要
+        init_in_ray()  # driver also needs this
     """
     if not ray.is_initialized():
-        raise RuntimeError("Ray 未初始化，请先调用 ray.init()")
+        raise RuntimeError("Ray not initialized, please call ray.init() first")
 
     node_ip = _get_node_ip()
     _start_background_loop()
 
-    # 已有 seed → 直接加入
+    # Seed exists -> join directly
     seed_addr = _get_seed()
     if seed_addr is not None:
         return _run_sync(_do_init(f"{node_ip}:0", seeds=[seed_addr]))
 
-    # 启动为潜在 seed
+    # Start as potential seed
     system = _run_sync(_do_init(f"{node_ip}:0"))
     my_addr = str(system.addr)
 
     if _try_set_seed(my_addr):
-        return system  # 写入成功，我是 seed
+        return system  # Write succeeded, I am seed
 
-    # 竞争失败（极罕见），重新加入实际 seed
+    # Race lost (rare), re-join with actual seed
     _run_sync(_do_shutdown())
     return _run_sync(_do_init(f"{node_ip}:0", seeds=[_get_seed()]))
 
 
 async def async_init_in_ray():
-    """在当前进程初始化 Pulsing 并加入集群（异步版本）。
+    """Initialize Pulsing in current process and join cluster (async version).
 
-    适用于 async Ray actor。
+    Suitable for async Ray actors.
     """
     if not ray.is_initialized():
-        raise RuntimeError("Ray 未初始化，请先调用 ray.init()")
+        raise RuntimeError("Ray not initialized, please call ray.init() first")
 
     node_ip = _get_node_ip()
 
@@ -156,7 +156,7 @@ async def async_init_in_ray():
 
 
 def cleanup():
-    """清理 Pulsing 在 Ray KV store 中的状态"""
+    """Clean up Pulsing state in Ray KV store"""
     _internal_kv_del(_SEED_KEY)
 
 

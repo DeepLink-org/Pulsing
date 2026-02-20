@@ -60,11 +60,11 @@ async fn test_restart_on_failure() {
     let resp = actor_ref.send(Message::single("ping", b"1")).await;
     assert!(resp.is_ok());
 
-    // 2nd message - receive 返回 Err，错误返回给调用者，actor 不退出、不重启
+    // 2nd message - receive returns Err, error returned to caller, actor doesn't exit or restart
     let resp = actor_ref.send(Message::single("ping", b"2")).await;
     assert!(resp.is_err());
 
-    // 3rd message - 同一实例仍存活，继续处理
+    // 3rd message - same instance still alive, continues processing
     let resp = actor_ref.send(Message::single("ping", b"3")).await;
     assert!(resp.is_ok());
 
@@ -80,7 +80,7 @@ async fn test_restart_on_failure() {
 
 #[tokio::test]
 async fn test_max_restarts_exceeded() {
-    // receive 返回 Err 不会导致 actor 退出，因此不会触发 restart；factory 只被调用一次
+    // receive returning Err doesn't cause actor to exit, so no restart is triggered; factory only called once
     let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
     let counter = Arc::new(AtomicU32::new(0));
 
@@ -89,7 +89,7 @@ async fn test_max_restarts_exceeded() {
         counter_clone.fetch_add(1, Ordering::SeqCst);
         Ok(FailingActor {
             counter: Arc::new(AtomicU32::new(0)),
-            fail_at: 1, // 第 1 条消息返回 Err
+            fail_at: 1, // 1st message returns Err
         })
     };
 
@@ -110,13 +110,13 @@ async fn test_max_restarts_exceeded() {
         .await
         .unwrap();
 
-    // 第 1 条消息：receive 返回 Err，只回传错误，actor 不退出
+    // 1st message: receive returns Err, only return error to caller, actor doesn't exit
     let r1 = actor_ref.send(Message::single("ping", b"1")).await;
     assert!(r1.is_err());
-    assert_eq!(counter.load(Ordering::SeqCst), 1); // factory 只调用 1 次
+    assert_eq!(counter.load(Ordering::SeqCst), 1); // factory only called once
 
-    // 第 2 条消息：同一实例，count=2 != fail_at(1)，返回 Ok
+    // 2nd message: same instance, count=2 != fail_at(1), returns Ok
     let r2 = actor_ref.send(Message::single("ping", b"2")).await;
     assert!(r2.is_ok());
-    assert_eq!(counter.load(Ordering::SeqCst), 1); // 无重启
+    assert_eq!(counter.load(Ordering::SeqCst), 1); // no restart
 }

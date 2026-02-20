@@ -310,7 +310,7 @@ def _extract_methods(cls: type) -> tuple[list[str], set[str]]:
     if isinstance(cls, ActorClass):
         cls = cls._cls
 
-    # 如果是 Ray ActorClass，提取原始类
+    # If it's a Ray ActorClass, extract the original class
     try:
         from ray.actor import ActorClass as RayActorClass
 
@@ -380,9 +380,9 @@ class ActorProxy:
 
 
 class _MethodCaller:
-    """Method caller. 支持两种用法:
-    - await proxy.method(args)  — 方法调用
-    - await proxy.attr          — 属性读取（无参调用）
+    """Method caller. Supports two usage patterns:
+    - await proxy.method(args)  — method call
+    - await proxy.attr          — attribute access (no args)
     """
 
     def __init__(self, actor_ref: ActorRef, method_name: str, is_async: bool = False):
@@ -397,7 +397,7 @@ class _MethodCaller:
             return self._sync_call(*args, **kwargs)
 
     def __await__(self):
-        """支持 await proxy.attr 直接读取属性"""
+        """Support await proxy.attr for direct attribute access"""
         return self().__await__()
 
     async def _sync_call(self, *args, **kwargs) -> Any:
@@ -683,7 +683,7 @@ class _WrappedActor(_ActorBase):
                 return _wrap_response_v1(error=error_msg)
 
             if not callable(attr):
-                # 属性读取：直接返回值
+                # Attribute access: return value directly
                 if version == 2:
                     return _wrap_response_v2(result=attr)
                 return _wrap_response_v1(result=attr)
@@ -955,7 +955,7 @@ class ActorClass:
 
     @staticmethod
     def _unwrap_ray_class(cls):
-        """如果 cls 是 Ray ActorClass，提取原始用户类"""
+        """Extract original user class if cls is a Ray ActorClass"""
         try:
             from ray.actor import ActorClass as RayActorClass
         except ImportError:
@@ -975,7 +975,7 @@ class ActorClass:
         max_backoff: float = 30.0,
     ):
         unwrapped = self._unwrap_ray_class(cls)
-        # 保留 Ray handle，使 .remote() 可用
+        # Keep Ray handle so .remote() remains available
         self._ray_cls = cls if unwrapped is not cls else None
         cls = unwrapped
         self._cls = cls
@@ -1002,7 +1002,7 @@ class ActorClass:
         # Register class
         _actor_class_registry[self._class_name] = cls
 
-        # 如果原始类被 @ray.remote 装饰，用 Ray 的 .remote() 覆盖实例方法
+        # If original class was decorated with @ray.remote, override with Ray's .remote() method
         if self._ray_cls is not None:
             self.remote = self._ray_cls.remote
 
@@ -1569,7 +1569,7 @@ async def resolve(
         proxy = ref.as_any()
         await proxy.send_text(chat_id, content)
 
-        # 等待名字出现（gossip 收敛）
+        # Wait for name to appear (gossip convergence)
         ref = await resolve("peer_node", timeout=30)
 
         # Low-level ask
@@ -1605,17 +1605,17 @@ def as_any(ref: ActorRef) -> ActorProxy:
 
 
 def mount(instance: Any, *, name: str, public: bool = True) -> None:
-    """将已有 Python 对象挂载到 Pulsing 通信网络。
+    """Mount an existing Python object to the Pulsing communication network.
 
-    同步接口，可在 ``__init__`` 中调用。内部自动完成：
-      1. 初始化 Pulsing（如果当前进程还没有，自动检测 Ray 环境）
-      2. 将 instance 包装为 Pulsing actor
-      3. 注册到 Pulsing 网络，其他节点可通过 ``pul.resolve(name)`` 发现
+    Synchronous interface, can be called in ``__init__``. Automatically:
+      1. Initialize Pulsing (if not already, auto-detects Ray environment)
+      2. Wrap instance as a Pulsing actor
+      3. Register to Pulsing network, other nodes can discover via ``pul.resolve(name)``
 
     Args:
-        instance: 要挂载的对象（任意 Python 实例）
-        name: Pulsing 名称，其他节点通过此名字 resolve
-        public: 是否可被集群其他节点发现（默认 True）
+        instance: Object to mount (any Python instance)
+        name: Pulsing name, other nodes resolve via this name
+        public: Whether discoverable by other cluster nodes (default True)
 
     Example::
 
@@ -1631,7 +1631,7 @@ def mount(instance: Any, *, name: str, public: bool = True) -> None:
     """
     from . import _global_system
 
-    # 自动初始化 Pulsing
+    # Auto-initialize Pulsing
     if _global_system is None:
         _auto_init_pulsing()
 
@@ -1639,7 +1639,7 @@ def mount(instance: Any, *, name: str, public: bool = True) -> None:
 
     if system is None:
         raise RuntimeError(
-            "Pulsing 初始化失败。请确保已调用 pul.init() 或在 Ray 环境中运行。"
+            "Pulsing initialization failed. Please call pul.init() or run in Ray environment."
         )
 
     actor_name = name if "/" in name else f"actors/{name}"
@@ -1655,10 +1655,10 @@ def mount(instance: Any, *, name: str, public: bool = True) -> None:
 
 
 def unmount(name: str) -> None:
-    """从 Pulsing 网络卸载一个已挂载的 actor。
+    """Unmount a previously mounted actor from the Pulsing network.
 
     Args:
-        name: 挂载时使用的名称
+        name: Name used during mounting
     """
     from . import _global_system
 
@@ -1674,7 +1674,7 @@ def unmount(name: str) -> None:
 
 
 def _auto_init_pulsing():
-    """自动检测环境并初始化 Pulsing。"""
+    """Auto-detect environment and initialize Pulsing."""
     try:
         import ray
 
@@ -1687,16 +1687,16 @@ def _auto_init_pulsing():
         pass
 
     raise RuntimeError(
-        "Pulsing 未初始化。请先调用 await pul.init() 或确保在 Ray 环境中运行。"
+        "Pulsing not initialized. Please call await pul.init() or run in Ray environment."
     )
 
 
 def _run_sync_on_pulsing_loop(coro):
-    """在 Pulsing 的后台事件循环上同步执行协程。"""
+    """Execute coroutine synchronously on Pulsing's background event loop."""
     import asyncio
     import concurrent.futures
 
-    # 尝试使用 pulsing.integrations.ray 的后台 loop（Ray 环境）
+    # Try to use pulsing.integrations.ray's background loop (Ray environment)
     try:
         from pulsing.integrations.ray import _loop
 
@@ -1706,7 +1706,7 @@ def _run_sync_on_pulsing_loop(coro):
     except ImportError:
         pass
 
-    # 非 Ray 环境：尝试在当前线程创建新 loop
+    # Non-Ray environment: try to create new loop in current thread
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -1715,7 +1715,7 @@ def _run_sync_on_pulsing_loop(coro):
     if loop is None:
         return asyncio.run(coro)
 
-    # 已有 running loop（比如 async context），在新线程运行
+    # Already have running loop (e.g., async context), run in new thread
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, coro).result(timeout=30)
 

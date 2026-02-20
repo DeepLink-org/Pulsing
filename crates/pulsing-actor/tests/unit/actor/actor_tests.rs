@@ -288,7 +288,7 @@ mod error_tests {
         let result: Result<StateResponse, _> = actor_ref.ask(ErrorMessage).await;
         assert!(result.is_err());
 
-        // receive 返回 Err 时只把错误返回给调用者，actor 不退出
+        // When receive returns Err, only return error to caller, actor doesn't exit
         let result2: Result<Pong, _> = actor_ref.ask(Ping { value: 1 }).await;
         assert!(
             result2.is_ok(),

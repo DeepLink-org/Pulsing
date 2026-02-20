@@ -516,7 +516,7 @@ mod tests {
         assert!(err.to_string().contains("head_node"));
     }
 
-    // --- 配置解析 ---
+    // --- Configuration Parsing ---
 
     #[test]
     fn test_config_with_seeds() {

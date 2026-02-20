@@ -52,11 +52,11 @@ from pulsing.core import (
 )
 
 
-# Ray integration (lazy import — 仅在 Ray 环境下可用)
+# Ray integration (lazy import — only available in Ray environment)
 def init_inside_ray():
-    """在 Ray worker 中初始化 Pulsing 并加入集群（async 版本）。
+    """Initialize Pulsing in Ray worker and join cluster (async version).
 
-    用法::
+    Usage::
 
         await pul.init_inside_ray()
     """
@@ -66,7 +66,7 @@ def init_inside_ray():
 
 
 def cleanup_ray():
-    """清理 Pulsing 在 Ray KV store 中的状态"""
+    """Clean up Pulsing state in Ray KV store"""
     from pulsing.integrations.ray import cleanup
 
     return cleanup()

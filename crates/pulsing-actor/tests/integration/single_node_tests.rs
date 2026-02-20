@@ -383,7 +383,7 @@ mod error_tests {
         assert!(result.is_err());
         assert_eq!(crash_count.load(Ordering::SeqCst), 1);
 
-        // Actor 仍存活，后续消息应正常处理
+        // Actor still alive, subsequent messages should be processed normally
         let result2: Result<Pong, _> = actor_ref.ask(Ping { value: 42 }).await;
         assert!(
             result2.is_ok(),

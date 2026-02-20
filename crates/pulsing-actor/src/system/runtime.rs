@@ -35,7 +35,7 @@ pub(crate) async fn run_actor_instance<A: Actor>(
                                 responder.send(Ok(response));
                             }
                             Err(e) => {
-                                // 业务错误：receive 返回 Err，只把错误返回给调用者，actor 继续处理下一条消息
+                                // Business error: receive returns Err, only return error to caller, actor continues processing next message
                                 tracing::warn!(actor_id = ?ctx.id(), error = %e, "Receive returned error (returned to caller)");
                                 responder.send(Err(e));
                             }

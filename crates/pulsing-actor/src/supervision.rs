@@ -13,7 +13,7 @@ pub enum RestartPolicy {
     Always,
     /// Restart the actor only if it failed (non-normal exit)
     OnFailure,
-    /// Never restart the actor (default). Panic / 不可恢复错误时停止且不恢复
+    /// Never restart the actor (default). Stop and don't recover on panic / unrecoverable errors
     #[default]
     Never,
 }

@@ -2064,7 +2064,7 @@ impl PyActorSystem {
 
             match timeout {
                 None => {
-                    // 无 timeout：找不到立刻报错（原有行为）
+                    // No timeout: error immediately if not found (original behavior)
                     let actor_ref = system
                         .resolve_named(&path, node.as_ref())
                         .await
@@ -2072,7 +2072,7 @@ impl PyActorSystem {
                     Ok(PyActorRef { inner: actor_ref })
                 }
                 Some(secs) => {
-                    // 带 timeout：重试直到名字出现或超时
+                    // With timeout: retry until name appears or timeout
                     let deadline =
                         tokio::time::Instant::now() + std::time::Duration::from_secs_f64(secs);
                     let mut last_err = None;

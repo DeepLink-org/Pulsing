@@ -260,19 +260,19 @@ def bench(
 @hp.param("examples")
 def examples(name: str | None = None):
     """
-    列出或查看 Pulsing 内置示例。
+    List or view Pulsing built-in examples.
 
-    不带参数时列出所有可用示例；指定名称时显示该示例的详细说明、
-    运行方式和源码路径。
+    Lists all available examples when called without arguments;
+    shows detailed description, usage, and source path when given a name.
 
     Args:
-        name: 示例名称（可选）。留空则列出所有示例。
+        name: Example name (optional). If omitted, lists all examples.
 
     Examples:
-        # 列出所有示例
+        # List all examples
         pulsing examples
 
-        # 查看某个示例的详情
+        # View details of a specific example
         pulsing examples counting_game
     """
     from pulsing.examples import get_example_detail, list_examples
@@ -280,19 +280,19 @@ def examples(name: str | None = None):
     if name is None:
         all_examples = list_examples()
         if not all_examples:
-            print("暂无可用示例。")
+            print("No examples available.")
             return
-        print("可用示例:\n")
+        print("Available examples:\n")
         max_name_len = max(len(n) for n, _, _ in all_examples)
         for n, summary, filepath in all_examples:
             print(f"  {n:<{max_name_len}}  {summary}")
-        print("\n使用 'pulsing examples <名称>' 查看详情。")
+        print("\nUse 'pulsing examples <name>' for details.")
         return
 
     detail = get_example_detail(name)
     if detail is None:
-        print(f"未知示例: '{name}'")
-        print("使用 'pulsing examples' 查看所有可用示例。")
+        print(f"Unknown example: '{name}'")
+        print("Use 'pulsing examples' to see all available examples.")
         return
 
     summary, docstring, filepath = detail
@@ -302,15 +302,15 @@ def examples(name: str | None = None):
     if docstring:
         print(docstring)
         print()
-    print(f"源码路径:\n  {filepath}\n")
-    print(f"快速运行:\n  python -m pulsing.examples.{name}")
+    print(f"Source path:\n  {filepath}\n")
+    print(f"Quick run:\n  python -m pulsing.examples.{name}")
 
 
 def main():
     import sys
 
-    # 让 `pulsing examples <name>` 以位置参数方式工作
-    # hp 框架把有默认值的参数当 --name 选项，这里做一层转换
+    # Make `pulsing examples <name>` work with positional arguments
+    # hp framework treats params with default values as --name options, so we convert here
     if (
         len(sys.argv) >= 3
         and sys.argv[1] == "examples"

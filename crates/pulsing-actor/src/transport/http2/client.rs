@@ -822,7 +822,7 @@ mod tests {
         assert!(Arc::ptr_eq(&client.pool, &cloned.pool));
     }
 
-    // --- 连接管理 ---
+    // --- Connection Management ---
 
     #[test]
     fn test_client_pool_and_stats() {
@@ -860,7 +860,7 @@ mod tests {
         client.shutdown();
     }
 
-    // --- 错误恢复：对不可达地址应返回连接错误 ---
+    // --- Error Recovery: should return connection error for unreachable addresses ---
 
     #[tokio::test]
     async fn test_ask_connection_error() {
@@ -894,7 +894,7 @@ mod tests {
         );
     }
 
-    // --- 错误植入 ---
+    // --- Fault Injection ---
 
     #[tokio::test]
     async fn test_fault_injector_ask() {

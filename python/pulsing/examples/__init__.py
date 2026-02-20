@@ -1,21 +1,21 @@
 """
-pulsing.examples — Pulsing 内置示例集
+pulsing.examples — Pulsing built-in examples collection
 
-每个子模块都是一个可独立运行的示例，同时也可被测试导入复用。
+Each submodule is a standalone runnable example, also importable for testing.
 """
 
 import importlib
 import inspect
 from pathlib import Path
 
-# 注册所有 example：模块名 → 一句话摘要
+# Register all examples: module name -> one-line summary
 _EXAMPLES = {
-    "counting_game": "Pulsing + Ray 分布式报数游戏",
+    "counting_game": "Pulsing + Ray distributed counting game",
 }
 
 
 def list_examples():
-    """返回 [(name, summary, module_path)] 列表"""
+    """Return [(name, summary, module_path)] list"""
     result = []
     examples_dir = Path(__file__).parent
     for name, summary in _EXAMPLES.items():
@@ -25,7 +25,7 @@ def list_examples():
 
 
 def get_example_detail(name):
-    """返回 (summary, docstring, filepath)，找不到则返回 None"""
+    """Return (summary, docstring, filepath), or None if not found"""
     if name not in _EXAMPLES:
         return None
     mod = importlib.import_module(f"pulsing.examples.{name}")
