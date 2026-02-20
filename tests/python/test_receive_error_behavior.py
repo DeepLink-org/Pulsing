@@ -1,9 +1,9 @@
 """
-Tests for receive error behavior (业务错误不杀 actor、panic 停止不恢复).
+Tests for receive error behavior (business errors don't kill actor, panic stops without recovery).
 
 Covers:
-1. receive 返回/抛出错误时：错误返回给调用者，actor 不退出，可继续处理下一条消息
-2. 多次 receive 错误：每次错误只回传调用方，actor 始终存活
+1. When receive returns/raises error: error returned to caller, actor doesn't exit, can process next message
+2. Multiple receive errors: each error only returned to caller, actor stays alive
 """
 
 import pytest
@@ -26,12 +26,12 @@ async def system():
 
 
 # ============================================================================
-# Actor: 对特定消息返回错误，其它消息正常处理
+# Actor: returns error for specific message, processes other messages normally
 # ============================================================================
 
 
 class ErrorOnBadMessageActor(Actor):
-    """收到 'bad' 时 raise，其它消息 echo."""
+    """Raises when receiving 'bad', echoes other messages."""
 
     async def receive(self, msg):
         if msg == "bad":
@@ -40,27 +40,27 @@ class ErrorOnBadMessageActor(Actor):
 
 
 # ============================================================================
-# Test: receive 出错只回传调用者，actor 不退出
+# Test: receive error only returned to caller, actor doesn't exit
 # ============================================================================
 
 
 @pytest.mark.asyncio
 async def test_receive_error_returned_to_caller_actor_stays_alive(system):
-    """receive 返回/抛出错误时：调用者收到错误，actor 不退出，下一条消息正常处理。"""
+    """When receive returns/raises error: caller receives error, actor doesn't exit, next message processed normally."""
     ref = await system.spawn(ErrorOnBadMessageActor(), name="error_on_bad")
 
-    # 第一条：触发错误，应收到异常
+    # 1st message: trigger error, should receive exception
     with pytest.raises(Exception):
         await ref.ask("bad")
 
-    # 第二条：actor 仍存活，应正常返回
+    # 2nd message: actor still alive, should return normally
     result = await ref.ask("ok")
     assert result == "ok"
 
 
 @pytest.mark.asyncio
 async def test_receive_multiple_errors_then_success(system):
-    """多次 receive 出错：每次错误只回传调用方，actor 始终存活，最后一条正常。"""
+    """Multiple receive errors: each error only returned to caller, actor stays alive, final message succeeds."""
     ref = await system.spawn(ErrorOnBadMessageActor(), name="multi_error")
 
     for _ in range(3):

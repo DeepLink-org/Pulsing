@@ -108,7 +108,7 @@ def test_init_raises_without_ray():
     """init_in_ray() raises when Ray is not initialized."""
     from pulsing.integrations.ray import init_in_ray
 
-    with pytest.raises(RuntimeError, match="Ray 未初始化"):
+    with pytest.raises(RuntimeError, match="Ray not initialized"):
         init_in_ray()
 
 
@@ -116,7 +116,7 @@ async def test_async_init_raises_without_ray():
     """async_init_in_ray() raises when Ray is not initialized."""
     from pulsing.integrations.ray import async_init_in_ray
 
-    with pytest.raises(RuntimeError, match="Ray 未初始化"):
+    with pytest.raises(RuntimeError, match="Ray not initialized"):
         await async_init_in_ray()
 
 
@@ -315,7 +315,7 @@ async def test_async_init_stores_seed(ray_env):
 
 
 def test_counting_game(ray_env):
-    """20 个进程通过 Pulsing actor 玩报数游戏（复用 pulsing.examples）。"""
+    """20 processes play counting game via Pulsing actor (reuses pulsing.examples)."""
     from pulsing.examples.counting_game import run
 
     run(num_workers=NUM_WORKERS)

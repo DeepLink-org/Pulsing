@@ -1,12 +1,12 @@
 """
-Queue & Topic 混沌测试
+Queue & Topic Chaos Testing
 
-在随机延迟、高并发、动态加入/退出、随机参数等混沌场景下验证：
-- Queue: 数据不丢、不重（按 rank/world_size 分桶）、无死锁
-- Topic: 订阅者动态变化时发布不崩溃、交付语义可区分、慢/失败订阅者被踢或超时
-- 与 StorageManager 共享资源时无阻塞、无竞态
+Validates under chaotic scenarios with random delays, high concurrency, dynamic join/leave, random parameters:
+- Queue: no data loss, no duplication (bucketed by rank/world_size), no deadlock
+- Topic: no crash during publish when subscribers dynamically change, distinguishable delivery semantics, slow/failed subscribers kicked or timeout
+- No blocking or race conditions when sharing resources with StorageManager
 
-运行: pytest tests/python/test_queue_topic_chaos.py -v -s
+Run: pytest tests/python/test_queue_topic_chaos.py -v -s
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from pulsing.streaming import (
 
 
 # =============================================================================
-# Fixtures & 随机负载工具
+# Fixtures & Random Load Utilities
 # =============================================================================
 
 
@@ -49,21 +49,21 @@ def temp_storage_path():
 
 
 def _random_sleep(max_ms: int = 20):
-    """短随机延迟，模拟混沌."""
+    """Short random delay to simulate chaos."""
     return asyncio.sleep(random.uniform(0, max_ms) / 1000.0)
 
 
 def _chaos_sleep(
     min_ms: int = 0, max_ms: int = 50, occasional_long_ms: int | None = 120
 ):
-    """随机延迟：常规 min~max_ms，小概率长延迟（模拟抖动）。"""
+    """Random delay: normally min~max_ms, small chance of long delay (simulating jitter)."""
     if occasional_long_ms and random.random() < 0.08:
         return asyncio.sleep(random.uniform(max_ms, occasional_long_ms) / 1000.0)
     return asyncio.sleep(random.uniform(min_ms, max_ms) / 1000.0)
 
 
 # =============================================================================
-# Queue 混沌
+# Queue Chaos
 # =============================================================================
 
 
@@ -71,7 +71,7 @@ def _chaos_sleep(
 async def test_queue_chaos_concurrent_producer_consumer(
     actor_system, temp_storage_path
 ):
-    """混沌：多生产者 + 多消费者（rank/world_size），随机 put/get/延迟，验证不丢不重."""
+    """Chaos: multiple producers + multiple consumers (rank/world_size), random put/get/delay, verify no loss or duplication."""
     random.seed(42)
     topic = "chaos_q_concurrent"
     num_buckets = random.choice([3, 4, 5, 6])
@@ -144,7 +144,7 @@ async def test_queue_chaos_concurrent_producer_consumer(
 async def test_queue_chaos_many_buckets_parallel_handles(
     actor_system, temp_storage_path
 ):
-    """混沌：多桶、多 writer 并行写，多 reader 并行读；用单 reader 收齐后校验总数（多 reader 会瓜分数据）."""
+    """Chaos: many buckets, multiple writers in parallel, multiple readers in parallel; use single reader to collect all and verify total (multiple readers would split data)."""
     random.seed(43)
     topic = "chaos_q_many_buckets"
     num_buckets = random.randint(4, 12)
@@ -179,7 +179,7 @@ async def test_queue_chaos_many_buckets_parallel_handles(
 
     await asyncio.gather(*[write_batch(w) for w in range(num_writers)])
 
-    # 单 reader 读全量，避免多 reader 瓜分导致并集不足 expected_count
+    # Single reader reads full data, avoiding multiple readers splitting data resulting in insufficient union
     r = await read_queue(
         actor_system,
         topic=topic,
@@ -203,7 +203,7 @@ async def test_queue_chaos_many_buckets_parallel_handles(
 
 @pytest.mark.asyncio
 async def test_queue_chaos_reader_reset_and_reread(actor_system, temp_storage_path):
-    """混沌：同一 reader 多次 reset + get，与间歇写入交错，随机 limit/延迟."""
+    """Chaos: same reader multiple reset + get, interleaved with intermittent writes, random limit/delay."""
     random.seed(44)
     topic = "chaos_q_reset"
     num_buckets = random.choice([2, 3, 4])
@@ -243,13 +243,13 @@ async def test_queue_chaos_reader_reset_and_reread(actor_system, temp_storage_pa
 
 
 # =============================================================================
-# Topic 混沌
+# Topic Chaos
 # =============================================================================
 
 
 @pytest.mark.asyncio
 async def test_topic_chaos_subscribers_join_leave_during_publish(actor_system):
-    """混沌：发布过程中订阅者动态加入/退出，随机阶段数/每阶段消息数/模式/延迟."""
+    """Chaos: subscribers dynamically join/leave during publishing, random phases/messages per phase/mode/delay."""
     random.seed(45)
     topic_name = "chaos_t_join_leave"
     writer = await write_topic(actor_system, topic_name)
@@ -304,7 +304,7 @@ async def test_topic_chaos_subscribers_join_leave_during_publish(actor_system):
 
 @pytest.mark.asyncio
 async def test_topic_chaos_many_publishers_many_subscribers(actor_system):
-    """混沌：多发布者 + 多订阅者，随机发布模式/条数/延迟，验证每人收到预期条数."""
+    """Chaos: multiple publishers + multiple subscribers, random publish mode/count/delay, verify each receives expected count."""
     random.seed(46)
     topic_name = "chaos_t_many"
     num_publishers = random.randint(3, 6)
@@ -353,7 +353,7 @@ async def test_topic_chaos_many_publishers_many_subscribers(actor_system):
 
 @pytest.mark.asyncio
 async def test_topic_chaos_slow_callback_best_effort(actor_system):
-    """混沌：部分订阅者 callback 很慢，随机条数/延迟/超时，best_effort 验证不崩溃."""
+    """Chaos: some subscriber callbacks are slow, random count/delay/timeout, best_effort verify no crash."""
     random.seed(47)
     topic_name = "chaos_t_slow"
     writer = await write_topic(actor_system, topic_name)
@@ -393,13 +393,13 @@ async def test_topic_chaos_slow_callback_best_effort(actor_system):
 
 
 # =============================================================================
-# 混合：Queue + Topic 同时混沌
+# Mixed: Queue + Topic Chaos Simultaneously
 # =============================================================================
 
 
 @pytest.mark.asyncio
 async def test_chaos_mixed_queue_and_topic_same_loop(actor_system, temp_storage_path):
-    """混沌：同一 loop 内 queue + topic 并发，随机条数/桶数/延迟."""
+    """Chaos: queue + topic concurrent in same loop, random count/buckets/delay."""
     random.seed(48)
     q_topic = "chaos_mixed_q"
     t_topic = "chaos_mixed_t"
@@ -453,7 +453,7 @@ async def test_chaos_mixed_queue_and_topic_same_loop(actor_system, temp_storage_
 
 @pytest.mark.asyncio
 async def test_chaos_rapid_open_close_handles(actor_system, temp_storage_path):
-    """混沌：快速反复创建/丢弃 queue writer 和 topic reader，随机次数/延迟."""
+    """Chaos: rapidly create/discard queue writer and topic reader repeatedly, random times/delay."""
     random.seed(49)
     n_writes = random.randint(6, 12)
     n_readers = random.randint(4, 10)
@@ -485,13 +485,13 @@ async def test_chaos_rapid_open_close_handles(actor_system, temp_storage_path):
     assert result.subscriber_count >= 0
 
     # -------------------------------------------------------------------------
-    # 新增：高复杂度 / 随机负载风暴
+    # Added: High Complexity / Random Load Storm
     # -------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_queue_chaos_storm_random_params(actor_system, temp_storage_path):
-    """混沌风暴：全随机参数（桶数/消费者数/生产者数/条数/get limit/延迟），验证不丢不重."""
+    """Chaos storm: fully random parameters (buckets/consumers/producers/count/get limit/delay), verify no loss or duplication."""
     random.seed(100)
     topic = "chaos_q_storm"
     num_buckets = random.randint(2, 8)
@@ -570,7 +570,7 @@ async def test_queue_chaos_storm_random_params(actor_system, temp_storage_path):
 
 @pytest.mark.asyncio
 async def test_topic_chaos_storm_random_params(actor_system):
-    """混沌风暴：全随机 topic 参数（发布者/订阅者数量、条数、模式、延迟），验证交付."""
+    """Chaos storm: fully random topic parameters (publishers/subscribers count, messages, mode, delay), verify delivery."""
     random.seed(101)
     topic_name = "chaos_t_storm"
     num_publishers = random.randint(2, 5)
@@ -616,7 +616,7 @@ async def test_topic_chaos_storm_random_params(actor_system):
 
 @pytest.mark.asyncio
 async def test_chaos_storm_multi_queue_multi_topic(actor_system, temp_storage_path):
-    """混沌风暴：多 queue + 多 topic 同时跑，各自随机负载，验证无死锁、数据一致."""
+    """Chaos storm: multiple queues + multiple topics running simultaneously, each with random load, verify no deadlock and data consistency."""
     random.seed(102)
     q_topics = ["chaos_storm_q1", "chaos_storm_q2"]
     t_topics = ["chaos_storm_t1", "chaos_storm_t2"]

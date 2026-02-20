@@ -1,5 +1,5 @@
 """
-Tests for Actor Behavior as defined in llms.binding.md (Actor 行为 section).
+Tests for Actor Behavior as defined in llms.binding.md (Actor Behavior section).
 
 Tests cover:
 1. Base Actor with receive method (sync/async)
