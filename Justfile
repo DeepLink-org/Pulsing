@@ -203,8 +203,8 @@ ci-test:
     # Install wheel and dependencies using uv (preferred) or pip
     if command -v uv &> /dev/null; then
         uv pip install --system dist/*.whl pytest pytest-asyncio
-        # Use uv run pytest (uses uv-managed Python environment)
-        uv run pytest tests/python -v
+        # --system: use same env as above (where wheel was installed), avoid project venv without pulsing
+        uv run --system pytest tests/python -v
     else
         # Fallback to pip if uv not available
         pip install dist/*.whl pytest pytest-asyncio
