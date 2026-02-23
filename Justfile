@@ -203,12 +203,18 @@ ci-test:
     # Install wheel and dependencies using uv (preferred) or pip
     if command -v uv &> /dev/null; then
         uv pip install --system dist/*.whl pytest pytest-asyncio
-        # --system: use same env as above (where wheel was installed), avoid project venv without pulsing
-        uv run --system pytest tests/python -v
+        # Use same interpreter as above (where wheel was installed); do not use uv run (project venv has no pulsing)
+        for py in python3.12 python3.11 python3.10 python3 python; do
+            if command -v $py &> /dev/null; then
+                $py -m pytest tests/python -v
+                exit 0
+            fi
+        done
+        echo "Error: No Python interpreter found"
+        exit 1
     else
         # Fallback to pip if uv not available
         pip install dist/*.whl pytest pytest-asyncio
-        # Try to find python executable
         for py in python3 python3.12 python3.11 python3.10 python; do
             if command -v $py &> /dev/null; then
                 $py -m pytest tests/python -v
