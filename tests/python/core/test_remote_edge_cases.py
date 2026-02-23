@@ -3,7 +3,7 @@ Tests for core/remote.py edge cases and uncovered paths.
 
 Focus areas:
 - _WrappedActor edge cases
-- v1/v2 protocol handling
+- Protocol wire format (call/response)
 - Attribute access
 - Sync generator handling
 - on_start/on_stop callbacks
@@ -250,68 +250,44 @@ async def test_sync_generator_with_exception():
 
 
 # ============================================================================
-# Protocol v1/v2 handling
+# Protocol wire format
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_protocol_v1_call():
-    """Test v1 protocol call format."""
+async def test_protocol_call_format():
+    """Test protocol call/response format (single wire format)."""
     from pulsing.core.remote import (
-        _wrap_call_v1,
+        _wrap_call,
+        _wrap_response,
         _unwrap_call,
-        _wrap_response_v1,
-        _detect_protocol_version,
+        _unwrap_response,
     )
 
-    # v1 call format
-    msg = _wrap_call_v1("test_method", (1, 2), {"key": "value"}, False)
-    assert msg["__call__"] == "test_method"
-    assert msg["args"] == (1, 2)
-    assert msg["kwargs"] == {"key": "value"}
-    assert msg["__async__"] is False
-
-    # v1 response
-    resp = _wrap_response_v1(result="success")
-    assert resp["__result__"] == "success"
-    assert "__error__" not in resp
-
-    # Error response
-    err_resp = _wrap_response_v1(error="failed")
-    assert err_resp["__error__"] == "failed"
-    assert "__result__" not in err_resp
-
-    # Protocol detection
-    assert _detect_protocol_version(msg) == 1
-
-
-@pytest.mark.asyncio
-async def test_protocol_v2_call():
-    """Test v2 protocol call format."""
-    from pulsing.core.remote import (
-        _wrap_call_v2,
-        _wrap_response_v2,
-        _detect_protocol_version,
-    )
-
-    # v2 call format
-    msg = _wrap_call_v2("test_method", (1, 2), {"key": "value"}, True)
-    assert msg["__pulsing_proto__"] == "v2"
+    msg = _wrap_call("test_method", (1, 2), {"key": "value"}, True)
+    assert msg["__pulsing_proto__"] == "1"
     assert msg["__pulsing__"]["call"] == "test_method"
     assert msg["__pulsing__"]["async"] is True
     assert msg["user_data"]["args"] == (1, 2)
 
-    # v2 response
-    resp = _wrap_response_v2(result="success")
-    assert resp["__pulsing_proto__"] == "v2"
+    method, args, kwargs, is_async = _unwrap_call(msg)
+    assert method == "test_method"
+    assert args == (1, 2)
+    assert kwargs == {"key": "value"}
+    assert is_async is True
+
+    resp = _wrap_response(result="success")
+    assert resp["__pulsing_proto__"] == "1"
     assert resp["__pulsing__"]["result"] == "success"
+    result, error = _unwrap_response(resp)
+    assert result == "success"
+    assert error is None
 
-    # Error response
-    err_resp = _wrap_response_v2(error="failed")
+    err_resp = _wrap_response(error="failed")
     assert err_resp["__pulsing__"]["error"] == "failed"
-
-    # Protocol detection
-    assert _detect_protocol_version(msg) == 2
+    result, error = _unwrap_response(err_resp)
+    assert result is None
+    assert error == "failed"
 
 
 # ============================================================================

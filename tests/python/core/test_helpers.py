@@ -21,27 +21,19 @@ from pulsing.core import remote, init, shutdown
 
 
 @pytest.mark.asyncio
-async def test_unwrap_call_v1():
-    """Test unwrapping v1 protocol call."""
-    from pulsing.core.remote import _wrap_call_v1, _unwrap_call
+async def test_unwrap_call():
+    """Test wrap/unwrap call message."""
+    from pulsing.core.remote import _wrap_call, _unwrap_call
 
-    msg = _wrap_call_v1("my_method", (1, 2, 3), {"key": "val"}, False)
+    msg = _wrap_call("my_method", (1, 2, 3), {"key": "val"}, False)
     method, args, kwargs, is_async = _unwrap_call(msg)
-
     assert method == "my_method"
     assert args == (1, 2, 3)
     assert kwargs == {"key": "val"}
     assert is_async is False
 
-
-@pytest.mark.asyncio
-async def test_unwrap_call_v2():
-    """Test unwrapping v2 protocol call."""
-    from pulsing.core.remote import _wrap_call_v2, _unwrap_call
-
-    msg = _wrap_call_v2("async_method", (), {"param": 42}, True)
-    method, args, kwargs, is_async = _unwrap_call(msg)
-
+    msg_async = _wrap_call("async_method", (), {"param": 42}, True)
+    method, args, kwargs, is_async = _unwrap_call(msg_async)
     assert method == "async_method"
     assert args == ()
     assert kwargs == {"param": 42}
@@ -49,46 +41,19 @@ async def test_unwrap_call_v2():
 
 
 @pytest.mark.asyncio
-async def test_unwrap_response_v1():
-    """Test unwrapping v1 protocol response."""
-    from pulsing.core.remote import (
-        _wrap_response_v1,
-        _unwrap_response,
-        _wrap_call_v1,
-    )
+async def test_unwrap_response():
+    """Test wrap/unwrap response message."""
+    from pulsing.core.remote import _wrap_response, _unwrap_response
 
-    # Success response
-    resp = _wrap_response_v1(result={"data": "success"})
+    resp = _wrap_response(result={"data": "success"})
     result, error = _unwrap_response(resp)
     assert error is None
     assert result == {"data": "success"}
 
-    # Error response
-    err = _wrap_response_v1(error="something failed")
+    err = _wrap_response(error="something failed")
     result, error = _unwrap_response(err)
     assert result is None
     assert "something failed" in error
-
-
-@pytest.mark.asyncio
-async def test_unwrap_response_v2():
-    """Test unwrapping v2 protocol response."""
-    from pulsing.core.remote import (
-        _wrap_response_v2,
-        _unwrap_response,
-    )
-
-    # Success response
-    resp = _wrap_response_v2(result=[1, 2, 3])
-    result, error = _unwrap_response(resp)
-    assert error is None
-    assert result == [1, 2, 3]
-
-    # Error response
-    err = _wrap_response_v2(error="error message")
-    result, error = _unwrap_response(err)
-    assert result is None
-    assert "error message" in error
 
 
 # ============================================================================
@@ -184,28 +149,6 @@ async def test_consume_task_exception():
     except ValueError:
         pass
     _consume_task_exception(task)
-
-
-# ============================================================================
-# Protocol detection edge cases
-# ============================================================================
-
-
-@pytest.mark.asyncio
-async def test_detect_protocol_unknown_format():
-    """Test protocol detection with unknown format defaults to v1."""
-    from pulsing.core.remote import _detect_protocol_version
-
-    # Unknown format
-    assert _detect_protocol_version({}) == 1
-    assert _detect_protocol_version({"some": "data"}) == 1
-
-    # v1 format (has __call__)
-    assert _detect_protocol_version({"__call__": "method"}) == 1
-
-    # v2 format (has __pulsing_proto__)
-    assert _detect_protocol_version({"__pulsing_proto__": "v2"}) == 2
-    assert _detect_protocol_version({"__pulsing_proto__": 2}) == 2
 
 
 # ============================================================================

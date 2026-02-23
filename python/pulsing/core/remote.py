@@ -3,7 +3,6 @@
 import asyncio
 import inspect
 import logging
-import os
 import random
 import uuid
 from abc import ABC, abstractmethod
@@ -11,15 +10,6 @@ from typing import Any, TypeVar
 
 from pulsing._core import ActorRef, ActorSystem, Message, StreamMessage
 from pulsing.exceptions import PulsingActorError, PulsingRuntimeError
-
-# Protocol version configuration
-# Default to v1 for backward compatibility
-_DEFAULT_PROTOCOL_VERSION = int(os.getenv("PULSING_PROTOCOL_VERSION", "1"))
-
-
-def _get_protocol_version() -> int:
-    """Get protocol version from environment or default to v1."""
-    return _DEFAULT_PROTOCOL_VERSION
 
 
 def _consume_task_exception(task: asyncio.Task) -> None:
@@ -37,60 +27,22 @@ def _consume_task_exception(task: asyncio.Task) -> None:
         logging.getLogger(__name__).exception("Stream task failed")
 
 
-def _detect_protocol_version(msg: dict) -> int:
-    """Auto-detect protocol version from message.
-
-    Returns:
-        1 for v1 protocol, 2 for v2 protocol
-    """
-    if "__pulsing_proto__" in msg:
-        version_str = msg["__pulsing_proto__"]
-        if isinstance(version_str, str) and version_str.startswith("v"):
-            return int(version_str[1:])
-        return int(version_str)
-    # v1 compatibility: check for __call__ field
-    if "__call__" in msg:
-        return 1
-    return 1  # default to v1
+# Wire format version (single protocol)
+_PULSING_WIRE_VERSION = "1"
 
 
-def _wrap_call_v1(method: str, args: tuple, kwargs: dict, is_async: bool) -> dict:
-    """v1 protocol: legacy format (backward compatible).
+def _wrap_call(method: str, args: tuple, kwargs: dict, is_async: bool) -> dict:
+    """Wrap method call for wire format (namespace isolation).
 
     Format:
         {
-            "__call__": method_name,
-            "args": args,
-            "kwargs": kwargs,
-            "__async__": is_async
+            "__pulsing_proto__": version,
+            "__pulsing__": { "call": method_name, "async": is_async },
+            "user_data": { "args": args, "kwargs": kwargs }
         }
     """
     return {
-        "__call__": method,
-        "args": args,
-        "kwargs": kwargs,
-        "__async__": is_async,
-    }
-
-
-def _wrap_call_v2(method: str, args: tuple, kwargs: dict, is_async: bool) -> dict:
-    """v2 protocol: namespace isolation.
-
-    Format:
-        {
-            "__pulsing_proto__": "v2",
-            "__pulsing__": {
-                "call": method_name,
-                "async": is_async
-            },
-            "user_data": {
-                "args": args,
-                "kwargs": kwargs
-            }
-        }
-    """
-    return {
-        "__pulsing_proto__": "v2",
+        "__pulsing_proto__": _PULSING_WIRE_VERSION,
         "__pulsing__": {
             "call": method,
             "async": is_async,
@@ -103,70 +55,53 @@ def _wrap_call_v2(method: str, args: tuple, kwargs: dict, is_async: bool) -> dic
 
 
 def _unwrap_call(msg: dict) -> tuple[str, tuple, dict, bool]:
-    """Unwrap call message, supporting both v1 and v2 protocols.
-
-    Returns:
-        (method_name, args, kwargs, is_async)
-    """
-    version = _detect_protocol_version(msg)
-
-    if version == 2:
-        pulsing = msg.get("__pulsing__", {})
-        user_data = msg.get("user_data", {})
-        return (
-            pulsing.get("call", ""),
-            tuple(user_data.get("args", ())),
-            dict(user_data.get("kwargs", {})),
-            pulsing.get("async", False),
-        )
-    else:  # v1
-        return (
-            msg.get("__call__", ""),
-            tuple(msg.get("args", ())),
-            dict(msg.get("kwargs", {})),
-            msg.get("__async__", False),
-        )
+    """Unwrap call message. Returns (method_name, args, kwargs, is_async)."""
+    pulsing = msg.get("__pulsing__", {})
+    user_data = msg.get("user_data", {})
+    return (
+        pulsing.get("call", ""),
+        tuple(user_data.get("args", ())),
+        dict(user_data.get("kwargs", {})),
+        pulsing.get("async", False),
+    )
 
 
-def _wrap_response_v1(result: Any = None, error: str | None = None) -> dict:
-    """v1 protocol response format."""
-    if error:
-        return {"__error__": error}
-    return {"__result__": result}
-
-
-def _wrap_response_v2(result: Any = None, error: str | None = None) -> dict:
-    """v2 protocol response format."""
+def _wrap_response(result: Any = None, error: str | None = None) -> dict:
+    """Wrap response for wire format."""
     if error:
         return {
-            "__pulsing_proto__": "v2",
+            "__pulsing_proto__": _PULSING_WIRE_VERSION,
             "__pulsing__": {"error": error},
             "user_data": {},
         }
     return {
-        "__pulsing_proto__": "v2",
+        "__pulsing_proto__": _PULSING_WIRE_VERSION,
         "__pulsing__": {"result": result},
         "user_data": {},
     }
 
 
 def _unwrap_response(resp: dict) -> tuple[Any, str | None]:
-    """Unwrap response, supporting both v1 and v2 protocols.
+    """Unwrap response. Returns (result, error) - one of them will be None.
 
-    Returns:
-        (result, error) - one of them will be None
+    Accepts: wire format (__pulsing__.result/error), legacy (__result__/__error__),
+    and top-level "result"/"error" (e.g. from Message payload JSON).
     """
-    version = _detect_protocol_version(resp)
-
-    if version == 2:
-        pulsing = resp.get("__pulsing__", {})
+    pulsing = resp.get("__pulsing__", {})
+    if isinstance(pulsing, dict):
         if "error" in pulsing:
             return (None, pulsing["error"])
-        return (pulsing.get("result"), None)
-    else:  # v1
-        if "__error__" in resp:
-            return (None, resp["__error__"])
-        return (resp.get("__result__"), None)
+        if "result" in pulsing:
+            return (pulsing["result"], None)
+    if "__error__" in resp:
+        return (None, resp["__error__"])
+    if "__result__" in resp:
+        return (resp["__result__"], None)
+    if "error" in resp:
+        return (None, resp["error"])
+    if "result" in resp:
+        return (resp["result"], None)
+    return (None, None)
 
 
 _PULSING_ERROR_PREFIX = "__PULSING_ERROR__:"
@@ -402,12 +337,7 @@ class _MethodCaller:
 
     async def _sync_call(self, *args, **kwargs) -> Any:
         """Synchronous method call."""
-        # Use configured protocol version (default v1)
-        protocol_version = _get_protocol_version()
-        if protocol_version == 2:
-            call_msg = _wrap_call_v2(self._method, args, kwargs, False)
-        else:
-            call_msg = _wrap_call_v1(self._method, args, kwargs, False)
+        call_msg = _wrap_call(self._method, args, kwargs, False)
 
         resp = await _ask_convert_errors(self._ref, call_msg)
 
@@ -427,12 +357,21 @@ class _MethodCaller:
             if resp.is_stream:
                 return _SyncGeneratorStreamReader(resp)
             data = resp.to_json()
+            if not isinstance(data, dict):
+                return resp
             if resp.msg_type == "Error":
-                # Actor execution error
                 raise PulsingActorError(
                     data.get("error", "Remote call failed"),
                     actor_name=str(self._ref.actor_id.id),
                 )
+            result, error = _unwrap_response(data)
+            if error:
+                raise PulsingActorError(
+                    error,
+                    actor_name=str(self._ref.actor_id.id),
+                )
+            if result is not None:
+                return result
             return data.get("result")
         return resp
 
@@ -463,12 +402,7 @@ class _AsyncMethodCall:
     async def _get_stream(self):
         """Get stream (lazy initialization)"""
         if self._stream_reader is None:
-            # Use configured protocol version (default v1)
-            protocol_version = _get_protocol_version()
-            if protocol_version == 2:
-                call_msg = _wrap_call_v2(self._method, self._args, self._kwargs, True)
-            else:
-                call_msg = _wrap_call_v1(self._method, self._args, self._kwargs, True)
+            call_msg = _wrap_call(self._method, self._args, self._kwargs, True)
             resp = await _ask_convert_errors(self._ref, call_msg)
 
             # Response may be PyMessage (streaming) or direct Python object
@@ -502,20 +436,32 @@ class _AsyncMethodCall:
         reader = await self._get_stream()
         try:
             item = await reader.__anext__()
-            # Check if it's the final result
             if isinstance(item, dict):
+                # Wire format (__pulsing__.result/error) or legacy (__result__/__error__)
+                result, error = _unwrap_response(item)
+                if error is not None:
+                    raise PulsingActorError(
+                        error, actor_name=str(self._ref.actor_id.id)
+                    )
+                if (
+                    result is not None
+                    and "__yield__" not in item
+                    and "__final__" not in item
+                ):
+                    # Single-value response (non-streaming)
+                    self._final_result = result
+                    self._got_result = True
+                    raise StopAsyncIteration
                 if "__final__" in item:
                     self._final_result = item.get("__result__")
                     self._got_result = True
                     raise StopAsyncIteration
                 if "__error__" in item:
-                    # Actor execution error
                     raise PulsingActorError(
                         item["__error__"], actor_name=str(self._ref.actor_id.id)
                     )
                 if "__yield__" in item:
                     return item["__yield__"]
-                # Single-value response (non-streaming): {"__result__": value}
                 if "__result__" in item:
                     self._final_result = item.get("__result__")
                     self._got_result = True
@@ -604,7 +550,7 @@ class _DelayedCallProxy:
             raise AttributeError(name)
 
         def caller(*args, **kwargs):
-            msg = _wrap_call_v1(name, args, kwargs, is_async=True)
+            msg = _wrap_call(name, args, kwargs, is_async=True)
             delay = max(0.0, self._delay_sec)
 
             async def _send():
@@ -662,31 +608,20 @@ class _WrappedActor(_ActorBase):
         return {}
 
     async def receive(self, msg) -> Any:
-        # Handle dict-based call format (supporting both v1 and v2)
+        # Handle dict-based call format
         if isinstance(msg, dict):
-            # Detect protocol version
-            version = _detect_protocol_version(msg)
             method, args, kwargs, is_async_call = _unwrap_call(msg)
 
             if not method or method.startswith("_"):
-                error_msg = f"Invalid method: {method}"
-                if version == 2:
-                    return _wrap_response_v2(error=error_msg)
-                return _wrap_response_v1(error=error_msg)
+                return _wrap_response(error=f"Invalid method: {method}")
 
             _MISSING = object()
             attr = getattr(self._instance, method, _MISSING)
             if attr is _MISSING:
-                error_msg = f"Not found: {method}"
-                if version == 2:
-                    return _wrap_response_v2(error=error_msg)
-                return _wrap_response_v1(error=error_msg)
+                return _wrap_response(error=f"Not found: {method}")
 
             if not callable(attr):
-                # Attribute access: return value directly
-                if version == 2:
-                    return _wrap_response_v2(result=attr)
-                return _wrap_response_v1(result=attr)
+                return _wrap_response(result=attr)
 
             func = attr
 
@@ -716,15 +651,9 @@ class _WrappedActor(_ActorBase):
                     return self._handle_generator_result(result)
                 if asyncio.iscoroutine(result):
                     result = await result
-                # Use same protocol version as request
-                if version == 2:
-                    return _wrap_response_v2(result=result)
-                return _wrap_response_v1(result=result)
+                return _wrap_response(result=result)
             except Exception as e:
-                error_msg = str(e)
-                if version == 2:
-                    return _wrap_response_v2(error=error_msg)
-                return _wrap_response_v1(error=error_msg)
+                return _wrap_response(error=str(e))
 
         # Handle legacy Message-based call format (for Rust actor compatibility)
         if isinstance(msg, Message):
