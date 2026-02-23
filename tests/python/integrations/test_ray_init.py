@@ -255,7 +255,8 @@ def test_concurrent_init_without_driver(ray_env):
     ), f"Expected 1 seed, got {len(unique_seeds)}: {unique_seeds}"
 
     # The seed must be one of the workers' addresses
-    assert unique_seeds.pop() in addrs
+    seed = unique_seeds.pop()
+    assert seed in addrs
 
 
 def test_actor_becomes_seed_without_driver(ray_env):
