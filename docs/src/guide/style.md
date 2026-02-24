@@ -27,12 +27,14 @@ This page defines terminology and style conventions for Pulsing documentation an
 
 ### Starting Actors
 
-```bash
-pulsing actor <full.class.Path> [options]
+Arguments are split by `--`: before `--` go to the actor subcommand (e.g. `--addr`, `--seeds`, `--name`); after `--` are passed to the Actor constructor.
 
-# Examples
-pulsing actor pulsing.serving.Router --http_port 8080 --model_name my-llm
-pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --device cpu
+```bash
+pulsing actor <full.class.Path> [options] [-- constructor-args]
+
+# Examples (use -- to separate actor-level options from constructor args)
+pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 -- --http_port 8080 --model_name my-llm
+pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8001 -- --model_name gpt2 --device cpu
 ```
 
 ### Inspect Commands (Observer Mode)

@@ -55,15 +55,15 @@ pip install pulsing
 ```bash
 pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
+  -- \
   --http_port 8080 \
   --model_name my-llm
 ```
 
 | 参数 | 说明 |
 |------|------|
-| `--addr` | Actor 系统地址（Worker 加入此地址） |
-| `--http_port` | OpenAI 兼容 HTTP 端点 |
-| `--model_name` | API 响应中的模型名称 |
+| `--addr`（`--` 前） | Actor 系统地址（Worker 加入此地址） |
+| `--http_port`、`--model_name`（`--` 后） | Router 构造参数：HTTP 端口、API 响应中的模型名 |
 
 ---
 
@@ -75,25 +75,27 @@ pulsing actor pulsing.serving.Router \
 
     ```bash
     pulsing actor pulsing.serving.TransformersWorker \
-      --model_name gpt2 \
-      --device cpu \
       --addr 0.0.0.0:8001 \
-      --seeds 127.0.0.1:8000
+      --seeds 127.0.0.1:8000 \
+      -- \
+      --model_name gpt2 \
+      --device cpu
     ```
 
 === "vLLM (GPU)"
 
     ```bash
     pulsing actor pulsing.serving.VllmWorker \
-      --model Qwen/Qwen2.5-0.5B \
       --addr 0.0.0.0:8002 \
-      --seeds 127.0.0.1:8000
+      --seeds 127.0.0.1:8000 \
+      -- \
+      --model Qwen/Qwen2.5-0.5B
     ```
 
 | 参数 | 说明 |
 |------|------|
-| `--model` / `--model_name` | 模型名称/路径（TransformersWorker 用 `--model_name`，VllmWorker 用 `--model`） |
-| `--seeds` | 加入集群的 Router 地址 |
+| `--addr`、`--seeds`（`--` 前） | actor 级：绑定地址、种子节点 |
+| `--model` / `--model_name`（`--` 后） | 构造参数：模型名称/路径 |
 
 ---
 
@@ -145,10 +147,10 @@ curl -N http://localhost:8080/v1/chat/completions \
 
 ```bash
 # 终端 C
-pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --addr 0.0.0.0:8003 --seeds 127.0.0.1:8000
+pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8003 --seeds 127.0.0.1:8000 -- --model_name gpt2
 
 # 终端 D
-pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --addr 0.0.0.0:8004 --seeds 127.0.0.1:8000
+pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8004 --seeds 127.0.0.1:8000 -- --model_name gpt2
 ```
 
 Router 会自动在所有 Worker 间负载均衡。
@@ -159,7 +161,7 @@ Router 会自动在所有 Worker 间负载均衡。
 
 | 问题 | 解决方案 |
 |------|----------|
-| `No available workers` | 确保 Worker 使用 `--seeds <router_addr>` |
+| `No available workers` | Router 默认按名字 `worker` 查找。需 (1) Worker 用 `--name worker`（在 `--` 前）启动，或 (2) Router 用 `--worker_name <名字>`（在 `--` 后）与 Worker 一致；(3) Worker 必须 `--seeds <router_addr>`。可执行 `pulsing inspect actors --seeds 127.0.0.1:8000` 确认是否有名为 `worker` 的 actor。 |
 | 连接被拒绝 | 检查 Router 是否以 `--addr` 启动 |
 | 启动慢 | 首次请求需要加载模型权重 |
 

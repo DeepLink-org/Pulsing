@@ -21,6 +21,7 @@ Router 需要指定 **actor system 地址**，以便其它进程启动的 worker
 ```bash
 pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
+  -- \
   --http_host 0.0.0.0 \
   --http_port 8080 \
   --model_name my-llm \
@@ -35,21 +36,23 @@ pulsing actor pulsing.serving.Router \
 
 ```bash
 pulsing actor pulsing.serving.worker.TransformersWorker \
-  --model_name gpt2 \
-  --device cpu \
   --addr 0.0.0.0:8001 \
   --seeds 127.0.0.1:8000 \
-  --name worker
+  --name worker \
+  -- \
+  --model_name gpt2 \
+  --device cpu
 ```
 
 ### 方案 B：vLLM Worker（终端 C）
 
 ```bash
 pulsing actor pulsing.serving.vllm.VllmWorker \
-  --model Qwen/Qwen2.5-0.5B \
   --addr 0.0.0.0:8002 \
   --seeds 127.0.0.1:8000 \
-  --name worker
+  --name worker \
+  -- \
+  --model Qwen/Qwen2.5-0.5B
 ```
 
 ## 3）验证集群与 worker
@@ -87,9 +90,9 @@ curl -N http://localhost:8080/v1/chat/completions \
 ## 排障
 
 - 如果出现 `No available workers`，请检查：
-  - router 是否带了 `--addr`
-  - worker 是否通过 `--seeds <router_addr>` 加入
-  - worker actor 名称是否为 `worker`（默认）
+  - Router 已用 `--addr` 启动，Worker 已用 `--seeds <router_addr>` 加入
+  - **名字一致**：Worker 用 `--name worker`（`--` 前）启动，或 Router 用 `--worker_name <名字>`（`--` 后）与 Worker 一致
+  - 执行 `pulsing inspect actors --seeds 127.0.0.1:8000`，确认能看到 Router 在找的名字（默认 `worker`）
 
 更多：
 

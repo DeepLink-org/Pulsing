@@ -1,15 +1,19 @@
 """
 pulsing.ray - Initialize Pulsing in Ray cluster
 
-Each Ray worker process can call init_in_ray() to start Pulsing and auto-join the cluster.
+For automatic cluster formation, use pulsing.bootstrap(ray=True, torchrun=False) (or
+pul.bootstrap() to try both Ray and torchrun). This module provides init_in_ray(),
+used by bootstrap and as worker_process_setup_hook so each Ray worker initializes Pulsing.
+
 Uses Ray's internal KV store to coordinate seed node discovery.
 
 Recommended usage:
     import ray
     from pulsing.integrations.ray import init_in_ray
+    import pulsing as pul
 
     ray.init(runtime_env={"worker_process_setup_hook": init_in_ray})
-    init_in_ray()  # driver process also needs initialization
+    pul.bootstrap(ray=True, torchrun=False, wait_timeout=30)  # driver
 """
 
 try:

@@ -6,7 +6,14 @@ Pulsing ships with built-in CLI tools for starting actors, inspecting systems, a
 
 ## Starting Actors
 
-The `pulsing actor` command starts actors by providing their full class path. The CLI automatically matches command-line arguments to the Actor's constructor parameters.
+The `pulsing actor` command starts actors by providing their full class path. Arguments are split by `--` so that **actor-level options** (e.g. `--addr`, `--seeds`, `--name`) and **Actor constructor arguments** never collide.
+
+### Parameter separation (`--`)
+
+- **Before `--`**: All arguments are passed to the `actor` subcommand as-is (positional actor type + any options such as `--addr`, `--seeds`, `--name`).
+- **After `--`**: All `--key value` pairs are collected and passed to the Actor's constructor. Use this to avoid name collision with actor-level options.
+
+If you omit `--`, only the arguments recognized by the `actor` subcommand are used; constructor args must then be passed via `-D actor.extra_kwargs='{"key":"value"}'` or by using `--` when you need to pass both.
 
 ### Format
 
@@ -22,8 +29,11 @@ Actor type must be a full class path:
 #### Router (OpenAI-compatible HTTP API)
 
 ```bash
+# Actor-level (addr, name) before --; Router constructor args after --
 pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
+  --name my-llm \
+  -- \
   --http_host 0.0.0.0 \
   --http_port 8080 \
   --model_name my-llm \
@@ -35,21 +45,23 @@ pulsing actor pulsing.serving.Router \
 
 ```bash
 pulsing actor pulsing.serving.worker.TransformersWorker \
-  --model_name gpt2 \
-  --device cpu \
   --addr 0.0.0.0:8001 \
   --seeds 127.0.0.1:8000 \
-  --name worker
+  --name worker \
+  -- \
+  --model_name gpt2 \
+  --device cpu
 ```
 
 #### vLLM Worker
 
 ```bash
 pulsing actor pulsing.serving.vllm.VllmWorker \
-  --model Qwen/Qwen2 \
   --addr 0.0.0.0:8002 \
   --seeds 127.0.0.1:8000 \
   --name worker \
+  -- \
+  --model Qwen/Qwen2 \
   --role aggregated \
   --max_new_tokens 512
 ```
@@ -59,61 +71,36 @@ pulsing actor pulsing.serving.vllm.VllmWorker \
 ```bash
 # Start multiple workers with different names
 pulsing actor pulsing.serving.worker.TransformersWorker \
-  --model_name gpt2 \
   --name worker-1 \
-  --seeds 127.0.0.1:8000
+  --seeds 127.0.0.1:8000 \
+  -- --model_name gpt2
 
 pulsing actor pulsing.serving.worker.TransformersWorker \
-  --model_name gpt2 \
   --name worker-2 \
-  --seeds 127.0.0.1:8000
+  --seeds 127.0.0.1:8000 \
+  -- --model_name gpt2
 
 # Router targeting specific worker name
 pulsing actor pulsing.serving.Router \
-  --worker_name worker-1 \
-  --seeds 127.0.0.1:8000
+  --addr 0.0.0.0:8000 \
+  --seeds 127.0.0.1:8000 \
+  -- --worker_name worker-1
 ```
 
-### Common Options
+### Common options (before `--`)
 
 - `--name NAME`: Actor name (default: "worker")
 - `--addr ADDR`: Actor System bind address
 - `--seeds SEEDS`: Comma-separated list of seed nodes
-- Any other `--param value` pairs matching the Actor's constructor signature
 
-### How It Works
-
-```bash
-# Pass parameters directly as command-line arguments
-pulsing actor pulsing.serving.worker.TransformersWorker \
-  --model_name gpt2 \
-  --device cpu \
-  --preload true \
-  --name my-worker \
-  --seeds 127.0.0.1:8000
-
-# Start vLLM worker with all parameters
-pulsing actor pulsing.serving.vllm.VllmWorker \
-  --model Qwen/Qwen2 \
-  --role aggregated \
-  --max_new_tokens 512 \
-  --name vllm-worker \
-  --seeds 127.0.0.1:8000
-```
-
-Options:
-- `--name NAME`: Actor name (default: "worker")
-- `--addr ADDR`: Actor System bind address
-- `--seeds SEEDS`: Comma-separated list of seed nodes
-- Any other `--param value` pairs matching the Actor's constructor signature
+Arguments after `--` are passed to the Actor's constructor as `--key value` pairs.
 
 The Actor class must:
 - Be importable from the specified module path
 - Inherit from `pulsing.core.Actor`
-- Have a constructor with named parameters (the CLI automatically matches arguments to constructor parameters)
+- Have a constructor with named parameters (arguments after `--` are matched to constructor parameters)
 
-**How it works:**
-The CLI inspects the Actor class constructor signature and automatically extracts matching parameters from command-line arguments. You can use `--help` to see available parameters, or check the Actor class documentation.
+**How it works:** The CLI passes everything before `--` to the actor subcommand, and collects every `--key value` after `--` into the Actor constructor. Use `pulsing actor <class> --help` to see actor-level options; for constructor parameters, see the Actor class documentation.
 
 ---
 
@@ -227,10 +214,10 @@ pulsing bench gpt2 --url http://localhost:8080
 
 | Task | Command |
 |------|---------|
-| Start router | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --http_port 8080` |
-| Start worker | `pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --seeds ...` |
-| Start multiple workers | `pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --name worker-1 --seeds ...` |
-| Router with custom worker | `pulsing actor pulsing.serving.Router --worker_name worker-1 --seeds ...` |
+| Start router | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 -- --http_port 8080 --model_name my-llm` |
+| Start worker | `pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8001 --seeds ... -- --model_name gpt2` |
+| Start multiple workers | `pulsing actor ... --name worker-1 --seeds ... -- --model_name gpt2` |
+| Router with custom worker | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 -- --worker_name worker-1` |
 | List actors | `pulsing inspect actors --endpoint 127.0.0.1:8000` |
 | Inspect cluster | `pulsing inspect cluster --seeds 127.0.0.1:8000` |
 | Inspect actors | `pulsing inspect actors --seeds 127.0.0.1:8000 --top 10` |

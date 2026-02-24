@@ -91,7 +91,7 @@ result = await proxy.any_method(args)
 
 `pul.mount` registers any Python object as a Pulsing actor, enabling tight integration between Ray actors and Pulsing.
 
-**Running Pulsing in a Ray cluster:** Every process (driver and workers) must initialize Pulsing. Use `pulsing.ray.init_in_ray()` and pass it in `ray.init(runtime_env={"worker_process_setup_hook": init_in_ray})` so workers call it on startup; the driver must call `init_in_ray()` once in code. See the `pulsing.ray` module for details.
+**Running Pulsing in a Ray cluster:** Use `pulsing.bootstrap(ray=True, torchrun=False, wait_timeout=...)` in the driver; set `ray.init(runtime_env={"worker_process_setup_hook": init_in_ray})` so every worker runs `init_in_ray` on startup. See [Cluster Networking](../docs/src/quickstart/cluster_networking.md) and `pulsing.bootstrap` for details.
 
 ```python
 import pulsing as pul

@@ -671,6 +671,13 @@ impl GossipCluster {
 
     pub async fn unregister_named_actor(&self, path: &ActorPath) {
         let key = path.as_str();
+        let actor_id = {
+            let named = self.state.named_actors.read().await;
+            named
+                .get(&key)
+                .and_then(|info| info.instances.get(&self.state.local_node))
+                .map(|inst| inst.actor_id)
+        };
         {
             let mut named = self.state.named_actors.write().await;
             if let Some(info) = named.get_mut(&key) {
@@ -679,6 +686,9 @@ impl GossipCluster {
                     named.remove(&key);
                 }
             }
+        }
+        if let Some(aid) = actor_id {
+            self.unregister_actor(&aid).await;
         }
         let msg = GossipMessage::NamedActorUnregistered {
             path: path.clone(),

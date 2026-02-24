@@ -67,7 +67,9 @@ Gossip 的节奏与行为由 `GossipConfig` 控制：`gossip_interval`、`fanout
 
 ---
 
-## Init in Ray：实现原理
+## Init in Ray / Bootstrap：实现原理
+
+推荐在 Ray 或 torchrun 下使用统一入口 **`pulsing.bootstrap(ray=..., torchrun=..., on_ready=..., wait_timeout=...)`**；其后台会执行 `init_in_ray` 和/或 `init_in_torchrun`。
 
 - Pulsing 运行在 **Ray** 集群内。每个使用 Pulsing 的进程调用 `init_in_ray()`（或 `async_init_in_ray()`）。
 - **Seed 发现**使用 Ray 的 **internal KV**：

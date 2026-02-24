@@ -17,6 +17,8 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
+import pulsing
+
 # Import Rust policies if available
 try:
     from pulsing._core import (
@@ -53,7 +55,7 @@ class Scheduler(ABC):
     async def get_available_workers(self):
         try:
             return await self._system.get_named_instances(self._worker_name)
-        except Exception:
+        except Exception as e:
             return []
 
     async def get_worker_count(self) -> int:
@@ -109,8 +111,7 @@ class RoundRobinScheduler(Scheduler):
         async with self._lock:
             self._index = (self._index + 1) % len(workers)
             selected_worker = workers[self._index]
-
-        return await self._resolve_worker(node_id=selected_worker.get("node_id"))
+        return await pulsing.refer(selected_worker.get("actor_id"))
 
 
 class RandomScheduler(Scheduler):
@@ -128,7 +129,7 @@ class RandomScheduler(Scheduler):
             return None
 
         selected_worker = random.choice(workers)
-        return await self._resolve_worker(node_id=selected_worker.get("node_id"))
+        return await pulsing.refer(selected_worker.get("actor_id"))
 
 
 class LeastConnectionScheduler(Scheduler):
@@ -154,7 +155,7 @@ class LeastConnectionScheduler(Scheduler):
             node_id = selected_worker.get("node_id")
             self._request_counts[node_id] = self._request_counts.get(node_id, 0) + 1
 
-        return await self._resolve_worker(node_id=node_id)
+        return await pulsing.refer(selected_worker.get("actor_id"))
 
 
 # ============================================================================
@@ -224,7 +225,7 @@ class RustRandomScheduler(RustSchedulerBase):
             return None
 
         selected_worker = workers[selected_idx]
-        return await self._resolve_worker(node_id=selected_worker.get("node_id"))
+        return await pulsing.refer(selected_worker.get("actor_id"))
 
 
 class RustRoundRobinScheduler(RustSchedulerBase):
@@ -255,7 +256,7 @@ class RustRoundRobinScheduler(RustSchedulerBase):
             return None
 
         selected_worker = workers[selected_idx]
-        return await self._resolve_worker(node_id=selected_worker.get("node_id"))
+        return await pulsing.refer(selected_worker.get("actor_id"))
 
     def reset(self):
         """Reset round-robin counter"""
@@ -294,7 +295,7 @@ class RustPowerOfTwoScheduler(RustSchedulerBase):
             return None
 
         selected_worker = workers[selected_idx]
-        return await self._resolve_worker(node_id=selected_worker.get("node_id"))
+        return await pulsing.refer(selected_worker.get("actor_id"))
 
     def update_loads(self, loads: dict[str, int]):
         """Update cached load information
@@ -351,7 +352,7 @@ class RustConsistentHashScheduler(RustSchedulerBase):
             return None
 
         selected_worker = workers[selected_idx]
-        return await self._resolve_worker(node_id=selected_worker.get("node_id"))
+        return await pulsing.refer(selected_worker.get("actor_id"))
 
     def reset(self):
         """Reset hash ring"""
@@ -421,7 +422,7 @@ class RustCacheAwareScheduler(RustSchedulerBase):
             return None
 
         selected_worker = workers[selected_idx]
-        return await self._resolve_worker(node_id=selected_worker.get("node_id"))
+        return await pulsing.refer(selected_worker.get("actor_id"))
 
     def add_worker(self, url: str, model_id: str = "default"):
         """Add worker to cache tree"""

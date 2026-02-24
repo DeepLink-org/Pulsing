@@ -55,15 +55,15 @@ Open **Terminal A**:
 ```bash
 pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
+  -- \
   --http_port 8080 \
   --model_name my-llm
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--addr` | Actor system address (workers join here) |
-| `--http_port` | OpenAI-compatible HTTP endpoint |
-| `--model_name` | Model name in API responses |
+| `--addr` (before `--`) | Actor system address (workers join here) |
+| `--http_port`, `--model_name` (after `--`) | Router constructor: HTTP port, model name in API responses |
 
 ---
 
@@ -75,25 +75,27 @@ Open **Terminal B**:
 
     ```bash
     pulsing actor pulsing.serving.TransformersWorker \
-      --model_name gpt2 \
-      --device cpu \
       --addr 0.0.0.0:8001 \
-      --seeds 127.0.0.1:8000
+      --seeds 127.0.0.1:8000 \
+      -- \
+      --model_name gpt2 \
+      --device cpu
     ```
 
 === "vLLM (GPU)"
 
     ```bash
     pulsing actor pulsing.serving.VllmWorker \
-      --model Qwen/Qwen2.5-0.5B \
       --addr 0.0.0.0:8002 \
-      --seeds 127.0.0.1:8000
+      --seeds 127.0.0.1:8000 \
+      -- \
+      --model Qwen/Qwen2.5-0.5B
     ```
 
 | Flag | Description |
 |------|-------------|
-| `--model` / `--model_name` | Model name/path (TransformersWorker uses `--model_name`, VllmWorker uses `--model`) |
-| `--seeds` | Router address to join cluster |
+| `--addr`, `--seeds` (before `--`) | Actor-level: bind address, seed nodes |
+| `--model` / `--model_name` (after `--`) | Constructor: model name/path |
 
 ---
 
@@ -145,10 +147,10 @@ Add more workers to handle more load:
 
 ```bash
 # Terminal C
-pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --addr 0.0.0.0:8003 --seeds 127.0.0.1:8000
+pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8003 --seeds 127.0.0.1:8000 -- --model_name gpt2
 
 # Terminal D
-pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --addr 0.0.0.0:8004 --seeds 127.0.0.1:8000
+pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8004 --seeds 127.0.0.1:8000 -- --model_name gpt2
 ```
 
 The Router automatically load-balances across all workers.
@@ -159,7 +161,7 @@ The Router automatically load-balances across all workers.
 
 | Problem | Solution |
 |---------|----------|
-| `No available workers` | Ensure workers use `--seeds <router_addr>` |
+| `No available workers` | Router looks for actors named `worker` by default. (1) Start workers with `--name worker` (before `--`). (2) Or start Router with `--worker_name <name>` (after `--`) to match. (3) Workers must use `--seeds <router_addr>`. Check: `pulsing inspect actors --seeds 127.0.0.1:8000` and ensure a `worker` (or your custom name) appears. |
 | Connection refused | Check router started with `--addr` |
 | Slow startup | First request loads model weights |
 

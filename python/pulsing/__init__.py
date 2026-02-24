@@ -72,6 +72,29 @@ def cleanup_ray():
     return cleanup()
 
 
+# torchrun / torch.distributed integration (lazy import)
+def init_inside_torchrun():
+    """Initialize Pulsing in current process and join cluster via torch.distributed.
+
+    Rank 0 becomes the seed; others join with seeds=[rank0_addr]. Call after
+    torch.distributed.init_process_group() (e.g. when launched with torchrun).
+
+    Usage::
+
+        import torch.distributed as dist
+        dist.init_process_group(...)
+        system = pul.init_inside_torchrun()
+    """
+    from pulsing.integrations.torchrun import init_in_torchrun
+
+    return init_in_torchrun()
+
+
+# Bootstrap: single API — pulsing.bootstrap(ray=..., torchrun=..., on_ready=..., wait_timeout=...)
+from pulsing.bootstrap import bootstrap, stop as bootstrap_stop  # noqa: E402
+
+bootstrap.stop = bootstrap_stop
+
 # Import exceptions
 from pulsing.exceptions import (
     PulsingError,
@@ -248,6 +271,8 @@ async def refer(actorid: ActorId | str) -> ActorRef:
     if isinstance(actorid, str):
         # Parse string to ActorId
         actorid = ActorId.from_str(actorid)
+    if isinstance(actorid, int):
+        actorid = ActorId(actorid)
     return await system.refer(actorid)
 
 
@@ -313,6 +338,10 @@ __all__ = [
     # Ray integration
     "init_inside_ray",
     "cleanup_ray",
+    # torchrun integration
+    "init_inside_torchrun",
+    # Bootstrap (auto cluster in background, wait_ready() for callers)
+    "bootstrap",
     # Types
     "Actor",
     "ActorSystem",

@@ -27,12 +27,14 @@
 
 ### 启动 Actor
 
-```bash
-pulsing actor <完整类路径> [选项]
+参数以 `--` 分隔：`--` 前为 actor 子命令选项（如 `--addr`、`--seeds`、`--name`），`--` 后为 Actor 构造参数。
 
-# 示例
-pulsing actor pulsing.serving.Router --http_port 8080 --model_name my-llm
-pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --device cpu
+```bash
+pulsing actor <完整类路径> [选项] [-- 构造参数]
+
+# 示例（用 -- 区分 actor 级选项与构造参数）
+pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 -- --http_port 8080 --model_name my-llm
+pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8001 -- --model_name gpt2 --device cpu
 ```
 
 ### 检查命令（观察者模式）

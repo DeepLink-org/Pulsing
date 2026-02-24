@@ -99,6 +99,8 @@ impl ActorSystem {
                             .register_named_actor_full(path.clone(), actor_id, metadata)
                             .await;
                     }
+                    // So refer(actor_id) / lookup_actor can resolve this actor on any node
+                    cluster.register_actor(actor_id).await;
                 }
             }
         } else {

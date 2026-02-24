@@ -9,7 +9,8 @@ def actor(
     addr: str | None = None,
     seeds: str | None = None,
     name: str = "worker",  # Actor name (default: "worker")
-    **kwargs,  # Additional arguments for Actor constructor
+    extra_kwargs: dict
+    | None = None,  # Additional arguments for Actor constructor (--key value from CLI)
 ):
     r"""
     Start an Actor-based service.
@@ -23,32 +24,32 @@ def actor(
     - Example: 'pulsing.serving.VllmWorker'
     - Example: 'my_module.my_actor.MyCustomActor'
 
-    Pass constructor parameters directly as command-line arguments.
-    The CLI will automatically match parameters to the Actor's constructor signature.
+    Parameter separation (avoids name collision):
+    - Actor-level (process/cluster): --addr, --seeds, --name. Pass before \"--\".
+    - Actor constructor args: pass after \"--\" so they never collide with --addr/--seeds/--name.
 
     Note: To list actors, use 'pulsing inspect actors' instead.
 
     Args:
-        actor_type: Full class path (positional argument), e.g., 'pulsing.serving.worker.TransformersWorker'
-        addr: Actor System bind address (e.g., '0.0.0.0:8000')
-        seeds: Comma-separated list of seed nodes (e.g., '192.168.1.1:8000,192.168.1.2:8000')
-        name: Actor name. Default: 'worker'. Use different names to run multiple workers in the same cluster.
-        **kwargs: Additional arguments matching the Actor's constructor parameters.
-            Pass parameters directly as command-line arguments, e.g., --model_name gpt2 --device cpu
+        actor_type: Full class path (positional), e.g. pulsing.serving.Router
+        addr: Bind address (e.g. 0.0.0.0:8000)
+        seeds: Comma-separated seed nodes (e.g. 192.168.1.1:8000,192.168.1.2:8000)
+        name: Actor name (default: worker). Use different names for multiple workers.
+        extra_kwargs: Constructor arguments. Pass after \"--\" or via -D actor.extra_kwargs='{...}'.
 
     Examples:
+        # Actor-level before \"--\", constructor args after (no collision)
+        pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --name my-llm -- --model_name my-llm --http_port 8080
+
         # Start a Transformers worker
-        pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --device cpu --name my-worker
+        pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8000 -- --model_name gpt2 --device cpu
 
-        # Start a vLLM worker
-        pulsing actor pulsing.serving.VllmWorker --model Qwen/Qwen2 --role aggregated --max_new_tokens 512 --name vllm-worker
+        # Start a Router (constructor args after --)
+        pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --name my-llm -- --http_host 0.0.0.0 --http_port 8080 --model_name my-llm --worker_name worker
 
-        # Start a Router with OpenAI-compatible API
-        pulsing actor pulsing.serving.Router --http_host 0.0.0.0 --http_port 8080 --model_name my-llm --worker_name worker
-
-        # Start multiple workers with different names
-        pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --name worker-1 --seeds 127.0.0.1:8000
-        pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --name worker-2 --seeds 127.0.0.1:8000
+        # Multiple workers
+        pulsing actor pulsing.serving.TransformersWorker --name worker-1 --seeds 127.0.0.1:8000 -- --model_name gpt2
+        pulsing actor pulsing.serving.TransformersWorker --name worker-2 --seeds 127.0.0.1:8000 -- --model_name gpt2
     """
     from .actors import start_generic_actor
 
@@ -73,13 +74,19 @@ def actor(
     if seeds:
         seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
 
+    # extra_kwargs may be str when passed via -D actor.extra_kwargs='{...}'
+    import json
+
+    kwargs = extra_kwargs or {}
+    if isinstance(kwargs, str):
+        kwargs = json.loads(kwargs) if kwargs.strip() else {}
     # Start generic Actor class
     start_generic_actor(
         actor_type=actor_type,
         addr=addr,
         seeds=seed_list,
         name=name,
-        extra_kwargs=kwargs,  # All additional CLI arguments
+        extra_kwargs=kwargs,
     )
 
 
@@ -306,17 +313,59 @@ def examples(name: str | None = None):
     print(f"Quick run:\n  python -m pulsing.examples.{name}")
 
 
+def _collect_key_value_pairs(tokens: list[str]) -> dict:
+    """Collect --key value pairs from token list into a dict. Keys normalized to snake_case."""
+    extra = {}
+    i = 0
+    while i < len(tokens):
+        a = tokens[i]
+        if a.startswith("--") and not a.startswith("---") and len(a) > 2:
+            key = a[2:].replace("-", "_")
+            if i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
+                extra[key] = tokens[i + 1]
+                i += 2
+                continue
+        i += 1
+    return extra
+
+
+def _actor_argv_rewrite(argv: list[str]) -> list[str]:
+    """Pre-parse 'pulsing actor ...' argv: split on \"--\" only.
+
+    - Before \"--\": entire token list is passed through to the actor subcommand (no name-based parsing).
+    - After \"--\": collected as --key value and injected as actor.extra_kwargs (constructor args).
+    - If there is no \"--\", argv is left unchanged.
+    """
+    import json
+
+    if len(argv) < 2 or argv[1] != "actor":
+        return argv
+    rest = argv[2:]
+    if "--" not in rest:
+        return argv
+    dash_idx = rest.index("--")
+    before, after = rest[:dash_idx], rest[dash_idx + 1 :]
+    extra = _collect_key_value_pairs(after)
+    if not extra:
+        return argv
+    return (
+        [argv[0], "actor"] + before + ["-D", f"actor.extra_kwargs={json.dumps(extra)}"]
+    )
+
+
 def main():
     import sys
 
     # Make `pulsing examples <name>` work with positional arguments
-    # hp framework treats params with default values as --name options, so we convert here
     if (
         len(sys.argv) >= 3
         and sys.argv[1] == "examples"
         and not sys.argv[2].startswith("-")
     ):
         sys.argv = [sys.argv[0], "examples", "--name", sys.argv[2]] + sys.argv[3:]
+
+    # Pre-parse 'actor' so --model_name my-llm etc. become actor.extra_kwargs (avoids required kwargs positional)
+    sys.argv = _actor_argv_rewrite(sys.argv)
 
     hp.launch()
 

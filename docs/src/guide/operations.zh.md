@@ -6,7 +6,14 @@ Pulsing 内置 CLI 工具，用于启动 actors、检查系统和基准测试分
 
 ## 启动 Actor
 
-`pulsing actor` 命令通过提供完整的类路径来启动 actors。CLI 会自动将命令行参数匹配到 Actor 的构造函数参数。
+`pulsing actor` 通过完整类路径启动 actor。参数以 `--` 分隔，避免 **actor 级选项**（如 `--addr`、`--seeds`、`--name`）与 **Actor 构造参数** 重名。
+
+### 参数分隔（`--`）
+
+- **`--` 之前**：整段原样传给 `actor` 子命令（位置参数：actor 类型 + 任意选项如 `--addr`、`--seeds`、`--name`）。
+- **`--` 之后**：所有 `--key value` 会收集并传给 Actor 的构造函数。用于传入构造参数，避免与 actor 级选项冲突。
+
+若不写 `--`，则只会使用 `actor` 子命令能识别的参数；若要同时传 actor 级与构造参数，请使用 `--` 分隔，或通过 `-D actor.extra_kwargs='{"key":"value"}'` 传构造参数。
 
 ### 格式
 
@@ -22,8 +29,11 @@ Actor 类型必须是完整的类路径：
 #### Router（OpenAI 兼容 HTTP API）
 
 ```bash
+# actor 级（addr、name）在 -- 前；Router 构造参数在 -- 后
 pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
+  --name my-llm \
+  -- \
   --http_host 0.0.0.0 \
   --http_port 8080 \
   --model_name my-llm \
@@ -35,21 +45,23 @@ pulsing actor pulsing.serving.Router \
 
 ```bash
 pulsing actor pulsing.serving.worker.TransformersWorker \
-  --model_name gpt2 \
-  --device cpu \
   --addr 0.0.0.0:8001 \
   --seeds 127.0.0.1:8000 \
-  --name worker
+  --name worker \
+  -- \
+  --model_name gpt2 \
+  --device cpu
 ```
 
 #### vLLM Worker
 
 ```bash
 pulsing actor pulsing.serving.vllm.VllmWorker \
-  --model Qwen/Qwen2 \
   --addr 0.0.0.0:8002 \
   --seeds 127.0.0.1:8000 \
   --name worker \
+  -- \
+  --model Qwen/Qwen2 \
   --role aggregated \
   --max_new_tokens 512
 ```
@@ -59,36 +71,36 @@ pulsing actor pulsing.serving.vllm.VllmWorker \
 ```bash
 # 启动多个不同名称的 worker
 pulsing actor pulsing.serving.worker.TransformersWorker \
-  --model_name gpt2 \
   --name worker-1 \
-  --seeds 127.0.0.1:8000
+  --seeds 127.0.0.1:8000 \
+  -- --model_name gpt2
 
 pulsing actor pulsing.serving.worker.TransformersWorker \
-  --model_name gpt2 \
   --name worker-2 \
-  --seeds 127.0.0.1:8000
+  --seeds 127.0.0.1:8000 \
+  -- --model_name gpt2
 
 # Router 路由到特定 worker 名称
 pulsing actor pulsing.serving.Router \
-  --worker_name worker-1 \
-  --seeds 127.0.0.1:8000
+  --addr 0.0.0.0:8000 \
+  --seeds 127.0.0.1:8000 \
+  -- --worker_name worker-1
 ```
 
-### 通用选项
+### 通用选项（`--` 之前）
 
 - `--name NAME`: Actor 名称（默认: "worker"）
 - `--addr ADDR`: Actor System 绑定地址
 - `--seeds SEEDS`: 逗号分隔的种子节点列表
-- 任何其他 `--param value` 参数对，匹配 Actor 的构造函数签名
 
-### 工作原理
-
-CLI 会检查 Actor 类的构造函数签名，并自动从命令行参数中提取匹配的参数。可以使用 `--help` 查看可用参数，或查看 Actor 类的文档。
+`--` 之后的参数以 `--key value` 形式传入 Actor 构造函数。
 
 Actor 类必须：
-- 可以从指定的模块路径导入
+- 可从指定模块路径导入
 - 继承自 `pulsing.core.Actor`
-- 具有带命名参数的构造函数（CLI 会自动将参数匹配到构造函数参数）
+- 构造函数为命名参数（`--` 后的参数会匹配到构造参数）
+
+**工作原理**：`--` 之前的整段原样传给 actor 子命令；`--` 之后的每个 `--key value` 会收集并传入 Actor 构造函数。可用 `pulsing actor <class> --help` 查看 actor 级选项；构造参数见各 Actor 类文档。
 
 ---
 
@@ -209,10 +221,10 @@ pulsing bench gpt2 --url http://localhost:8080
 
 | 任务 | 命令 |
 |------|------|
-| 启动 router | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --http_port 8080` |
-| 启动 worker | `pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --seeds ...` |
-| 启动多个 worker | `pulsing actor pulsing.serving.TransformersWorker --model_name gpt2 --name worker-1 --seeds ...` |
-| Router 指定 worker | `pulsing actor pulsing.serving.Router --worker_name worker-1 --seeds ...` |
+| 启动 router | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 -- --http_port 8080 --model_name my-llm` |
+| 启动 worker | `pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8001 --seeds ... -- --model_name gpt2` |
+| 启动多个 worker | `pulsing actor ... --name worker-1 --seeds ... -- --model_name gpt2` |
+| Router 指定 worker | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 -- --worker_name worker-1` |
 | 列出 actors | `pulsing inspect actors --endpoint 127.0.0.1:8000` |
 | 检查集群 | `pulsing inspect cluster --seeds 127.0.0.1:8000` |
 | 检查 actors | `pulsing inspect actors --seeds 127.0.0.1:8000 --top 10` |

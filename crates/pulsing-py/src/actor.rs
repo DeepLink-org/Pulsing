@@ -1920,45 +1920,24 @@ impl PyActorSystem {
                 ActorPath::new(&name).map_err(to_py_value_err)?
             };
             let instances = system.get_named_instances_detailed(&path).await;
-            let result: Vec<std::collections::HashMap<String, serde_json::Value>> = instances
-                .into_iter()
-                .map(|(member, instance_opt)| {
-                    let mut map = std::collections::HashMap::new();
-                    // Use decimal string for node_id to match members() format
-                    map.insert(
-                        "node_id".to_string(),
-                        serde_json::Value::String(member.node_id.0.to_string()),
-                    );
-                    map.insert(
-                        "addr".to_string(),
-                        serde_json::Value::String(member.addr.to_string()),
-                    );
-                    map.insert(
-                        "status".to_string(),
-                        serde_json::Value::String(format!("{:?}", member.status)),
-                    );
-
-                    // Add detailed instance info if available
-                    if let Some(inst) = instance_opt {
-                        // Use decimal string for actor_id to match other APIs
-                        map.insert(
-                            "actor_id".to_string(),
-                            serde_json::Value::String(inst.actor_id.0.to_string()),
-                        );
-                        // Add metadata fields
-                        for (k, v) in inst.metadata {
-                            map.insert(k, serde_json::Value::String(v));
-                        }
-                    }
-
-                    map
-                })
-                .collect();
 
             Python::with_gil(|py| -> PyResult<PyObject> {
-                use pythonize::pythonize;
-                let pyobj = pythonize(py, &result)?;
-                Ok(pyobj.into())
+                use pyo3::types::PyDict;
+                let list = pyo3::types::PyList::empty(py);
+                for (member, instance_opt) in instances {
+                    let dict = PyDict::new(py);
+                    dict.set_item("node_id", member.node_id.0)?;
+                    dict.set_item("addr", member.addr.to_string())?;
+                    dict.set_item("status", format!("{:?}", member.status))?;
+                    if let Some(inst) = instance_opt {
+                        dict.set_item("actor_id", inst.actor_id.0)?;
+                        for (k, v) in inst.metadata {
+                            dict.set_item(k, v)?;
+                        }
+                    }
+                    list.append(dict)?;
+                }
+                Ok(list.into_pyobject(py)?.into())
             })
         })
     }

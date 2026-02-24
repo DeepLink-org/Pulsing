@@ -67,7 +67,9 @@ In Rust, `ActorSystem::new(config)` builds a `NamingBackend`: if `config.head_ad
 
 ---
 
-## Init in Ray: how it works
+## Init in Ray / Bootstrap: how it works
+
+The recommended Python API for Ray or torchrun is **`pulsing.bootstrap(ray=..., torchrun=..., on_ready=..., wait_timeout=...)`**; it runs `init_in_ray` and/or `init_in_torchrun` in the background.
 
 - Pulsing runs inside a **Ray** cluster. Each process that uses Pulsing calls `init_in_ray()` (or `async_init_in_ray()`).
 - **Seed discovery** uses Ray’s **internal KV store**:

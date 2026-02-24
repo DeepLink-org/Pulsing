@@ -21,6 +21,7 @@ The router needs an **actor system address** so workers can join the same cluste
 ```bash
 pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
+  -- \
   --http_host 0.0.0.0 \
   --http_port 8080 \
   --model_name my-llm \
@@ -35,21 +36,23 @@ You can run **one or more** workers. Each worker should join the router node via
 
 ```bash
 pulsing actor pulsing.serving.worker.TransformersWorker \
-  --model_name gpt2 \
-  --device cpu \
   --addr 0.0.0.0:8001 \
   --seeds 127.0.0.1:8000 \
-  --name worker
+  --name worker \
+  -- \
+  --model_name gpt2 \
+  --device cpu
 ```
 
 ### Option B: vLLM worker (Terminal C)
 
 ```bash
 pulsing actor pulsing.serving.vllm.VllmWorker \
-  --model Qwen/Qwen2.5-0.5B \
   --addr 0.0.0.0:8002 \
   --seeds 127.0.0.1:8000 \
-  --name worker
+  --name worker \
+  -- \
+  --model Qwen/Qwen2.5-0.5B
 ```
 
 ## 3) Verify cluster + workers
@@ -87,9 +90,9 @@ curl -N http://localhost:8080/v1/chat/completions \
 ## Troubleshooting
 
 - If you see `No available workers`, ensure:
-  - router is started with `--addr`
-  - workers join via `--seeds <router_addr>`
-  - the worker actor name is `worker` (default)
+  - router is started with `--addr` and workers join via `--seeds <router_addr>`
+  - the worker actor **name** matches: workers started with `--name worker` (before `--`), or start the router with `--worker_name <name>` (after `--`) to match your worker name
+  - check: `pulsing inspect actors --seeds 127.0.0.1:8000` — you should see an actor with the name the router is looking for (default `worker`)
 
 See also:
 
