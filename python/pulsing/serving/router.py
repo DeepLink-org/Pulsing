@@ -464,7 +464,7 @@ class Router(Actor):
         http_port: int = 8080,
         model_name: str = "pulsing-model",
         worker_name: str = "worker",
-        scheduler_type: str = "stream_load",
+        scheduler_type: str = "round_robin",
     ):
         self.http_host = http_host
         self.http_port = http_port

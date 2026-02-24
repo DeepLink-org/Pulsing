@@ -1878,19 +1878,18 @@ impl PyActorSystem {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let members = system.members().await;
-            // Return all fields as strings for safe JSON serialization
-            let result: Vec<std::collections::HashMap<String, String>> = members
-                .into_iter()
-                .map(|m| {
-                    let mut map = std::collections::HashMap::new();
-                    // Use string representation to avoid JSON integer overflow
-                    map.insert("node_id".to_string(), m.node_id.0.to_string());
-                    map.insert("addr".to_string(), m.addr.to_string());
-                    map.insert("status".to_string(), format!("{:?}", m.status));
-                    map
-                })
-                .collect();
-            Ok(result)
+            Python::with_gil(|py| -> PyResult<PyObject> {
+                use pyo3::types::PyDict;
+                let list = pyo3::types::PyList::empty(py);
+                for m in members {
+                    let dict = PyDict::new(py);
+                    dict.set_item("node_id", m.node_id.0)?;
+                    dict.set_item("addr", m.addr.to_string())?;
+                    dict.set_item("status", format!("{:?}", m.status))?;
+                    list.append(dict)?;
+                }
+                Ok(list.into_pyobject(py)?.into())
+            })
         })
     }
 
@@ -1950,64 +1949,33 @@ impl PyActorSystem {
             let all_named = system.all_named_actors().await;
 
             Python::with_gil(|py| -> PyResult<PyObject> {
-                use pythonize::pythonize;
-                let result: Vec<std::collections::HashMap<String, serde_json::Value>> = all_named
-                    .into_iter()
-                    .map(|info| {
-                        let mut map = std::collections::HashMap::new();
-                        map.insert(
-                            "path".to_string(),
-                            serde_json::Value::String(info.path.as_str().to_string()),
-                        );
-                        map.insert(
-                            "instance_count".to_string(),
-                            serde_json::Value::Number(serde_json::Number::from(
-                                info.instance_count(),
-                            )),
-                        );
-                        // Convert instance_nodes (HashSet<NodeId>) to list of node IDs as decimal strings
-                        let instances: Vec<serde_json::Value> = info
-                            .instance_nodes
-                            .iter()
-                            .map(|id| serde_json::Value::String(id.0.to_string()))
-                            .collect();
-                        map.insert("instances".to_string(), serde_json::Value::Array(instances));
-
-                        // Add detailed instance info if available
-                        let detailed: Vec<serde_json::Value> = info
-                            .instances
-                            .iter()
-                            .map(|(node_id, inst)| {
-                                let mut inst_map = serde_json::Map::new();
-                                // Use decimal string to match members() format
-                                inst_map.insert(
-                                    "node_id".to_string(),
-                                    serde_json::Value::String(node_id.0.to_string()),
-                                );
-                                inst_map.insert(
-                                    "actor_id".to_string(),
-                                    serde_json::Value::String(inst.actor_id.0.to_string()),
-                                );
-                                // Add metadata
-                                for (k, v) in &inst.metadata {
-                                    inst_map
-                                        .insert(k.clone(), serde_json::Value::String(v.clone()));
-                                }
-                                serde_json::Value::Object(inst_map)
-                            })
-                            .collect();
-                        if !detailed.is_empty() {
-                            map.insert(
-                                "detailed_instances".to_string(),
-                                serde_json::Value::Array(detailed),
-                            );
+                use pyo3::types::PyDict;
+                let list = pyo3::types::PyList::empty(py);
+                for info in all_named {
+                    let dict = PyDict::new(py);
+                    dict.set_item("path", info.path.as_str())?;
+                    dict.set_item("instance_count", info.instance_count())?;
+                    let instances_list = pyo3::types::PyList::empty(py);
+                    for id in &info.instance_nodes {
+                        instances_list.append(id.0)?;
+                    }
+                    dict.set_item("instances", instances_list)?;
+                    if !info.instances.is_empty() {
+                        let detailed_list = pyo3::types::PyList::empty(py);
+                        for (node_id, inst) in &info.instances {
+                            let inst_dict = PyDict::new(py);
+                            inst_dict.set_item("node_id", node_id.0)?;
+                            inst_dict.set_item("actor_id", inst.actor_id.0)?;
+                            for (k, v) in &inst.metadata {
+                                inst_dict.set_item(k, v)?;
+                            }
+                            detailed_list.append(inst_dict)?;
                         }
-
-                        map
-                    })
-                    .collect();
-                let pyobj = pythonize(py, &result)?;
-                Ok(pyobj.into())
+                        dict.set_item("detailed_instances", detailed_list)?;
+                    }
+                    list.append(dict)?;
+                }
+                Ok(list.into_pyobject(py)?.into())
             })
         })
     }
