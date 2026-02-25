@@ -33,12 +33,15 @@ def start_generic_actor(
         print(f"Error: {e}")
         return
 
-    print(f"  Class: {actor_class.__name__}")
-    print(f"  Module: {actor_class.__module__}")
+    # @remote 返回的是 ActorClass 包装，取原始类用于 __name__ / __module__ / signature
+    cls_for_display = getattr(actor_class, "_cls", actor_class)
 
-    # Get Actor constructor signature
+    print(f"  Class: {cls_for_display.__name__}")
+    print(f"  Module: {cls_for_display.__module__}")
+
+    # Get Actor constructor signature（用原始类）
     try:
-        actor_sig = inspect.signature(actor_class.__init__)
+        actor_sig = inspect.signature(cls_for_display.__init__)
     except Exception as e:
         print(f"Error: Cannot inspect Actor constructor: {e}")
         return
@@ -104,38 +107,71 @@ def start_generic_actor(
     if addr:
         print(f"  Address: {addr}")
 
+    is_remote = hasattr(actor_class, "spawn") and callable(
+        getattr(actor_class, "spawn")
+    )
+
     async def run():
-        try:
-            # Instantiate Actor
-            actor_instance = actor_class(**constructor_kwargs)
-        except TypeError as e:
-            print(f"\nError: Failed to instantiate {actor_class.__name__}")
-            print(f"  {e}")
-            print("\nHint: Check the constructor signature and provided parameters.")
-            required_params = [
-                name
-                for name, param in actor_sig.parameters.items()
-                if name != "self" and param.default == inspect.Parameter.empty
-            ]
-            if required_params:
-                print(f"  Required parameters: {', '.join(required_params)}")
-            print(f"  All constructor parameters: {', '.join(actor_params)}")
-            print(f"  Provided parameters: {', '.join(constructor_kwargs.keys())}")
-            return
-        except Exception as e:
-            print(f"\nError: Failed to create Actor instance: {e}")
-            import traceback
+        if is_remote:
+            # @remote 类：init 后直接 spawn(name=..., **constructor_kwargs)
+            from pulsing.core import init
+            from pulsing.core.helpers import run_until_signal
 
-            traceback.print_exc()
-            return
+            system = await init(addr=addr, seeds=seeds if seeds else None)
+            try:
+                proxy = await actor_class.spawn(
+                    name=name,
+                    public=True,
+                    **constructor_kwargs,
+                )
+            except TypeError as e:
+                print(f"\nError: Failed to spawn {cls_for_display.__name__}")
+                print(f"  {e}")
+                print(
+                    "\nHint: Check the constructor signature and provided parameters."
+                )
+                required_params = [
+                    n
+                    for n, p in actor_sig.parameters.items()
+                    if n != "self" and p.default == inspect.Parameter.empty
+                ]
+                if required_params:
+                    print(f"  Required parameters: {', '.join(required_params)}")
+                return
+            print(f"[{name}] Started at {system.addr}")
+            await run_until_signal(name)
+        else:
+            # Actor 子类：实例化后 spawn_and_run
+            try:
+                actor_instance = actor_class(**constructor_kwargs)
+            except TypeError as e:
+                print(f"\nError: Failed to instantiate {cls_for_display.__name__}")
+                print(f"  {e}")
+                print(
+                    "\nHint: Check the constructor signature and provided parameters."
+                )
+                required_params = [
+                    name
+                    for name, param in actor_sig.parameters.items()
+                    if name != "self" and param.default == inspect.Parameter.empty
+                ]
+                if required_params:
+                    print(f"  Required parameters: {', '.join(required_params)}")
+                print(f"  All constructor parameters: {', '.join(actor_params)}")
+                print(f"  Provided parameters: {', '.join(constructor_kwargs.keys())}")
+                return
+            except Exception as e:
+                print(f"\nError: Failed to create Actor instance: {e}")
+                import traceback
 
-        # Spawn and run
-        await spawn_and_run(
-            actor_instance,
-            name=name,
-            addr=addr,
-            seeds=seeds if seeds else None,
-            public=True,
-        )
+                traceback.print_exc()
+                return
+            await spawn_and_run(
+                actor_instance,
+                name=name,
+                addr=addr,
+                seeds=seeds if seeds else None,
+                public=True,
+            )
 
     uvloop.run(run())

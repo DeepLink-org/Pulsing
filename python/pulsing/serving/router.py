@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from aiohttp import web
 
-from pulsing.core import Actor, ActorId, ActorSystem, Message, get_system
+from pulsing.core import ActorId, ActorSystem, get_system, remote
 
 
 @dataclass
@@ -196,13 +196,15 @@ class _OpenAIHandler:
         created = int(time.time())
 
         try:
-            msg = Message.from_json(
-                "GenerateRequest", {"prompt": prompt, "max_new_tokens": max_tokens}
-            )
-            result = (await worker_ref.ask(msg)).to_json()
-            text = result.get("text", "")
-            prompt_tokens = result.get("prompt_tokens", 0)
-            completion_tokens = result.get("completion_tokens", 0)
+            worker = worker_ref.as_any()
+            result = await worker.generate(prompt=prompt, max_new_tokens=max_tokens)
+            if isinstance(result, dict) and "error" in result:
+                text = f"[Error: {result['error']}]"
+                prompt_tokens = completion_tokens = 0
+            else:
+                text = result.get("text", "")
+                prompt_tokens = result.get("prompt_tokens", 0)
+                completion_tokens = result.get("completion_tokens", 0)
         except Exception as e:
             text = f"[Error: {e}]"
             prompt_tokens = completion_tokens = 0
@@ -244,26 +246,16 @@ class _OpenAIHandler:
         obj_type = "chat.completion.chunk" if is_chat else "text_completion"
 
         try:
-            req_msg = Message.from_json(
-                "GenerateStreamRequest",
-                {"prompt": prompt, "max_new_tokens": max_tokens},
-            )
-            stream_message = await worker_ref.ask(req_msg)
+            worker = worker_ref.as_any()
+            stream = worker.generate_stream(prompt=prompt, max_new_tokens=max_tokens)
 
-            # Check if returned message is a stream message
-            if not stream_message.is_stream:
-                # If not stream message, might be error message
-                error_data = stream_message.to_json()
-                error_msg = error_data.get("error", "Unknown error")
-                await stream_response.write(
-                    f"data: {json.dumps({'error': error_msg})}\n\n".encode()
-                )
-                await stream_response.write(b"data: [DONE]\n\n")
-                return stream_response
-
-            reader = stream_message.stream_reader()
-
-            async for chunk in reader:
+            async for chunk in stream:
+                if isinstance(chunk, dict) and chunk.get("error"):
+                    await stream_response.write(
+                        f"data: {json.dumps({'error': chunk['error']})}\n\n".encode()
+                    )
+                    await stream_response.write(b"data: [DONE]\n\n")
+                    return stream_response
                 try:
                     finish_reason = chunk.get("finish_reason")
                     text = chunk.get("text", "")
@@ -427,35 +419,18 @@ async def stop_router(runner: web.AppRunner):
         print("[Router] HTTP server stopped")
 
 
-class Router(Actor):
-    """Router Actor - OpenAI-compatible HTTP API router as an Actor
+@remote
+class Router:
+    """Router - OpenAI 兼容 HTTP API 路由，通过 pulsing.remote 暴露 health_check / get_config。
 
-    This actor wraps the start_router/stop_router functions to provide
-    a CLI-compatible entry point via `pulsing actor pulsing.serving.Router`.
+    包装 start_router/stop_router，支持 CLI：pulsing actor pulsing.serving.Router。
 
     Args:
-        http_host: HTTP listen address (default: "0.0.0.0")
-        http_port: HTTP listen port (default: 8080)
-        model_name: Model name for API responses (default: "pulsing-model")
-        worker_name: Worker actor name to route requests to (default: "worker")
-        scheduler_type: Scheduler type, supports:
-            - "stream_load": Stream load-aware (default, recommended)
-            - "random": Random
-            - "round_robin": Round robin
-            - "power_of_two": Power-of-Two Choices
-            - "cache_aware": Cache-aware
-
-    Example:
-        # Start via CLI
-        pulsing actor pulsing.serving.Router \\
-            --http_host 0.0.0.0 \\
-            --http_port 8080 \\
-            --model_name my-llm \\
-            --worker_name worker
-
-        # Or programmatically
-        router = Router(http_port=8080, model_name="my-llm")
-        await system.spawn(router, name="router", public=True)
+        http_host: HTTP 监听地址 (default: "0.0.0.0")
+        http_port: HTTP 监听端口 (default: 8080)
+        model_name: API 响应中的模型名 (default: "pulsing-model")
+        worker_name: 路由目标 worker 名称 (default: "worker")
+        scheduler_type: 调度策略，支持 stream_load / random / round_robin / power_of_two / cache_aware
     """
 
     def __init__(
@@ -517,27 +492,20 @@ class Router(Actor):
             "scheduler_type": self.scheduler_type,
         }
 
-    async def receive(self, msg: Message) -> Message | None:
-        """Handle diagnostic messages"""
-        if msg.msg_type == "HealthCheck":
-            return Message.from_json(
-                "Ok",
-                {
-                    "status": "healthy",
-                    "http_port": self.http_port,
-                    "model_name": self.model_name,
-                },
-            )
-        elif msg.msg_type == "GetConfig":
-            return Message.from_json(
-                "Config",
-                {
-                    "http_host": self.http_host,
-                    "http_port": self.http_port,
-                    "model_name": self.model_name,
-                    "worker_name": self.worker_name,
-                    "scheduler_type": self.scheduler_type,
-                },
-            )
-        else:
-            return Message.from_json("Error", {"error": f"Unknown: {msg.msg_type}"})
+    def health_check(self) -> dict:
+        """健康检查。"""
+        return {
+            "status": "healthy",
+            "http_port": self.http_port,
+            "model_name": self.model_name,
+        }
+
+    def get_config(self) -> dict:
+        """路由配置。"""
+        return {
+            "http_host": self.http_host,
+            "http_port": self.http_port,
+            "model_name": self.model_name,
+            "worker_name": self.worker_name,
+            "scheduler_type": self.scheduler_type,
+        }

@@ -1,4 +1,4 @@
-"""vLLM Worker Actor - High-performance inference Worker based on vLLM V1 engine
+"""vLLM Worker - High-performance inference Worker based on vLLM V1 engine (pulsing.remote)
 
 Referencing Dynamo implementation, supports:
 1. Prefill/Decode separation (PD Disaggregation)
@@ -9,22 +9,19 @@ Referencing Dynamo implementation, supports:
 6. Engine monitoring and health checks
 """
 
-# VllmWorker Actor - Main Actor class
-
 import asyncio
 import logging
 import os
 import uuid
 from typing import Any
 
-from pulsing.core import Actor, ActorId, Message, StreamMessage
+from pulsing.core import ActorId, StreamMessage, remote
 
 from .handlers import BaseWorkerHandler, DecodeWorkerHandler, PrefillWorkerHandler
 from .utils import _is_macos, _setup_macos_metal_env
 
 try:
     from vllm.engine.arg_utils import AsyncEngineArgs
-    from vllm.sampling_params import SamplingParams
     from vllm.usage.usage_lib import UsageContext
     from vllm.v1.engine.async_llm import AsyncLLM
 
@@ -35,15 +32,16 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class VllmWorker(Actor):
-    """vLLM inference Worker Actor
+@remote
+class VllmWorker:
+    """vLLM inference Worker，通过 pulsing.remote 暴露方法。
 
-    Supports vLLM V1 engine, features aligned with Dynamo:
-    1. Supports PD separation (Prefill / Decode roles)
-    2. Supports multimodal input (Image)
-    3. Supports KV Cache cross-node transfer parameters
-    4. Supports LoRA dynamic loading/unloading
-    5. Supports OpenAI-compatible text input/output
+    支持 vLLM V1 engine，功能对齐 Dynamo：
+    1. PD 分离（Prefill / Decode 角色）
+    2. 多模态输入（Image）
+    3. KV Cache 管理与清理
+    4. LoRA 动态加载/卸载
+    5. OpenAI 兼容文本输入/输出
     """
 
     def __init__(
@@ -428,162 +426,142 @@ class VllmWorker(Actor):
 
         return meta
 
-    async def receive(self, msg: Message) -> Message | StreamMessage:
-        # If engine not ready, wait for initialization to complete
+    async def _ensure_ready(self) -> None:
+        """等待 engine 就绪，超时则抛出异常。"""
+        if not VLLM_AVAILABLE:
+            raise RuntimeError("vLLM not installed or version incompatible")
+        max_wait = 60.0
+        wait_interval = 0.5
+        waited = 0.0
+        while not self._is_ready and waited < max_wait:
+            await asyncio.sleep(wait_interval)
+            waited += wait_interval
         if not self._is_ready:
-            if not VLLM_AVAILABLE:
-                error_msg = "vLLM not installed or version incompatible"
-                if msg.msg_type.endswith("StreamRequest"):
-                    stream_msg, writer = StreamMessage.create("Error")
-                    asyncio.create_task(writer.error(error_msg))
-                    writer.close()
-                    return stream_msg
-                return Message.from_json("Error", {"error": error_msg})
+            raise RuntimeError(f"vLLM engine initialization timeout after {max_wait}s")
 
-            # Wait for engine initialization to complete
-            max_wait = 60.0
-            wait_interval = 0.5
-            waited = 0.0
+    def _build_request(
+        self, prompt: str = "", max_new_tokens: int | None = None, **kwargs
+    ) -> dict:
+        data = kwargs.copy()
+        data.setdefault("prompt", prompt)
+        data.setdefault("max_new_tokens", max_new_tokens or self.default_max_new_tokens)
+        return data
 
-            while not self._is_ready and waited < max_wait:
-                await asyncio.sleep(wait_interval)
-                waited += wait_interval
+    async def _collect_generate_result(self, data: dict) -> dict:
+        """从 handler.generate 的迭代结果聚合成单次响应 dict。"""
+        accumulated_text = ""
+        finish_reason = None
+        result_count = 0
+        async for result in self._handler.generate(data):
+            result_count += 1
+            if "choices" in result and len(result["choices"]) > 0:
+                choice = result["choices"][0]
+                if "delta" in choice and "content" in choice["delta"]:
+                    accumulated_text += choice["delta"]["content"]
+                elif "message" in choice and "content" in choice["message"]:
+                    accumulated_text = choice["message"]["content"]
+                elif "text" in choice:
+                    accumulated_text = choice["text"]
+                if "finish_reason" in choice and choice["finish_reason"]:
+                    finish_reason = choice["finish_reason"]
+        if accumulated_text or result_count > 0:
+            return {
+                "text": accumulated_text,
+                "finish_reason": finish_reason or "stop",
+                "completion_tokens": (
+                    len(accumulated_text.split()) if accumulated_text else 0
+                ),
+                "prompt_tokens": 0,
+            }
+        return {"error": "No output"}
 
-            if not self._is_ready:
-                error_msg = f"vLLM engine initialization timeout after {max_wait}s"
-                logger.error(error_msg)
-                if msg.msg_type.endswith("StreamRequest"):
-                    stream_msg, writer = StreamMessage.create("Error")
-                    asyncio.create_task(writer.error(error_msg))
-                    writer.close()
-                    return stream_msg
-                return Message.from_json("Error", {"error": error_msg})
+    # -------------------------------------------------------------------------
+    # 对外方法（替代原 receive 的消息类型分支）
+    # -------------------------------------------------------------------------
 
+    async def generate(
+        self,
+        prompt: str = "",
+        max_new_tokens: int | None = None,
+        **kwargs,
+    ) -> dict:
+        """同步生成，返回 {text, finish_reason, prompt_tokens, completion_tokens} 或 {error}。"""
+        await self._ensure_ready()
         try:
-            if msg.msg_type in ("GenerateRequest", "ChatCompletionRequest"):
-                return await self._handle_generate(msg)
-            elif msg.msg_type in (
-                "GenerateStreamRequest",
-                "ChatCompletionStreamRequest",
-            ):
-                return await self._handle_generate_stream(msg)
-            elif msg.msg_type == "HealthCheck":
-                # Detailed health check
-                health_status = self._handler.engine_monitor.get_health_status()
-                health_status["role"] = self.role
-                health_status["worker_id"] = self.worker_id
-                return Message.from_json("Ok", health_status)
-            elif msg.msg_type == "ClearKVCache":
-                result = await self._handler.clear_kv_cache()
-                return Message.from_json("Ok", result)
-            elif msg.msg_type == "LoadLoRA":
-                # LoRA loading support
-                data = msg.to_json()
-                lora_name = data.get("lora_name")
-                lora_path = data.get("lora_path")
-                if not lora_name or not lora_path:
-                    return Message.from_json(
-                        "Error",
-                        {"error": "Missing required fields: lora_name and lora_path"},
-                    )
-                result = await self._handler.load_lora(lora_name, lora_path)
-                return Message.from_json("Ok", result)
-            elif msg.msg_type == "UnloadLoRA":
-                # LoRA unloading support
-                data = msg.to_json()
-                lora_name = data.get("lora_name")
-                if not lora_name:
-                    return Message.from_json(
-                        "Error", {"error": "Missing required field: lora_name"}
-                    )
-                result = await self._handler.unload_lora(lora_name)
-                return Message.from_json("Ok", result)
-            elif msg.msg_type == "ListLoRAs":
-                # LoRA listing support
-                result = await self._handler.list_loras()
-                return Message.from_json("Ok", result)
-            else:
-                if msg.msg_type.endswith("StreamRequest"):
-                    stream_msg, writer = StreamMessage.create("Error")
-                    asyncio.create_task(
-                        writer.error(f"Unsupported type: {msg.msg_type}")
-                    )
-                    writer.close()
-                    return stream_msg
-                return Message.from_json(
-                    "Error", {"error": f"Unsupported type: {msg.msg_type}"}
-                )
+            data = self._build_request(
+                prompt=prompt, max_new_tokens=max_new_tokens, **kwargs
+            )
+            return await self._collect_generate_result(data)
         except Exception as e:
-            logger.exception(f"Error handling {msg.msg_type}: {e}")
-            if msg.msg_type.endswith("StreamRequest"):
-                stream_msg, writer = StreamMessage.create("Error")
-                asyncio.create_task(writer.error(str(e)))
-                writer.close()
-                return stream_msg
-            return Message.from_json("Error", {"error": str(e)})
+            logger.exception("Error in generate: %s", e)
+            return {"error": str(e)}
 
-    async def _handle_generate(self, msg: Message) -> Message:
-        data = msg.to_json()
-
-        try:
-            # Use handler to generate results
-            # Accumulate complete text and information
-            accumulated_text = ""
-            finish_reason = None
-            result_count = 0
-
-            async for result in self._handler.generate(data):
-                result_count += 1
-
-                # Extract text content (support different formats)
-                if "choices" in result and len(result["choices"]) > 0:
-                    choice = result["choices"][0]
-
-                    # Streaming format: extract from delta.content
-                    if "delta" in choice and "content" in choice["delta"]:
-                        accumulated_text += choice["delta"]["content"]
-                    # Non-streaming format: extract from message.content
-                    elif "message" in choice and "content" in choice["message"]:
-                        accumulated_text = choice["message"]["content"]
-                    # Or extract directly from text
-                    elif "text" in choice:
-                        accumulated_text = choice["text"]
-
-                    # Extract finish_reason
-                    if "finish_reason" in choice and choice["finish_reason"]:
-                        finish_reason = choice["finish_reason"]
-
-            # Return complete response (OpenAI format)
-            if accumulated_text or result_count > 0:
-                response = {
-                    "text": accumulated_text,
-                    "finish_reason": finish_reason or "stop",
-                    "completion_tokens": (
-                        len(accumulated_text.split()) if accumulated_text else 0
-                    ),
-                    "prompt_tokens": 0,  # TODO: Calculate actual prompt tokens
-                }
-                return Message.from_json("GenerateResponse", response)
-            return Message.from_json("Error", {"error": "No output"})
-        except Exception as e:
-            logger.exception(f"Error in generate: {e}")
-            return Message.from_json("Error", {"error": str(e)})
-
-    async def _handle_generate_stream(self, msg: Message) -> StreamMessage:
+    async def generate_stream(
+        self,
+        prompt: str = "",
+        max_new_tokens: int | None = None,
+        **kwargs,
+    ):
+        """流式生成，async generator 逐条 yield chunk。"""
+        await self._ensure_ready()
         stream_msg, writer = StreamMessage.create("GenerateStream")
+        data = self._build_request(
+            prompt=prompt, max_new_tokens=max_new_tokens, **kwargs
+        )
 
         async def produce():
             try:
-                data = msg.to_json()
                 async for chunk in self._handler.generate(data):
                     await writer.write(chunk)
                     if chunk.get("finish_reason"):
                         break
             except Exception as e:
-                logger.exception(f"Error in stream generation: {e}")
+                logger.exception("Error in stream generation: %s", e)
                 await writer.error(str(e))
             finally:
                 writer.close()
 
         asyncio.create_task(produce())
-        return stream_msg
+        async for chunk in stream_msg.stream_reader():
+            yield chunk
+
+    def health_check(self) -> dict:
+        """健康检查，含 engine 状态。"""
+        if not self._is_ready or not self._handler:
+            return {
+                "role": self.role,
+                "worker_id": self.worker_id,
+                "ready": False,
+                "error": "Engine not ready",
+            }
+        status = self._handler.engine_monitor.get_health_status()
+        status["role"] = self.role
+        status["worker_id"] = self.worker_id
+        return status
+
+    async def clear_kv_cache(self) -> dict:
+        """清理 KV Cache。"""
+        await self._ensure_ready()
+        result = await self._handler.clear_kv_cache()
+        return result if isinstance(result, dict) else {"ok": True}
+
+    async def load_lora(self, lora_name: str, lora_path: str) -> dict:
+        """加载 LoRA。"""
+        await self._ensure_ready()
+        if not lora_name or not lora_path:
+            return {"error": "Missing required fields: lora_name and lora_path"}
+        result = await self._handler.load_lora(lora_name, lora_path)
+        return result if isinstance(result, dict) else {"ok": True}
+
+    async def unload_lora(self, lora_name: str) -> dict:
+        """卸载 LoRA。"""
+        await self._ensure_ready()
+        if not lora_name:
+            return {"error": "Missing required field: lora_name"}
+        result = await self._handler.unload_lora(lora_name)
+        return result if isinstance(result, dict) else {"ok": True}
+
+    async def list_loras(self) -> Any:
+        """列出已加载的 LoRA。"""
+        await self._ensure_ready()
+        return await self._handler.list_loras()

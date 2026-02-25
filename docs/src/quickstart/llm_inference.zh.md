@@ -55,15 +55,17 @@ pip install pulsing
 ```bash
 pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
+  --name my-llm \
   -- \
   --http_port 8080 \
-  --model_name my-llm
+  --model_name gpt2 \
+  --worker_name worker
 ```
 
 | 参数 | 说明 |
 |------|------|
-| `--addr`（`--` 前） | Actor 系统地址（Worker 加入此地址） |
-| `--http_port`、`--model_name`（`--` 后） | Router 构造参数：HTTP 端口、API 响应中的模型名 |
+| `--addr`、`--name`（`--` 前） | Actor 系统地址、Router 名称 |
+| `--http_port`、`--model_name`、`--worker_name`（`--` 后） | Router 构造参数：HTTP 端口、API 模型名、目标 worker 名 |
 
 ---
 
@@ -77,9 +79,9 @@ pulsing actor pulsing.serving.Router \
     pulsing actor pulsing.serving.TransformersWorker \
       --addr 0.0.0.0:8001 \
       --seeds 127.0.0.1:8000 \
+      --name worker \
       -- \
-      --model_name gpt2 \
-      --device cpu
+      --model_name gpt2
     ```
 
 === "vLLM (GPU)"
@@ -88,6 +90,7 @@ pulsing actor pulsing.serving.Router \
     pulsing actor pulsing.serving.VllmWorker \
       --addr 0.0.0.0:8002 \
       --seeds 127.0.0.1:8000 \
+      --name worker \
       -- \
       --model Qwen/Qwen2.5-0.5B
     ```
@@ -118,25 +121,17 @@ pulsing inspect cluster --seeds 127.0.0.1:8000
 ### 非流式
 
 ```bash
-curl -s http://localhost:8080/v1/chat/completions \
+curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "my-llm",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "stream": false
-  }'
+  -d '{"model": "gpt2", "messages": [{"role": "user", "content": "Hello"}], "stream": false}'
 ```
 
 ### 流式 (SSE)
 
 ```bash
-curl -N http://localhost:8080/v1/chat/completions \
+curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "my-llm",
-    "messages": [{"role": "user", "content": "讲个笑话"}],
-    "stream": true
-  }'
+  -d '{"model": "gpt2", "messages": [{"role": "user", "content": "讲个笑话"}], "stream": true}'
 ```
 
 ---

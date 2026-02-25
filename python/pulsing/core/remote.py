@@ -594,13 +594,21 @@ class _WrappedActor(_ActorBase):
             actor_ref, delay_sec
         )
 
-    def on_start(self, actor_id) -> None:
+    def on_start(self, actor_id):
+        """调用用户 on_start；若为 async 则返回 coroutine 供 Rust 端 run_coroutine_threadsafe 执行。"""
         if hasattr(self._instance, "on_start"):
-            self._instance.on_start(actor_id)
+            r = self._instance.on_start(actor_id)
+            if asyncio.iscoroutine(r):
+                return r
+        return None
 
-    def on_stop(self) -> None:
+    def on_stop(self):
+        """调用用户 on_stop；若为 async 则返回 coroutine 供 Rust 端执行。"""
         if hasattr(self._instance, "on_stop"):
-            self._instance.on_stop()
+            r = self._instance.on_stop()
+            if asyncio.iscoroutine(r):
+                return r
+        return None
 
     def metadata(self) -> dict[str, str]:
         if hasattr(self._instance, "metadata") and callable(self._instance.metadata):

@@ -1,11 +1,12 @@
-"""Transformers Worker Actor - LLM Inference Worker"""
+"""Transformers Worker - LLM Inference Worker (pulsing.remote)"""
 
 import asyncio
 import time
 import uuid
 from dataclasses import dataclass
+from threading import Thread
 
-from pulsing.core import Actor, ActorId, Message, StreamMessage
+from pulsing.core import ActorId, StreamMessage, remote
 
 
 @dataclass
@@ -18,10 +19,11 @@ class GenerationConfig:
     do_sample: bool = False
 
 
-class TransformersWorker(Actor):
-    """Transformers LLM Inference Worker, supports synchronous and streaming generation
+@remote
+class TransformersWorker:
+    """Transformers LLM Inference Worker，支持同步/流式生成与负载订阅。
 
-    Supports streaming load subscription (SubscribeLoad), Router can subscribe and receive load updates in real-time.
+    通过 pulsing.remote 暴露方法：generate、generate_stream、subscribe_load、health_check、get_load。
     """
 
     def __init__(
@@ -45,11 +47,8 @@ class TransformersWorker(Actor):
         self._tokenizer = None
         self._is_loaded = False
 
-        # Load tracking
         self._current_load = 0
         self._request_count = 0
-
-        # Load subscribers (streaming push)
         self._load_subscribers: list = []
 
     async def on_start(self, actor_id: ActorId) -> None:
@@ -62,7 +61,6 @@ class TransformersWorker(Actor):
     def on_stop(self) -> None:
         self._model = None
         self._tokenizer = None
-        # Close all subscription streams
         for writer in self._load_subscribers:
             try:
                 writer.close()
@@ -71,7 +69,6 @@ class TransformersWorker(Actor):
         self._load_subscribers.clear()
 
     def metadata(self) -> dict[str, str]:
-        """Returns worker metadata"""
         return {
             "type": "worker",
             "model": self.model_name,
@@ -92,7 +89,6 @@ class TransformersWorker(Actor):
         return self._current_load / max(1, self.capacity)
 
     def _get_load_snapshot(self) -> dict:
-        """Get load snapshot"""
         return {
             "worker_id": self.worker_id,
             "node_id": self._node_id or self.worker_id,
@@ -103,27 +99,21 @@ class TransformersWorker(Actor):
         }
 
     async def _push_load_update(self):
-        """Push load update to all subscribers"""
         if not self._load_subscribers:
             return
-
         snapshot = self._get_load_snapshot()
-        dead_writers = []
-
+        dead = []
         for writer in self._load_subscribers:
             try:
                 await writer.write(snapshot)
             except Exception:
-                dead_writers.append(writer)
-
-        # Clean up disconnected connections
-        for w in dead_writers:
+                dead.append(writer)
+        for w in dead:
             self._load_subscribers.remove(w)
 
     async def load_model(self):
         if self._is_loaded:
             return
-
         try:
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -132,81 +122,32 @@ class TransformersWorker(Actor):
 
         print(f"[Worker] Loading {self.model_name}...")
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-
         torch_dtype = torch.float16 if self.device in ("cuda", "mps") else torch.float32
         model_kwargs = {"device_map": "auto"} if self.device == "cuda" else {}
-
         self._model = AutoModelForCausalLM.from_pretrained(
             self.model_name, torch_dtype=torch_dtype, **model_kwargs
         )
-
         if self.device != "cuda":
             self._model.to(self.device)
-
         self._model.eval()
         self._is_loaded = True
         print(f"[Worker] Model ready on {self.device}")
 
-    async def receive(self, msg: Message) -> Message | StreamMessage:
-        try:
-            if msg.msg_type == "GenerateRequest":
-                return await self._handle_generate(msg)
-            elif msg.msg_type == "GenerateStreamRequest":
-                return await self._handle_generate_stream(msg)
-            elif msg.msg_type == "SubscribeLoad":
-                return self._handle_subscribe_load()
-            elif msg.msg_type == "HealthCheck":
-                return Message.from_json(
-                    "Ok",
-                    {
-                        "status": "healthy",
-                        "worker_id": self.worker_id,
-                        "is_loaded": self._is_loaded,
-                    },
-                )
-            elif msg.msg_type == "GetLoad":
-                return Message.from_json("LoadInfo", self._get_load_snapshot())
-            else:
-                return Message.from_json("Error", {"error": f"Unknown: {msg.msg_type}"})
-        except Exception as e:
-            print(f"[Worker] Error: {e}")
-            return Message.from_json("Error", {"error": str(e)})
+    # -------------------------------------------------------------------------
+    # 对外方法（替代原 receive 的消息类型分支）
+    # -------------------------------------------------------------------------
 
-    def _handle_subscribe_load(self) -> StreamMessage:
-        """Handle load subscription request, returns a stream that continuously pushes load updates"""
-        stream_msg, writer = StreamMessage.create("LoadStream")
-        self._load_subscribers.append(writer)
-
-        worker = self
-
-        async def produce():
-            try:
-                # Immediately send current state
-                await writer.write(worker._get_load_snapshot())
-
-                # Periodic push (every second)
-                while True:
-                    await asyncio.sleep(1.0)
-                    await writer.write(worker._get_load_snapshot())
-            except Exception:
-                pass
-            finally:
-                if writer in worker._load_subscribers:
-                    worker._load_subscribers.remove(writer)
-                writer.close()
-
-        asyncio.create_task(produce())
-        return stream_msg
-
-    async def _handle_generate(self, msg: Message) -> Message:
+    async def generate(
+        self,
+        prompt: str,
+        max_new_tokens: int | None = None,
+    ) -> dict:
+        """同步生成，返回 {text, prompt_tokens, completion_tokens} 或 {error}。"""
+        if max_new_tokens is None:
+            max_new_tokens = self.gen_config.max_new_tokens
         if not self._is_loaded:
             await self.load_model()
 
-        data = msg.to_json()
-        prompt = data.get("prompt", "")
-        max_new_tokens = data.get("max_new_tokens", self.gen_config.max_new_tokens)
-
-        # Start request - increase load
         self._current_load += 1
         self._request_count += 1
         asyncio.create_task(self._push_load_update())
@@ -214,7 +155,7 @@ class TransformersWorker(Actor):
         try:
             loop = asyncio.get_running_loop()
 
-            def _generate_sync():
+            def _run():
                 inputs = self._tokenizer(prompt, return_tensors="pt").to(
                     self._model.device
                 )
@@ -224,85 +165,73 @@ class TransformersWorker(Actor):
                     pad_token_id=self._tokenizer.eos_token_id,
                     do_sample=self.gen_config.do_sample,
                 )
-
                 input_len = inputs["input_ids"].shape[1]
                 new_tokens = outputs[0][input_len:]
                 text = self._tokenizer.decode(new_tokens, skip_special_tokens=True)
                 return text, input_len, len(new_tokens)
 
             text, prompt_tokens, completion_tokens = await loop.run_in_executor(
-                None, _generate_sync
+                None, _run
             )
-
-            return Message.from_json(
-                "GenerateResponse",
-                {
-                    "text": text,
-                    "worker_id": self.worker_id,
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                },
-            )
+            return {
+                "text": text,
+                "worker_id": self.worker_id,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+            }
+        except Exception as e:
+            print(f"[Worker] Error: {e}")
+            return {"error": str(e)}
         finally:
-            # Request completed - decrease load
             self._current_load -= 1
             asyncio.create_task(self._push_load_update())
 
-    async def _handle_generate_stream(self, msg: Message) -> StreamMessage:
-        from threading import Thread
-
+    async def generate_stream(
+        self,
+        prompt: str,
+        max_new_tokens: int | None = None,
+    ):
+        """流式生成，async generator 逐条 yield {text, worker_id} 或最终 {finish_reason, prompt_tokens, completion_tokens}。"""
+        if max_new_tokens is None:
+            max_new_tokens = self.gen_config.max_new_tokens
         if not self._is_loaded:
             await self.load_model()
 
-        data = msg.to_json()
-        prompt = data.get("prompt", "")
-        max_new_tokens = data.get("max_new_tokens", self.gen_config.max_new_tokens)
-
-        # Start request - increase load
         self._current_load += 1
         self._request_count += 1
         asyncio.create_task(self._push_load_update())
 
         stream_msg, writer = StreamMessage.create("GenerateStream")
-
-        # Save reference for decreasing load in produce
         worker = self
 
         async def produce():
             try:
+                from transformers import TextIteratorStreamer
+
                 inputs = worker._tokenizer(prompt, return_tensors="pt").to(
                     worker._model.device
                 )
                 input_len = inputs["input_ids"].shape[1]
-
-                from transformers import TextIteratorStreamer
-
                 streamer = TextIteratorStreamer(
                     worker._tokenizer, skip_prompt=True, skip_special_tokens=True
                 )
-                generation_kwargs = {
+                gen_kwargs = {
                     **inputs,
                     "max_new_tokens": max_new_tokens,
                     "pad_token_id": worker._tokenizer.eos_token_id,
                     "do_sample": worker.gen_config.do_sample,
                     "streamer": streamer,
                 }
-
-                thread = Thread(target=worker._model.generate, kwargs=generation_kwargs)
+                thread = Thread(target=worker._model.generate, kwargs=gen_kwargs)
                 thread.start()
-
                 token_count = 0
                 for text in streamer:
                     if text:
                         token_count += 1
                         await writer.write(
-                            {
-                                "text": text,
-                                "worker_id": worker.worker_id,
-                            }
+                            {"text": text, "worker_id": worker.worker_id}
                         )
                 thread.join()
-
                 await writer.write(
                     {
                         "text": "",
@@ -318,10 +247,45 @@ class TransformersWorker(Actor):
                 except Exception:
                     pass
             finally:
-                # Request completed - decrease load
                 worker._current_load -= 1
                 asyncio.create_task(worker._push_load_update())
                 writer.close()
 
         asyncio.create_task(produce())
-        return stream_msg
+        async for chunk in stream_msg.stream_reader():
+            yield chunk
+
+    async def subscribe_load(self):
+        """订阅负载更新，async generator 每秒 yield 一次负载快照。"""
+        stream_msg, writer = StreamMessage.create("LoadStream")
+        self._load_subscribers.append(writer)
+        worker = self
+
+        async def produce():
+            try:
+                await writer.write(worker._get_load_snapshot())
+                while True:
+                    await asyncio.sleep(1.0)
+                    await writer.write(worker._get_load_snapshot())
+            except Exception:
+                pass
+            finally:
+                if writer in worker._load_subscribers:
+                    worker._load_subscribers.remove(writer)
+                writer.close()
+
+        asyncio.create_task(produce())
+        async for snapshot in stream_msg.stream_reader():
+            yield snapshot
+
+    def health_check(self) -> dict:
+        """健康检查。"""
+        return {
+            "status": "healthy",
+            "worker_id": self.worker_id,
+            "is_loaded": self._is_loaded,
+        }
+
+    def get_load(self) -> dict:
+        """当前负载快照。"""
+        return self._get_load_snapshot()

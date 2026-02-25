@@ -21,10 +21,10 @@ The router needs an **actor system address** so workers can join the same cluste
 ```bash
 pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
+  --name my-llm \
   -- \
-  --http_host 0.0.0.0 \
   --http_port 8080 \
-  --model_name my-llm \
+  --model_name gpt2 \
   --worker_name worker
 ```
 
@@ -35,13 +35,12 @@ You can run **one or more** workers. Each worker should join the router node via
 ### Option A: Transformers worker (Terminal B)
 
 ```bash
-pulsing actor pulsing.serving.worker.TransformersWorker \
+pulsing actor pulsing.serving.TransformersWorker \
   --addr 0.0.0.0:8001 \
   --seeds 127.0.0.1:8000 \
   --name worker \
   -- \
-  --model_name gpt2 \
-  --device cpu
+  --model_name gpt2
 ```
 
 ### Option B: vLLM worker (Terminal C)
@@ -74,17 +73,17 @@ pulsing inspect cluster --seeds 127.0.0.1:8000
 ### Non-streaming
 
 ```bash
-curl -s http://localhost:8080/v1/chat/completions \
+curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"my-llm","messages":[{"role":"user","content":"Hello"}],"stream":false}'
+  -d '{"model": "gpt2", "messages": [{"role": "user", "content": "Hello"}], "stream": false}'
 ```
 
 ### Streaming (SSE)
 
 ```bash
-curl -N http://localhost:8080/v1/chat/completions \
+curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"my-llm","messages":[{"role":"user","content":"Tell me a joke"}],"stream":true}'
+  -d '{"model": "gpt2", "messages": [{"role": "user", "content": "Tell me a joke"}], "stream": true}'
 ```
 
 ## Troubleshooting

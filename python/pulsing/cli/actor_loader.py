@@ -1,24 +1,23 @@
-"""Generic Actor loader - dynamically load and instantiate Actor classes"""
+"""Generic Actor loader - dynamically load Actor or @remote classes"""
 
 import importlib
-import json
-from typing import Any
+from typing import Any, Union
 
 from pulsing.core import Actor
 
 
-def load_actor_class(class_path: str) -> type[Actor]:
-    """Load Actor class from module path
+def load_actor_class(class_path: str) -> Union[type[Actor], Any]:
+    """Load Actor 或 @remote 类
 
     Args:
-        class_path: Full class path, e.g., 'pulsing.serving.worker.TransformersWorker'
+        class_path: 完整类路径，如 'pulsing.serving.worker.TransformersWorker'
 
     Returns:
-        Actor class
+        Actor 子类或带 .spawn 的 @remote 类
 
     Raises:
-        ImportError: If module or class cannot be imported
-        ValueError: If class is not an Actor subclass
+        ImportError: 模块/类无法导入
+        ValueError: 既非 Actor 子类也非 @remote 类（无 .spawn）
     """
     if "." not in class_path:
         raise ValueError(
@@ -26,7 +25,6 @@ def load_actor_class(class_path: str) -> type[Actor]:
             f"Example: pulsing.serving.worker.TransformersWorker"
         )
 
-    # Split module path and class name
     parts = class_path.rsplit(".", 1)
     if len(parts) != 2:
         raise ValueError(
@@ -36,7 +34,6 @@ def load_actor_class(class_path: str) -> type[Actor]:
     module_path, class_name = parts
 
     try:
-        # Import module
         module = importlib.import_module(module_path)
     except ImportError as e:
         raise ImportError(
@@ -44,7 +41,6 @@ def load_actor_class(class_path: str) -> type[Actor]:
             f"Make sure the module is installed and the path is correct."
         ) from e
 
-    # Get class from module
     if not hasattr(module, class_name):
         raise AttributeError(
             f"Class '{class_name}' not found in module '{module_path}'.\n"
@@ -53,11 +49,13 @@ def load_actor_class(class_path: str) -> type[Actor]:
 
     actor_class = getattr(module, class_name)
 
-    # Verify it's an Actor subclass
-    if not isinstance(actor_class, type) or not issubclass(actor_class, Actor):
-        raise ValueError(
-            f"'{class_name}' is not an Actor subclass.\n"
-            f"Expected a class that inherits from pulsing.core.Actor"
-        )
+    # Actor 子类 或 @remote 类（有 .spawn）
+    if isinstance(actor_class, type) and issubclass(actor_class, Actor):
+        return actor_class
+    if hasattr(actor_class, "spawn") and callable(getattr(actor_class, "spawn")):
+        return actor_class
 
-    return actor_class
+    raise ValueError(
+        f"'{class_name}' is not an Actor subclass nor a @remote class (no .spawn).\n"
+        f"Use pulsing.core.Actor or @pulsing.remote."
+    )

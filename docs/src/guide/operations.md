@@ -34,23 +34,20 @@ pulsing actor pulsing.serving.Router \
   --addr 0.0.0.0:8000 \
   --name my-llm \
   -- \
-  --http_host 0.0.0.0 \
   --http_port 8080 \
-  --model_name my-llm \
-  --worker_name worker \
-  --scheduler_type stream_load
+  --model_name gpt2 \
+  --worker_name worker
 ```
 
 #### Transformers Worker
 
 ```bash
-pulsing actor pulsing.serving.worker.TransformersWorker \
+pulsing actor pulsing.serving.TransformersWorker \
   --addr 0.0.0.0:8001 \
   --seeds 127.0.0.1:8000 \
   --name worker \
   -- \
-  --model_name gpt2 \
-  --device cpu
+  --model_name gpt2
 ```
 
 #### vLLM Worker
@@ -70,12 +67,12 @@ pulsing actor pulsing.serving.vllm.VllmWorker \
 
 ```bash
 # Start multiple workers with different names
-pulsing actor pulsing.serving.worker.TransformersWorker \
+pulsing actor pulsing.serving.TransformersWorker \
   --name worker-1 \
   --seeds 127.0.0.1:8000 \
   -- --model_name gpt2
 
-pulsing actor pulsing.serving.worker.TransformersWorker \
+pulsing actor pulsing.serving.TransformersWorker \
   --name worker-2 \
   --seeds 127.0.0.1:8000 \
   -- --model_name gpt2
@@ -97,7 +94,7 @@ Arguments after `--` are passed to the Actor's constructor as `--key value` pair
 
 The Actor class must:
 - Be importable from the specified module path
-- Inherit from `pulsing.core.Actor`
+- Be an `pulsing.core.Actor` subclass or a `@pulsing.remote` class
 - Have a constructor with named parameters (arguments after `--` are matched to constructor parameters)
 
 **How it works:** The CLI passes everything before `--` to the actor subcommand, and collects every `--key value` after `--` into the Actor constructor. Use `pulsing actor <class> --help` to see actor-level options; for constructor parameters, see the Actor class documentation.
@@ -214,8 +211,9 @@ pulsing bench gpt2 --url http://localhost:8080
 
 | Task | Command |
 |------|---------|
-| Start router | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 -- --http_port 8080 --model_name my-llm` |
-| Start worker | `pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8001 --seeds ... -- --model_name gpt2` |
+| Start router | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --name my-llm -- --http_port 8080 --model_name gpt2 --worker_name worker` |
+| Start worker | `pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8001 --seeds 127.0.0.1:8000 --name worker -- --model_name gpt2` |
+| Chat completions | `curl -X POST http://localhost:8080/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"gpt2","messages":[{"role":"user","content":"Hello"}],"stream":false}'` |
 | Start multiple workers | `pulsing actor ... --name worker-1 --seeds ... -- --model_name gpt2` |
 | Router with custom worker | `pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 -- --worker_name worker-1` |
 | List actors | `pulsing inspect actors --endpoint 127.0.0.1:8000` |
