@@ -1,16 +1,15 @@
 """Load information subscription based on streaming requests
 
 Architecture:
-    Router sends SubscribeLoad request → Worker returns StreamMessage
-    Worker continuously pushes load updates in stream → Router reads asynchronously
+    Scheduler (LoadStreamConsumer) calls worker_ref.as_any().subscribe_load()
+    and iterates the async generator; Worker yields load snapshot dicts.
 
     ┌─────────┐                      ┌─────────┐
-    │ Router  │ ─── SubscribeLoad ─► │ Worker  │
-    │         │                      │         │
-    │         │ ◄─── Stream ──────── │         │
+    │ Scheduler│ ─ subscribe_load() ►│ Worker  │
+    │ (Consumer)│                     │ @remote  │
+    │         │ ◄── async for ────── │         │
     │         │      {load: 5}       │         │
-    │         │ ◄─── Stream ──────── │         │
-    │         │      {load: 3}       │         │
+    │         │ ◄── {load: 3} ────── │         │
     └─────────┘                      └─────────┘
 
 Usage:
@@ -25,7 +24,9 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from pulsing.core import ActorRef, Message
+from pulsing.core import ActorRef
+
+from .scheduler import Scheduler
 
 
 @dataclass
@@ -70,17 +71,19 @@ class LoadStreamConsumer:
         self._on_disconnect: Callable[[str], None] | None = None
 
     async def subscribe(self, worker_ref: ActorRef, worker_id: str = None):
-        """Subscribe to Worker's load stream"""
+        """Subscribe to Worker's load stream via @remote subscribe_load()."""
         wid = worker_id or str(worker_ref.actor_id)
         await self.unsubscribe(wid)
 
         async def consume():
             try:
-                stream_msg = await worker_ref.ask(
-                    Message.from_json("SubscribeLoad", {})
-                )
-                async for chunk in stream_msg:
-                    data = chunk.to_json()
+                proxy = worker_ref.as_any()
+                async for chunk in proxy.subscribe_load():
+                    data = (
+                        chunk
+                        if isinstance(chunk, dict)
+                        else (chunk.to_json() if hasattr(chunk, "to_json") else {})
+                    )
                     snapshot = LoadSnapshot.from_dict(data)
                     async with self._lock:
                         self._loads[snapshot.worker_id] = snapshot
@@ -145,7 +148,7 @@ class LoadStreamConsumer:
         self._on_update = callback
 
 
-class StreamLoadScheduler:
+class StreamLoadScheduler(Scheduler):
     """Load-aware scheduler based on stream subscription
 
     - Automatically discovers new Workers and subscribes
@@ -160,8 +163,7 @@ class StreamLoadScheduler:
         auto_discover: bool = True,
         discover_interval: float = 10.0,
     ):
-        self._system = actor_system
-        self._worker_name = worker_name
+        super().__init__(actor_system, worker_name)
         self._auto_discover = auto_discover
         self._discover_interval = discover_interval
 
@@ -170,7 +172,6 @@ class StreamLoadScheduler:
         self._subscribed_workers: set = set()
         self._running = False
         self._discover_task: asyncio.Task | None = None
-        self._lock = asyncio.Lock()
 
         self._on_worker_added: Callable[[str], None] | None = None
         self._on_worker_removed: Callable[[str], None] | None = None
@@ -280,8 +281,11 @@ class StreamLoadScheduler:
     def get_all_loads(self) -> dict[str, LoadSnapshot]:
         return self._consumer.get_all_loads()
 
-    def get_worker_count(self) -> int:
+    async def get_worker_count(self) -> int:
         return len(self._subscribed_workers)
+
+    async def get_healthy_worker_count(self) -> int:
+        return len(self._consumer.get_all_loads())
 
     def get_subscribed_workers(self) -> set:
         return self._subscribed_workers.copy()

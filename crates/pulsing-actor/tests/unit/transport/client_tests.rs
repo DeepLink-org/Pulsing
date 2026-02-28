@@ -2,7 +2,9 @@
 
 use crate::common::fixtures::{StreamingHandler, TestCounters, TestHandler};
 use pulsing_actor::actor::{ActorId, Message};
-use pulsing_actor::transport::{Http2Client, Http2Config, Http2RemoteTransport, Http2Server};
+use pulsing_actor::transport::{
+    Http2Client, Http2Config, Http2RemoteTransport, Http2Server, TransportTarget,
+};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -181,7 +183,9 @@ async fn test_http2_remote_transport_ask() {
     let addr = server.local_addr();
 
     let client = Arc::new(Http2Client::new(Http2Config::default()));
-    let transport = Http2RemoteTransport::new(client, addr, "test-actor".to_string());
+    let transport =
+        Http2RemoteTransport::builder(client, addr, TransportTarget::ByName("test-actor".into()))
+            .build();
 
     use pulsing_actor::actor::RemoteTransport;
 
@@ -216,7 +220,9 @@ async fn test_http2_remote_transport_tell() {
     let addr = server.local_addr();
 
     let client = Arc::new(Http2Client::new(Http2Config::default()));
-    let transport = Http2RemoteTransport::new(client, addr, "fire-actor".to_string());
+    let transport =
+        Http2RemoteTransport::builder(client, addr, TransportTarget::ByName("fire-actor".into()))
+            .build();
 
     use pulsing_actor::actor::RemoteTransport;
 
@@ -252,7 +258,8 @@ async fn test_http2_remote_transport_named_path() {
     let client = Arc::new(Http2Client::new(Http2Config::default()));
     use pulsing_actor::actor::ActorPath;
     let path = ActorPath::new("services/llm/worker").unwrap();
-    let transport = Http2RemoteTransport::new_named(client, addr, path);
+    let transport =
+        Http2RemoteTransport::builder(client, addr, TransportTarget::Named(path)).build();
 
     use pulsing_actor::actor::RemoteTransport;
 

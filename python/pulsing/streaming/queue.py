@@ -14,7 +14,7 @@ from pulsing.core.remote import ActorProxy
 from .manager import get_bucket_ref, get_storage_manager
 
 if TYPE_CHECKING:
-    from .sync_queue import SyncQueue, SyncQueueReader, SyncQueueWriter
+    from .sync_queue import SyncQueue, SyncQueueReader
 
 logger = logging.getLogger(__name__)
 
@@ -221,27 +221,6 @@ class Queue:
         return SyncQueue(self)
 
 
-class QueueWriter:
-    """Queue write handle"""
-
-    def __init__(self, queue: Queue):
-        self.queue = queue
-
-    async def put(
-        self, record: dict[str, Any] | list[dict[str, Any]]
-    ) -> dict[str, Any] | list[dict[str, Any]]:
-        return await self.queue.put(record)
-
-    async def flush(self) -> None:
-        await self.queue.flush()
-
-    def sync(self) -> "SyncQueueWriter":
-        """Return synchronous wrapper"""
-        from .sync_queue import SyncQueueWriter
-
-        return SyncQueueWriter(self)
-
-
 class QueueReader:
     """Queue read handle
 
@@ -314,8 +293,8 @@ async def write_queue(
     storage_path: str | None = None,
     backend: str | type = "memory",
     backend_options: dict[str, Any] | None = None,
-) -> QueueWriter:
-    """Open queue for writing
+) -> Queue:
+    """Open queue for writing, returns a ``Queue`` object.
 
     Args:
         system: Actor system
@@ -324,26 +303,18 @@ async def write_queue(
         num_buckets: Number of buckets
         batch_size: Batch size
         storage_path: Storage path
-        backend: Storage backend
-            - "memory": Pure in-memory backend (default)
-            - Custom: register_backend() or pass StorageBackend class
+        backend: Storage backend ("memory" by default; or a registered name / class)
         backend_options: Additional backend parameters
 
-    Example:
-        writer = await write_queue(system, "my_queue")
+    Example::
 
-        # Custom backend from a plugin
-        from my_plugin import MyBackend
-        from .backend import register_backend
-        register_backend("my_backend", MyBackend)
-        writer = await write_queue(system, "my_queue", backend="my_backend")
+        queue = await write_queue(system, "my_queue")
+        await queue.put({"id": "1", "value": 42})
     """
-    # Ensure all nodes in cluster have StorageManager
     from .manager import ensure_storage_managers
 
     await ensure_storage_managers(system)
-
-    queue = Queue(
+    return Queue(
         system=system,
         topic=topic,
         bucket_column=bucket_column,
@@ -353,7 +324,6 @@ async def write_queue(
         backend=backend,
         backend_options=backend_options,
     )
-    return QueueWriter(queue)
 
 
 def _assign_buckets(num_buckets: int, rank: int, world_size: int) -> list[int]:

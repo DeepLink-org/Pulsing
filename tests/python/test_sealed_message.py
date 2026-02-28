@@ -1,9 +1,7 @@
-"""
-Tests for SealedPyMessage - Python object serialization for Python-to-Python actor communication.
+"""Tests for Python object serialization in Python-to-Python actor communication.
 
 Covers:
-- SealedPyMessage seal/unseal functionality
-- ask/tell with arbitrary Python objects
+- ask/tell with arbitrary Python objects (pickle 由运行时内部处理)
 - receive returning arbitrary Python objects
 - Python-to-Python actor communication with isinstance-based dispatch
 - Backward compatibility with Message.from_json
@@ -17,7 +15,6 @@ import pytest
 from pulsing.core import (
     Actor,
     Message,
-    SealedPyMessage,
     ZeroCopyDescriptor,
 )
 import pulsing as pul
@@ -204,76 +201,6 @@ async def actor_system():
     system = await pul.actor_system()
     yield system
     await system.shutdown()
-
-
-# ============================================================================
-# SealedPyMessage Unit Tests
-# ============================================================================
-
-
-def test_sealed_message_seal_unseal_dict():
-    """Test sealing and unsealing a dict."""
-    original = {"key": "value", "number": 42, "nested": {"a": 1}}
-    sealed = SealedPyMessage.seal(original)
-
-    assert sealed is not None
-    assert len(sealed.data) > 0
-
-    unsealed = sealed.unseal()
-    assert unsealed == original
-
-
-def test_sealed_message_seal_unseal_dataclass():
-    """Test sealing and unsealing a dataclass."""
-    original = IncrementCommand(n=10)
-    sealed = SealedPyMessage.seal(original)
-
-    unsealed = sealed.unseal()
-    assert unsealed == original
-    assert isinstance(unsealed, IncrementCommand)
-    assert unsealed.n == 10
-
-
-def test_sealed_message_seal_unseal_list():
-    """Test sealing and unsealing a list."""
-    original = [1, 2, 3, "hello", {"key": "value"}]
-    sealed = SealedPyMessage.seal(original)
-
-    unsealed = sealed.unseal()
-    assert unsealed == original
-
-
-def test_sealed_message_seal_unseal_tuple():
-    """Test sealing and unsealing a tuple."""
-    original = (1, "two", 3.0)
-    sealed = SealedPyMessage.seal(original)
-
-    unsealed = sealed.unseal()
-    assert unsealed == original
-
-
-def test_sealed_message_seal_unseal_set():
-    """Test sealing and unsealing a set."""
-    original = {1, 2, 3, 4, 5}
-    sealed = SealedPyMessage.seal(original)
-
-    unsealed = sealed.unseal()
-    assert unsealed == original
-
-
-def test_sealed_message_seal_unseal_none():
-    """Test sealing and unsealing None."""
-    sealed = SealedPyMessage.seal(None)
-    unsealed = sealed.unseal()
-    assert unsealed is None
-
-
-def test_sealed_message_repr():
-    """Test SealedPyMessage repr."""
-    sealed = SealedPyMessage.seal({"test": "data"})
-    repr_str = repr(sealed)
-    assert "SealedPyMessage" in repr_str
-    assert "data_len=" in repr_str
 
 
 # ============================================================================

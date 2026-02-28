@@ -10,7 +10,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .queue import Queue, QueueReader, QueueWriter
+    from .queue import Queue, QueueReader
 
 
 class SyncQueue:
@@ -46,27 +46,6 @@ class SyncQueue:
 
     def stats(self) -> dict[str, Any]:
         return self._run(self._queue.stats())
-
-
-class SyncQueueWriter:
-    """Synchronous writer wrapper"""
-
-    def __init__(self, writer: "QueueWriter"):
-        self._writer = writer
-        self._loop = writer.queue._loop
-
-    def _run(self, coro):
-        if self._loop is None or not self._loop.is_running():
-            raise RuntimeError(
-                "Event loop not running. Sync wrapper requires a running event loop."
-            )
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
-
-    def put(self, record: dict[str, Any] | list[dict[str, Any]]):
-        return self._run(self._writer.put(record))
-
-    def flush(self) -> None:
-        self._run(self._writer.flush())
 
 
 class SyncQueueReader:

@@ -205,14 +205,36 @@ Pulsing/
 
 ## 🛠️ 开发
 
-```bash
-# 开发构建
-maturin develop
+### 前置依赖
 
-# 运行测试
-pytest tests/python/
-cargo test --workspace
+- [Rust](https://rustup.rs/) ≥ 1.75
+- Python ≥ 3.10
+- [uv](https://docs.astral.sh/uv/)（推荐的包管理器）
+- [just](https://github.com/casey/just)（任务运行器：`cargo install just` 或 `brew install just`）
+
+### 快速搭建
+
+```bash
+# 1. 安装 Python 依赖
+uv sync --extra dev
+
+# 2. 编译 Rust 核心并安装（修改 Rust 代码后需重新执行）
+uv run maturin develop
 ```
+
+### 常用命令
+
+```bash
+just dev          # 编译并安装（开发模式）
+just test         # 运行全部测试（Rust + Python）
+just test-python  # 仅运行 Python 测试
+just fmt          # 格式化代码
+just lint         # 代码检查
+just check        # 提交前完整检查（格式 + lint + 测试）
+just cov          # 生成覆盖率报告
+```
+
+详细开发指南请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 📄 License
 

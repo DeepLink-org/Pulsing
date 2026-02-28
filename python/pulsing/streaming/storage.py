@@ -6,7 +6,12 @@ from typing import Any, AsyncIterator
 
 from pulsing.core import ActorId, StreamMessage, remote
 
-from .backend import StorageBackend, get_backend_class
+from .backend import (
+    ConsumptionBackend,
+    StorageBackend,
+    TensorBackend,
+    get_backend_class,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +48,14 @@ class BucketStorage:
 
         # Backend instance (initialized in on_start)
         self._backend: StorageBackend | None = None
+        # Typed extension references — set once in on_start via isinstance checks
+        self._tensor_backend: TensorBackend | None = None
+        self._consumption_backend: ConsumptionBackend | None = None
         self._production_status: dict[int, dict[str, str]] = {}
         self._consumption_status: dict[str, set[int]] = {}
         self._key_to_index: dict[str, int] = {}
 
     def on_start(self, actor_id: ActorId) -> None:
-        # Create backend instance
         backend_class = get_backend_class(self._backend_type)
         self._backend = backend_class(
             bucket_id=self.bucket_id,
@@ -56,9 +63,19 @@ class BucketStorage:
             batch_size=self.batch_size,
             **self._backend_options,
         )
+        # Capability detection — done once here, never repeated via hasattr elsewhere
+        self._tensor_backend = (
+            self._backend if isinstance(self._backend, TensorBackend) else None
+        )
+        self._consumption_backend = (
+            self._backend if isinstance(self._backend, ConsumptionBackend) else None
+        )
         backend_name = getattr(backend_class, "__name__", str(self._backend_type))
         logger.info(
-            f"BucketStorage[{self.bucket_id}] started with {backend_name} at {self.storage_path}"
+            f"BucketStorage[{self.bucket_id}] started with {backend_name} "
+            f"(tensor={self._tensor_backend is not None}, "
+            f"consumption={self._consumption_backend is not None}) "
+            f"at {self.storage_path}"
         )
 
     def on_stop(self) -> None:
@@ -104,17 +121,17 @@ class BucketStorage:
     async def put_tensor(
         self, data: Any, partition_id: str = "default", **kwargs: Any
     ) -> dict:
-        if hasattr(self._backend, "put_tensor"):
-            meta = await self._backend.put_tensor(
-                data, partition_id=partition_id, **kwargs
-            )
-            if hasattr(meta, "global_indexes") and hasattr(meta, "field_names"):
-                for idx in meta.global_indexes:
-                    self._production_status[idx] = {
-                        field: "ready" for field in meta.field_names
-                    }
-            return {"status": "ok"}
-        raise NotImplementedError("Backend does not support put_tensor")
+        if self._tensor_backend is None:
+            raise NotImplementedError("Backend does not support put_tensor")
+        meta = await self._tensor_backend.put_tensor(
+            data, partition_id=partition_id, **kwargs
+        )
+        if hasattr(meta, "global_indexes") and hasattr(meta, "field_names"):
+            for idx in meta.global_indexes:
+                self._production_status[idx] = {
+                    field: "ready" for field in meta.field_names
+                }
+        return {"status": "ok"}
 
     async def get(self, limit: int = 100, offset: int = 0) -> list[dict]:
         """Get records.
@@ -174,27 +191,24 @@ class BucketStorage:
         sampler: Any = None,
         **sampling_kwargs: Any,
     ) -> dict:
-        if hasattr(self._backend, "get_meta"):
-            meta = await self._backend.get_meta(
+        if self._tensor_backend is not None:
+            meta = await self._tensor_backend.get_meta(
                 fields=fields,
                 batch_size=batch_size,
                 task_name=task_name,
                 sampler=sampler,
                 **sampling_kwargs,
             )
-            if hasattr(meta, "to_dict"):
-                return meta.to_dict()
-            return meta
+            return meta.to_dict() if hasattr(meta, "to_dict") else meta
 
+        # Generic fallback: use in-memory production/consumption tracking
         consumed = self._consumption_status.setdefault(task_name, set())
-        ready = []
-        for idx in sorted(self._production_status):
-            if idx in consumed:
-                continue
-            status = self._production_status[idx]
-            if all(status.get(field) == "ready" for field in fields):
-                ready.append(idx)
-
+        ready = [
+            idx
+            for idx in sorted(self._production_status)
+            if idx not in consumed
+            and all(self._production_status[idx].get(f) == "ready" for f in fields)
+        ]
         if sampler is not None:
             sampled, marked = sampler.sample(ready, batch_size, **sampling_kwargs)
         else:
@@ -207,13 +221,13 @@ class BucketStorage:
                     "partition_id": sampling_kwargs.get("partition_id", "default"),
                     "global_index": idx,
                     "fields": {
-                        field: {
-                            "name": field,
+                        f: {
+                            "name": f,
                             "dtype": None,
                             "shape": None,
                             "production_status": "ready",
                         }
-                        for field in fields
+                        for f in fields
                     },
                 }
                 for idx in sampled
@@ -222,14 +236,14 @@ class BucketStorage:
         }
 
     async def get_data(self, batch_meta: dict, fields: list[str] | None = None) -> Any:
-        if hasattr(self._backend, "get_data"):
-            return await self._backend.get_data(batch_meta, fields=fields)
+        if self._tensor_backend is not None:
+            return await self._tensor_backend.get_data(batch_meta, fields=fields)
 
         indexes = batch_meta.get("global_indexes") or [
             sample.get("global_index", -1) for sample in batch_meta.get("samples", [])
         ]
-        if hasattr(self._backend, "get_by_indices"):
-            rows = await self._backend.get_by_indices(indexes)
+        if self._consumption_backend is not None:
+            rows = await self._consumption_backend.get_by_indices(indexes)
         else:
             rows = []
             for idx in indexes:
@@ -240,19 +254,19 @@ class BucketStorage:
 
     async def mark_consumed(self, task_name: str, global_indexes: list[int]) -> dict:
         self._consumption_status.setdefault(task_name, set()).update(global_indexes)
-        if hasattr(self._backend, "mark_consumed"):
-            await self._backend.mark_consumed(task_name, global_indexes)
+        if self._consumption_backend is not None:
+            await self._consumption_backend.mark_consumed(task_name, global_indexes)
         return {"status": "ok"}
 
     async def reset_consumption(self, task_name: str) -> dict:
         self._consumption_status.pop(task_name, None)
-        if hasattr(self._backend, "reset_consumption"):
-            await self._backend.reset_consumption(task_name)
+        if self._consumption_backend is not None:
+            await self._consumption_backend.reset_consumption(task_name)
         return {"status": "ok"}
 
     async def clear(self, global_indexes: list[int]) -> dict:
-        if hasattr(self._backend, "clear"):
-            await self._backend.clear(global_indexes)
+        if self._consumption_backend is not None:
+            await self._consumption_backend.clear(global_indexes)
         return {"status": "ok"}
 
     async def kv_register(self, key: str, global_index: int) -> dict:

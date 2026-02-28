@@ -318,7 +318,7 @@ class PulsingRuntime:
             actor_ref = self._agent_refs.get(full_key)
             if actor_ref:
                 # Use tell (don't wait for response)
-                task = asyncio.create_task(actor_ref.ask(envelope))
+                task = asyncio.ensure_future(actor_ref.ask(envelope))
                 tasks.append(task)
 
         if tasks:

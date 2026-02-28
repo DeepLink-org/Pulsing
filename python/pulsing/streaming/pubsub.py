@@ -116,32 +116,32 @@ class TopicWriter:
         Args:
             message: Message to publish (any Python object)
             mode: Publish mode
-            timeout: Timeout in seconds. None means use default timeout.
-                     For WAIT_ANY_ACK and WAIT_ALL_ACKS modes, local task will be cancelled after timeout,
-                     but remote handler may still be executing (relies on HTTP/2 RST_STREAM to propagate cancellation).
+            timeout: Fanout timeout forwarded to the broker (seconds).
+                     The broker respects this deadline when waiting for subscriber acks
+                     and returns a structured PublishResult after the timeout.
+                     None uses the broker's default (DEFAULT_FANOUT_TIMEOUT).
 
         Returns:
-            PublishResult: Publish result
+            PublishResult: Publish result with delivery statistics.
 
         Raises:
-            asyncio.TimeoutError: Timeout
-            RuntimeError: Other errors
+            PulsingRuntimeError: If the broker is unreachable.
         """
         broker = await self._broker_ref()
-
-        # Determine timeout value
         effective_timeout = timeout if timeout is not None else DEFAULT_PUBLISH_TIMEOUT
 
-        async def _do_publish():
-            # Direct method call on broker proxy
-            return await broker.publish(
-                message,
-                mode=mode.value,
-                sender_id=self._writer_id,
-                timeout=effective_timeout,
-            )
+        data = await broker.publish(
+            message,
+            mode=mode.value,
+            sender_id=self._writer_id,
+            timeout=effective_timeout,
+        )
 
-        data = await asyncio.wait_for(_do_publish(), timeout=effective_timeout)
+        if data.get("timed_out"):
+            raise asyncio.TimeoutError(
+                f"Publish timed out after {effective_timeout}s "
+                f"({data.get('delivered', 0)}/{data.get('subscriber_count', 0)} acks received)"
+            )
 
         return PublishResult(
             success=data.get("success", False),

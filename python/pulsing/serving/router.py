@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from aiohttp import web
 
 from pulsing.core import ActorId, ActorSystem, get_system, remote
+from pulsing.serving.scheduler import Scheduler  # noqa: F401 (used in type annotation)
 
 
 @dataclass
@@ -54,7 +55,9 @@ class CompletionRequest:
 class _OpenAIHandler:
     """OpenAI-compatible HTTP request handler."""
 
-    def __init__(self, actor_system: ActorSystem, model_name: str, scheduler):
+    def __init__(
+        self, actor_system: ActorSystem, model_name: str, scheduler: Scheduler
+    ):
         self._actor_system = actor_system
         self.model_name = model_name
         self._request_count = 0
@@ -69,21 +72,8 @@ class _OpenAIHandler:
         )
 
     async def health_check(self, request: web.Request) -> web.Response:
-        if hasattr(self._scheduler, "get_worker_count"):
-            count = self._scheduler.get_worker_count()
-            if hasattr(count, "__await__"):
-                total_workers = await count
-            else:
-                total_workers = count
-        else:
-            total_workers = 0
-
-        if hasattr(self._scheduler, "get_healthy_worker_count"):
-            healthy_workers = await self._scheduler.get_healthy_worker_count()
-        elif hasattr(self._scheduler, "get_all_loads"):
-            healthy_workers = len(self._scheduler.get_all_loads())
-        else:
-            healthy_workers = total_workers
+        total_workers = await self._scheduler.get_worker_count()
+        healthy_workers = await self._scheduler.get_healthy_worker_count()
 
         return web.json_response(
             {
@@ -321,36 +311,8 @@ class _OpenAIHandler:
         return stream_response
 
 
-async def start_router(
-    system: ActorSystem,
-    http_host: str = "0.0.0.0",
-    http_port: int = 8080,
-    model_name: str = "pulsing-model",
-    worker_name: str = "worker",
-    scheduler_type: str = "stream_load",
-    scheduler=None,
-    scheduler_class=None,  # Backward compatibility
-) -> web.AppRunner:
-    """Start Router HTTP server, returns AppRunner
-
-    Args:
-        system: ActorSystem instance
-        http_host: HTTP listen address
-        http_port: HTTP listen port
-        model_name: Model name
-        worker_name: Worker actor name
-        scheduler_type: Scheduler type, supports:
-            - "stream_load": Stream load-aware (default, recommended)
-            - "random": Random
-            - "round_robin": Round robin
-            - "power_of_two": Power-of-Two Choices
-            - "cache_aware": Cache-aware
-        scheduler: Custom scheduler instance (takes priority)
-        scheduler_class: [Deprecated] Use scheduler parameter instead
-
-    Returns:
-        AppRunner instance
-    """
+def _build_scheduler(system: ActorSystem, worker_name: str, scheduler_type: str):
+    """Create a Scheduler instance from scheduler_type string."""
     from .load_stream import StreamLoadScheduler
     from .scheduler import (
         RUST_POLICIES_AVAILABLE,
@@ -360,77 +322,38 @@ async def start_router(
         RustPowerOfTwoScheduler,
     )
 
-    # Backward compatibility: scheduler_class -> scheduler
-    if scheduler_class is not None and scheduler is None:
-        scheduler = scheduler_class(system, worker_name)
+    scheduler_map = {
+        "stream_load": StreamLoadScheduler,
+        "random": RandomScheduler,
+        "round_robin": RoundRobinScheduler,
+    }
+    if RUST_POLICIES_AVAILABLE:
+        scheduler_map["power_of_two"] = RustPowerOfTwoScheduler
+        scheduler_map["cache_aware"] = RustCacheAwareScheduler
 
-    # Create scheduler
-    if scheduler is None:
-        scheduler_map = {
-            "stream_load": StreamLoadScheduler,
-            "random": RandomScheduler,
-            "round_robin": RoundRobinScheduler,
-        }
-
-        # Rust high-performance schedulers (requires compilation)
-        if RUST_POLICIES_AVAILABLE:
-            scheduler_map["power_of_two"] = RustPowerOfTwoScheduler
-            scheduler_map["cache_aware"] = RustCacheAwareScheduler
-
-        scheduler_class = scheduler_map.get(scheduler_type, StreamLoadScheduler)
-        scheduler = scheduler_class(system, worker_name)
-
-    # Start scheduler (if has start method)
-    if hasattr(scheduler, "start"):
-        await scheduler.start()
-
-    handler = _OpenAIHandler(system, model_name, scheduler)
-
-    app = web.Application()
-    app.router.add_get("/", handler.index)
-    app.router.add_get("/health", handler.health_check)
-    app.router.add_get("/v1/models", handler.list_models)
-    app.router.add_post("/v1/chat/completions", handler.chat_completions)
-    app.router.add_post("/v1/completions", handler.completions)
-
-    # Save scheduler reference for cleanup
-    app["scheduler"] = scheduler
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, http_host, http_port)
-    await site.start()
-
-    print(f"[Router] HTTP server started at http://{http_host}:{http_port}")
-    print(f"[Router] Using scheduler: {scheduler_type}")
-    return runner
-
-
-async def stop_router(runner: web.AppRunner):
-    """Stop Router HTTP server"""
-    if runner:
-        # Stop scheduler (if has stop method)
-        app = runner.app
-        scheduler = app.get("scheduler")
-        if scheduler and hasattr(scheduler, "stop"):
-            await scheduler.stop()
-
-        await runner.cleanup()
-        print("[Router] HTTP server stopped")
+    cls = scheduler_map.get(scheduler_type, StreamLoadScheduler)
+    return cls(system, worker_name)
 
 
 @remote
 class Router:
-    """Router - OpenAI 兼容 HTTP API 路由，通过 pulsing.remote 暴露 health_check / get_config。
+    """OpenAI-compatible HTTP API router Actor.
 
-    包装 start_router/stop_router，支持 CLI：pulsing actor pulsing.serving.Router。
+    Starts an HTTP server on ``on_start`` and stops it on ``on_stop``.
+    Exposes ``health_check`` and ``get_config`` as remote-callable methods.
+
+    CLI usage::
+
+        pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 -- \\
+            --http_port 8080 --model_name my-model
 
     Args:
-        http_host: HTTP 监听地址 (default: "0.0.0.0")
-        http_port: HTTP 监听端口 (default: 8080)
-        model_name: API 响应中的模型名 (default: "pulsing-model")
-        worker_name: 路由目标 worker 名称 (default: "worker")
-        scheduler_type: 调度策略，支持 stream_load / random / round_robin / power_of_two / cache_aware
+        http_host: HTTP listen address (default: "0.0.0.0")
+        http_port: HTTP listen port (default: 8080)
+        model_name: Model name returned in API responses (default: "pulsing-model")
+        worker_name: Worker actor name to route to (default: "worker")
+        scheduler_type: Scheduling policy — stream_load (default) / random /
+            round_robin / power_of_two / cache_aware
     """
 
     def __init__(
@@ -439,7 +362,7 @@ class Router:
         http_port: int = 8080,
         model_name: str = "pulsing-model",
         worker_name: str = "worker",
-        scheduler_type: str = "round_robin",
+        scheduler_type: str = "stream_load",
     ):
         self.http_host = http_host
         self.http_port = http_port
@@ -448,41 +371,46 @@ class Router:
         self.scheduler_type = scheduler_type
 
         self._runner: web.AppRunner | None = None
-        self._actor_id: ActorId | None = None
+        self._scheduler: Scheduler | None = None
 
     async def on_start(self, actor_id: ActorId) -> None:
-        """Start the HTTP server when actor starts"""
-        self._actor_id = actor_id
-
-        # Get global system (set by CLI via init())
         system = get_system()
-
-        # Start HTTP server
-        self._runner = await start_router(
-            system=system,
-            http_host=self.http_host,
-            http_port=self.http_port,
-            model_name=self.model_name,
-            worker_name=self.worker_name,
-            scheduler_type=self.scheduler_type,
+        self._scheduler = _build_scheduler(
+            system, self.worker_name, self.scheduler_type
         )
+        await self._scheduler.start()
 
+        handler = _OpenAIHandler(system, self.model_name, self._scheduler)
+        app = web.Application()
+        app.router.add_get("/", handler.index)
+        app.router.add_get("/health", handler.health_check)
+        app.router.add_get("/v1/models", handler.list_models)
+        app.router.add_post("/v1/chat/completions", handler.chat_completions)
+        app.router.add_post("/v1/completions", handler.completions)
+
+        self._runner = web.AppRunner(app)
+        await self._runner.setup()
+        await web.TCPSite(self._runner, self.http_host, self.http_port).start()
+
+        print(
+            f"[Router] HTTP server started at http://{self.http_host}:{self.http_port}"
+        )
         print(f"[Router] Actor started: {actor_id}")
 
     def on_stop(self) -> None:
-        """Stop the HTTP server when actor stops"""
         if self._runner:
-            # Schedule cleanup in background (on_stop is sync)
-            asyncio.create_task(self._cleanup())
+            asyncio.create_task(self._shutdown())
 
-    async def _cleanup(self):
-        """Async cleanup helper"""
+    async def _shutdown(self) -> None:
+        if self._scheduler:
+            await self._scheduler.stop()
+            self._scheduler = None
         if self._runner:
-            await stop_router(self._runner)
+            await self._runner.cleanup()
             self._runner = None
+            print("[Router] HTTP server stopped")
 
     def metadata(self) -> dict[str, str]:
-        """Return router metadata for diagnostics"""
         return {
             "type": "router",
             "http_host": self.http_host,
@@ -493,7 +421,6 @@ class Router:
         }
 
     def health_check(self) -> dict:
-        """健康检查。"""
         return {
             "status": "healthy",
             "http_port": self.http_port,
@@ -501,7 +428,6 @@ class Router:
         }
 
     def get_config(self) -> dict:
-        """路由配置。"""
         return {
             "http_host": self.http_host,
             "http_port": self.http_port,
@@ -509,3 +435,56 @@ class Router:
             "worker_name": self.worker_name,
             "scheduler_type": self.scheduler_type,
         }
+
+
+async def start_router(
+    system: ActorSystem,
+    http_host: str = "0.0.0.0",
+    http_port: int = 8080,
+    model_name: str = "pulsing-model",
+    worker_name: str = "worker",
+    scheduler_type: str = "stream_load",
+    scheduler=None,
+    scheduler_class=None,
+) -> web.AppRunner:
+    """Start an OpenAI-compatible HTTP server without creating a Router actor.
+
+    Useful for embedding the router in an existing asyncio application.
+    For CLI / Actor-lifecycle usage prefer the ``Router`` actor class instead.
+
+    Returns:
+        ``web.AppRunner`` — pass to ``stop_router()`` for cleanup.
+    """
+    if scheduler_class is not None and scheduler is None:
+        scheduler = scheduler_class(system, worker_name)
+    if scheduler is None:
+        scheduler = _build_scheduler(system, worker_name, scheduler_type)
+
+    await scheduler.start()
+
+    handler = _OpenAIHandler(system, model_name, scheduler)
+    app = web.Application()
+    app.router.add_get("/", handler.index)
+    app.router.add_get("/health", handler.health_check)
+    app.router.add_get("/v1/models", handler.list_models)
+    app.router.add_post("/v1/chat/completions", handler.chat_completions)
+    app.router.add_post("/v1/completions", handler.completions)
+    app["scheduler"] = scheduler
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, http_host, http_port).start()
+
+    print(f"[Router] HTTP server started at http://{http_host}:{http_port}")
+    return runner
+
+
+async def stop_router(runner: web.AppRunner) -> None:
+    """Stop a router started via ``start_router()``."""
+    if not runner:
+        return
+    scheduler = runner.app.get("scheduler")
+    if scheduler:
+        await scheduler.stop()
+    await runner.cleanup()
+    print("[Router] HTTP server stopped")

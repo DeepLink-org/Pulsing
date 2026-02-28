@@ -17,6 +17,7 @@ pub mod http2;
 // HTTP/2 exports
 pub use http2::{
     BinaryFrameParser, Http2Client, Http2ClientBuilder, Http2Config, Http2RemoteTransport,
-    Http2Server, Http2ServerHandler, Http2Transport, MessageMode, PoolConfig, PoolStats,
-    RequestType, RetryConfig, RetryableError, StreamFrame, StreamHandle, FLAG_END, FLAG_ERROR,
+    Http2RemoteTransportBuilder, Http2Server, Http2ServerHandler, Http2Transport, MessageMode,
+    PoolConfig, PoolStats, RequestType, RetryConfig, RetryableError, StreamFrame, StreamHandle,
+    TransportTarget, FLAG_END, FLAG_ERROR,
 };

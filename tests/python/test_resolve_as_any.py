@@ -14,6 +14,8 @@ import asyncio
 
 import pytest
 
+from pulsing.exceptions import PulsingRuntimeError
+
 import pulsing as pul
 from pulsing.core import Actor, ActorRef, as_any, remote
 
@@ -306,6 +308,6 @@ async def test_counter_resolve_with_timeout(initialized_pul):
 
 @pytest.mark.asyncio
 async def test_counter_resolve_timeout_not_found(initialized_pul):
-    """Counter.resolve(name, timeout=...) raises after timeout if not found."""
-    with pytest.raises(RuntimeError):
+    """Counter.resolve(name, timeout=...) raises PulsingRuntimeError if not found."""
+    with pytest.raises(PulsingRuntimeError):
         await _ServiceWithMethods.resolve("nonexistent_actor", timeout=0.3)

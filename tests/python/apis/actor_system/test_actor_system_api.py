@@ -225,7 +225,7 @@ class Counter:
 @pytest.mark.asyncio
 async def test_remote_decorator_spawn(system):
     """Test @pul.remote class spawn."""
-    counter = await Counter.local(system, init=10)
+    counter = await Counter.spawn(system=system, init=10)
     assert counter is not None
     result = await counter.get()
     assert result == 10
@@ -234,7 +234,7 @@ async def test_remote_decorator_spawn(system):
 @pytest.mark.asyncio
 async def test_remote_decorator_sync_method(system):
     """Test calling sync method on @pul.remote class."""
-    counter = await Counter.local(system, init=0)
+    counter = await Counter.spawn(system=system, init=0)
     result = await counter.incr()
     assert result == 1
     result = await counter.incr()
@@ -244,7 +244,7 @@ async def test_remote_decorator_sync_method(system):
 @pytest.mark.asyncio
 async def test_remote_decorator_async_method(system):
     """Test calling async method on @pul.remote class."""
-    counter = await Counter.local(system, init=5)
+    counter = await Counter.spawn(system=system, init=5)
     result = await counter.decr()
     assert result == 4
 

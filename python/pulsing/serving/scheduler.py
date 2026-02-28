@@ -45,17 +45,27 @@ except ImportError:
 
 
 class Scheduler(ABC):
-    """Scheduler base class"""
+    """Scheduler base class
+
+    All scheduler implementations must inherit from this class.
+    Provides default lifecycle (start/stop) and health query methods.
+    """
 
     def __init__(self, actor_system, worker_name: str = "worker"):
         self._system = actor_system
         self._worker_name = worker_name
         self._lock = asyncio.Lock()
 
+    async def start(self):
+        """Start the scheduler. Override for schedulers that need background tasks."""
+
+    async def stop(self):
+        """Stop the scheduler. Override for schedulers that need cleanup."""
+
     async def get_available_workers(self):
         try:
             return await self._system.get_named_instances(self._worker_name)
-        except Exception as e:
+        except Exception:
             return []
 
     async def get_worker_count(self) -> int:
@@ -67,7 +77,6 @@ class Scheduler(ABC):
 
     async def _resolve_worker(self, node_id: int | None = None):
         try:
-            # node_id is now u128 integer from members()
             return await self._system.resolve_named(self._worker_name, node_id=node_id)
         except Exception:
             return None

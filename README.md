@@ -205,14 +205,36 @@ Pulsing/
 
 ## 🛠️ Development
 
-```bash
-# Development build
-maturin develop
+### Prerequisites
 
-# Run tests
-pytest tests/python/
-cargo test --workspace
+- [Rust](https://rustup.rs/) ≥ 1.75
+- Python ≥ 3.10
+- [uv](https://docs.astral.sh/uv/) (recommended package manager)
+- [just](https://github.com/casey/just) (task runner: `cargo install just` or `brew install just`)
+
+### Quick Setup
+
+```bash
+# 1. Install Python dependencies
+uv sync --extra dev
+
+# 2. Compile Rust core and install (run again after any Rust changes)
+uv run maturin develop
 ```
+
+### Common Commands
+
+```bash
+just dev          # Compile and install in development mode
+just test         # Run all tests (Rust + Python)
+just test-python  # Python tests only
+just fmt          # Format code (Rust + Python)
+just lint         # Lint check
+just check        # Full pre-commit check (format + lint + test)
+just cov          # Generate coverage report
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for a detailed guide on the development workflow.
 
 ## 📄 License
 

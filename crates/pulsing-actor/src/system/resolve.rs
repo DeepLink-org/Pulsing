@@ -12,7 +12,7 @@ use crate::policies::LoadBalancingPolicy;
 use crate::system::config::ResolveOptions;
 use crate::system::load_balancer::{MemberWorker, NodeLoadTracker};
 use crate::system::ActorSystem;
-use crate::transport::Http2RemoteTransport;
+use crate::transport::{Http2RemoteTransport, TransportTarget};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,8 +42,12 @@ impl ActorSystem {
 
         // Lookup actor location in cluster
         if let Some(member_info) = cluster.lookup_actor(id).await {
-            let transport =
-                Http2RemoteTransport::new_by_id(self.transport.client(), member_info.addr, *id);
+            let transport = Http2RemoteTransport::builder(
+                self.transport.client(),
+                member_info.addr,
+                TransportTarget::ById(*id),
+            )
+            .build();
             return Ok(ActorRef::remote(*id, member_info.addr, Arc::new(transport)));
         }
 
@@ -124,11 +128,12 @@ impl ActorSystem {
                 if nid != self.node_id {
                     if let Some(member) = cluster.get_member(&nid).await {
                         if !options.filter_alive || member.status == MemberStatus::Alive {
-                            let transport = Http2RemoteTransport::new_named(
+                            let transport = Http2RemoteTransport::builder(
                                 self.transport.client(),
                                 member.addr,
-                                path.clone(),
-                            );
+                                TransportTarget::Named(path.clone()),
+                            )
+                            .build();
                             let actor_id = ActorId::generate();
                             return Ok(ActorRef::remote(
                                 actor_id,
@@ -188,8 +193,12 @@ impl ActorSystem {
             return Ok(ActorRef::local(handle.actor_id, handle.sender.clone()));
         }
 
-        let transport =
-            Http2RemoteTransport::new_named(self.transport.client(), target.addr, path.clone());
+        let transport = Http2RemoteTransport::builder(
+            self.transport.client(),
+            target.addr,
+            TransportTarget::Named(path.clone()),
+        )
+        .build();
 
         // For named actors, we don't have a specific ActorId until we resolve
         // Use a placeholder ID (this will be replaced when the actor is actually accessed)

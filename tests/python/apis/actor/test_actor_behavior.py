@@ -135,7 +135,7 @@ class Counter:
 @pytest.mark.asyncio
 async def test_remote_sync_method(system):
     """Test @pul.remote class sync method."""
-    counter = await Counter.local(system, init=0)
+    counter = await Counter.spawn(system=system, init=0)
 
     result = await counter.incr()
     assert result == 1
@@ -147,7 +147,7 @@ async def test_remote_sync_method(system):
 @pytest.mark.asyncio
 async def test_remote_async_method(system):
     """Test @pul.remote class async method."""
-    counter = await Counter.local(system, init=10)
+    counter = await Counter.spawn(system=system, init=10)
 
     result = await counter.async_incr()
     assert result == 11
@@ -156,7 +156,7 @@ async def test_remote_async_method(system):
 @pytest.mark.asyncio
 async def test_remote_no_return_method(system):
     """Test @pul.remote class method with no return value."""
-    counter = await Counter.local(system, init=100)
+    counter = await Counter.spawn(system=system, init=100)
 
     # reset() has no return value
     await counter.reset()
@@ -169,7 +169,7 @@ async def test_remote_no_return_method(system):
 @pytest.mark.asyncio
 async def test_remote_sync_method_sequential(system):
     """Test that sync methods are processed sequentially."""
-    counter = await Counter.local(system, init=0)
+    counter = await Counter.spawn(system=system, init=0)
 
     # Multiple calls should be sequential
     results = []
@@ -314,7 +314,7 @@ class StreamingService:
 @pytest.mark.asyncio
 async def test_remote_async_generator_stream(system):
     """Test @pul.remote with async generator for streaming."""
-    service = await StreamingService.local(system)
+    service = await StreamingService.spawn(system=system)
 
     chunks = []
     async for chunk in service.async_stream(5):
@@ -328,7 +328,7 @@ async def test_remote_async_generator_stream(system):
 @pytest.mark.asyncio
 async def test_remote_sync_generator_stream(system):
     """Test @pul.remote with sync generator for streaming."""
-    service = await StreamingService.local(system)
+    service = await StreamingService.spawn(system=system)
 
     # For sync generator methods, need to await then iterate
     result = await service.sync_stream(3)

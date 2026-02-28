@@ -1,111 +1,81 @@
 //! Convert Python exceptions to Rust ActorError
 //!
-//! This module provides automatic conversion from Python exceptions
-//! to unified ActorError types, enabling seamless error handling
-//! across Rust and Python boundaries.
+//! Uses `isinstance` checks against `pulsing.exceptions` classes — matching
+//! most-specific types first — then falls back to standard Python exception
+//! types for interoperability.
 
 use pulsing_actor::error::ActorError;
 use pyo3::exceptions::{PyTimeoutError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
-/// Convert Python exception (PyErr) to ActorError
+/// Convert Python exception to ActorError.
 ///
-/// This function automatically classifies Python exceptions:
-/// - ValueError, TypeError -> Business error
-/// - TimeoutError -> Timeout error
-/// - Other exceptions -> System error
+/// Matching order (most-specific first):
+/// 1. Pulsing custom types: Business → System → Timeout → Unsupported
+/// 2. Standard Python types: TimeoutError → ValueError/TypeError → fallback
 pub fn convert_python_exception_to_actor_error(
     py: Python,
     err: &PyErr,
 ) -> anyhow::Result<ActorError> {
-    // Try to extract exception type and message
-    let err_type = err.get_type(py);
-    let type_name = err_type.name()?.to_string();
-    let err_msg = err.to_string();
+    let err_obj = err.value(py);
 
-    // Check for specific exception types
+    if let Ok(exc) = py.import("pulsing.exceptions") {
+        // PulsingBusinessError — check before PulsingActorError (more specific)
+        if let Ok(cls) = exc.getattr("PulsingBusinessError") {
+            if err_obj.is_instance(&cls).unwrap_or(false) {
+                let code = err_obj.getattr("code")?.extract::<u32>()?;
+                let message = err_obj.getattr("message")?.extract::<String>()?;
+                let details = err_obj
+                    .getattr("details")
+                    .ok()
+                    .and_then(|d| d.extract::<Option<String>>().ok())
+                    .flatten();
+                return Ok(ActorError::business(code, message, details));
+            }
+        }
+
+        if let Ok(cls) = exc.getattr("PulsingSystemError") {
+            if err_obj.is_instance(&cls).unwrap_or(false) {
+                let error = err_obj.getattr("error")?.extract::<String>()?;
+                let recoverable = err_obj
+                    .getattr("recoverable")
+                    .ok()
+                    .and_then(|r| r.extract::<bool>().ok())
+                    .unwrap_or(true);
+                return Ok(ActorError::system(error, recoverable));
+            }
+        }
+
+        if let Ok(cls) = exc.getattr("PulsingTimeoutError") {
+            if err_obj.is_instance(&cls).unwrap_or(false) {
+                let operation = err_obj.getattr("operation")?.extract::<String>()?;
+                let duration_ms = err_obj
+                    .getattr("duration_ms")
+                    .ok()
+                    .and_then(|d| d.extract::<u64>().ok())
+                    .unwrap_or(0);
+                return Ok(ActorError::timeout(operation, duration_ms));
+            }
+        }
+
+        if let Ok(cls) = exc.getattr("PulsingUnsupportedError") {
+            if err_obj.is_instance(&cls).unwrap_or(false) {
+                let operation = err_obj.getattr("operation")?.extract::<String>()?;
+                return Ok(ActorError::unsupported(operation));
+            }
+        }
+    }
+
+    // Standard Python exception fallback
     if err.is_instance_of::<PyTimeoutError>(py) {
-        // Timeout error
         return Ok(ActorError::timeout("python_operation", 0));
     }
 
     if err.is_instance_of::<PyValueError>(py) || err.is_instance_of::<PyTypeError>(py) {
-        // Business error: validation/type errors
-        return Ok(ActorError::business(400, err_msg, None));
+        return Ok(ActorError::business(400, err.to_string(), None));
     }
 
-    // Check if it's a custom Pulsing exception
-    // Try to extract error details from exception attributes
-    let py_err_obj = err.value(py);
-
-    // Check for PulsingBusinessError
-    if let Ok(code_attr) = py_err_obj.getattr("code") {
-        if let Ok(code) = code_attr.extract::<u32>() {
-            let message_attr = py_err_obj.getattr("message").ok();
-            let message = message_attr
-                .and_then(|m| m.extract::<String>().ok())
-                .unwrap_or_else(|| err_msg.clone());
-
-            let details_attr = py_err_obj.getattr("details").ok();
-            let details = details_attr.and_then(|d| d.extract::<String>().ok());
-
-            return Ok(ActorError::business(code, message, details));
-        }
-    }
-
-    // Check for PulsingSystemError
-    if let Ok(error_attr) = py_err_obj.getattr("error") {
-        if let Ok(error_msg) = error_attr.extract::<String>() {
-            let recoverable_attr = py_err_obj.getattr("recoverable").ok();
-            let recoverable = recoverable_attr
-                .and_then(|r| r.extract::<bool>().ok())
-                .unwrap_or(true);
-
-            return Ok(ActorError::system(error_msg, recoverable));
-        }
-    }
-
-    // Check for PulsingTimeoutError (has both operation and duration_ms)
-    if let Ok(operation_attr) = py_err_obj.getattr("operation") {
-        if let Ok(operation) = operation_attr.extract::<String>() {
-            let duration_attr = py_err_obj.getattr("duration_ms").ok();
-            if let Some(duration_ms) = duration_attr.and_then(|d| d.extract::<u64>().ok()) {
-                // Has duration_ms -> Timeout error
-                return Ok(ActorError::timeout(operation, duration_ms));
-            }
-        }
-    }
-
-    // Check for PulsingUnsupportedError (by type name or operation attribute without duration_ms)
-    if type_name.contains("Unsupported") || type_name.contains("unsupported") {
-        if let Ok(operation_attr) = py_err_obj.getattr("operation") {
-            if let Ok(operation) = operation_attr.extract::<String>() {
-                return Ok(ActorError::unsupported(operation));
-            }
-        }
-        // Fallback: use error message as operation
-        return Ok(ActorError::unsupported(err_msg));
-    }
-
-    // Default: classify based on exception type name
-    match type_name.as_str() {
-        "TimeoutError" | "asyncio.TimeoutError" => Ok(ActorError::timeout("python_operation", 0)),
-        "ValueError" | "TypeError" | "KeyError" | "AttributeError" => {
-            // Business errors: user input errors
-            Ok(ActorError::business(400, err_msg, None))
-        }
-        "RuntimeError" | "SystemError" | "OSError" | "IOError" => {
-            // System errors: internal errors
-            Ok(ActorError::system(err_msg, true))
-        }
-        _ => {
-            // Unknown exception type: treat as system error
-            Ok(ActorError::system(
-                format!("{}: {}", type_name, err_msg),
-                true,
-            ))
-        }
-    }
+    Ok(ActorError::system(err.to_string(), true))
 }
 
 #[cfg(test)]

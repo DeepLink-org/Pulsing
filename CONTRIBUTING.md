@@ -1,139 +1,169 @@
 # Contributing to Pulsing
 
-感谢你对 Pulsing 的兴趣！我们欢迎各种形式的贡献。
+感谢你对 Pulsing 的贡献兴趣！本文档介绍如何搭建开发环境、运行测试以及提交代码。
 
-## 开发环境设置
+## 前置要求
 
-### 前置要求
+| 工具 | 版本 | 安装方式 |
+|------|------|----------|
+| Rust | ≥ 1.75 | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| Python | ≥ 3.10 | [python.org](https://python.org) 或 `uv python install 3.11` |
+| uv | 最新 | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| just | 最新 | `cargo install just` 或 `brew install just` |
 
-- Rust 1.75+
-- Python 3.10+
-- maturin (`pip install maturin`)
-
-### 构建项目
-
-```bash
-# 克隆仓库
-git clone https://github.com/DeepLink-org/Pulsing.git
-cd pulsing
-
-# 安装 Python 依赖
-pip install -e .
-# 或使用 maturin
-maturin develop
-
-# 运行测试
-cargo test
-pytest tests/
-```
-
-## 贡献流程
-
-### 1. 创建 Issue
-
-在开始工作之前，请先创建一个 Issue 讨论你想要做的改动。这有助于避免重复工作并确保你的贡献与项目方向一致。
-
-### 2. Fork 和 Clone
+## 快速开始（三步）
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/pulsing.git
-cd pulsing
-git remote add upstream https://github.com/DeepLink-org/Pulsing.git
+# 1. 克隆仓库
+git clone https://github.com/DeepLink-org/Pulsing.git && cd Pulsing
+
+# 2. 创建并激活 Python 虚拟环境，安装开发依赖
+uv sync --extra dev
+
+# 3. 编译 Rust 核心并安装到当前环境
+uv run maturin develop
 ```
 
-### 3. 创建分支
+完成后可以验证安装：
 
 ```bash
-git checkout -b feature/your-feature-name
-# 或
-git checkout -b fix/your-fix-name
+uv run python -c "import pulsing; print(pulsing.__version__)"
 ```
 
-### 4. 开发
+## 常用开发命令
 
-- 遵循现有的代码风格
-- 添加必要的测试
-- 更新相关文档
+项目使用 [just](https://github.com/casey/just) 作为任务运行器，所有常用命令都在 `Justfile` 中定义。
 
-### 5. 提交
-
-我们使用 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
-
-```
-feat: 添加新功能
-fix: 修复 bug
-docs: 更新文档
-test: 添加或修改测试
-refactor: 代码重构
-chore: 构建过程或辅助工具的变动
-```
-
-示例：
 ```bash
-git commit -m "feat: add streaming support to ActorRef"
-git commit -m "fix: resolve memory leak in mailbox"
-git commit -m "docs: update README with new examples"
+just dev          # 编译并安装（开发模式，等同于 maturin develop）
+just test         # 运行全部测试（Rust + Python）
+just test-python  # 仅运行 Python 测试
+just test-rust    # 仅运行 Rust 测试
+just fmt          # 格式化代码（Rust + Python）
+just lint         # 代码检查
+just check        # 提交前完整检查（格式 + lint + 测试）
+just cov          # 生成覆盖率报告
+just clean        # 清理构建产物
 ```
 
-### 6. 提交 PR
+> **提示**：提交代码前请运行 `just check`，确保所有检查通过。
 
-- 确保所有测试通过
-- 确保代码格式正确 (`cargo fmt`, `ruff format`)
-- 提供清晰的 PR 描述
+## 项目结构
 
-## 代码风格
+```
+Pulsing/
+├── crates/
+│   ├── pulsing-actor/    # Rust 核心：Actor、Cluster、Transport
+│   └── pulsing-py/       # PyO3 绑定：将 Rust 类型暴露给 Python
+├── python/pulsing/       # Python 包
+│   ├── core/             # @remote 装饰器、ActorProxy
+│   ├── serving/          # LLM 服务路由、调度
+│   ├── streaming/        # 分布式队列与发布/订阅
+│   ├── agent/            # Agent 运行时工具
+│   └── integrations/     # Ray / AutoGen / LangGraph 集成
+├── tests/python/         # Python 测试
+├── examples/             # 示例代码
+└── docs/                 # 文档（MkDocs）
+```
+
+## 开发工作流
+
+### 修改 Python 代码
+
+Python 代码无需重新编译，修改后直接运行测试：
+
+```bash
+just test-python
+# 或者运行单个文件
+uv run pytest tests/python/test_remote_decorator.py -v
+```
+
+### 修改 Rust 代码
+
+修改 Rust 代码后需要重新编译：
+
+```bash
+just dev
+just test
+```
+
+### 添加新特性
+
+1. 在 `crates/pulsing-actor/` 实现 Rust 逻辑
+2. 在 `crates/pulsing-py/src/` 添加 PyO3 绑定
+3. 在 `python/pulsing/` 添加 Python 封装（如需要）
+4. 在 `tests/python/` 添加测试
+5. 运行 `just check` 确认无误
+
+## 代码规范
 
 ### Rust
 
-- 使用 `cargo fmt` 格式化代码
-- 使用 `cargo clippy` 检查代码质量
-- 遵循 [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/)
+- 使用 `cargo fmt` 格式化（`just fmt` 会自动运行）
+- 通过 `cargo clippy` 检查（`just lint` 会自动运行）
+- 公共 API 必须有文档注释（`///`）
+- 错误类型使用 `thiserror` 定义，避免使用 `anyhow` 做为库的公共 API
 
 ### Python
 
-- 使用 `ruff` 进行格式化和检查
-- 遵循 PEP 8
-- 使用类型注解
+- 使用 `ruff format` 格式化（行宽 88）
+- 使用 `ruff check` 检查（遵循 E/F/W/I/UP/B 规则集）
+- 类型注解尽量完整
+- 异步函数优先使用 `async def`
 
-## 测试
+### 测试
 
-### Rust 测试
+- Python 测试使用 `pytest-asyncio`，配置 `asyncio_mode = "auto"`
+- 测试函数命名：`test_<功能描述>_<场景>`
+- 避免测试间共享全局状态（每个测试通过 fixture 独立初始化系统）
 
-```bash
-# 运行所有测试
-cargo test
-
-# 运行特定测试
-cargo test test_name
-
-# 运行 Actor System 测试
-cargo test -p pulsing-actor
-```
-
-### Python 测试
+## 运行文档
 
 ```bash
-# 运行所有测试
-pytest tests/
-
-# 运行特定测试
-pytest tests/actor_system/
+cd docs
+uv run mkdocs serve
+# 访问 http://localhost:8000
 ```
 
-## 文档
+## 提交 PR
 
-- API 文档使用 rustdoc / docstring
-- 设计文档放在 `docs/design/`
-- 示例代码放在 `examples/`
+1. Fork 仓库并创建特性分支：`git checkout -b feat/your-feature`
+2. 编写代码和测试
+3. 运行 `just check` 确保全部通过
+4. Push 并在 GitHub 上创建 Pull Request
+5. PR 描述中说明改动目的和测试方式
 
-## 行为准则
+## 常见问题
 
-请阅读并遵守我们的 [行为准则](CODE_OF_CONDUCT.md)。
+**Q: `maturin develop` 报错 `linker 'cc' not found`**
 
-## 许可证
+Linux 上需要安装 gcc：
 
-通过贡献代码，你同意你的贡献将在 Apache-2.0 许可证下发布。
+```bash
+# Ubuntu/Debian
+sudo apt install build-essential
+# CentOS/Fedora
+sudo dnf install gcc gcc-c++
+```
 
-## 问题？
+**Q: 运行测试时报 `ImportError: cannot import name '_core' from 'pulsing'`**
 
-如果你有任何问题，请通过 [GitHub Issues](https://github.com/DeepLink-org/Pulsing/issues) 联系我们。
+需要先编译 Rust 核心：
+
+```bash
+just dev
+```
+
+**Q: macOS 上 `maturin develop` 很慢**
+
+可以尝试只编译当前架构：
+
+```bash
+maturin develop --target $(rustc -vV | grep host | cut -d' ' -f2)
+```
+
+**Q: 如何只跑某一个测试？**
+
+```bash
+uv run pytest tests/python/test_remote_decorator.py::test_spawn_actor -v
+```

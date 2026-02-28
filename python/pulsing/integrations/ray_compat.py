@@ -198,7 +198,7 @@ class _ActorClass:
         self._ensure_wrapped()
 
         async def create():
-            proxy = await self._pulsing_class.local(_system, *args, **kwargs)
+            proxy = await self._pulsing_class.spawn(*args, system=_system, **kwargs)
             return _ActorHandle(proxy, self._methods)
 
         return _run_coro_sync(create())

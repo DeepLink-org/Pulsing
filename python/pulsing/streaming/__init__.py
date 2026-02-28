@@ -33,9 +33,9 @@ from .pubsub import (
     subscribe_to_topic,
     write_topic,
 )
-from .queue import Queue, QueueReader, QueueWriter, read_queue, write_queue
+from .queue import Queue, QueueReader, read_queue, write_queue
 from .storage import BucketStorage
-from .sync_queue import SyncQueue, SyncQueueReader, SyncQueueWriter
+from .sync_queue import SyncQueue, SyncQueueReader
 
 if TYPE_CHECKING:
     from pulsing._core import ActorSystem
@@ -57,8 +57,8 @@ class QueueAPI:
         storage_path: str | None = None,
         backend: str | type = "memory",
         backend_options: dict[str, Any] | None = None,
-    ) -> QueueWriter:
-        """Open queue for writing"""
+    ) -> Queue:
+        """Open queue for writing, returns a ``Queue``."""
         return await write_queue(
             self._system,
             topic,
@@ -130,12 +130,10 @@ __all__ = [
     "QueueAPI",
     "TopicAPI",
     "Queue",
-    "QueueWriter",
     "QueueReader",
     "write_queue",
     "read_queue",
     "SyncQueue",
-    "SyncQueueWriter",
     "SyncQueueReader",
     "StorageManager",
     "BucketStorage",

@@ -231,7 +231,7 @@ class TestCounter:
 @pytest.mark.asyncio
 async def test_remote_local_creation(system):
     """@remote should allow local actor creation."""
-    counter = await TestCounter.local(system, init_value=10)
+    counter = await TestCounter.spawn(system=system, init_value=10)
 
     # Should be able to call methods
     result = await counter.increment(5)

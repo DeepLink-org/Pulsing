@@ -395,54 +395,6 @@ impl PyMessage {
     }
 }
 
-// ============================================================================
-// SealedPyMessage - Pickle-encoded Python objects for Python-to-Python communication
-// ============================================================================
-
-/// Pickle-encoded Python object wrapper for transparent Python object passing.
-///
-/// This allows Python actors to send and receive arbitrary Python objects
-/// without the need for JSON serialization. The object is serialized using
-/// Python's pickle module.
-#[pyclass(name = "SealedPyMessage")]
-#[derive(Clone)]
-pub struct PySealedMessage {
-    /// Pickle-encoded Python object bytes
-    data: Vec<u8>,
-}
-
-#[pymethods]
-impl PySealedMessage {
-    /// Create a SealedPyMessage by pickling any Python object
-    #[staticmethod]
-    fn seal(py: Python<'_>, obj: PyObject) -> PyResult<Self> {
-        let pickle = py.import("pickle")?;
-        let dumped = pickle.call_method1("dumps", (&obj,))?;
-        let bytes = dumped.downcast::<PyBytes>()?;
-        Ok(Self {
-            data: bytes.as_bytes().to_vec(),
-        })
-    }
-
-    /// Unseal (unpickle) the message back to a Python object
-    fn unseal(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let pickle = py.import("pickle")?;
-        let bytes = PyBytes::new(py, &self.data);
-        let obj = pickle.call_method1("loads", (bytes,))?;
-        Ok(obj.into())
-    }
-
-    /// Get raw pickle bytes
-    #[getter]
-    fn data<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(py, &self.data)
-    }
-
-    fn __repr__(&self) -> String {
-        format!("SealedPyMessage(data_len={})", self.data.len())
-    }
-}
-
 /// Descriptor object for optional zerocopy payload transport.
 #[pyclass(name = "ZeroCopyDescriptor")]
 #[derive(Clone)]
@@ -2111,8 +2063,6 @@ pub fn add_to_module(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyStreamReader>()?;
     m.add_class::<PyStreamWriter>()?;
     m.add_class::<PyStreamMessage>()?;
-    // Sealed message support (for Python-to-Python communication)
-    m.add_class::<PySealedMessage>()?;
     m.add_class::<PyZeroCopyDescriptor>()?;
     Ok(())
 }

@@ -224,17 +224,71 @@ impl ResponseType {
     }
 }
 
+/// Describes which actor on the remote node to reach.
+#[derive(Debug, Clone)]
+pub enum TransportTarget {
+    /// Actor registered by name (path: `/actors/{name}`)
+    ByName(String),
+    /// Actor identified by its UUID (path: `/actors/{id}`)
+    ById(ActorId),
+    /// Actor registered under a hierarchical named path (path: `/named/{path}`)
+    Named(ActorPath),
+}
+
+impl TransportTarget {
+    fn to_path(&self) -> String {
+        match self {
+            TransportTarget::ByName(name) => format!("/actors/{}", name),
+            TransportTarget::ById(id) => format!("/actors/{}", id),
+            TransportTarget::Named(path) => format!("/named/{}", path.as_str()),
+        }
+    }
+}
+
+/// Builder for [`Http2RemoteTransport`].
+///
+/// ```ignore
+/// let transport = Http2RemoteTransport::builder(
+///     client, addr, TransportTarget::ByName("my_actor".into()))
+///     .circuit_breaker(CircuitBreakerConfig::default())
+///     .build();
+/// ```
+pub struct Http2RemoteTransportBuilder {
+    client: Arc<Http2Client>,
+    remote_addr: SocketAddr,
+    target: TransportTarget,
+    cb_config: Option<CircuitBreakerConfig>,
+}
+
+impl Http2RemoteTransportBuilder {
+    pub fn circuit_breaker(mut self, config: CircuitBreakerConfig) -> Self {
+        self.cb_config = Some(config);
+        self
+    }
+
+    pub fn build(self) -> Http2RemoteTransport {
+        Http2RemoteTransport {
+            client: self.client,
+            remote_addr: self.remote_addr,
+            path: self.target.to_path(),
+            circuit_breaker: match self.cb_config {
+                Some(cfg) => CircuitBreaker::with_config(cfg),
+                None => CircuitBreaker::new(),
+            },
+        }
+    }
+}
+
 /// HTTP/2 Remote Transport for ActorRef
 ///
 /// Implements the `RemoteTransport` trait, enabling `ActorRef` to communicate
 /// with remote actors over HTTP/2, including streaming support.
 ///
-/// Features:
-/// - Automatic connection pooling and reuse
-/// - Retry with exponential backoff for transient failures
-/// - Circuit breaker for fault tolerance
-/// - Configurable timeouts
-/// - Streaming response support
+/// Build via [`Http2RemoteTransport::builder`]:
+/// ```ignore
+/// let transport = Http2RemoteTransport::builder(
+///     client, addr, TransportTarget::ByName("my_actor".into())).build();
+/// ```
 pub struct Http2RemoteTransport {
     client: Arc<Http2Client>,
     remote_addr: SocketAddr,
@@ -244,63 +298,17 @@ pub struct Http2RemoteTransport {
 }
 
 impl Http2RemoteTransport {
-    /// Create a new remote transport targeting an actor by name
-    pub fn new(client: Arc<Http2Client>, remote_addr: SocketAddr, actor_name: String) -> Self {
-        Self {
-            client,
-            remote_addr,
-            path: format!("/actors/{}", actor_name),
-            circuit_breaker: CircuitBreaker::new(),
-        }
-    }
-
-    /// Create a new remote transport targeting an actor by ID
-    pub fn new_by_id(client: Arc<Http2Client>, remote_addr: SocketAddr, actor_id: ActorId) -> Self {
-        Self {
-            client,
-            remote_addr,
-            path: format!("/actors/{}", actor_id),
-            circuit_breaker: CircuitBreaker::new(),
-        }
-    }
-
-    /// Create a new remote transport targeting a named actor by path
-    pub fn new_named(client: Arc<Http2Client>, remote_addr: SocketAddr, path: ActorPath) -> Self {
-        Self {
-            client,
-            remote_addr,
-            path: format!("/named/{}", path.as_str()),
-            circuit_breaker: CircuitBreaker::new(),
-        }
-    }
-
-    /// Create a new remote transport with custom circuit breaker configuration
-    pub fn with_circuit_breaker(
+    /// Start building a transport for the given target.
+    pub fn builder(
         client: Arc<Http2Client>,
         remote_addr: SocketAddr,
-        actor_name: String,
-        cb_config: CircuitBreakerConfig,
-    ) -> Self {
-        Self {
+        target: TransportTarget,
+    ) -> Http2RemoteTransportBuilder {
+        Http2RemoteTransportBuilder {
             client,
             remote_addr,
-            path: format!("/actors/{}", actor_name),
-            circuit_breaker: CircuitBreaker::with_config(cb_config),
-        }
-    }
-
-    /// Create a new remote transport targeting a named actor with custom circuit breaker
-    pub fn new_named_with_circuit_breaker(
-        client: Arc<Http2Client>,
-        remote_addr: SocketAddr,
-        path: ActorPath,
-        cb_config: CircuitBreakerConfig,
-    ) -> Self {
-        Self {
-            client,
-            remote_addr,
-            path: format!("/named/{}", path.as_str()),
-            circuit_breaker: CircuitBreaker::with_config(cb_config),
+            target,
+            cb_config: None,
         }
     }
 
@@ -419,11 +427,17 @@ mod tests {
         let client = Arc::new(Http2Client::new(Http2Config::default()));
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
 
-        let transport = Http2RemoteTransport::new(client.clone(), addr, "my_actor".to_string());
+        let transport = Http2RemoteTransport::builder(
+            client.clone(),
+            addr,
+            TransportTarget::ByName("my_actor".into()),
+        )
+        .build();
         assert_eq!(transport.path(), "/actors/my_actor");
 
         let path = ActorPath::new("services/llm").unwrap();
-        let transport = Http2RemoteTransport::new_named(client, addr, path);
+        let transport =
+            Http2RemoteTransport::builder(client, addr, TransportTarget::Named(path)).build();
         assert_eq!(transport.path(), "/named/services/llm");
     }
 
@@ -484,7 +498,8 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
         let actor_id = ActorId::generate();
 
-        let transport = Http2RemoteTransport::new_by_id(client, addr, actor_id);
+        let transport =
+            Http2RemoteTransport::builder(client, addr, TransportTarget::ById(actor_id)).build();
         // Path should be /actors/{uuid} where uuid is 32 hex chars
         assert!(transport.path().starts_with("/actors/"));
         assert_eq!(transport.path().len(), 8 + 32); // "/actors/" + 32 hex chars
@@ -497,12 +512,10 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
         let cb_config = CircuitBreakerConfig::default();
 
-        let transport = Http2RemoteTransport::with_circuit_breaker(
-            client,
-            addr,
-            "my_actor".to_string(),
-            cb_config,
-        );
+        let transport =
+            Http2RemoteTransport::builder(client, addr, TransportTarget::ByName("my_actor".into()))
+                .circuit_breaker(cb_config)
+                .build();
         assert_eq!(transport.path(), "/actors/my_actor");
         assert!(transport.circuit_breaker().can_execute());
     }
@@ -514,8 +527,9 @@ mod tests {
         let path = ActorPath::new("services/llm").unwrap();
         let cb_config = CircuitBreakerConfig::default();
 
-        let transport =
-            Http2RemoteTransport::new_named_with_circuit_breaker(client, addr, path, cb_config);
+        let transport = Http2RemoteTransport::builder(client, addr, TransportTarget::Named(path))
+            .circuit_breaker(cb_config)
+            .build();
         assert_eq!(transport.path(), "/named/services/llm");
     }
 
@@ -524,7 +538,12 @@ mod tests {
         let client = Arc::new(Http2Client::new(Http2Config::default()));
         let addr: SocketAddr = "192.168.1.100:9000".parse().unwrap();
 
-        let transport = Http2RemoteTransport::new(client.clone(), addr, "test_actor".to_string());
+        let transport = Http2RemoteTransport::builder(
+            client.clone(),
+            addr,
+            TransportTarget::ByName("test_actor".into()),
+        )
+        .build();
 
         assert_eq!(transport.remote_addr(), addr);
         assert_eq!(transport.path(), "/actors/test_actor");

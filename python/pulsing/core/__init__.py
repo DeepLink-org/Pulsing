@@ -29,7 +29,6 @@ from pulsing._core import (
     ActorRef,
     ActorSystem,
     NodeId,
-    SealedPyMessage,
     ZeroCopyDescriptor,
     StreamReader,
     StreamWriter,
@@ -214,12 +213,11 @@ from .remote import (
     get_system_actor,
     health_check,
     list_actors,
-    mount,
-    unmount,
     ping,
     remote,
     resolve,
 )
+from .helpers import mount, unmount
 
 # Import exceptions for convenience
 from pulsing.exceptions import (

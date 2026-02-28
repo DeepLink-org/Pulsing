@@ -84,8 +84,9 @@ def _wrap_response(result: Any = None, error: str | None = None) -> dict:
 def _unwrap_response(resp: dict) -> tuple[Any, str | None]:
     """Unwrap response. Returns (result, error) - one of them will be None.
 
-    Accepts: wire format (__pulsing__.result/error), legacy (__result__/__error__),
-    and top-level "result"/"error" (e.g. from Message payload JSON).
+    Accepts:
+    - Wire format: {"__pulsing__": {"result": ..., "error": ...}}
+    - Message JSON: {"result": ..., "error": ...}  (Rust actor responses)
     """
     pulsing = resp.get("__pulsing__", {})
     if isinstance(pulsing, dict):
@@ -93,10 +94,6 @@ def _unwrap_response(resp: dict) -> tuple[Any, str | None]:
             return (None, pulsing["error"])
         if "result" in pulsing:
             return (pulsing["result"], None)
-    if "__error__" in resp:
-        return (None, resp["__error__"])
-    if "__result__" in resp:
-        return (resp["__result__"], None)
     if "error" in resp:
         return (None, resp["error"])
     if "result" in resp:
@@ -104,85 +101,9 @@ def _unwrap_response(resp: dict) -> tuple[Any, str | None]:
     return (None, None)
 
 
-_PULSING_ERROR_PREFIX = "__PULSING_ERROR__:"
-
-
-def _convert_rust_error(err: RuntimeError) -> Exception:
-    """Convert Rust-raised RuntimeError to appropriate Pulsing exception.
-
-    Rust layer encodes errors as JSON envelopes with prefix "__PULSING_ERROR__:".
-    The JSON format:
-      Actor errors:  {"category": "actor", "error": {"type": "business", "code": 400, ...}}
-      Runtime errors: {"category": "runtime", "kind": "actor_not_found", "message": "...", ...}
-
-    This replaces the previous regex-based string prefix parsing with
-    reliable JSON deserialization.
-    """
-    import json
-
-    from pulsing.exceptions import (
-        PulsingBusinessError,
-        PulsingSystemError,
-        PulsingTimeoutError,
-        PulsingUnsupportedError,
-    )
-
-    err_msg = str(err)
-
-    if not err_msg.startswith(_PULSING_ERROR_PREFIX):
-        # Not a structured Pulsing error, wrap as generic RuntimeError
-        return PulsingRuntimeError(err_msg)
-
-    json_str = err_msg[len(_PULSING_ERROR_PREFIX) :]
-    try:
-        envelope = json.loads(json_str)
-    except (json.JSONDecodeError, ValueError):
-        # JSON parse failed, fall back to generic error
-        return PulsingRuntimeError(err_msg)
-
-    category = envelope.get("category")
-
-    if category == "actor":
-        actor_err = envelope.get("error", {})
-        err_type = actor_err.get("type")
-
-        if err_type == "business":
-            code = actor_err.get("code", 0)
-            message = actor_err.get("message", "Unknown error")
-            details = actor_err.get("details")
-            return PulsingBusinessError(code, message, details=details)
-
-        if err_type == "system":
-            error = actor_err.get("error", "Unknown error")
-            recoverable = actor_err.get("recoverable", True)
-            return PulsingSystemError(error, recoverable=recoverable)
-
-        if err_type == "timeout":
-            operation = actor_err.get("operation", "unknown")
-            duration_ms = actor_err.get("duration_ms", 0)
-            return PulsingTimeoutError(operation, duration_ms)
-
-        if err_type == "unsupported":
-            operation = actor_err.get("operation", "unknown")
-            return PulsingUnsupportedError(operation)
-
-        # Unknown actor error type, generic fallback
-        return PulsingActorError(str(actor_err))
-
-    if category == "runtime":
-        message = envelope.get("message", "Unknown runtime error")
-        return PulsingRuntimeError(message)
-
-    # Unknown category
-    return PulsingRuntimeError(err_msg)
-
-
 async def _ask_convert_errors(ref, msg) -> Any:
-    """Call ref.ask(msg) and convert Rust RuntimeError to Pulsing exceptions."""
-    try:
-        return await ref.ask(msg)
-    except RuntimeError as e:
-        raise _convert_rust_error(e) from e
+    """Call ref.ask(msg); Rust raises typed Pulsing exceptions directly."""
+    return await ref.ask(msg)
 
 
 logger = logging.getLogger(__name__)
@@ -338,24 +259,17 @@ class _MethodCaller:
     async def _sync_call(self, *args, **kwargs) -> Any:
         """Synchronous method call."""
         call_msg = _wrap_call(self._method, args, kwargs, False)
-
         resp = await _ask_convert_errors(self._ref, call_msg)
 
         if isinstance(resp, dict):
             result, error = _unwrap_response(resp)
             if error:
-                # Actor execution error
-                try:
-                    raise PulsingActorError(
-                        error, actor_name=str(self._ref.actor_id.id)
-                    )
-                except RuntimeError as e:
-                    # If it's a Rust error, convert it
-                    raise _convert_rust_error(e) from e
+                raise PulsingActorError(error, actor_name=str(self._ref.actor_id.id))
             return result
         elif isinstance(resp, Message):
             if resp.is_stream:
-                return _SyncGeneratorStreamReader(resp)
+                # Sync generator: return an awaitable/iterable stream reader
+                return _AsyncMethodCall.from_message(self._ref, resp)
             data = resp.to_json()
             if not isinstance(data, dict):
                 return resp
@@ -366,10 +280,7 @@ class _MethodCaller:
                 )
             result, error = _unwrap_response(data)
             if error:
-                raise PulsingActorError(
-                    error,
-                    actor_name=str(self._ref.actor_id.id),
-                )
+                raise PulsingActorError(error, actor_name=str(self._ref.actor_id.id))
             if result is not None:
                 return result
             return data.get("result")
@@ -377,14 +288,11 @@ class _MethodCaller:
 
 
 class _AsyncMethodCall:
-    """Async method call - supports await and async for
+    """Async method call — supports await (final result) and async for (stream).
 
     Usage:
-        # Directly await to get final result
-        result = await service.generate("hello")
-
-        # Stream intermediate results
-        async for chunk in service.generate("hello"):
+        result = await actor.generate("hello")        # get final result
+        async for chunk in actor.generate("hello"):   # stream chunks
             print(chunk)
     """
 
@@ -399,133 +307,99 @@ class _AsyncMethodCall:
         self._final_result = None
         self._got_result = False
 
-    async def _get_stream(self):
-        """Get stream (lazy initialization)"""
-        if self._stream_reader is None:
-            call_msg = _wrap_call(self._method, self._args, self._kwargs, True)
-            resp = await _ask_convert_errors(self._ref, call_msg)
+    @classmethod
+    def from_message(cls, ref: ActorRef, message: Message) -> "_AsyncMethodCall":
+        """Build from a pre-acquired streaming Message (sync generator return path)."""
+        obj = cls.__new__(cls)
+        obj._ref = ref
+        obj._method = ""
+        obj._args = ()
+        obj._kwargs = {}
+        obj._stream_reader = message.stream_reader()
+        obj._final_result = None
+        obj._got_result = False
+        return obj
 
-            # Response may be PyMessage (streaming) or direct Python object
-            if isinstance(resp, Message):
-                # Check if it's a streaming message
-                if resp.is_stream:
-                    self._stream_reader = resp.stream_reader()
-                else:
-                    # Not streaming, might be an error
-                    data = resp.to_json()
-                    if resp.msg_type == "Error":
-                        # Actor execution error
-                        raise PulsingActorError(
-                            data.get("error", "Remote call failed"),
-                            actor_name=str(self._ref.actor_id.id),
-                        )
-                    # Wrap as single-value iterator
-                    self._stream_reader = _SingleValueIterator(data)
+    async def _ensure_stream(self) -> None:
+        """Send RPC and resolve the response.
+
+        For streaming responses, initialises _stream_reader.
+        For direct responses (non-streaming), resolves _final_result immediately
+        so __anext__ can stop without an extra iterator allocation.
+        """
+        if self._stream_reader is not None or self._got_result:
+            return
+
+        call_msg = _wrap_call(self._method, self._args, self._kwargs, True)
+        resp = await _ask_convert_errors(self._ref, call_msg)
+
+        if isinstance(resp, Message):
+            if resp.is_stream:
+                self._stream_reader = resp.stream_reader()
             else:
-                # Regular Python object (might be dict)
-                self._stream_reader = _SingleValueIterator(resp)
-
-        return self._stream_reader
-
-    def __aiter__(self):
-        """Support async iteration, get intermediate results"""
-        return self
-
-    async def __anext__(self):
-        """Get next streaming data"""
-        reader = await self._get_stream()
-        try:
-            item = await reader.__anext__()
-            if isinstance(item, dict):
-                # Wire format (__pulsing__.result/error) or legacy (__result__/__error__)
-                result, error = _unwrap_response(item)
-                if error is not None:
+                data = resp.to_json()
+                if resp.msg_type == "Error":
+                    raise PulsingActorError(
+                        data.get("error", "Remote call failed"),
+                        actor_name=str(self._ref.actor_id.id),
+                    )
+                result, error = _unwrap_response(data)
+                if error:
                     raise PulsingActorError(
                         error, actor_name=str(self._ref.actor_id.id)
                     )
-                if (
-                    result is not None
-                    and "__yield__" not in item
-                    and "__final__" not in item
-                ):
-                    # Single-value response (non-streaming)
-                    self._final_result = result
+                self._final_result = result
+                self._got_result = True
+        else:
+            # Direct dict from Python actor called with is_async=True
+            if isinstance(resp, dict):
+                pulsing = resp.get("__pulsing__", {})
+                if isinstance(pulsing, dict):
+                    if "error" in pulsing:
+                        raise PulsingActorError(
+                            pulsing["error"], actor_name=str(self._ref.actor_id.id)
+                        )
+                    self._final_result = pulsing.get("result")
                     self._got_result = True
-                    raise StopAsyncIteration
-                if "__final__" in item:
-                    self._final_result = item.get("__result__")
-                    self._got_result = True
-                    raise StopAsyncIteration
-                if "__error__" in item:
-                    raise PulsingActorError(
-                        item["__error__"], actor_name=str(self._ref.actor_id.id)
-                    )
+                    return
+            self._final_result = resp
+            self._got_result = True
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        await self._ensure_stream()
+        if self._got_result:
+            raise StopAsyncIteration
+        try:
+            item = await self._stream_reader.__anext__()
+            if isinstance(item, dict):
+                pulsing = item.get("__pulsing__", {})
+                if isinstance(pulsing, dict):
+                    if "error" in pulsing:
+                        raise PulsingActorError(
+                            pulsing["error"], actor_name=str(self._ref.actor_id.id)
+                        )
+                    if pulsing.get("final"):
+                        self._final_result = pulsing.get("result")
+                        self._got_result = True
+                        raise StopAsyncIteration
                 if "__yield__" in item:
                     return item["__yield__"]
-                if "__result__" in item:
-                    self._final_result = item.get("__result__")
-                    self._got_result = True
-                    raise StopAsyncIteration
             return item
         except StopAsyncIteration:
             raise
 
     def __await__(self):
-        """Support await, get final result"""
         return self._await_result().__await__()
 
     async def _await_result(self):
-        """Consume entire stream, return final result"""
         async for _ in self:
-            pass  # Consume all yielded intermediate values
+            pass
         if self._got_result:
             return self._final_result
         return None
-
-
-class _SingleValueIterator:
-    """Single-value async iterator - wraps a single value as async iterator"""
-
-    def __init__(self, value):
-        self._value = value
-        self._consumed = False
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if self._consumed:
-            raise StopAsyncIteration
-        self._consumed = True
-        return self._value
-
-
-class _SyncGeneratorStreamReader:
-    """Stream reader for sync generator returned from non-async method"""
-
-    def __init__(self, message: Message):
-        self._reader = message.stream_reader()
-        self._final_result = None
-        self._got_result = False
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        try:
-            item = await self._reader.__anext__()
-            if isinstance(item, dict):
-                if "__final__" in item:
-                    self._final_result = item.get("__result__")
-                    self._got_result = True
-                    raise StopAsyncIteration
-                if "__error__" in item:
-                    raise PulsingActorError(item["__error__"])
-                if "__yield__" in item:
-                    return item["__yield__"]
-            return item
-        except StopAsyncIteration:
-            raise
 
 
 class _DelayedCallProxy:
@@ -690,7 +564,7 @@ class _WrappedActor(_ActorBase):
             except Exception as e:
                 return Message.from_json("Error", {"error": str(e)})
 
-        return {"__error__": f"Unknown message type: {type(msg)}"}
+        return _wrap_response(error=f"Unknown message type: {type(msg)}")
 
     @staticmethod
     async def _safe_stream_write(writer, obj: dict) -> bool:
@@ -730,10 +604,12 @@ class _WrappedActor(_ActorBase):
                         ):
                             return
                 await self._safe_stream_write(
-                    writer, {"__final__": True, "__result__": None}
+                    writer, {"__pulsing__": {"final": True, "result": None}}
                 )
             except Exception as e:
-                await self._safe_stream_write(writer, {"__error__": str(e)})
+                await self._safe_stream_write(
+                    writer, {"__pulsing__": {"error": str(e)}}
+                )
             finally:
                 await self._safe_stream_close(writer)
 
@@ -757,12 +633,12 @@ class _WrappedActor(_ActorBase):
                         ):
                             return
                     await self._safe_stream_write(
-                        writer, {"__final__": True, "__result__": None}
+                        writer, {"__pulsing__": {"final": True, "result": None}}
                     )
                 elif asyncio.iscoroutine(result):
                     final_result = await result
                     await self._safe_stream_write(
-                        writer, {"__final__": True, "__result__": final_result}
+                        writer, {"__pulsing__": {"final": True, "result": final_result}}
                     )
                 elif inspect.isgenerator(result):
                     for item in result:
@@ -771,14 +647,16 @@ class _WrappedActor(_ActorBase):
                         ):
                             return
                     await self._safe_stream_write(
-                        writer, {"__final__": True, "__result__": None}
+                        writer, {"__pulsing__": {"final": True, "result": None}}
                     )
                 else:
                     await self._safe_stream_write(
-                        writer, {"__final__": True, "__result__": result}
+                        writer, {"__pulsing__": {"final": True, "result": result}}
                     )
             except Exception as e:
-                await self._safe_stream_write(writer, {"__error__": str(e)})
+                await self._safe_stream_write(
+                    writer, {"__pulsing__": {"error": str(e)}}
+                )
             finally:
                 await self._safe_stream_close(writer)
 
@@ -877,22 +755,20 @@ class PythonActorService(_ActorBase):
 
 
 class ActorClass:
-    """Actor class wrapper
+    """Actor class wrapper.
 
-    Provides two ways to create actors:
+    Usage::
 
-    1. Simple API (uses global system):
         await init()
-        counter = await Counter.spawn(init=10)
-
-    2. Explicit system:
-        system = await pul.actor_system()
-        counter = await Counter.local(system, init=10)
+        counter = await Counter.spawn(init=10)             # local, global system
+        counter = await Counter.spawn(system=s, init=10)   # local, explicit system
+        counter = await Counter.spawn(placement="remote")  # random remote node
+        counter = await Counter.spawn(placement=node_id)   # specific node
     """
 
     @staticmethod
     def _unwrap_ray_class(cls):
-        """Extract original user class if cls is a Ray ActorClass"""
+        """Extract original user class if cls is a Ray ActorClass."""
         try:
             from ray.actor import ActorClass as RayActorClass
         except ImportError:
@@ -912,7 +788,7 @@ class ActorClass:
         max_backoff: float = 30.0,
     ):
         unwrapped = self._unwrap_ray_class(cls)
-        # Keep Ray handle so .remote() remains available
+        # Keep Ray handle so .remote() remains available for Ray-wrapped classes
         self._ray_cls = cls if unwrapped is not cls else None
         cls = unwrapped
         self._cls = cls
@@ -922,7 +798,6 @@ class ActorClass:
         self._min_backoff = min_backoff
         self._max_backoff = max_backoff
 
-        # Collect all public methods
         self._methods = []
         self._async_methods = set()
 
@@ -930,38 +805,43 @@ class ActorClass:
             if name.startswith("_"):
                 continue
             self._methods.append(name)
-            # Detect if it's an async method (including async functions and async generators)
             if inspect.iscoroutinefunction(method) or inspect.isasyncgenfunction(
                 method
             ):
                 self._async_methods.add(name)
 
-        # Register class
         _actor_class_registry[self._class_name] = cls
 
-        # If original class was decorated with @ray.remote, override with Ray's .remote() method
+        # If original class was decorated with @ray.remote, expose Ray's .remote()
         if self._ray_cls is not None:
             self.remote = self._ray_cls.remote
 
     async def spawn(
         self,
         *args,
+        system: ActorSystem | None = None,
         name: str | None = None,
         public: bool | None = None,
+        placement: "str | int" = "local",
         **kwargs,
     ) -> ActorProxy:
-        """Create actor using global system (simple API)
-
-        Must call `await init()` before using this method.
+        """Create an actor and return its proxy.
 
         Args:
-            *args: Positional arguments for the class constructor
-            name: Optional actor name (if provided, defaults to public=True)
-            public: Whether the actor should be publicly resolvable (default: True if name provided)
-            **kwargs: Keyword arguments for the class constructor
+            *args: Positional arguments forwarded to the class constructor.
+            system: ActorSystem to use. Defaults to the global system
+                (requires ``await init()`` to have been called first).
+            name: Optional actor name. When given, ``public`` defaults to True.
+            public: Whether the actor is cluster-discoverable.
+                Defaults to True when *name* is set, False otherwise.
+            placement: Where to place the actor.
+                - ``"local"`` *(default)*: spawn on the current node.
+                - ``"remote"``: spawn on a randomly-chosen remote node;
+                  falls back to local if no remote nodes are available.
+                - ``int``: spawn on the node with that specific node_id.
+            **kwargs: Keyword arguments forwarded to the class constructor.
 
-        Example:
-            from pulsing.core import init, remote
+        Example::
 
             await init()
 
@@ -973,52 +853,52 @@ class ActorClass:
             counter = await Counter.spawn(init=10)
             result = await counter.incr()
         """
-        # Import here to avoid circular import
         from . import _global_system
 
-        if _global_system is None:
+        if system is None:
+            system = _global_system
+        if system is None:
             raise PulsingRuntimeError(
                 "Actor system not initialized. Call 'await init()' first."
             )
 
-        # Default public=True if name is provided
         if public is None:
             public = name is not None
 
-        return await self.local(
-            _global_system, *args, name=name, public=public, **kwargs
-        )
+        if placement == "local":
+            return await self._spawn_local(
+                system, *args, name=name, public=public, **kwargs
+            )
+        elif placement == "remote":
+            return await self._spawn_remote(
+                system, None, *args, name=name, public=public, **kwargs
+            )
+        elif isinstance(placement, int):
+            return await self._spawn_remote(
+                system, placement, *args, name=name, public=public, **kwargs
+            )
+        else:
+            raise ValueError(
+                f"Invalid placement {placement!r}. Use 'local', 'remote', or an int node_id."
+            )
 
-    async def local(
+    async def _spawn_local(
         self,
         system: ActorSystem,
         *args,
         name: str | None = None,
-        public: bool | None = None,
+        public: bool = False,
         **kwargs,
     ) -> ActorProxy:
-        """Create actor locally with explicit system.
-
-        Args:
-            system: The ActorSystem to spawn the actor in
-            *args: Positional arguments for the class constructor
-            name: Optional actor name (if provided, defaults to public=True)
-            public: Whether the actor should be publicly resolvable (default: True if name provided)
-            **kwargs: Keyword arguments for the class constructor
-
-        Note: Use pul.actor_system() to create ActorSystem,
-        which automatically registers PythonActorService.
-        """
-        # Default public=True if name is provided
-        if public is None:
-            public = name is not None
-
-        # Actor name must follow namespace/name format
-        if name:
-            # Ensure user-provided name has namespace
-            actor_name = name if "/" in name else f"actors/{name}"
-        else:
-            actor_name = f"actors/{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
+        actor_name = (
+            name
+            if (name and "/" in name)
+            else (
+                f"actors/{name}"
+                if name
+                else f"actors/{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
+            )
+        )
 
         if self._restart_policy != "never":
             _wrapped_holder: list[_WrappedActor] = []
@@ -1046,64 +926,44 @@ class ActorClass:
             actor_ref = await system.spawn(actor, name=actor_name, public=public)
             actor._inject_delayed(actor_ref)
 
-        # Register actor metadata
         _register_actor_metadata(actor_name, self._cls)
-
         return ActorProxy(actor_ref, self._methods, self._async_methods)
 
-    async def remote(
+    async def _spawn_remote(
         self,
         system: ActorSystem,
+        node_id: int | None,
         *args,
         name: str | None = None,
-        public: bool | None = None,
+        public: bool = False,
         **kwargs,
     ) -> ActorProxy:
-        """Create actor remotely (randomly selects a remote node).
+        """Spawn on a specific remote node (node_id=None means random)."""
+        if node_id is None:
+            members = await system.members()
+            local_id = str(system.node_id.id)
+            remote_nodes = [m for m in members if m["node_id"] != local_id]
+            if not remote_nodes:
+                logger.warning("No remote nodes available, falling back to local spawn")
+                return await self._spawn_local(
+                    system, *args, name=name, public=public, **kwargs
+                )
+            node_id = int(random.choice(remote_nodes)["node_id"])
 
-        Args:
-            system: The ActorSystem to spawn the actor in
-            *args: Positional arguments for the class constructor
-            name: Optional actor name (if provided, defaults to public=True)
-            public: Whether the actor should be publicly resolvable (default: True if name provided)
-            **kwargs: Keyword arguments for the class constructor
-
-        Note: Use pul.actor_system() to create ActorSystem,
-        which automatically registers PythonActorService.
-        """
-        # Default public=True if name is provided
-        if public is None:
-            public = name is not None
-
-        members = await system.members()
-        # members["node_id"] is string, convert local_id to string for comparison
-        local_id = str(system.node_id.id)
-
-        # Filter out remote nodes (node_id is string)
-        remote_nodes = [m for m in members if m["node_id"] != local_id]
-
-        if not remote_nodes:
-            # No remote nodes, fallback to local creation
-            logger.warning("No remote nodes, fallback to local")
-            return await self.local(system, *args, name=name, public=public, **kwargs)
-
-        # Randomly select one
-        target = random.choice(remote_nodes)
-        # Convert back to int for resolve_named
-        target_id = int(target["node_id"])
-
-        # Get target node's Python actor creation service
         service_ref = await system.resolve_named(
-            PYTHON_ACTOR_SERVICE_NAME, node_id=target_id
+            PYTHON_ACTOR_SERVICE_NAME, node_id=node_id
         )
 
-        # Actor name must follow namespace/name format
-        if name:
-            actor_name = name if "/" in name else f"actors/{name}"
-        else:
-            actor_name = f"actors/{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
+        actor_name = (
+            name
+            if (name and "/" in name)
+            else (
+                f"actors/{name}"
+                if name
+                else f"actors/{self._cls.__name__}_{uuid.uuid4().hex[:8]}"
+            )
+        )
 
-        # Send creation request
         resp = await _ask_convert_errors(
             service_ref,
             Message.from_json(
@@ -1114,7 +974,6 @@ class ActorClass:
                     "args": list(args),
                     "kwargs": kwargs,
                     "public": public,
-                    # Supervision config
                     "restart_policy": self._restart_policy,
                     "max_restarts": self._max_restarts,
                     "min_backoff": self._min_backoff,
@@ -1125,19 +984,14 @@ class ActorClass:
 
         data = resp.to_json()
         if resp.msg_type == "Error":
-            # System error: actor creation failed
             raise PulsingRuntimeError(f"Remote create failed: {data.get('error')}")
 
-        # Build remote ActorRef
         from pulsing._core import ActorId
 
-        # actor_id is now a UUID (u128), may be transmitted as string
         actor_id = data["actor_id"]
         if isinstance(actor_id, str):
             actor_id = int(actor_id)
-        remote_id = ActorId(actor_id)
-        actor_ref = await system.actor_ref(remote_id)
-
+        actor_ref = await system.actor_ref(ActorId(actor_id))
         return ActorProxy(
             actor_ref, data.get("methods", self._methods), self._async_methods
         )
@@ -1145,22 +999,6 @@ class ActorClass:
     def __call__(self, *args, **kwargs):
         """Direct call returns local instance (not an Actor)"""
         return self._cls(*args, **kwargs)
-
-    def proxy(self, actor_ref: ActorRef) -> ActorProxy:
-        """Wrap ActorRef into typed ActorProxy
-
-        Args:
-            actor_ref: Underlying actor reference
-
-        Returns:
-            ActorProxy: Proxy with method type information
-
-        Example:
-            ref = await system.resolve_named("my_counter")
-            counter = Counter.proxy(ref)
-            await counter.increment()
-        """
-        return ActorProxy(actor_ref, self._methods, self._async_methods)
 
     async def resolve(
         self,
@@ -1518,10 +1356,7 @@ async def resolve(
     if _global_system is None:
         raise RuntimeError("Actor system not initialized. Call 'await init()' first.")
 
-    try:
-        return await _global_system.resolve(name, node_id=node_id, timeout=timeout)
-    except RuntimeError as e:
-        raise _convert_rust_error(e) from e
+    return await _global_system.resolve(name, node_id=node_id, timeout=timeout)
 
 
 def as_any(ref: ActorRef) -> ActorProxy:
@@ -1539,122 +1374,6 @@ def as_any(ref: ActorRef) -> ActorProxy:
         await proxy.send_text(chat_id, content)
     """
     return ref.as_any()
-
-
-def mount(instance: Any, *, name: str, public: bool = True) -> None:
-    """Mount an existing Python object to the Pulsing communication network.
-
-    Synchronous interface, can be called in ``__init__``. Automatically:
-      1. Initialize Pulsing (if not already, auto-detects Ray environment)
-      2. Wrap instance as a Pulsing actor
-      3. Register to Pulsing network, other nodes can discover via ``pul.resolve(name)``
-
-    Args:
-        instance: Object to mount (any Python instance)
-        name: Pulsing name, other nodes resolve via this name
-        public: Whether discoverable by other cluster nodes (default True)
-
-    Example::
-
-        @ray.remote
-        class Counter:
-            def __init__(self, name, peers):
-                self.name = name
-                self.peers = sorted(peers)
-                pul.mount(self, name=name)
-
-            async def greet(self, msg):
-                return f"Hello from {self.name}: {msg}"
-    """
-    from . import _global_system
-
-    # Auto-initialize Pulsing
-    if _global_system is None:
-        _auto_init_pulsing()
-
-    from . import _global_system as system
-
-    if system is None:
-        raise RuntimeError(
-            "Pulsing initialization failed. Please call pul.init() or run in Ray environment."
-        )
-
-    actor_name = name if "/" in name else f"actors/{name}"
-    wrapped = _WrappedActor(instance)
-
-    async def _do_mount():
-        ref = await system.spawn(wrapped, name=actor_name, public=public)
-        return ref
-
-    actor_ref = _run_sync_on_pulsing_loop(_do_mount())
-    wrapped._inject_delayed(actor_ref)
-    _register_actor_metadata(actor_name, type(instance))
-
-
-def unmount(name: str) -> None:
-    """Unmount a previously mounted actor from the Pulsing network.
-
-    Args:
-        name: Name used during mounting
-    """
-    from . import _global_system
-
-    if _global_system is None:
-        return
-
-    actor_name = name if "/" in name else f"actors/{name}"
-
-    async def _do_unmount():
-        await _global_system.stop(actor_name)
-
-    _run_sync_on_pulsing_loop(_do_unmount())
-
-
-def _auto_init_pulsing():
-    """Auto-detect environment and initialize Pulsing."""
-    try:
-        import ray
-
-        if ray.is_initialized():
-            from pulsing.integrations.ray import init_in_ray
-
-            init_in_ray()
-            return
-    except ImportError:
-        pass
-
-    raise RuntimeError(
-        "Pulsing not initialized. Please call await pul.init() or run in Ray environment."
-    )
-
-
-def _run_sync_on_pulsing_loop(coro):
-    """Execute coroutine synchronously on Pulsing's background event loop."""
-    import asyncio
-    import concurrent.futures
-
-    # Try to use pulsing.integrations.ray's background loop (Ray environment)
-    try:
-        from pulsing.integrations.ray import _loop
-
-        if _loop is not None:
-            fut = asyncio.run_coroutine_threadsafe(coro, _loop)
-            return fut.result(timeout=30)
-    except ImportError:
-        pass
-
-    # Non-Ray environment: try to create new loop in current thread
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is None:
-        return asyncio.run(coro)
-
-    # Already have running loop (e.g., async context), run in new thread
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result(timeout=30)
 
 
 RemoteClass = ActorClass

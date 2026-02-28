@@ -28,7 +28,6 @@ from pulsing.streaming import (
     BucketStorage,
     Queue,
     QueueReader,
-    QueueWriter,
     read_queue,
     write_queue,
 )
@@ -282,7 +281,7 @@ async def test_write_queue_api(actor_system, temp_storage_path):
         storage_path=temp_storage_path,
     )
 
-    assert isinstance(writer, QueueWriter)
+    assert isinstance(writer, Queue)
 
     # Write data
     result = await writer.put({"id": "test", "value": 1})
@@ -482,9 +481,8 @@ async def test_explicit_bucket_ids(actor_system, temp_storage_path):
     records = await reader.get(limit=100)
 
     # All records should be from bucket 0
-    q = writer.queue
     for record in records:
-        bucket_id = q.get_bucket_id(record["id"])
+        bucket_id = writer.get_bucket_id(record["id"])
         assert bucket_id == 0
 
 
@@ -818,7 +816,7 @@ async def test_many_buckets(actor_system, temp_storage_path):
     await writer.flush()
 
     # Get stats
-    stats = await writer.queue.stats()
+    stats = await writer.stats()
 
     # Count non-empty buckets
     non_empty = sum(1 for b in stats["buckets"].values() if b.get("total_count", 0) > 0)
@@ -947,13 +945,12 @@ async def test_data_integrity_under_stress(actor_system, temp_storage_path):
 @pytest.mark.asyncio
 async def test_bucket_storage_direct(actor_system, temp_storage_path):
     """Test BucketStorage actor directly with memory backend via proxy."""
-    # Use BucketStorage.local() to create properly wrapped actor with proxy
-    bucket = await BucketStorage.local(
-        actor_system,
+    bucket = await BucketStorage.spawn(
         bucket_id=0,
         storage_path=f"{temp_storage_path}/direct_bucket",
         batch_size=5,
         backend="memory",
+        system=actor_system,
         name="test_bucket",
     )
 
@@ -980,12 +977,12 @@ async def test_bucket_storage_direct(actor_system, temp_storage_path):
 @pytest.mark.asyncio
 async def test_bucket_storage_get(actor_system, temp_storage_path):
     """Test BucketStorage get method via proxy."""
-    bucket = await BucketStorage.local(
-        actor_system,
+    bucket = await BucketStorage.spawn(
         bucket_id=0,
         storage_path=f"{temp_storage_path}/get_bucket",
         batch_size=5,
         backend="memory",
+        system=actor_system,
         name="test_bucket_get",
     )
 
@@ -1005,12 +1002,12 @@ async def test_bucket_storage_get(actor_system, temp_storage_path):
 @pytest.mark.asyncio
 async def test_bucket_storage_put_batch(actor_system, temp_storage_path):
     """Test BucketStorage put_batch method via proxy."""
-    bucket = await BucketStorage.local(
-        actor_system,
+    bucket = await BucketStorage.spawn(
         bucket_id=0,
         storage_path=f"{temp_storage_path}/batch_bucket",
         batch_size=100,
         backend="memory",
+        system=actor_system,
         name="test_bucket_batch",
     )
 
@@ -1104,7 +1101,7 @@ def test_sync_queue_standalone():
 
 
 def test_sync_writer_reader_standalone():
-    """Test SyncQueueWriter and SyncQueueReader."""
+    """Test SyncQueue (write) and SyncQueueReader."""
     import tempfile
     import shutil
     import threading

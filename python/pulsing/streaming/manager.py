@@ -158,13 +158,13 @@ class StorageManager:
                 self._buckets[key] = await self.system.resolve_named(actor_name)
                 logger.debug(f"Resolved existing bucket: {actor_name}")
             except Exception:
-                proxy = await BucketStorage.local(
-                    self.system,
+                proxy = await BucketStorage.spawn(
                     bucket_id=bucket_id,
                     storage_path=bucket_storage_path,
                     batch_size=batch_size,
                     backend=backend or self.default_backend,
                     backend_options=backend_options,
+                    system=self.system,
                     name=actor_name,
                     public=True,
                 )
@@ -192,8 +192,12 @@ class StorageManager:
             except Exception:
                 from pulsing.streaming.broker import TopicBroker
 
-                proxy = await TopicBroker.local(
-                    self.system, topic_name, self.system, name=actor_name, public=True
+                proxy = await TopicBroker.spawn(
+                    topic_name,
+                    self.system,
+                    system=self.system,
+                    name=actor_name,
+                    public=True,
                 )
                 self._topics[topic_name] = proxy.ref
                 logger.info(f"Created topic broker: {actor_name}")
@@ -364,10 +368,9 @@ async def get_storage_manager(system: ActorSystem) -> "ActorProxy":
         except Exception:
             pass
 
-        # Create new StorageManager using .local()
         try:
-            return await StorageManager.local(
-                system, system, name=STORAGE_MANAGER_NAME, public=True
+            return await StorageManager.spawn(
+                system, system=system, name=STORAGE_MANAGER_NAME, public=True
             )
         except Exception as e:
             if "already exists" in str(e).lower():
@@ -388,6 +391,32 @@ async def ensure_storage_managers(system: ActorSystem) -> None:
     logger.debug(f"Local StorageManager ensured on node {system.node_id.id}")
 
 
+async def _get_remote_manager(
+    system: ActorSystem,
+    owner_node_id_str: str,
+    retries: int = 10,
+) -> "ActorProxy":
+    """Resolve StorageManager on a remote node, retrying until it appears."""
+    owner_node_id_int = int(owner_node_id_str)
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return await StorageManager.resolve(
+                STORAGE_MANAGER_NAME, system=system, node_id=owner_node_id_int
+            )
+        except Exception as e:
+            last_exc = e
+            if attempt < retries - 1:
+                logger.debug(
+                    f"StorageManager not on node {owner_node_id_str}, "
+                    f"retry {attempt + 1}/{retries}"
+                )
+                await asyncio.sleep(0.5)
+    raise RuntimeError(
+        f"StorageManager not found on node {owner_node_id_str} after {retries} retries: {last_exc}"
+    ) from last_exc
+
+
 async def get_bucket_ref(
     system: ActorSystem,
     topic: str,
@@ -398,31 +427,13 @@ async def get_bucket_ref(
     backend_options: dict | None = None,
     max_redirects: int = 3,
 ) -> "ActorProxy":
-    """Get ActorProxy for specified bucket
-
-    Automatically handles redirects to ensure getting the bucket on the correct node.
-    Returns ActorProxy for direct method calls on BucketStorage.
-
-    Args:
-        system: Actor system
-        topic: Queue topic
-        bucket_id: Bucket ID
-        batch_size: Batch size
-        storage_path: Custom storage path (optional)
-        backend: Storage backend name or class (optional)
-        backend_options: Additional backend options (optional)
-        max_redirects: Maximum redirect count
-    """
-    # Request from local StorageManager first
+    """Get ActorProxy for the specified bucket, following redirects automatically."""
     manager = await get_storage_manager(system)
-
-    # Convert backend class to name if needed
-    backend_name = None
-    if backend:
-        backend_name = backend if isinstance(backend, str) else backend.__name__
+    backend_name = (
+        (backend if isinstance(backend, str) else backend.__name__) if backend else None
+    )
 
     for redirect_count in range(max_redirects + 1):
-        # Call manager.get_bucket() via proxy
         resp_data = await manager.get_bucket(
             topic=topic,
             bucket_id=bucket_id,
@@ -431,60 +442,28 @@ async def get_bucket_ref(
             backend=backend_name,
             backend_options=backend_options,
         )
-
         msg_type = resp_data.get("_type", "")
 
         if msg_type == "BucketReady":
-            # Successfully got bucket - resolve by actor name for typed proxy
-            actor_name = f"bucket_{topic}_{bucket_id}"
-            # Use BucketStorage.resolve to get typed ActorProxy
-            return await BucketStorage.resolve(actor_name, system=system)
-
-        elif msg_type == "Redirect":
-            # Need to redirect to other node
-            # owner_node_id transmitted as string, keep as string for comparison
-            owner_node_id_str = str(resp_data.get("owner_node_id"))
-            owner_addr = resp_data.get("owner_addr")
-
-            logger.debug(
-                f"Redirecting bucket {topic}:{bucket_id} to node {owner_node_id_str} @ {owner_addr}"
+            return await BucketStorage.resolve(
+                f"bucket_{topic}_{bucket_id}", system=system
             )
 
+        if msg_type == "Redirect":
+            owner_node_id_str = str(resp_data.get("owner_node_id"))
             if redirect_count >= max_redirects:
                 raise RuntimeError(f"Too many redirects for bucket {topic}:{bucket_id}")
-
-            # Check if redirecting to self (avoid infinite loop)
-            # Compare as strings for consistency
-            if str(owner_node_id_str) == str(system.node_id.id):
+            if owner_node_id_str == str(system.node_id.id):
                 raise RuntimeError(
                     f"Redirect loop detected for bucket {topic}:{bucket_id}"
                 )
+            logger.debug(
+                f"Redirecting bucket {topic}:{bucket_id} to node {owner_node_id_str}"
+            )
+            manager = await _get_remote_manager(system, owner_node_id_str)
+            continue
 
-            # Get owner node's StorageManager (with retry, wait for remote node initialization)
-            # Convert to int for resolve_named which expects int
-            owner_node_id_int = int(owner_node_id_str)
-            max_resolve_retries = 10
-            for resolve_retry in range(max_resolve_retries):
-                try:
-                    manager = await StorageManager.resolve(
-                        STORAGE_MANAGER_NAME, system=system, node_id=owner_node_id_int
-                    )
-                    break
-                except Exception as e:
-                    if resolve_retry < max_resolve_retries - 1:
-                        logger.debug(
-                            f"StorageManager not found on node {owner_node_id_str}, "
-                            f"retry {resolve_retry + 1}/{max_resolve_retries}"
-                        )
-                        await asyncio.sleep(0.5)
-                    else:
-                        raise RuntimeError(
-                            f"StorageManager not found on node {owner_node_id_str} after "
-                            f"{max_resolve_retries} retries: {e}"
-                        ) from e
-
-        else:
-            raise RuntimeError(f"Unexpected response: {msg_type}")
+        raise RuntimeError(f"Unexpected response type: {msg_type}")
 
     raise RuntimeError(f"Failed to get bucket {topic}:{bucket_id}")
 
@@ -494,61 +473,28 @@ async def get_topic_broker(
     topic: str,
     max_redirects: int = 3,
 ) -> "ActorProxy":
-    """Get broker ActorProxy for specified topic
-
-    Automatically handles redirects to ensure getting the broker on the correct node.
-    Returns ActorProxy for direct method calls on TopicBroker.
-
-    Args:
-        system: Actor system
-        topic: Topic name
-        max_redirects: Maximum redirect count
-    """
+    """Get broker ActorProxy for the specified topic, following redirects automatically."""
     from pulsing.streaming.broker import TopicBroker
 
     manager = await get_storage_manager(system)
 
     for redirect_count in range(max_redirects + 1):
-        # Call manager.get_topic() via proxy
         resp_data = await manager.get_topic(topic=topic)
         msg_type = resp_data.get("_type", "")
 
         if msg_type == "TopicReady":
-            # Successfully got topic - resolve by actor name for typed proxy
-            actor_name = f"_topic_broker_{topic}"
-            return await TopicBroker.resolve(actor_name, system=system)
+            return await TopicBroker.resolve(f"_topic_broker_{topic}", system=system)
 
-        elif msg_type == "Redirect":
-            # owner_node_id transmitted as string, keep as string for comparison
+        if msg_type == "Redirect":
             owner_node_id_str = str(resp_data["owner_node_id"])
-
-            logger.debug(f"Redirecting topic {topic} to node {owner_node_id_str}")
-
             if redirect_count >= max_redirects:
                 raise RuntimeError(f"Too many redirects for topic: {topic}")
-
-            # Compare as strings for consistency
-            if str(owner_node_id_str) == str(system.node_id.id):
+            if owner_node_id_str == str(system.node_id.id):
                 raise RuntimeError(f"Redirect loop for topic: {topic}")
+            logger.debug(f"Redirecting topic {topic} to node {owner_node_id_str}")
+            manager = await _get_remote_manager(system, owner_node_id_str)
+            continue
 
-            # Get owner node's StorageManager via proxy
-            # Convert to int for resolve_named which expects int
-            owner_node_id_int = int(owner_node_id_str)
-            for retry in range(10):
-                try:
-                    manager = await StorageManager.resolve(
-                        STORAGE_MANAGER_NAME, system=system, node_id=owner_node_id_int
-                    )
-                    break
-                except Exception as e:
-                    if retry < 9:
-                        await asyncio.sleep(0.5)
-                    else:
-                        raise RuntimeError(
-                            f"StorageManager not found on node {owner_node_id_str}: {e}"
-                        ) from e
-
-        else:
-            raise RuntimeError(f"Unexpected response: {msg_type}")
+        raise RuntimeError(f"Unexpected response type: {msg_type}")
 
     raise RuntimeError(f"Failed to get topic broker: {topic}")

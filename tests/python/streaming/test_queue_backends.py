@@ -250,13 +250,12 @@ class TestBucketStorageWithBackend:
         self, actor_system, temp_storage_path
     ):
         """Test BucketStorage with memory backend via proxy."""
-        # Use BucketStorage.local() for proper @remote wrapping
-        bucket = await BucketStorage.local(
-            actor_system,
+        bucket = await BucketStorage.spawn(
             bucket_id=0,
             storage_path=f"{temp_storage_path}/bucket_memory",
             batch_size=10,
             backend="memory",
+            system=actor_system,
             name="bucket_memory_test",
         )
 
@@ -275,13 +274,12 @@ class TestBucketStorageWithBackend:
     @pytest.mark.asyncio
     async def test_bucket_storage_put_batch(self, actor_system, temp_storage_path):
         """Test BucketStorage put_batch method via proxy."""
-        # Use BucketStorage.local() for proper @remote wrapping
-        bucket = await BucketStorage.local(
-            actor_system,
+        bucket = await BucketStorage.spawn(
             bucket_id=0,
             storage_path=f"{temp_storage_path}/bucket_batch",
             batch_size=100,
             backend="memory",
+            system=actor_system,
             name="bucket_batch_test",
         )
 
@@ -324,7 +322,7 @@ class TestQueueAPIWithBackend:
             assert result["status"] == "ok"
 
         # Check stats
-        stats = await writer.queue.stats()
+        stats = await writer.stats()
         total = sum(b.get("total_count", 0) for b in stats["buckets"].values())
         assert total == 10
 
@@ -377,7 +375,7 @@ class TestQueueAPIWithBackend:
             result = await writer.put({"id": f"test_{i}", "value": i})
             assert result["status"] == "ok"
 
-        stats = await writer.queue.stats()
+        stats = await writer.stats()
         assert any(b.get("backend") == "memory" for b in stats["buckets"].values())
 
     @pytest.mark.asyncio
@@ -394,7 +392,7 @@ class TestQueueAPIWithBackend:
 
         await writer.put({"id": "test", "value": 1})
 
-        stats = await writer.queue.stats()
+        stats = await writer.stats()
         assert any(b.get("backend") == "memory" for b in stats["buckets"].values())
 
 
@@ -538,13 +536,12 @@ class TestCustomBackendProtocol:
         # Register and use
         register_backend("tracking", TrackingBackend)
 
-        # Use BucketStorage.local() for proper @remote wrapping
-        bucket = await BucketStorage.local(
-            actor_system,
+        bucket = await BucketStorage.spawn(
             bucket_id=0,
             storage_path=f"{temp_storage_path}/tracking_test",
             batch_size=100,
             backend="tracking",
+            system=actor_system,
             name="tracking_bucket",
         )
 
@@ -652,7 +649,7 @@ class TestBackendIntegration:
         await asyncio.gather(*tasks)
 
         # Verify all written
-        stats = await writer.queue.stats()
+        stats = await writer.stats()
         total = sum(b.get("total_count", 0) for b in stats["buckets"].values())
         assert total == num_writers * records_per_writer
 

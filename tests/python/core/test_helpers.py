@@ -61,11 +61,26 @@ async def test_unwrap_response():
 # ============================================================================
 
 
+class _SingleValueIterator:
+    """Local test helper: minimal single-value async iterator."""
+
+    def __init__(self, value):
+        self._value = value
+        self._consumed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self._consumed:
+            raise StopAsyncIteration
+        self._consumed = True
+        return self._value
+
+
 @pytest.mark.asyncio
 async def test_single_value_iterator():
     """Test _SingleValueIterator yields one value then stops."""
-    from pulsing.core.remote import _SingleValueIterator
-
     it = _SingleValueIterator("single_value")
     results = []
     async for v in it:

@@ -144,17 +144,19 @@ class TopicBroker:
         }
 
         if mode == "fire_and_forget":
-            return await self._fanout_tell(envelope, sender_id)
+            return await self._fanout_sequential(envelope, sender_id)
+        elif mode == "best_effort":
+            return await self._fanout_sequential(
+                envelope, sender_id, per_sub_timeout=5.0
+            )
         elif mode == "wait_all_acks":
-            return await self._fanout_ask(
+            return await self._fanout_concurrent(
                 envelope, sender_id, wait_all=True, timeout=timeout
             )
         elif mode == "wait_any_ack":
-            return await self._fanout_ask(
+            return await self._fanout_concurrent(
                 envelope, sender_id, wait_all=False, timeout=timeout
             )
-        elif mode == "best_effort":
-            return await self._fanout_best_effort(envelope, sender_id)
         else:
             raise ValueError(f"Unknown mode: {mode}")
 
@@ -176,10 +178,8 @@ class TopicBroker:
 
     async def _resolve(self, sub: _Subscriber) -> "ActorRef | None":
         now = time.time()
-
         if sub._ref is not None and (now - sub._ref_resolved_at) < REF_TTL_SECONDS:
             return sub._ref
-
         try:
             sub._ref = await self.system.resolve_named(
                 sub.actor_name, node_id=sub.node_id
@@ -212,176 +212,167 @@ class TopicBroker:
                         f"TopicBroker[{self.topic}] evicted zombie subscriber: {sub_id}"
                     )
 
-    async def _fanout_tell(self, envelope: dict, sender_id: str | None) -> dict:
-        sent = 0
-        failed = 0
-        zombies: list[str] = []
+    async def _resolve_targets(
+        self, sender_id: str | None
+    ) -> tuple[list[tuple[str, "_Subscriber", "ActorRef"]], list[str]]:
+        """Resolve all eligible subscriber refs.
 
+        Returns (targets, zombie_ids) where targets is a list of
+        (sub_id, sub, ref) triples and zombie_ids are subs that hit the
+        consecutive-failure threshold during resolution.
+        """
+        targets: list[tuple[str, "_Subscriber", "ActorRef"]] = []
+        zombies: list[str] = []
         for sub_id, sub in list(self._subscribers.items()):
             if sender_id and sub_id == sender_id:
                 continue
+            ref = await self._resolve(sub)
+            if ref:
+                targets.append((sub_id, sub, ref))
+            else:
+                if self._record_failure(sub):
+                    zombies.append(sub_id)
+        return targets, zombies
+
+    def _fanout_result(
+        self,
+        delivered: int,
+        failed: int,
+        failed_ids: list[str] | None,
+        always_success: bool = False,
+        timed_out: bool = False,
+    ) -> dict:
+        """Build the standard publish result dict and update running totals."""
+        self._total_delivered += delivered
+        self._total_failed += failed
+        result: dict = {
+            "success": True if always_success else (delivered > 0 or failed == 0),
+            "delivered": delivered,
+            "failed": failed,
+            "subscriber_count": len(self._subscribers),
+        }
+        if failed_ids is not None:
+            result["failed_subscribers"] = failed_ids
+        if timed_out:
+            result["timed_out"] = True
+        return result
+
+    async def _fanout_sequential(
+        self,
+        envelope: dict,
+        sender_id: str | None,
+        per_sub_timeout: float | None = None,
+    ) -> dict:
+        """Sequential fanout engine used by fire_and_forget and best_effort.
+
+        When *per_sub_timeout* is None the message is sent fire-and-forget via
+        ``ref.tell``; otherwise each subscriber is awaited via ``ref.ask`` with
+        the given per-subscriber timeout.
+        """
+        targets, zombies = await self._resolve_targets(sender_id)
+        delivered = failed = 0
+        failed_ids: list[str] | None = [] if per_sub_timeout is not None else None
+
+        for sub_id, sub, ref in targets:
             try:
-                ref = await self._resolve(sub)
-                if ref:
-                    await ref.tell(envelope)
-                    sent += 1
-                    self._record_success(sub)
+                if per_sub_timeout is not None:
+                    await asyncio.wait_for(ref.ask(envelope), timeout=per_sub_timeout)
                 else:
-                    failed += 1
-                    if self._record_failure(sub):
-                        zombies.append(sub_id)
+                    await ref.tell(envelope)
+                delivered += 1
+                self._record_success(sub)
             except Exception:
                 failed += 1
+                if failed_ids is not None:
+                    failed_ids.append(sub_id)
                 if self._record_failure(sub):
                     zombies.append(sub_id)
 
         await self._evict_zombies(zombies)
+        return self._fanout_result(delivered, failed, failed_ids, always_success=True)
 
-        self._total_delivered += sent
-        self._total_failed += failed
-
-        return {
-            "success": True,
-            "delivered": sent,
-            "failed": failed,
-            "subscriber_count": len(self._subscribers),
-        }
-
-    async def _fanout_ask(
+    async def _fanout_concurrent(
         self,
         envelope: dict,
         sender_id: str | None,
         wait_all: bool,
         timeout: float = DEFAULT_FANOUT_TIMEOUT,
     ) -> dict:
-        """Wait for ack mode."""
-        tasks = []
-        sub_ids = []
-        resolve_failed: list[str] = []
+        """Concurrent fanout engine used by wait_all_acks and wait_any_ack.
 
-        for sub_id, sub in list(self._subscribers.items()):
-            if sender_id and sub_id == sender_id:
-                continue
-            ref = await self._resolve(sub)
-            if ref:
-                tasks.append(ref.ask(envelope))
-                sub_ids.append(sub_id)
-            else:
-                if self._record_failure(sub):
-                    resolve_failed.append(sub_id)
+        All subscriber asks are launched as Tasks simultaneously; *wait_all*
+        controls whether we wait for every ack or only the first.
+        """
+        targets, zombies = await self._resolve_targets(sender_id)
 
-        if not tasks:
-            await self._evict_zombies(resolve_failed)
+        if not targets:
+            await self._evict_zombies(zombies)
             return {"success": True, "delivered": 0, "failed": 0, "subscriber_count": 0}
 
-        delivered = 0
-        failed = 0
-        failed_ids = []
-        zombies: list[str] = resolve_failed.copy()
+        sub_ids = [sub_id for sub_id, _, _ in targets]
+        subs = {sub_id: sub for sub_id, sub, _ in targets}
+        # ref.ask() returns a pyo3 Future (not a native coroutine); ensure_future
+        # handles both Futures and coroutines, unlike create_task which rejects Futures.
+        tasks = [asyncio.ensure_future(ref.ask(envelope)) for _, _, ref in targets]
 
-        if wait_all:
-            # wait_all_acks: wait for all responses with overall timeout
-            try:
-                results = await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=timeout,
-                )
-                for i, result in enumerate(results):
-                    sub = self._subscribers.get(sub_ids[i])
-                    if isinstance(result, Exception):
-                        failed += 1
-                        failed_ids.append(sub_ids[i])
-                        if sub and self._record_failure(sub):
-                            zombies.append(sub_ids[i])
-                    else:
-                        delivered += 1
-                        if sub:
-                            self._record_success(sub)
-            except asyncio.TimeoutError:
-                # Timeout: all tasks considered failed
-                logger.warning(
-                    f"TopicBroker[{self.topic}] wait_all_acks timeout after {timeout}s"
-                )
-                failed = len(tasks)
-                failed_ids = sub_ids.copy()
-                # Cancel all pending tasks
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-        else:
-            # wait_any_ack: wait for any response with overall timeout
-            try:
-                done, pending = await asyncio.wait(
+        delivered = failed = 0
+        failed_ids: list[str] = []
+
+        try:
+            if wait_all:
+                try:
+                    results = await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=timeout,
+                    )
+                    for i, result in enumerate(results):
+                        sub = subs.get(sub_ids[i])
+                        if isinstance(result, Exception):
+                            failed += 1
+                            failed_ids.append(sub_ids[i])
+                            if sub and self._record_failure(sub):
+                                zombies.append(sub_ids[i])
+                        else:
+                            delivered += 1
+                            if sub:
+                                self._record_success(sub)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"TopicBroker[{self.topic}] wait_all_acks timeout after {timeout}s"
+                    )
+                    await self._evict_zombies(zombies)
+                    return self._fanout_result(
+                        0, len(tasks), sub_ids.copy(), timed_out=True
+                    )
+            else:
+                # asyncio.wait with timeout returns empty done-set on timeout (no exception)
+                done, _ = await asyncio.wait(
                     tasks,
                     return_when=asyncio.FIRST_COMPLETED,
                     timeout=timeout,
                 )
-                for task in done:
-                    if not task.exception():
-                        delivered = 1
-                        break
-                # Cancel other pending tasks
-                for task in pending:
-                    task.cancel()
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"TopicBroker[{self.topic}] wait_any_ack timeout after {timeout}s"
-                )
-                failed = len(tasks)
-                failed_ids = sub_ids.copy()
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-
-        await self._evict_zombies(zombies)
-
-        self._total_delivered += delivered
-        self._total_failed += failed
-
-        return {
-            "success": delivered > 0 or failed == 0,
-            "delivered": delivered,
-            "failed": failed,
-            "failed_subscribers": failed_ids,
-            "subscriber_count": len(self._subscribers),
-        }
-
-    async def _fanout_best_effort(self, envelope: dict, sender_id: str | None) -> dict:
-        """Best-effort: try to send, record failures"""
-        delivered = 0
-        failed = 0
-        failed_ids = []
-        zombies: list[str] = []
-
-        for sub_id, sub in list(self._subscribers.items()):
-            if sender_id and sub_id == sender_id:
-                continue
-            try:
-                ref = await self._resolve(sub)
-                if ref:
-                    await asyncio.wait_for(ref.ask(envelope), timeout=5.0)
-                    delivered += 1
-                    self._record_success(sub)
+                if done:
+                    for task in done:
+                        try:
+                            task.result()
+                            delivered = 1
+                            break
+                        except Exception:
+                            failed += 1
+                    if not delivered:
+                        failed_ids = sub_ids[: len(done)]
                 else:
-                    failed += 1
-                    failed_ids.append(sub_id)
-                    if self._record_failure(sub):
-                        zombies.append(sub_id)
-            except Exception:
-                failed += 1
-                failed_ids.append(sub_id)
-                if self._record_failure(sub):
-                    zombies.append(sub_id)
+                    logger.warning(
+                        f"TopicBroker[{self.topic}] wait_any_ack timeout after {timeout}s"
+                    )
+                    failed = len(tasks)
+                    failed_ids = sub_ids.copy()
+        finally:
+            pending = [t for t in tasks if not t.done()]
+            for t in pending:
+                t.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
 
         await self._evict_zombies(zombies)
-
-        self._total_delivered += delivered
-        self._total_failed += failed
-
-        return {
-            "success": True,
-            "delivered": delivered,
-            "failed": failed,
-            "failed_subscribers": failed_ids,
-            "subscriber_count": len(self._subscribers),
-        }
+        return self._fanout_result(delivered, failed, failed_ids)
