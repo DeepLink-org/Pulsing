@@ -13,6 +13,14 @@ if TYPE_CHECKING:
     from .queue import Queue, QueueReader
 
 
+def _run_sync(loop: asyncio.AbstractEventLoop | None, coro):
+    if loop is None or not loop.is_running():
+        raise RuntimeError(
+            "Event loop not running. Sync wrapper requires a running event loop."
+        )
+    return asyncio.run_coroutine_threadsafe(coro, loop).result()
+
+
 class SyncQueue:
     """Synchronous queue wrapper"""
 
@@ -20,16 +28,8 @@ class SyncQueue:
         self._queue = queue
         self._loop = queue._loop
 
-    def _run(self, coro):
-        """Run coroutine synchronously"""
-        if self._loop is None or not self._loop.is_running():
-            raise RuntimeError(
-                "Event loop not running. Sync wrapper requires a running event loop."
-            )
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
-
     def put(self, record: dict[str, Any] | list[dict[str, Any]]):
-        return self._run(self._queue.put(record))
+        return _run_sync(self._loop, self._queue.put(record))
 
     def get(
         self,
@@ -39,13 +39,15 @@ class SyncQueue:
         wait: bool = False,
         timeout: float | None = None,
     ) -> list[dict[str, Any]]:
-        return self._run(self._queue.get(bucket_id, limit, offset, wait, timeout))
+        return _run_sync(
+            self._loop, self._queue.get(bucket_id, limit, offset, wait, timeout)
+        )
 
     def flush(self) -> None:
-        self._run(self._queue.flush())
+        _run_sync(self._loop, self._queue.flush())
 
     def stats(self) -> dict[str, Any]:
-        return self._run(self._queue.stats())
+        return _run_sync(self._loop, self._queue.stats())
 
 
 class SyncQueueReader:
@@ -55,15 +57,8 @@ class SyncQueueReader:
         self._reader = reader
         self._loop = reader.queue._loop
 
-    def _run(self, coro):
-        if self._loop is None or not self._loop.is_running():
-            raise RuntimeError(
-                "Event loop not running. Sync wrapper requires a running event loop."
-            )
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
-
     def get(self, limit: int = 100, wait: bool = False, timeout: float | None = None):
-        return self._run(self._reader.get(limit, wait, timeout))
+        return _run_sync(self._loop, self._reader.get(limit, wait, timeout))
 
     def reset(self) -> None:
         self._reader.reset()

@@ -173,216 +173,106 @@ class LeastConnectionScheduler(Scheduler):
 
 
 class RustSchedulerBase(Scheduler):
-    """Rust scheduler base class"""
+    """Rust scheduler base class — provides shared select_worker implementation."""
 
     def __init__(self, actor_system, worker_name: str = "worker"):
+        if not RUST_POLICIES_AVAILABLE:
+            raise ImportError("Rust policies not available. Rebuild with maturin.")
         super().__init__(actor_system, worker_name)
         self._worker_info_cache: dict[str, WorkerInfo] = {}
+        self._policy = None  # subclasses set this
 
     def _get_worker_info(self, worker_data: dict) -> WorkerInfo:
-        """Get or create WorkerInfo object"""
         node_id = worker_data.get("node_id", "")
-
         if node_id not in self._worker_info_cache:
             url = worker_data.get("addr", f"http://{node_id}")
             model_id = worker_data.get("model_id", "default")
             self._worker_info_cache[node_id] = WorkerInfo(url, model_id)
-
         worker_info = self._worker_info_cache[node_id]
-
-        # Update health status
-        is_healthy = worker_data.get("status") == "Alive"
-        worker_info.is_healthy = is_healthy
-
+        worker_info.is_healthy = worker_data.get("status") == "Alive"
         return worker_info
 
     def _workers_to_info_list(self, workers: list) -> list:
-        """Convert worker data to WorkerInfo list"""
         return [self._get_worker_info(w) for w in workers]
 
-    @abstractmethod
-    def _get_policy(self):
-        """Get Rust policy object"""
-        pass
+    def _pre_select(self, worker_infos: list) -> None:
+        """Hook for subclasses that need setup before selection (e.g. CacheAware)."""
+
+    def _do_select(self, worker_infos, request_text, headers):
+        """Invoke the Rust policy. Override for policies that need extra args (e.g. headers)."""
+        return self._policy.select_worker(worker_infos, request_text)
+
+    async def select_worker(
+        self,
+        request_text: str | None = None,
+        headers: dict[str, str] | None = None,
+    ):
+        workers = await self.get_available_workers()
+        if not workers:
+            return None
+
+        worker_infos = self._workers_to_info_list(workers)
+        self._pre_select(worker_infos)
+        selected_idx = self._do_select(worker_infos, request_text, headers)
+
+        if selected_idx is None:
+            return None
+        return await pulsing.refer(workers[selected_idx].get("actor_id"))
 
 
 class RustRandomScheduler(RustSchedulerBase):
     """Random scheduler (Rust implementation, high performance)"""
 
     def __init__(self, actor_system, worker_name: str = "worker"):
-        if not RUST_POLICIES_AVAILABLE:
-            raise ImportError("Rust policies not available. Rebuild with maturin.")
         super().__init__(actor_system, worker_name)
         self._policy = RandomPolicy()
-
-    def _get_policy(self):
-        return self._policy
-
-    async def select_worker(
-        self,
-        request_text: str | None = None,
-        headers: dict[str, str] | None = None,
-    ):
-        workers = await self.get_available_workers()
-        if not workers:
-            return None
-
-        worker_infos = self._workers_to_info_list(workers)
-        selected_idx = self._policy.select_worker(worker_infos, request_text)
-
-        if selected_idx is None:
-            return None
-
-        selected_worker = workers[selected_idx]
-        return await pulsing.refer(selected_worker.get("actor_id"))
 
 
 class RustRoundRobinScheduler(RustSchedulerBase):
     """Round-robin scheduler (Rust implementation)"""
 
     def __init__(self, actor_system, worker_name: str = "worker"):
-        if not RUST_POLICIES_AVAILABLE:
-            raise ImportError("Rust policies not available. Rebuild with maturin.")
         super().__init__(actor_system, worker_name)
         self._policy = RoundRobinPolicy()
 
-    def _get_policy(self):
-        return self._policy
-
-    async def select_worker(
-        self,
-        request_text: str | None = None,
-        headers: dict[str, str] | None = None,
-    ):
-        workers = await self.get_available_workers()
-        if not workers:
-            return None
-
-        worker_infos = self._workers_to_info_list(workers)
-        selected_idx = self._policy.select_worker(worker_infos, request_text)
-
-        if selected_idx is None:
-            return None
-
-        selected_worker = workers[selected_idx]
-        return await pulsing.refer(selected_worker.get("actor_id"))
-
     def reset(self):
-        """Reset round-robin counter"""
         self._policy.reset()
 
 
 class RustPowerOfTwoScheduler(RustSchedulerBase):
-    """Power-of-Two Choices scheduler (Rust implementation)
-
-    Randomly selects two workers, then chooses the one with lower load.
-    Provides near-optimal load balancing in large-scale clusters.
-    """
+    """Power-of-Two Choices scheduler (Rust implementation)"""
 
     def __init__(self, actor_system, worker_name: str = "worker"):
-        if not RUST_POLICIES_AVAILABLE:
-            raise ImportError("Rust policies not available. Rebuild with maturin.")
         super().__init__(actor_system, worker_name)
         self._policy = PowerOfTwoPolicy()
 
-    def _get_policy(self):
-        return self._policy
-
-    async def select_worker(
-        self,
-        request_text: str | None = None,
-        headers: dict[str, str] | None = None,
-    ):
-        workers = await self.get_available_workers()
-        if not workers:
-            return None
-
-        worker_infos = self._workers_to_info_list(workers)
-        selected_idx = self._policy.select_worker(worker_infos, request_text)
-
-        if selected_idx is None:
-            return None
-
-        selected_worker = workers[selected_idx]
-        return await pulsing.refer(selected_worker.get("actor_id"))
-
     def update_loads(self, loads: dict[str, int]):
-        """Update cached load information
-
-        Args:
-            loads: Mapping from worker URL to load value
-        """
         self._policy.update_loads(loads)
 
 
 class RustConsistentHashScheduler(RustSchedulerBase):
     """Consistent hash scheduler (Rust implementation)
 
-    Routes based on session ID or user ID, ensuring requests from the same user are always routed to the same worker.
-    Supports extracting routing key from HTTP headers or request body.
-
-    HTTP header priority (checked in order):
-    - x-session-id
-    - x-user-id
-    - x-tenant-id
-    - x-request-id
-    - x-correlation-id
-    - x-trace-id
-
-    Request body field priority:
-    - session_params.session_id
-    - user
-    - session_id
-    - user_id
+    Routes based on session ID or user ID, ensuring requests from the same user
+    are always routed to the same worker.
     """
 
     def __init__(self, actor_system, worker_name: str = "worker"):
-        if not RUST_POLICIES_AVAILABLE:
-            raise ImportError("Rust policies not available. Rebuild with maturin.")
         super().__init__(actor_system, worker_name)
         self._policy = ConsistentHashPolicy()
 
-    def _get_policy(self):
-        return self._policy
-
-    async def select_worker(
-        self,
-        request_text: str | None = None,
-        headers: dict[str, str] | None = None,
-    ):
-        workers = await self.get_available_workers()
-        if not workers:
-            return None
-
-        worker_infos = self._workers_to_info_list(workers)
-        selected_idx = self._policy.select_worker(worker_infos, request_text, headers)
-
-        if selected_idx is None:
-            return None
-
-        selected_worker = workers[selected_idx]
-        return await pulsing.refer(selected_worker.get("actor_id"))
+    def _do_select(self, worker_infos, request_text, headers):
+        return self._policy.select_worker(worker_infos, request_text, headers)
 
     def reset(self):
-        """Reset hash ring"""
         self._policy.reset()
 
 
 class RustCacheAwareScheduler(RustSchedulerBase):
     """Cache-aware scheduler (Rust implementation)
 
-    Combines cache affinity and load balancing strategies:
-    1. When system load is balanced, use cache-aware routing (based on Radix Tree prefix matching)
-    2. When system load is unbalanced, switch to shortest queue routing
-
-    Particularly suitable for LLM inference scenarios, can improve KV Cache hit rate.
-
-    Args:
-        cache_threshold: Prefix match threshold (0.0-1.0), use cache affinity routing when exceeded
-        balance_abs_threshold: Absolute threshold for load imbalance
-        balance_rel_threshold: Relative threshold for load imbalance
-        eviction_interval_secs: Cache eviction interval (seconds)
-        max_tree_size: Maximum number of Radix Tree nodes
+    Combines cache affinity and load balancing. Suitable for LLM inference
+    scenarios to improve KV Cache hit rate.
     """
 
     def __init__(
@@ -395,10 +285,7 @@ class RustCacheAwareScheduler(RustSchedulerBase):
         eviction_interval_secs: int = 60,
         max_tree_size: int = 100000,
     ):
-        if not RUST_POLICIES_AVAILABLE:
-            raise ImportError("Rust policies not available. Rebuild with maturin.")
         super().__init__(actor_system, worker_name)
-
         config = CacheAwareConfig(
             cache_threshold=cache_threshold,
             balance_abs_threshold=balance_abs_threshold,
@@ -408,41 +295,16 @@ class RustCacheAwareScheduler(RustSchedulerBase):
         )
         self._policy = CacheAwarePolicy(config)
 
-    def _get_policy(self):
-        return self._policy
-
-    async def select_worker(
-        self,
-        request_text: str | None = None,
-        headers: dict[str, str] | None = None,
-    ):
-        workers = await self.get_available_workers()
-        if not workers:
-            return None
-
-        worker_infos = self._workers_to_info_list(workers)
-
-        # Initialize workers (if first call)
+    def _pre_select(self, worker_infos: list) -> None:
         self._policy.init_workers(worker_infos)
 
-        selected_idx = self._policy.select_worker(worker_infos, request_text)
-
-        if selected_idx is None:
-            return None
-
-        selected_worker = workers[selected_idx]
-        return await pulsing.refer(selected_worker.get("actor_id"))
-
     def add_worker(self, url: str, model_id: str = "default"):
-        """Add worker to cache tree"""
         self._policy.add_worker(url, model_id)
 
     def remove_worker(self, url: str):
-        """Remove worker from cache tree"""
         self._policy.remove_worker(url)
 
     def evict_cache(self, max_size: int):
-        """Manually trigger cache eviction"""
         self._policy.evict_cache(max_size)
 
 

@@ -48,7 +48,7 @@ async def test_proxy_method_validation():
         # Dynamic proxy (no method list) allows any method
         system = get_system()
         raw_ref = await system.resolve("my_service")
-        dynamic_proxy = ActorProxy.from_ref(raw_ref)
+        dynamic_proxy = ActorProxy(raw_ref)
 
         # This creates the method caller but will fail on actual call
         caller = dynamic_proxy.any_method_name
@@ -113,13 +113,13 @@ async def test_async_method_error_handling():
 
 
 # ============================================================================
-# ActorProxy.from_ref Tests
+# ActorProxy constructor tests
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_actor_proxy_from_ref_dynamic_mode():
-    """Test ActorProxy.from_ref in dynamic mode (no method list)."""
+async def test_actor_proxy_dynamic_mode():
+    """Test ActorProxy in dynamic mode (no method list)."""
     from pulsing.core import init, shutdown, remote, ActorProxy, get_system
 
     @remote
@@ -138,10 +138,8 @@ async def test_actor_proxy_from_ref_dynamic_mode():
         system = get_system()
         raw_ref = await system.resolve("dynamic_svc")
 
-        # Dynamic mode - any method name is allowed
-        proxy = ActorProxy.from_ref(raw_ref)
+        proxy = ActorProxy(raw_ref)
 
-        # These should work
         assert await proxy.method_a() == "a"
         assert await proxy.method_b() == "b"
 
@@ -150,8 +148,8 @@ async def test_actor_proxy_from_ref_dynamic_mode():
 
 
 @pytest.mark.asyncio
-async def test_actor_proxy_from_ref_with_async_methods():
-    """Test ActorProxy.from_ref with explicit async_methods set."""
+async def test_actor_proxy_with_async_methods():
+    """Test ActorProxy with explicit async_methods set."""
     from pulsing.core import init, shutdown, remote, ActorProxy, get_system
 
     @remote
@@ -171,17 +169,14 @@ async def test_actor_proxy_from_ref_with_async_methods():
         system = get_system()
         raw_ref = await system.resolve("hybrid_svc")
 
-        # Create proxy with async method info
-        proxy = ActorProxy.from_ref(
+        proxy = ActorProxy(
             raw_ref,
-            methods=["sync_method", "async_method"],
+            method_names=["sync_method", "async_method"],
             async_methods={"async_method"},
         )
 
-        # Sync method
         assert await proxy.sync_method() == "sync"
 
-        # Async method
         result = await proxy.async_method()
         assert result == "async"
 

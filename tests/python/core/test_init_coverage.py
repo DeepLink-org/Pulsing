@@ -7,7 +7,6 @@ Targets:
 - init() idempotency (double init returns same system)
 - shutdown() when no system
 - Actor base class
-- ask_with_timeout / tell_with_timeout
 """
 
 import asyncio
@@ -116,46 +115,6 @@ class TestActorBaseClass:
 
 
 # ============================================================================
-# ask_with_timeout / tell_with_timeout
-# ============================================================================
-
-
-class TestTimeoutUtilities:
-    @pytest.mark.asyncio
-    async def test_ask_with_timeout_success(self):
-        from pulsing.core import ask_with_timeout
-
-        system = await init()
-        try:
-            system_ref = await system.system()
-            result = await ask_with_timeout(
-                system_ref,
-                Message.from_json("SystemMessage", {"type": "Ping"}),
-                timeout=5.0,
-            )
-            assert result is not None
-        finally:
-            await shutdown()
-
-    @pytest.mark.asyncio
-    async def test_ask_with_timeout_expired(self):
-        from pulsing.core import ask_with_timeout
-
-        system = await init()
-        try:
-            system_ref = await system.system()
-
-            class NeverRespond:
-                async def ask(self, msg):
-                    await asyncio.sleep(100)
-
-            with pytest.raises(asyncio.TimeoutError):
-                await ask_with_timeout(NeverRespond(), "msg", timeout=0.01)
-        finally:
-            await shutdown()
-
-
-# ============================================================================
 # Module exports
 # ============================================================================
 
@@ -172,7 +131,6 @@ class TestModuleExports:
             resolve,
             mount,
             unmount,
-            as_any,
         )
 
         assert ActorClass is not None

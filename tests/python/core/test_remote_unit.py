@@ -319,13 +319,13 @@ class TestActorProxyAttributes:
         proxy = ActorProxy(ref)
         assert proxy.ref is ref
 
-    def test_from_ref(self):
+    def test_constructor_with_methods(self):
         class FakeRef:
             class actor_id:
                 id = 1
 
         ref = FakeRef()
-        proxy = ActorProxy.from_ref(ref, methods=["a", "b"], async_methods={"b"})
+        proxy = ActorProxy(ref, method_names=["a", "b"], async_methods={"b"})
         assert "a" in proxy._method_names
         assert "b" in proxy._async_methods
 

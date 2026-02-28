@@ -1,11 +1,10 @@
 """
-Tests for resolve().as_any() / .as_type() and as_any(ref): proxy generation on ActorRef.
+Tests for resolve().as_any() / .as_type(): proxy generation on ActorRef.
 
 Covers:
 - resolve(name) returns ActorRef with .as_any() and .as_type()
 - ref.as_any() returns an untyped proxy
 - ref.as_type(cls) returns a typed proxy
-- as_any(ref) function works with ref from resolve() or raw ActorRef
 - typed_proxy.as_any() returns an any proxy with the same underlying ref
 - ref.ask() / ref.tell() still work (backward compatibility)
 """
@@ -17,7 +16,7 @@ import pytest
 from pulsing.exceptions import PulsingRuntimeError
 
 import pulsing as pul
-from pulsing.core import Actor, ActorRef, as_any, remote
+from pulsing.core import Actor, ActorRef, remote
 
 
 # ============================================================================
@@ -149,32 +148,32 @@ async def test_as_any_proxy_method_with_args(initialized_pul):
 
 
 # ============================================================================
-# Test: as_any(ref) function
+# Test: ref.as_any() instance method
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_as_any_function_with_ref_from_resolve(initialized_pul):
-    """as_any(ref) works when ref is from pul.resolve()."""
+async def test_as_any_with_ref_from_resolve(initialized_pul):
+    """ref.as_any() works when ref is from pul.resolve()."""
     await _ServiceWithMethods.spawn(name="as_any_fn_svc", public=True)
 
     ref = await pul.resolve("as_any_fn_svc")
-    proxy = as_any(ref)
+    proxy = ref.as_any()
 
     result = await proxy.get_value()
     assert result == 0
 
 
 @pytest.mark.asyncio
-async def test_as_any_function_with_raw_ref(initialized_pul):
-    """as_any(ref) works when ref is raw ActorRef from system.resolve()."""
+async def test_as_any_with_raw_ref(initialized_pul):
+    """ref.as_any() works when ref is raw ActorRef from system.resolve()."""
     from pulsing.core import get_system
 
     await _ServiceWithMethods.spawn(name="as_any_raw_svc", public=True)
 
     system = get_system()
     raw_ref = await system.resolve("as_any_raw_svc")
-    proxy = as_any(raw_ref)
+    proxy = raw_ref.as_any()
 
     result = await proxy.get_value()
     assert result == 0

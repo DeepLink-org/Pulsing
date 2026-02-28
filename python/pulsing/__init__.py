@@ -33,7 +33,6 @@ from pulsing.core import (
     remote,
     # Resolve function
     resolve,
-    as_any,
     # Mount (attach existing object to Pulsing network)
     mount,
     unmount,
@@ -46,9 +45,9 @@ from pulsing.core import (
     Message,
     StreamMessage,
     SystemConfig,
-    # Service
-    PythonActorService,
-    PYTHON_ACTOR_SERVICE_NAME,
+    # Service (internal, used by actor_system())
+    PythonActorService as _PythonActorService,
+    PYTHON_ACTOR_SERVICE_NAME as _PYTHON_ACTOR_SERVICE_NAME,
 )
 
 
@@ -205,8 +204,8 @@ async def actor_system(
     system = ActorSystem(inner)
 
     # Automatically register PythonActorService (for remote actor creation)
-    service = PythonActorService(inner)
-    await inner.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
+    service = _PythonActorService(inner)
+    await inner.spawn(service, name=_PYTHON_ACTOR_SERVICE_NAME, public=True)
 
     return system
 
@@ -324,7 +323,6 @@ __all__ = [
     "spawn",
     "refer",
     "resolve",
-    "as_any",
     "get_system",
     "is_initialized",
     # Decorator

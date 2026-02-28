@@ -217,6 +217,22 @@ class _OpenAIHandler:
             res_data["choices"][0]["text"] = text
         return web.json_response(res_data)
 
+    def _build_chunk(
+        self, request_id, obj_type, created, model, text, finish_reason, is_chat
+    ) -> dict:
+        choice: dict = {"index": 0, "finish_reason": finish_reason}
+        if is_chat:
+            choice["delta"] = {"content": text} if text else {}
+        else:
+            choice["text"] = text or ""
+        return {
+            "id": request_id,
+            "object": obj_type,
+            "created": created,
+            "model": model or self.model_name,
+            "choices": [choice],
+        }
+
     async def _stream_generate(
         self,
         request: web.Request,
@@ -235,78 +251,65 @@ class _OpenAIHandler:
 
         obj_type = "chat.completion.chunk" if is_chat else "text_completion"
 
+        async def _send(data: dict):
+            await stream_response.write(f"data: {json.dumps(data)}\n\n".encode())
+
         try:
             worker = worker_ref.as_any()
             stream = worker.generate_stream(prompt=prompt, max_new_tokens=max_tokens)
 
             async for chunk in stream:
                 if isinstance(chunk, dict) and chunk.get("error"):
-                    await stream_response.write(
-                        f"data: {json.dumps({'error': chunk['error']})}\n\n".encode()
-                    )
+                    await _send({"error": chunk["error"]})
                     await stream_response.write(b"data: [DONE]\n\n")
                     return stream_response
                 try:
                     finish_reason = chunk.get("finish_reason")
                     text = chunk.get("text", "")
 
-                    # Check if finished
                     if finish_reason:
-                        # Send final chunk (if has text)
                         if text:
-                            data = {
-                                "id": request_id,
-                                "object": obj_type,
-                                "created": created,
-                                "model": model or self.model_name,
-                                "choices": [
-                                    {"index": 0, "finish_reason": finish_reason}
-                                ],
-                            }
-                            if is_chat:
-                                data["choices"][0]["delta"] = {"content": text}
-                            else:
-                                data["choices"][0]["text"] = text
-                            await stream_response.write(
-                                f"data: {json.dumps(data)}\n\n".encode()
+                            await _send(
+                                self._build_chunk(
+                                    request_id,
+                                    obj_type,
+                                    created,
+                                    model,
+                                    text,
+                                    finish_reason,
+                                    is_chat,
+                                )
                             )
                         break
 
-                    # Only send non-empty text
                     if text:
-                        data = {
-                            "id": request_id,
-                            "object": obj_type,
-                            "created": created,
-                            "model": model or self.model_name,
-                            "choices": [{"index": 0, "finish_reason": None}],
-                        }
-                        if is_chat:
-                            data["choices"][0]["delta"] = {"content": text}
-                        else:
-                            data["choices"][0]["text"] = text
-                        await stream_response.write(
-                            f"data: {json.dumps(data)}\n\n".encode()
+                        await _send(
+                            self._build_chunk(
+                                request_id,
+                                obj_type,
+                                created,
+                                model,
+                                text,
+                                None,
+                                is_chat,
+                            )
                         )
                 except json.JSONDecodeError:
                     continue
         except Exception as e:
-            await stream_response.write(
-                f"data: {json.dumps({'error': str(e)})}\n\n".encode()
-            )
+            await _send({"error": str(e)})
 
-        final = {
-            "id": request_id,
-            "object": obj_type,
-            "created": created,
-            "model": model or self.model_name,
-            "choices": [{"index": 0, "finish_reason": "stop"}],
-        }
-        if is_chat:
-            final["choices"][0]["delta"] = {}
-        else:
-            final["choices"][0]["text"] = ""
-        await stream_response.write(f"data: {json.dumps(final)}\n\n".encode())
+        await _send(
+            self._build_chunk(
+                request_id,
+                obj_type,
+                created,
+                model,
+                "",
+                "stop",
+                is_chat,
+            )
+        )
         await stream_response.write(b"data: [DONE]\n\n")
         return stream_response
 

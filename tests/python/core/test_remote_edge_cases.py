@@ -693,14 +693,15 @@ async def test_actor_class_resolve():
 
 @pytest.mark.asyncio
 async def test_actor_class_resolve_without_init():
-    """Resolve without init raises RuntimeError."""
+    """Resolve without init raises PulsingRuntimeError."""
+    from pulsing.exceptions import PulsingRuntimeError
 
     @remote
     class NeverResolved:
         def ping(self):
             return "pong"
 
-    with pytest.raises(RuntimeError, match="not initialized"):
+    with pytest.raises(PulsingRuntimeError, match="not initialized"):
         await NeverResolved.resolve("nonexistent")
 
 
@@ -807,14 +808,13 @@ async def test_supervised_actor_spawn():
 
 
 # ============================================================================
-# as_any top-level function
+# ref.as_any() instance method
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_as_any_function():
-    """Test the module-level as_any() function."""
-    from pulsing.core import as_any
+async def test_ref_as_any():
+    """Test the ref.as_any() instance method."""
 
     @remote
     class AsAnyActor:
@@ -825,7 +825,7 @@ async def test_as_any_function():
     try:
         actor = await AsAnyActor.spawn(name="as_any_test", public=True)
         ref = await get_system().resolve("as_any_test")
-        proxy = as_any(ref)
+        proxy = ref.as_any()
         assert await proxy.greet() == "hi"
     finally:
         await shutdown()

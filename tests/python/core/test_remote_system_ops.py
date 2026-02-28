@@ -1,8 +1,7 @@
-"""Tests for remote.py system operation helpers and legacy functions.
+"""Tests for remote.py system operation helpers.
 
-Covers: list_actors, get_metrics, get_node_info, health_check, ping,
-resolve, SystemActorProxy, PythonActorServiceProxy, get_system_actor,
-get_python_actor_service.
+Covers: SystemActorProxy, PythonActorServiceProxy, get_system_actor,
+get_python_actor_service, resolve.
 """
 
 import asyncio
@@ -13,66 +12,33 @@ from pulsing.core import init, shutdown, get_system
 
 
 # ============================================================================
-# Legacy helper functions (call SystemActor under the hood)
+# SystemActorProxy operations
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_list_actors():
-    from pulsing.core.remote import list_actors
+async def test_system_actor_proxy_legacy_ops():
+    """Test system operations via SystemActorProxy (replaces legacy helper functions)."""
+    from pulsing.core.remote import get_system_actor
 
     system = await init()
     try:
-        actors = await list_actors(system)
+        proxy = await get_system_actor(system)
+
+        actors = await proxy.list_actors()
         assert isinstance(actors, list)
-    finally:
-        await shutdown()
 
-
-@pytest.mark.asyncio
-async def test_get_metrics():
-    from pulsing.core.remote import get_metrics
-
-    system = await init()
-    try:
-        metrics = await get_metrics(system)
+        metrics = await proxy.get_metrics()
         assert isinstance(metrics, dict)
-    finally:
-        await shutdown()
 
-
-@pytest.mark.asyncio
-async def test_get_node_info():
-    from pulsing.core.remote import get_node_info
-
-    system = await init()
-    try:
-        info = await get_node_info(system)
+        info = await proxy.get_node_info()
         assert isinstance(info, dict)
-    finally:
-        await shutdown()
 
-
-@pytest.mark.asyncio
-async def test_health_check():
-    from pulsing.core.remote import health_check
-
-    system = await init()
-    try:
-        result = await health_check(system)
+        result = await proxy.health_check()
         assert isinstance(result, dict)
-    finally:
-        await shutdown()
 
-
-@pytest.mark.asyncio
-async def test_ping():
-    from pulsing.core.remote import ping
-
-    system = await init()
-    try:
-        result = await ping(system)
-        assert isinstance(result, dict)
+        pong = await proxy.ping()
+        assert isinstance(pong, dict)
     finally:
         await shutdown()
 
@@ -201,8 +167,9 @@ async def test_resolve_function():
 @pytest.mark.asyncio
 async def test_resolve_without_init():
     from pulsing.core.remote import resolve
+    from pulsing.exceptions import PulsingRuntimeError
 
-    with pytest.raises(RuntimeError, match="not initialized"):
+    with pytest.raises(PulsingRuntimeError, match="not initialized"):
         await resolve("anything")
 
 

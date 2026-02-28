@@ -908,65 +908,45 @@ async def test_publish_timeout_error(actor_system):
 
 @pytest.mark.asyncio
 async def test_ask_with_timeout_success(actor_system):
-    """Test ask_with_timeout helper function (success case)."""
-    from pulsing.core import Actor, ActorId, ask_with_timeout
+    """Test ask with asyncio.wait_for (success case)."""
+    from pulsing.core import Actor, ActorId
 
     class EchoActor(Actor):
-        def on_start(self, actor_id: ActorId) -> None:
-            pass
-
-        def on_stop(self) -> None:
-            pass
-
         async def receive(self, msg):
             return {"echo": msg}
 
     echo = EchoActor()
     ref = await actor_system.spawn(echo, name="echo_timeout_test")
 
-    # ask_with_timeout success scenario
-    result = await ask_with_timeout(ref, {"hello": "world"}, timeout=5.0)
+    result = await asyncio.wait_for(ref.ask({"hello": "world"}), timeout=5.0)
     assert result["echo"]["hello"] == "world"
 
 
 @pytest.mark.asyncio
 async def test_ask_with_timeout_error(actor_system):
-    """Test ask_with_timeout raises TimeoutError when timeout expires."""
-    from pulsing.core import Actor, ActorId, ask_with_timeout
+    """Test ask raises TimeoutError when timeout expires."""
+    from pulsing.core import Actor, ActorId
 
     class SlowActor(Actor):
-        def on_start(self, actor_id: ActorId) -> None:
-            pass
-
-        def on_stop(self) -> None:
-            pass
-
         async def receive(self, msg):
-            await asyncio.sleep(5.0)  # Intentionally slow
+            await asyncio.sleep(5.0)
             return {"done": True}
 
     slow = SlowActor()
     ref = await actor_system.spawn(slow, name="slow_timeout_test")
 
-    # ask_with_timeout timeout scenario
     with pytest.raises(asyncio.TimeoutError):
-        await ask_with_timeout(ref, {"hello": "world"}, timeout=0.1)
+        await asyncio.wait_for(ref.ask({"hello": "world"}), timeout=0.1)
 
 
 @pytest.mark.asyncio
 async def test_tell_with_timeout_success(actor_system):
-    """Test tell_with_timeout helper function (success case)."""
-    from pulsing.core import Actor, ActorId, tell_with_timeout
+    """Test tell with asyncio.wait_for (success case)."""
+    from pulsing.core import Actor, ActorId
 
     received = []
 
     class CollectorActor(Actor):
-        def on_start(self, actor_id: ActorId) -> None:
-            pass
-
-        def on_stop(self) -> None:
-            pass
-
         async def receive(self, msg):
             received.append(msg)
             return None
@@ -974,10 +954,8 @@ async def test_tell_with_timeout_success(actor_system):
     collector = CollectorActor()
     ref = await actor_system.spawn(collector, name="collector_timeout_test")
 
-    # tell_with_timeout success scenario (fire-and-forget doesn't wait for response)
-    await tell_with_timeout(ref, {"hello": "world"}, timeout=5.0)
+    await asyncio.wait_for(ref.tell({"hello": "world"}), timeout=5.0)
 
-    # Wait for message processing
     await asyncio.sleep(0.1)
     assert len(received) == 1
 
@@ -989,15 +967,6 @@ async def test_default_publish_timeout():
 
     # Default timeout should be a reasonable value (30 seconds)
     assert DEFAULT_PUBLISH_TIMEOUT == 30.0
-
-
-@pytest.mark.asyncio
-async def test_default_ask_timeout():
-    """Test that DEFAULT_ASK_TIMEOUT is reasonable."""
-    from pulsing.core import DEFAULT_ASK_TIMEOUT
-
-    # Default timeout should be a reasonable value (30 seconds)
-    assert DEFAULT_ASK_TIMEOUT == 30.0
 
 
 # ============================================================================
