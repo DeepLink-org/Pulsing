@@ -314,28 +314,27 @@ class _OpenAIHandler:
         return stream_response
 
 
+def _create_app(system: ActorSystem, model_name: str, scheduler) -> web.Application:
+    """Build the aiohttp Application with OpenAI-compatible routes."""
+    handler = _OpenAIHandler(system, model_name, scheduler)
+    app = web.Application()
+    app.router.add_get("/", handler.index)
+    app.router.add_get("/health", handler.health_check)
+    app.router.add_get("/v1/models", handler.list_models)
+    app.router.add_post("/v1/chat/completions", handler.chat_completions)
+    app.router.add_post("/v1/completions", handler.completions)
+    app["scheduler"] = scheduler
+    return app
+
+
 def _build_scheduler(system: ActorSystem, worker_name: str, scheduler_type: str):
     """Create a Scheduler instance from scheduler_type string."""
     from .load_stream import StreamLoadScheduler
-    from .scheduler import (
-        RUST_POLICIES_AVAILABLE,
-        RandomScheduler,
-        RoundRobinScheduler,
-        RustCacheAwareScheduler,
-        RustPowerOfTwoScheduler,
-    )
+    from .scheduler import get_scheduler
 
-    scheduler_map = {
-        "stream_load": StreamLoadScheduler,
-        "random": RandomScheduler,
-        "round_robin": RoundRobinScheduler,
-    }
-    if RUST_POLICIES_AVAILABLE:
-        scheduler_map["power_of_two"] = RustPowerOfTwoScheduler
-        scheduler_map["cache_aware"] = RustCacheAwareScheduler
-
-    cls = scheduler_map.get(scheduler_type, StreamLoadScheduler)
-    return cls(system, worker_name)
+    if scheduler_type == "stream_load":
+        return StreamLoadScheduler(system, worker_name)
+    return get_scheduler(scheduler_type, system, worker_name)
 
 
 @remote
@@ -383,14 +382,7 @@ class Router:
         )
         await self._scheduler.start()
 
-        handler = _OpenAIHandler(system, self.model_name, self._scheduler)
-        app = web.Application()
-        app.router.add_get("/", handler.index)
-        app.router.add_get("/health", handler.health_check)
-        app.router.add_get("/v1/models", handler.list_models)
-        app.router.add_post("/v1/chat/completions", handler.chat_completions)
-        app.router.add_post("/v1/completions", handler.completions)
-
+        app = _create_app(system, self.model_name, self._scheduler)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         await web.TCPSite(self._runner, self.http_host, self.http_port).start()
@@ -448,7 +440,6 @@ async def start_router(
     worker_name: str = "worker",
     scheduler_type: str = "stream_load",
     scheduler=None,
-    scheduler_class=None,
 ) -> web.AppRunner:
     """Start an OpenAI-compatible HTTP server without creating a Router actor.
 
@@ -458,22 +449,12 @@ async def start_router(
     Returns:
         ``web.AppRunner`` — pass to ``stop_router()`` for cleanup.
     """
-    if scheduler_class is not None and scheduler is None:
-        scheduler = scheduler_class(system, worker_name)
     if scheduler is None:
         scheduler = _build_scheduler(system, worker_name, scheduler_type)
 
     await scheduler.start()
 
-    handler = _OpenAIHandler(system, model_name, scheduler)
-    app = web.Application()
-    app.router.add_get("/", handler.index)
-    app.router.add_get("/health", handler.health_check)
-    app.router.add_get("/v1/models", handler.list_models)
-    app.router.add_post("/v1/chat/completions", handler.chat_completions)
-    app.router.add_post("/v1/completions", handler.completions)
-    app["scheduler"] = scheduler
-
+    app = _create_app(system, model_name, scheduler)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, http_host, http_port).start()

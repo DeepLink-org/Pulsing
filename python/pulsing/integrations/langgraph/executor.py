@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict
 
 from pulsing.core import Actor, ActorId, ActorRef, ActorSystem, SystemConfig
-from pulsing.core.remote import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
+from pulsing.core.service import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
 
 logger = logging.getLogger("pulsing.langgraph")
 

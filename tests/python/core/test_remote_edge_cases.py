@@ -265,10 +265,9 @@ async def test_protocol_call_format():
     )
 
     msg = _wrap_call("test_method", (1, 2), {"key": "value"}, True)
-    assert msg["__pulsing_proto__"] == "1"
-    assert msg["__pulsing__"]["call"] == "test_method"
-    assert msg["__pulsing__"]["async"] is True
-    assert msg["user_data"]["args"] == (1, 2)
+    assert msg["__call__"] == "test_method"
+    assert msg["__async__"] is True
+    assert msg["args"] == (1, 2)
 
     method, args, kwargs, is_async = _unwrap_call(msg)
     assert method == "test_method"
@@ -277,14 +276,13 @@ async def test_protocol_call_format():
     assert is_async is True
 
     resp = _wrap_response(result="success")
-    assert resp["__pulsing_proto__"] == "1"
-    assert resp["__pulsing__"]["result"] == "success"
+    assert resp["__result__"] == "success"
     result, error = _unwrap_response(resp)
     assert result == "success"
     assert error is None
 
     err_resp = _wrap_response(error="failed")
-    assert err_resp["__pulsing__"]["error"] == "failed"
+    assert err_resp["__error__"] == "failed"
     result, error = _unwrap_response(err_resp)
     assert result is None
     assert error == "failed"

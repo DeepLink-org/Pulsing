@@ -28,6 +28,31 @@ from typing import Any, AsyncIterator, Protocol, runtime_checkable
 logger = logging.getLogger(__name__)
 
 
+def build_batch_meta(
+    sampled: list[int], fields: list[str], partition_id: str = "default"
+) -> dict:
+    """Build the standard batch-meta dict used by get_meta implementations."""
+    return {
+        "samples": [
+            {
+                "partition_id": partition_id,
+                "global_index": idx,
+                "fields": {
+                    f: {
+                        "name": f,
+                        "dtype": None,
+                        "shape": None,
+                        "production_status": "ready",
+                    }
+                    for f in fields
+                },
+            }
+            for idx in sampled
+        ],
+        "global_indexes": sampled,
+    }
+
+
 @runtime_checkable
 class StorageBackend(Protocol):
     """Core Storage Backend Protocol.
@@ -260,25 +285,9 @@ class MemoryBackend:
             sampled, _ = sampler.sample(ready, batch_size, **sampling_kwargs)
         else:
             sampled = ready[:batch_size]
-        return {
-            "samples": [
-                {
-                    "partition_id": sampling_kwargs.get("partition_id", "default"),
-                    "global_index": idx,
-                    "fields": {
-                        field: {
-                            "name": field,
-                            "dtype": None,
-                            "shape": None,
-                            "production_status": "ready",
-                        }
-                        for field in fields
-                    },
-                }
-                for idx in sampled
-            ],
-            "global_indexes": sampled,
-        }
+        return build_batch_meta(
+            sampled, fields, sampling_kwargs.get("partition_id", "default")
+        )
 
     # ---- ConsumptionBackend methods ----
 

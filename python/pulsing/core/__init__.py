@@ -15,9 +15,6 @@ Simple API:
     result = await counter.incr()
 
     await shutdown()
-
-Advanced API:
-    from pulsing.core import ActorSystem, Actor, Message, SystemConfig
 """
 
 import asyncio
@@ -27,13 +24,15 @@ from pulsing._core import (
     ActorRef,
     ActorSystem,
     NodeId,
-    ZeroCopyDescriptor,
     StreamReader,
     StreamWriter,
     SystemConfig,
+    ZeroCopyDescriptor,
 )
-from .messaging import Message, StreamMessage
-
+from .messaging import (
+    Message,
+    StreamMessage,
+)  # internal: used by service.py / integrations
 
 # =============================================================================
 # Global system for simple API
@@ -61,19 +60,6 @@ async def init(
 
     Returns:
         ActorSystem instance
-
-    Example:
-        # Standalone mode
-        await init()
-
-        # Cluster mode (Gossip + seed)
-        await init(addr="0.0.0.0:8001", seeds=["192.168.1.1:8000"])
-
-        # Head node
-        await init(addr="0.0.0.0:8000", is_head_node=True)
-
-        # Worker node
-        await init(addr="0.0.0.0:8001", head_addr="192.168.1.1:8000")
     """
     global _global_system
 
@@ -83,7 +69,6 @@ async def init(
     if is_head_node and head_addr:
         raise ValueError("Cannot set both is_head_node and head_addr")
 
-    # Build config
     if addr:
         config = SystemConfig.with_addr(addr)
     else:
@@ -101,7 +86,6 @@ async def init(
 
     loop = asyncio.get_running_loop()
     _global_system = await ActorSystem.create(config, loop)
-    # Automatically register PythonActorService for remote actor creation
 
     service = PythonActorService(_global_system)
     await _global_system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
@@ -133,24 +117,25 @@ def is_initialized() -> bool:
     return _global_system is not None
 
 
-from . import helpers
-from .remote import (
-    PYTHON_ACTOR_SERVICE_NAME,
+from . import helpers  # noqa: E402
+from .helpers import mount, unmount  # noqa: E402
+from .proxy import ActorProxy  # noqa: E402
+from .remote import (  # noqa: E402
     Actor,
     ActorClass,
-    ActorProxy,
+    remote,
+    resolve,
+)
+from .service import (  # noqa: E402
+    PYTHON_ACTOR_SERVICE_NAME,
     PythonActorService,
     PythonActorServiceProxy,
     SystemActorProxy,
     get_python_actor_service,
     get_system_actor,
-    remote,
-    resolve,
 )
-from .helpers import mount, unmount
 
-# Import exceptions for convenience
-from pulsing.exceptions import (
+from pulsing.exceptions import (  # noqa: E402
     PulsingError,
     PulsingRuntimeError,
     PulsingActorError,
@@ -167,15 +152,12 @@ __all__ = [
     "get_system_actor",
     "is_initialized",
     "Actor",
-    "Message",
-    "StreamMessage",
     "SystemConfig",
     "ActorSystem",
     "ActorRef",
     "ActorId",
     "ActorProxy",
     "SystemActorProxy",
-    "ZeroCopyDescriptor",
     "PulsingError",
     "PulsingRuntimeError",
     "PulsingActorError",

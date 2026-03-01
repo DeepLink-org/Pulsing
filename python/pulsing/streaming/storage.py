@@ -10,6 +10,7 @@ from .backend import (
     ConsumptionBackend,
     StorageBackend,
     TensorBackend,
+    build_batch_meta,
     get_backend_class,
 )
 
@@ -215,25 +216,9 @@ class BucketStorage:
             sampled = ready[:batch_size]
             marked = sampled
         consumed.update(marked)
-        return {
-            "samples": [
-                {
-                    "partition_id": sampling_kwargs.get("partition_id", "default"),
-                    "global_index": idx,
-                    "fields": {
-                        f: {
-                            "name": f,
-                            "dtype": None,
-                            "shape": None,
-                            "production_status": "ready",
-                        }
-                        for f in fields
-                    },
-                }
-                for idx in sampled
-            ],
-            "global_indexes": sampled,
-        }
+        return build_batch_meta(
+            sampled, fields, sampling_kwargs.get("partition_id", "default")
+        )
 
     async def get_data(self, batch_meta: dict, fields: list[str] | None = None) -> Any:
         if self._tensor_backend is not None:

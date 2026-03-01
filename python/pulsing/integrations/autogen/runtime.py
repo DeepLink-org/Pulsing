@@ -37,10 +37,17 @@ from pulsing.core import (
     Message,
     SystemConfig,
 )
-from pulsing.core.remote import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
+from pulsing.core.service import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
 
 logger = logging.getLogger("pulsing.autogen")
 T = TypeVar("T")
+
+
+def _parse_agent_id(id_like: Any) -> tuple[str, str]:
+    """Extract (agent_type, agent_key) from an AutoGen AgentId-like object or string."""
+    agent_type = id_like.type if hasattr(id_like, "type") else str(id_like)
+    agent_key = id_like.key if hasattr(id_like, "key") else "default"
+    return agent_type, agent_key
 
 
 class PulsingRuntime:
@@ -183,9 +190,7 @@ class PulsingRuntime:
         if not self._running:
             raise RuntimeError("Runtime is not running")
 
-        # Parse recipient
-        agent_type = recipient.type if hasattr(recipient, "type") else str(recipient)
-        agent_key = recipient.key if hasattr(recipient, "key") else "default"
+        agent_type, agent_key = _parse_agent_id(recipient)
         full_key = f"{agent_type}/{agent_key}"
 
         # Ensure Agent is created
@@ -340,7 +345,7 @@ class PulsingRuntime:
             expected_class: Expected Agent type (for validation)
             eager: Whether to immediately create Agent instance (True required for distributed mode)
         """
-        agent_type = type.type if hasattr(type, "type") else str(type)
+        agent_type, _ = _parse_agent_id(type)
 
         if agent_type in self._agent_factories:
             raise ValueError(f"Agent type '{agent_type}' already registered")
@@ -366,8 +371,7 @@ class PulsingRuntime:
         agent_id: Any,  # AgentId
     ) -> Any:  # AgentId
         """Register Agent instance"""
-        agent_type = agent_id.type if hasattr(agent_id, "type") else str(agent_id)
-        agent_key = agent_id.key if hasattr(agent_id, "key") else "default"
+        agent_type, agent_key = _parse_agent_id(agent_id)
         full_key = f"{agent_type}/{agent_key}"
 
         if full_key in self._instantiated_agents:
@@ -425,10 +429,9 @@ class PulsingRuntime:
     ) -> Any:  # AgentId
         """Get Agent ID"""
         if hasattr(id_or_type, "type") and hasattr(id_or_type, "key"):
-            # Already an AgentId
             return id_or_type
 
-        agent_type = id_or_type.type if hasattr(id_or_type, "type") else str(id_or_type)
+        agent_type, _ = _parse_agent_id(id_or_type)
 
         if not lazy:
             await self._ensure_agent(agent_type, key)
@@ -446,8 +449,7 @@ class PulsingRuntime:
         type: Type[T] = object,  # type: ignore
     ) -> T:
         """Get underlying Agent instance"""
-        agent_type = id.type if hasattr(id, "type") else str(id)
-        agent_key = id.key if hasattr(id, "key") else "default"
+        agent_type, agent_key = _parse_agent_id(id)
         full_key = f"{agent_type}/{agent_key}"
 
         if full_key not in self._instantiated_agents:

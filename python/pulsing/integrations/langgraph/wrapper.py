@@ -9,7 +9,7 @@ import logging
 from typing import Any, AsyncIterator, Dict, Optional, Union
 
 from pulsing.core import ActorSystem, SystemConfig
-from pulsing.core.remote import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
+from pulsing.core.service import PYTHON_ACTOR_SERVICE_NAME, PythonActorService
 from .executor import NodeExecutorPool
 
 logger = logging.getLogger("pulsing.langgraph")

@@ -375,6 +375,45 @@ async def _get_remote_manager(
     ) from last_exc
 
 
+async def _follow_redirects(
+    system: ActorSystem,
+    fetch_fn,
+    resolve_fn,
+    resource_name: str,
+    max_redirects: int = 3,
+) -> "ActorProxy":
+    """Follow redirects from StorageManager until the resource is ready.
+
+    Args:
+        fetch_fn: async (manager_proxy) -> resp_data dict
+        resolve_fn: async () -> ActorProxy (called when resource is ready)
+        resource_name: human-readable name for error messages
+    """
+    manager = await get_storage_manager(system)
+    local_id = str(system.node_id.id)
+
+    for attempt in range(max_redirects + 1):
+        resp = await fetch_fn(manager)
+        msg_type = resp.get("_type", "")
+
+        if msg_type in ("BucketReady", "TopicReady"):
+            return await resolve_fn()
+
+        if msg_type == "Redirect":
+            owner = str(resp.get("owner_node_id"))
+            if attempt >= max_redirects:
+                raise RuntimeError(f"Too many redirects for {resource_name}")
+            if owner == local_id:
+                raise RuntimeError(f"Redirect loop for {resource_name}")
+            logger.debug(f"Redirecting {resource_name} to node {owner}")
+            manager = await _get_remote_manager(system, owner)
+            continue
+
+        raise RuntimeError(f"Unexpected response type: {msg_type}")
+
+    raise RuntimeError(f"Failed to get {resource_name}")
+
+
 async def get_bucket_ref(
     system: ActorSystem,
     topic: str,
@@ -386,44 +425,23 @@ async def get_bucket_ref(
     max_redirects: int = 3,
 ) -> "ActorProxy":
     """Get ActorProxy for the specified bucket, following redirects automatically."""
-    manager = await get_storage_manager(system)
     backend_name = (
         (backend if isinstance(backend, str) else backend.__name__) if backend else None
     )
-
-    for redirect_count in range(max_redirects + 1):
-        resp_data = await manager.get_bucket(
+    return await _follow_redirects(
+        system,
+        lambda mgr: mgr.get_bucket(
             topic=topic,
             bucket_id=bucket_id,
             batch_size=batch_size,
             storage_path=storage_path,
             backend=backend_name,
             backend_options=backend_options,
-        )
-        msg_type = resp_data.get("_type", "")
-
-        if msg_type == "BucketReady":
-            return await BucketStorage.resolve(
-                f"bucket_{topic}_{bucket_id}", system=system
-            )
-
-        if msg_type == "Redirect":
-            owner_node_id_str = str(resp_data.get("owner_node_id"))
-            if redirect_count >= max_redirects:
-                raise RuntimeError(f"Too many redirects for bucket {topic}:{bucket_id}")
-            if owner_node_id_str == str(system.node_id.id):
-                raise RuntimeError(
-                    f"Redirect loop detected for bucket {topic}:{bucket_id}"
-                )
-            logger.debug(
-                f"Redirecting bucket {topic}:{bucket_id} to node {owner_node_id_str}"
-            )
-            manager = await _get_remote_manager(system, owner_node_id_str)
-            continue
-
-        raise RuntimeError(f"Unexpected response type: {msg_type}")
-
-    raise RuntimeError(f"Failed to get bucket {topic}:{bucket_id}")
+        ),
+        lambda: BucketStorage.resolve(f"bucket_{topic}_{bucket_id}", system=system),
+        f"bucket {topic}:{bucket_id}",
+        max_redirects,
+    )
 
 
 async def get_topic_broker(
@@ -434,25 +452,10 @@ async def get_topic_broker(
     """Get broker ActorProxy for the specified topic, following redirects automatically."""
     from pulsing.streaming.broker import TopicBroker
 
-    manager = await get_storage_manager(system)
-
-    for redirect_count in range(max_redirects + 1):
-        resp_data = await manager.get_topic(topic=topic)
-        msg_type = resp_data.get("_type", "")
-
-        if msg_type == "TopicReady":
-            return await TopicBroker.resolve(f"_topic_broker_{topic}", system=system)
-
-        if msg_type == "Redirect":
-            owner_node_id_str = str(resp_data["owner_node_id"])
-            if redirect_count >= max_redirects:
-                raise RuntimeError(f"Too many redirects for topic: {topic}")
-            if owner_node_id_str == str(system.node_id.id):
-                raise RuntimeError(f"Redirect loop for topic: {topic}")
-            logger.debug(f"Redirecting topic {topic} to node {owner_node_id_str}")
-            manager = await _get_remote_manager(system, owner_node_id_str)
-            continue
-
-        raise RuntimeError(f"Unexpected response type: {msg_type}")
-
-    raise RuntimeError(f"Failed to get topic broker: {topic}")
+    return await _follow_redirects(
+        system,
+        lambda mgr: mgr.get_topic(topic=topic),
+        lambda: TopicBroker.resolve(f"_topic_broker_{topic}", system=system),
+        f"topic {topic}",
+        max_redirects,
+    )

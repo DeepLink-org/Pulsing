@@ -10,7 +10,6 @@ import asyncio
 import pytest
 
 from pulsing.core.remote import (
-    _PULSING_WIRE_VERSION,
     _extract_methods,
     _register_actor_metadata,
     _unwrap_call,
@@ -49,20 +48,19 @@ class _SingleValueIterator:
 class TestWrapCall:
     def test_basic(self):
         msg = _wrap_call("greet", ("hello",), {"lang": "en"}, False)
-        assert msg["__pulsing_proto__"] == _PULSING_WIRE_VERSION
-        assert msg["__pulsing__"]["call"] == "greet"
-        assert msg["__pulsing__"]["async"] is False
-        assert msg["user_data"]["args"] == ("hello",)
-        assert msg["user_data"]["kwargs"] == {"lang": "en"}
+        assert msg["__call__"] == "greet"
+        assert msg["__async__"] is False
+        assert msg["args"] == ("hello",)
+        assert msg["kwargs"] == {"lang": "en"}
 
     def test_async_flag(self):
         msg = _wrap_call("stream", (), {}, True)
-        assert msg["__pulsing__"]["async"] is True
+        assert msg["__async__"] is True
 
     def test_empty_args(self):
         msg = _wrap_call("no_args", (), {}, False)
-        assert msg["user_data"]["args"] == ()
-        assert msg["user_data"]["kwargs"] == {}
+        assert msg["args"] == ()
+        assert msg["kwargs"] == {}
 
 
 class TestUnwrapCall:
@@ -82,7 +80,7 @@ class TestUnwrapCall:
         assert is_async is False
 
     def test_partial_message(self):
-        msg = {"__pulsing__": {"call": "foo"}, "user_data": {}}
+        msg = {"__call__": "foo"}
         method, args, kwargs, is_async = _unwrap_call(msg)
         assert method == "foo"
         assert args == ()
@@ -98,37 +96,36 @@ class TestUnwrapCall:
 class TestWrapResponse:
     def test_success(self):
         resp = _wrap_response(result=42)
-        assert resp["__pulsing__"]["result"] == 42
-        assert resp["__pulsing_proto__"] == _PULSING_WIRE_VERSION
+        assert resp["__result__"] == 42
 
     def test_error(self):
         resp = _wrap_response(error="something broke")
-        assert resp["__pulsing__"]["error"] == "something broke"
+        assert resp["__error__"] == "something broke"
 
     def test_none_result(self):
         resp = _wrap_response(result=None)
-        assert resp["__pulsing__"]["result"] is None
+        assert resp["__result__"] is None
 
 
 class TestUnwrapResponse:
-    def test_wire_format_result(self):
+    def test_flat_result(self):
         resp = _wrap_response(result="ok")
         result, error = _unwrap_response(resp)
         assert result == "ok"
         assert error is None
 
-    def test_wire_format_error(self):
+    def test_flat_error(self):
         resp = _wrap_response(error="fail")
         result, error = _unwrap_response(resp)
         assert result is None
         assert error == "fail"
 
-    def test_message_json_result(self):
+    def test_rust_json_result(self):
         result, error = _unwrap_response({"result": "top"})
         assert result == "top"
         assert error is None
 
-    def test_message_json_error(self):
+    def test_rust_json_error(self):
         result, error = _unwrap_response({"error": "top_err"})
         assert result is None
         assert error == "top_err"
@@ -138,26 +135,20 @@ class TestUnwrapResponse:
         assert result is None
         assert error is None
 
-    def test_wire_takes_precedence_over_message_json(self):
-        resp = {"__pulsing__": {"error": "wire"}, "result": "message_json"}
+    def test_flat_takes_precedence_over_rust_json(self):
+        resp = {"__error__": "flat", "result": "rust_json"}
         result, error = _unwrap_response(resp)
-        assert error == "wire"
+        assert error == "flat"
         assert result is None
 
-    def test_non_dict_pulsing_field_falls_back_to_message_json(self):
-        resp = {"__pulsing__": "not a dict", "result": "fallback"}
-        result, error = _unwrap_response(resp)
-        assert result == "fallback"
-
     def test_stream_frame_final(self):
-        # Stream frames now use __pulsing__ namespace
-        frame = {"__pulsing__": {"final": True, "result": 42}}
+        frame = {"__final__": True, "__result__": 42}
         result, error = _unwrap_response(frame)
         assert result == 42
         assert error is None
 
     def test_stream_frame_error(self):
-        frame = {"__pulsing__": {"error": "stream failed"}}
+        frame = {"__error__": "stream failed"}
         result, error = _unwrap_response(frame)
         assert result is None
         assert error == "stream failed"

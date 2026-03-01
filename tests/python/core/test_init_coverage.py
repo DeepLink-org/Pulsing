@@ -112,27 +112,3 @@ class TestActorBaseClass:
                 pass
 
             BadActor()
-
-
-# ============================================================================
-# Module exports
-# ============================================================================
-
-
-class TestModuleExports:
-    def test_core_exports(self):
-        from pulsing.core import (
-            ActorClass,
-            ActorProxy,
-            PulsingError,
-            PulsingRuntimeError,
-            PulsingActorError,
-            remote,
-            resolve,
-            mount,
-            unmount,
-        )
-
-        assert ActorClass is not None
-        assert ActorProxy is not None
-        assert remote is not None

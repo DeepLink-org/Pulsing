@@ -1,16 +1,14 @@
 """Worker scheduler - Load balancing strategies
 
-Supports the following scheduling strategies:
-- RandomScheduler: Random selection (Python implementation)
-- RoundRobinScheduler: Round-robin selection (Python implementation)
-- LeastConnectionScheduler: Least connections (Python implementation)
-- RustRandomScheduler: Random selection (Rust implementation, high performance)
-- RustRoundRobinScheduler: Round-robin selection (Rust implementation)
-- RustPowerOfTwoScheduler: Power-of-Two Choices (Rust implementation)
-- RustConsistentHashScheduler: Consistent hashing (Rust implementation, supports session affinity)
-- RustCacheAwareScheduler: Cache-aware routing (Rust implementation, supports Radix Tree prefix matching)
+Supports the following scheduling strategies (all Rust-implemented):
+- RustRandomScheduler: Random selection
+- RustRoundRobinScheduler: Round-robin selection
+- RustPowerOfTwoScheduler: Power-of-Two Choices
+- RustConsistentHashScheduler: Consistent hashing (session affinity)
+- RustCacheAwareScheduler: Cache-aware routing (Radix Tree prefix matching)
+- LeastConnectionScheduler: Least connections (Python)
 
-For load-aware scheduling, recommend using StreamLoadScheduler from load_stream module
+For load-aware scheduling, use StreamLoadScheduler from load_stream module.
 """
 
 import asyncio
@@ -99,46 +97,6 @@ class Scheduler(ABC):
 # ============================================================================
 # Python-implemented schedulers
 # ============================================================================
-
-
-class RoundRobinScheduler(Scheduler):
-    """Round-robin scheduler (Python implementation)"""
-
-    def __init__(self, actor_system, worker_name: str = "worker"):
-        super().__init__(actor_system, worker_name)
-        self._index = 0
-
-    async def select_worker(
-        self,
-        request_text: str | None = None,
-        headers: dict[str, str] | None = None,
-    ):
-        workers = await self.get_available_workers()
-        if not workers:
-            return None
-
-        async with self._lock:
-            self._index = (self._index + 1) % len(workers)
-            selected_worker = workers[self._index]
-        return await pulsing.refer(selected_worker.get("actor_id"))
-
-
-class RandomScheduler(Scheduler):
-    """Random scheduler (Python implementation)"""
-
-    async def select_worker(
-        self,
-        request_text: str | None = None,
-        headers: dict[str, str] | None = None,
-    ):
-        import random
-
-        workers = await self.get_available_workers()
-        if not workers:
-            return None
-
-        selected_worker = random.choice(workers)
-        return await pulsing.refer(selected_worker.get("actor_id"))
 
 
 class LeastConnectionScheduler(Scheduler):
@@ -320,14 +278,12 @@ def get_scheduler(
 
     Args:
         policy_name: Policy name, supports:
-            - "random": Random (Rust implementation)
-            - "round_robin": Round robin (Rust implementation)
-            - "power_of_two": Power-of-Two Choices (Rust implementation)
-            - "consistent_hash": Consistent hash (Rust implementation)
-            - "cache_aware": Cache-aware (Rust implementation)
-            - "py_random": Random (Python implementation)
-            - "py_round_robin": Round robin (Python implementation)
-            - "least_connection": Least connections (Python implementation)
+            - "random": Random
+            - "round_robin": Round robin
+            - "power_of_two": Power-of-Two Choices
+            - "consistent_hash": Consistent hash
+            - "cache_aware": Cache-aware
+            - "least_connection": Least connections (Python)
         actor_system: Actor system instance
         worker_name: Worker actor name
         **kwargs: Policy-specific parameters (e.g., cache_threshold, etc.)
@@ -347,17 +303,11 @@ def get_scheduler(
         scheduler = get_scheduler("round_robin", actor_system, "worker")
     """
     policy_map = {
-        # Rust implementation (recommended)
-        "random": RustRandomScheduler if RUST_POLICIES_AVAILABLE else RandomScheduler,
-        "round_robin": (
-            RustRoundRobinScheduler if RUST_POLICIES_AVAILABLE else RoundRobinScheduler
-        ),
+        "random": RustRandomScheduler,
+        "round_robin": RustRoundRobinScheduler,
         "power_of_two": RustPowerOfTwoScheduler,
         "consistent_hash": RustConsistentHashScheduler,
         "cache_aware": RustCacheAwareScheduler,
-        # Python implementation
-        "py_random": RandomScheduler,
-        "py_round_robin": RoundRobinScheduler,
         "least_connection": LeastConnectionScheduler,
     }
 
@@ -376,20 +326,13 @@ def get_scheduler(
 
 # Exports
 __all__ = [
-    # Base class
     "Scheduler",
-    # Python schedulers
-    "RandomScheduler",
-    "RoundRobinScheduler",
     "LeastConnectionScheduler",
-    # Rust schedulers
     "RustRandomScheduler",
     "RustRoundRobinScheduler",
     "RustPowerOfTwoScheduler",
     "RustConsistentHashScheduler",
     "RustCacheAwareScheduler",
-    # Factory
     "get_scheduler",
-    # Constants
     "RUST_POLICIES_AVAILABLE",
 ]
