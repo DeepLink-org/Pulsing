@@ -25,7 +25,7 @@ class Worker:
         pul.mount(self, name=name)  # One line: join the Pulsing network
 
     async def call_peer(self, peer_name, msg):
-        proxy = (await pul.resolve(peer_name, timeout=30)).as_any()
+        proxy = await pul.resolve(peer_name, timeout=30)
         return await proxy.greet(msg)  # Cross-process Pulsing call
 
     async def greet(self, msg):
@@ -142,8 +142,8 @@ result = await worker.process("hello")
 
 ## Notes
 
-- Prefer typed proxy: `await Class.resolve(name)`.
-- If only a runtime name is available: `ref = await pul.resolve(name)` then `ref.as_type(Class)` / `ref.as_any()`.
+- Prefer typed proxy: `await pul.resolve(name, cls=Class)` or `await Class.resolve(name)`.
+- If only a runtime name is available: `proxy = await pul.resolve(name)` — you can call any method directly (untyped).
 
 ---
 

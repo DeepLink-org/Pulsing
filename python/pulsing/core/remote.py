@@ -492,16 +492,34 @@ def remote(
 async def resolve(
     name: str,
     *,
+    cls: type | None = None,
     node_id: int | None = None,
     timeout: float | None = None,
-):
-    """Resolve a named actor by name.
+) -> ActorProxy:
+    """Resolve a named actor and return a ready-to-use proxy.
 
-    Returns an ActorRef that supports .ask(), .tell(), .as_any(), and .as_type().
+    Args:
+        name: Actor name to resolve.
+        cls: Optional class for typed proxy (validates method names).
+             If omitted, returns an untyped proxy that accepts any method call.
+        node_id: Target node ID (None = any node via load balancing).
+        timeout: Retry timeout in seconds for waiting on gossip propagation.
+
+    Examples::
+
+        proxy = await pul.resolve("counter", cls=Counter, timeout=30)
+        result = await proxy.incr()
+
+        proxy = await pul.resolve("service")
+        result = await proxy.some_method()
     """
     from . import get_system
 
-    return await get_system().resolve(name, node_id=node_id, timeout=timeout)
+    ref = await get_system().resolve(name, node_id=node_id, timeout=timeout)
+    if cls is not None:
+        methods, async_methods = _extract_methods(cls)
+        return ActorProxy(ref, methods, async_methods)
+    return ActorProxy(ref)
 
 
 # ============================================================================

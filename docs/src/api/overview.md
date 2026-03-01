@@ -89,16 +89,15 @@ result = await counter.incr()             # direct method call
 
 ```python
 # Typed proxy — when you know the class
+proxy = await pul.resolve("counter", cls=Counter, timeout=30)
+result = await proxy.incr()
+
+# Or via ActorClass (same result)
 proxy = await Counter.resolve("counter")
 result = await proxy.incr()
 
-# Typed proxy — manual bind
-ref = await pul.resolve("counter", timeout=30)
-proxy = ref.as_type(Counter)
-
-# Untyped proxy — when remote type is unknown
-ref = await pul.resolve("service_name")
-proxy = ref.as_any()
+# Untyped proxy — when remote type is unknown (any method call)
+proxy = await pul.resolve("service_name")
 result = await proxy.any_method(args)
 ```
 

@@ -33,7 +33,7 @@ class Counter:
         """Yield number: broadcast own number to all nodes"""
         num = self.peers.index(self.name) + 1
         for peer in self.peers:
-            proxy = (await pul.resolve(peer, timeout=30)).as_type(Counter)
+            proxy = await pul.resolve(peer, cls=Counter, timeout=30)
             await proxy.on_number(num, self.name)
 
     async def on_number(self, num, from_who):

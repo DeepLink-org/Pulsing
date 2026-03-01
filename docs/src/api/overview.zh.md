@@ -93,12 +93,10 @@ proxy = await Counter.resolve("counter")
 result = await proxy.incr()
 
 # 类型化代理 — 手动绑定
-ref = await pul.resolve("counter", timeout=30)
-proxy = ref.as_type(Counter)
+proxy = await pul.resolve("counter", cls=Counter, timeout=30)
 
 # 无类型代理 — 远端类型未知时
-ref = await pul.resolve("service_name")
-proxy = ref.as_any()
+proxy = await pul.resolve("service_name")
 result = await proxy.any_method(args)
 ```
 

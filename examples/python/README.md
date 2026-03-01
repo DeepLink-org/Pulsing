@@ -20,14 +20,9 @@ python examples/python/remote_actor_example.py
 python examples/python/native_async_example.py
 ```
 
-### Ray 兼容 API (`pulsing.compat.ray`)
+### 与 Ray 一起使用
 
-一行代码从 Ray 迁移到 Pulsing：
-
-```bash
-# Ray 风格 API，同步接口
-python examples/python/ray_compat_example.py
-```
+在 Ray 中希望使用 Pulsing 做通信时，请用 **Bridge 模式**（保留 Ray 调度，用 `pul.mount()` 将现有对象挂到 Pulsing 网络），或参考文档 [Tutorial: Ray + Pulsing](../../docs/src/quickstart/migrate_from_ray.md)。Ray 风格兼容层（`pulsing.compat.ray`）已移除，推荐使用原生 `await pul.init()` + `@pul.remote` 或 Bridge 模式。
 
 ### 基础示例
 
@@ -42,8 +37,7 @@ python examples/python/cluster.py          # Multi-node (see --help)
 
 | API | 风格 | 适用场景 |
 |-----|------|----------|
-| `import pulsing as pul` | 异步 (`async/await`) | 新项目，高性能需求 |
-| `from pulsing.compat import ray` | 同步 (Ray 风格) | Ray 迁移，快速上手 |
+| `import pulsing as pul` | 异步 (`async/await`) | 新项目、Ray Bridge、高性能需求 |
 
 ### 原生 API 示例
 
@@ -65,22 +59,19 @@ async def main():
     await pul.shutdown()
 ```
 
-### Ray 兼容 API 示例
+### Ray Bridge 示例（在 Ray worker 内挂载 Pulsing）
 
 ```python
-from pulsing.compat import ray
-
-ray.init()
+import ray
+import pulsing as pul
 
 @ray.remote
-class Counter:
-    def __init__(self, value=0):
-        self.value = value
-    def inc(self):
-        self.value += 1
-        return self.value
+class Worker:
+    def __init__(self, name):
+        pul.mount(self, name=name)
 
-counter = Counter.remote(value=0)
-print(ray.get(counter.inc.remote()))  # 1
-ray.shutdown()
+    async def greet(self, msg):
+        return f"hello: {msg}"
+
+# 见 docs/src/quickstart/migrate_from_ray.md 完整示例
 ```

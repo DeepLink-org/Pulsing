@@ -13,10 +13,10 @@
 对 `ask` 建议显式加超时：
 
 ```python
-from pulsing.core import ask_with_timeout
-
-result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
+result = await asyncio.wait_for(ref.ask({"op": "compute"}), timeout=10.0)
 ```
+
+对 proxy 方法调用：`await asyncio.wait_for(proxy.compute(), timeout=10.0)`。
 
 ## 重试（放在业务层）
 

@@ -78,11 +78,9 @@ result = await counter.incr()
 async for chunk in counter.stream(10): print(chunk)
 
 # ── Resolve (cross-process / cross-node) ──
-proxy = await Counter.resolve("counter")                          # typed proxy (recommended)
-proxy = await Counter.resolve("counter", node_id=2, timeout=30)  # with options
-ref   = await pul.resolve("counter", timeout=30)                  # untyped ActorRef
-proxy = ref.as_type(Counter)                                      # bind type
-proxy = ref.as_any()                                              # or use as_any()
+proxy = await pul.resolve("counter", cls=Counter, timeout=30)      # typed proxy
+proxy = await pul.resolve("counter", timeout=30)                   # untyped proxy (any method)
+proxy = await Counter.resolve("counter")                           # via ActorClass (also typed)
 ```
 
 ### 3. Supervision & Restart
@@ -152,7 +150,7 @@ class Worker:
         pul.mount(self, name=name)
 
     async def call_peer(self, peer, msg):
-        return await (await pul.resolve(peer, timeout=30)).as_any().greet(msg)
+        return await (await pul.resolve(peer, timeout=30)).greet(msg)
 ```
 
 ### 7. Error Handling
@@ -173,6 +171,14 @@ from pulsing import (
 
 The global API is backed by an `ActorSystem`. Create one explicitly for finer control. Low-level APIs operate on `ActorRef` and require a `receive(self, msg)` method.
 
+**Message / StreamMessage** are not exported from top-level `pulsing`. For low-level `receive()` or streaming, use:
+
+```python
+from pulsing.core.messaging import Message, StreamMessage
+```
+
+**Wire protocol:** Python–runtime call/response uses a flat format: `__call__` / `__async__`, `args`, `kwargs` for requests; `__result__` / `__error__` for responses. The legacy namespaced format (`__pulsing_proto__` / `user_data`) is no longer used.
+
 ```python
 system = await pul.actor_system(addr=..., seeds=..., passphrase=...)
 
@@ -187,7 +193,7 @@ await ref.tell(msg)                 # fire-and-forget
 
 # Resolve / refer
 ref = await pul.refer(actor_id)     # by ActorId
-ref = await pul.resolve(name, *, node_id=None, timeout=None)
+proxy = await pul.resolve(name, *, cls=None, node_id=None, timeout=None)
 
 # Queue / Topic on explicit system
 writer = await system.queue.write("q"); reader = await system.queue.read("q")
@@ -206,7 +212,7 @@ class MyActor(Actor):
     async def receive(self, msg): return msg       # sync or async, auto-detected
 ```
 
-**Zerocopy** — optional fast path bypassing pickle for buffer objects:
+**Zerocopy** — optional fast path bypassing pickle for buffer objects (from `pulsing.core` or `pulsing._core`):
 
 ```python
 from pulsing.core import ZeroCopyDescriptor

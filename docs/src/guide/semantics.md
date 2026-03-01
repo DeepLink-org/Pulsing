@@ -72,6 +72,8 @@ Practical implication:
 
 ## Streaming semantics (`StreamMessage`)
 
+Use `from pulsing.core.messaging import Message, StreamMessage` when you need these types (they are not exported from top-level `pulsing`).
+
 `StreamMessage.create(msg_type, buffer_size=32)` returns `(stream_msg, writer)`.
 
 ### Stream composition

@@ -13,10 +13,10 @@ This page collects **practical reliability rules** for building production syste
 Prefer explicit timeouts on `ask`:
 
 ```python
-from pulsing.core import ask_with_timeout
-
-result = await ask_with_timeout(ref, {"op": "compute"}, timeout=10.0)
+result = await asyncio.wait_for(ref.ask({"op": "compute"}), timeout=10.0)
 ```
+
+For proxy method calls: `await asyncio.wait_for(proxy.compute(), timeout=10.0)`.
 
 ## Retries (application-level)
 

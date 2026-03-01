@@ -210,13 +210,14 @@ class ActorSystem:
         """
         pass
 
-    async def resolve(self, name, *, node_id=None):
+    async def resolve(self, name, *, node_id=None, timeout=None):
         """
-        通过名称解析 actor。
+        通过名称解析 actor。返回 ActorRef（低层 API）。若需即用型 proxy，请使用顶层 `pul.resolve(name, cls=...)`。
 
         **参数:**
         - `name`: Actor 名称（str）
         - `node_id`: 目标节点 ID（int 或 None）
+        - `timeout`: 重试超时（秒，可选）
 
         **返回:** 对应 actor 的 ActorRef
         """
@@ -227,9 +228,22 @@ class ActorSystem:
         pass
 ```
 
+### 顶层 resolve（推荐）
+
+`pul.resolve()` 直接返回 **ActorProxy**，无需再调用 `.as_type()` / `.as_any()`：
+
+```python
+# 有类型 proxy
+proxy = await pul.resolve("counter", cls=Counter, timeout=30)
+
+# 无类型 proxy（任意方法）
+proxy = await pul.resolve("service_name", timeout=30)
+# 需要底层 ActorRef 时：proxy.ref
+```
+
 ### ActorRef
 
-Actor 的底层引用。使用 `ask()` 和 `tell()` 进行通信。
+低层引用（例如来自 `system.resolve()`）。使用 `ask()` / `tell()` 通信，或通过 `.as_any()` / `.as_type(cls)` 得到 ActorProxy。
 
 ```python
 class ActorRef:

@@ -69,6 +69,8 @@
 
 ## 流式语义（`StreamMessage`）
 
+需要这些类型时请使用 `from pulsing.core.messaging import Message, StreamMessage`（顶层 `pulsing` 不导出）。
+
 `StreamMessage.create(msg_type, buffer_size=32)` 返回 `(stream_msg, writer)`。
 
 ### 流的组成

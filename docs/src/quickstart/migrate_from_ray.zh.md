@@ -25,7 +25,7 @@ class Worker:
         pul.mount(self, name=name)  # 一行代码：接入 Pulsing 网络
 
     async def call_peer(self, peer_name, msg):
-        proxy = (await pul.resolve(peer_name, timeout=30)).as_any()
+        proxy = await pul.resolve(peer_name, timeout=30)
         return await proxy.greet(msg)  # 跨进程 Pulsing 调用
 
     async def greet(self, msg):
@@ -142,8 +142,8 @@ result = await worker.process("hello")
 
 ## 说明
 
-- 优先使用 typed proxy：`await Class.resolve(name)`。
-- 若只有运行时名称：`ref = await pul.resolve(name)`，再使用 `ref.as_type(Class)` / `ref.as_any()`。
+- 优先使用 typed proxy：`await pul.resolve(name, cls=Class)` 或 `await Class.resolve(name)`。
+- 若只有运行时名称：`proxy = await pul.resolve(name)` 即可直接调用方法（无类型约束）。
 
 ---
 

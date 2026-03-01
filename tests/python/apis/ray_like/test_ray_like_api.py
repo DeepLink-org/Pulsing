@@ -137,9 +137,10 @@ async def test_resolve_public_actor(initialized_pul):
     """Test pul.resolve() for public actor."""
     await pul.spawn(SimpleActor(), name="resolve_public_test", public=True)
 
-    ref = await pul.resolve("resolve_public_test")
-    assert ref is not None
-    result = await ref.ask("resolved_msg")
+    proxy = await pul.resolve("resolve_public_test")
+    assert proxy is not None
+    assert isinstance(proxy, pul.ActorProxy)
+    result = await proxy.ref.ask("resolved_msg")
     assert result == "resolved_msg"
 
 

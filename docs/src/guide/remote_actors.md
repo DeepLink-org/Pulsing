@@ -45,16 +45,18 @@ await asyncio.sleep(1.0)
 
 ## Finding Remote Actors
 
-### Using system.resolve()
+### Using pul.resolve() (recommended)
+
+`pul.resolve()` returns an **ActorProxy** directly — no need to call `.as_type()` or `.as_any()`:
 
 ```python
-# Find actor by name (searches entire cluster)
-remote_ref = await system.resolve("worker")
-response = await remote_ref.ask({"action": "process", "data": "hello"})
+# Typed proxy — when you know the class
+proxy = await pul.resolve("worker", cls=Worker, timeout=30)
+result = await proxy.process("hello")
 
-# Convert ActorRef to proxy
-any_proxy = remote_ref.as_any()         # Unspecified/unknown type
-typed_proxy = remote_ref.as_type(Worker)  # Typed proxy when class is known
+# Untyped proxy — when remote type is unknown (any method)
+proxy = await pul.resolve("worker", timeout=30)
+result = await proxy.process("hello")
 ```
 
 ### Using @remote Class.resolve()
@@ -64,13 +66,23 @@ typed_proxy = remote_ref.as_type(Worker)  # Typed proxy when class is known
 class Worker:
     def process(self, data): return f"processed: {data}"
 
-# Resolve with type info - returns ActorProxy with methods
+# Same as pul.resolve("worker", cls=Worker)
 worker = await Worker.resolve("worker")
 result = await worker.process("hello")  # Direct method call
 ```
 
+### Using system.resolve() (low-level)
+
+When you need the raw **ActorRef** (e.g. for `.ask()` / `.tell()` or to pass to other APIs):
+
+```python
+remote_ref = await system.resolve("worker")
+response = await remote_ref.ask({"action": "process", "data": "hello"})
+# Get proxy from ref if needed: remote_ref.as_any() or remote_ref.as_type(Worker)
+```
+
 !!! note
-    For new code, prefer `Class.resolve(name)` (typed proxy). Use `system.resolve(name)` when you only have a runtime name and then call `.as_type()` / `.as_any()` on the returned `ActorRef`.
+    Prefer `pul.resolve(name, cls=...)` or `Class.resolve(name)` for a ready-to-use proxy. Use `system.resolve(name)` only when you need the low-level `ActorRef`.
 
 ## Named vs Anonymous Actors
 
@@ -172,22 +184,22 @@ except PulsingRuntimeError as e:
 Use timeouts for remote calls to avoid indefinite waits:
 
 ```python
-from pulsing.core import ask_with_timeout
-
 try:
-    response = await ask_with_timeout(remote_ref, msg, timeout=10.0)
+    response = await asyncio.wait_for(remote_ref.ask(msg), timeout=10.0)
 except asyncio.TimeoutError:
     print("Request timed out")
 except PulsingRuntimeError as e:
     print(f"Remote call failed: {e}")
 ```
 
+For proxy method calls: `await asyncio.wait_for(proxy.some_method(), timeout=10.0)`.
+
 ## Best Practices
 
 1. **Wait for cluster sync**: Add a small delay after joining a cluster
 2. **Handle errors gracefully**: Wrap remote calls in try-except blocks
 3. **Use named actors**: Actors that need remote access must have a `name`
-4. **Use @remote with resolve()**: Get typed proxies for better API experience
+4. **Use pul.resolve(name, cls=...) or Class.resolve(name)**: Get typed proxies for better API experience
 5. **Use timeouts**: Consider adding timeouts for remote calls
 
 ## Example: Distributed Counter

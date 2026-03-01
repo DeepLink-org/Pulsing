@@ -45,16 +45,18 @@ await asyncio.sleep(1.0)
 
 ## 查找远程 Actor
 
-### 使用 system.resolve()
+### 使用 pul.resolve()（推荐）
+
+`pul.resolve()` 直接返回 **ActorProxy**，无需再调用 `.as_type()` 或 `.as_any()`：
 
 ```python
-# 按名称查找 actor（搜索整个集群）
-remote_ref = await system.resolve("worker")
-response = await remote_ref.ask({"action": "process", "data": "hello"})
+# 类型化代理 — 已知 actor 类型时
+proxy = await pul.resolve("worker", cls=Worker, timeout=30)
+result = await proxy.process("hello")
 
-# 将 ActorRef 转换为代理
-any_proxy = remote_ref.as_any()           # 未知类型时使用
-typed_proxy = remote_ref.as_type(Worker)  # 已知类型时使用
+# 无类型代理 — 远端类型未知时（任意方法）
+proxy = await pul.resolve("worker", timeout=30)
+result = await proxy.process("hello")
 ```
 
 ### 使用 @remote 类的 resolve()
@@ -64,13 +66,23 @@ typed_proxy = remote_ref.as_type(Worker)  # 已知类型时使用
 class Worker:
     def process(self, data): return f"processed: {data}"
 
-# 带类型信息解析 - 返回带方法的 ActorProxy
+# 等价于 pul.resolve("worker", cls=Worker)
 worker = await Worker.resolve("worker")
-result = await worker.process("hello")  # 直接调用方法
+result = await worker.process("hello")  # 直接方法调用
+```
+
+### 使用 system.resolve()（低层）
+
+需要原始 **ActorRef** 时（例如使用 `.ask()` / `.tell()` 或传入其他 API）：
+
+```python
+remote_ref = await system.resolve("worker")
+response = await remote_ref.ask({"action": "process", "data": "hello"})
+# 需要 proxy 时：remote_ref.as_any() 或 remote_ref.as_type(Worker)
 ```
 
 !!! note
-    新代码优先使用 `Class.resolve(name)`（typed proxy）。仅在只有运行时名称时使用 `system.resolve(name)`，随后对返回的 `ActorRef` 调用 `.as_type()` / `.as_any()`。
+    推荐使用 `pul.resolve(name, cls=...)` 或 `Class.resolve(name)` 获得即用型 proxy。仅在需要低层 `ActorRef` 时使用 `system.resolve(name)`。
 
 ## 命名 vs 匿名 Actor
 
@@ -172,22 +184,22 @@ except PulsingRuntimeError as e:
 为远程调用使用超时，避免无限等待：
 
 ```python
-from pulsing.core import ask_with_timeout
-
 try:
-    response = await ask_with_timeout(remote_ref, msg, timeout=10.0)
+    response = await asyncio.wait_for(remote_ref.ask(msg), timeout=10.0)
 except asyncio.TimeoutError:
     print("请求超时")
 except PulsingRuntimeError as e:
     print(f"远程调用失败: {e}")
 ```
 
+对 proxy 方法调用可使用：`await asyncio.wait_for(proxy.some_method(), timeout=10.0)`。
+
 ## 最佳实践
 
 1. **等待集群同步**：加入集群后添加短暂延迟
 2. **优雅处理错误**：在 try-except 块中包装远程调用
 3. **使用命名 actor**：需要远程访问的 actor 必须有 `name`
-4. **使用 @remote 与 resolve()**：获取有类型的代理以获得更好的 API 体验
+4. **使用 pul.resolve(name, cls=...) 或 Class.resolve(name)**：获取有类型代理以获得更好的 API 体验
 5. **使用超时**：考虑为远程调用添加超时
 
 ## 示例：分布式计数器

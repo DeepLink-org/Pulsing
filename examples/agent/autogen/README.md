@@ -26,7 +26,7 @@ python simple.py
 ## 使用方式
 
 ```python
-from pulsing.autogen import PulsingRuntime
+from pulsing.integrations.autogen import PulsingRuntime
 
 # 单机
 runtime = PulsingRuntime()

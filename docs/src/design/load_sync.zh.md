@@ -64,7 +64,7 @@ runner = await start_router(
     system,
     http_port=8080,
     model_name="my-model",
-    scheduler_type="stream_load",  # 默认值
+    scheduler_type="stream_load",  # 默认值；也支持 scheduler=... 实例。不支持 scheduler_class。
 )
 ```
 

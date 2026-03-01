@@ -5,7 +5,7 @@
 ## 核心用法
 
 ```python
-from pulsing.langgraph import with_pulsing
+from pulsing.integrations.langgraph import with_pulsing
 
 app = graph.compile()
 

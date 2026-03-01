@@ -203,8 +203,8 @@ class ActorSystem:
         """Get ActorRef by ActorId."""
         pass
 
-    async def resolve(self, name, *, node_id=None):
-        """Resolve actor by name."""
+    async def resolve(self, name, *, node_id=None, timeout=None):
+        """Resolve actor by name. Returns ActorRef (low-level). For a ready-to-use proxy, use top-level pul.resolve(name, cls=...)."""
         pass
 
     async def shutdown(self):
@@ -212,9 +212,22 @@ class ActorSystem:
         pass
 ```
 
+### Top-level resolve (recommended)
+
+`pul.resolve()` returns an **ActorProxy** directly (no need for `.as_type()` / `.as_any()`):
+
+```python
+# Typed proxy
+proxy = await pul.resolve("counter", cls=Counter, timeout=30)
+
+# Untyped proxy (any method)
+proxy = await pul.resolve("service_name", timeout=30)
+# Access underlying ActorRef if needed: proxy.ref
+```
+
 ### ActorRef
 
-Low-level reference to an actor. Use `ask()` and `tell()` to communicate.
+Low-level reference (e.g. from `system.resolve()`). Use `ask()` and `tell()` to communicate, or `.as_any()` / `.as_type(cls)` to get an ActorProxy.
 
 ```python
 class ActorRef:

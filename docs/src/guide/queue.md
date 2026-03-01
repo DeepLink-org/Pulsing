@@ -251,12 +251,12 @@ Recommended patterns:
 
 ## Where to look in code
 
-- `python/pulsing/queue/queue.py`: high-level `Queue`, `write_queue`, `read_queue`
-- `python/pulsing/queue/manager.py`: `StorageManager` and bucket routing / redirects
-- `python/pulsing/queue/storage.py`: `BucketStorage` (delegates to `StorageBackend`)
-- `python/pulsing/queue/backend.py`: `StorageBackend` protocol and `MemoryBackend`
-- `examples/python/distributed_queue.py`: end-to-end example
-- `tests/python/test_queue.py`: behavior + stress tests
+- `python/pulsing/streaming/queue.py`: high-level `Queue`, `write_queue`, `read_queue`
+- `python/pulsing/streaming/manager.py`: `StorageManager` and bucket routing / redirects
+- `python/pulsing/streaming/storage.py`: `BucketStorage` (delegates to `StorageBackend`)
+- `python/pulsing/streaming/backend.py`: `StorageBackend` protocol and `MemoryBackend`
+- `examples/python/distributed_queue.py`: end-to-end example (if present)
+- `tests/python/test_queue*.py`: behavior + stress tests
 
 ## Related Projects
 
