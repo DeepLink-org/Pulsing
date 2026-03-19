@@ -89,6 +89,15 @@ async def init(
 
     service = PythonActorService(_global_system)
     await _global_system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
+
+    # Notify pulsing.subprocess of the loop so sync callers can submit coroutines
+    try:
+        from pulsing.subprocess.popen import _set_pulsing_loop
+
+        _set_pulsing_loop(loop)
+    except ImportError:
+        pass
+
     return _global_system
 
 
