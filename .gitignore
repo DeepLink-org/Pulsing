@@ -118,3 +118,6 @@ docs/site/
 stress_test_*.json
 queue_benchmark_*.json
 dist/*.whl
+
+# codex
+AGENTS.md

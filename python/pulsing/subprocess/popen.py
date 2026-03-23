@@ -107,6 +107,7 @@ class Popen:
         self._placement = kwargs.pop("placement", "local")
         self._system = kwargs.pop("system", None)
         self._name = kwargs.pop("name", None)
+        self._resources = kwargs.pop("resources", None)
         self._args = args
         self._spawn_kwargs = kwargs
         self._proxy = None
@@ -120,13 +121,26 @@ class Popen:
         _run_sync(self._aspawn())
 
     async def _aspawn(self) -> None:
-        self._proxy = await ProcessActor.spawn(
-            self._args,
-            system=self._system,
-            name=self._name,
-            placement=self._placement,
-            **self._spawn_kwargs,
-        )
+        if self._resources is not None:
+            from .ray_spawn import ray_spawn_process_actor
+            from pulsing.core import get_system
+
+            system = self._system or get_system()
+            self._proxy = await ray_spawn_process_actor(
+                system,
+                self._args,
+                actor_name=self._name,
+                resources=self._resources,
+                **self._spawn_kwargs,
+            )
+        else:
+            self._proxy = await ProcessActor.spawn(
+                self._args,
+                system=self._system,
+                name=self._name,
+                placement=self._placement,
+                **self._spawn_kwargs,
+            )
         self.pid = await self._proxy.pid()
         self.stdin = _StdinProxy(self._proxy, _run_sync)
         self.stdout = _StdoutProxy(self._proxy, _run_sync)
@@ -137,6 +151,24 @@ class Popen:
 
     def __exit__(self, *exc):
         self.wait()
+        self.close()
+
+    def __del__(self):
+        # Best effort cleanup.  If the event loop is already closed, there's not much we can do.
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        """Clean up Ray actor resources if this Popen used resources.
+
+        No-op for local (non-Ray) processes.  Idempotent.
+        """
+        if getattr(self._proxy, "_ray_node_actor", None) is not None:
+            from .ray_spawn import cleanup_ray_actor
+
+            _run_sync(cleanup_ray_actor(self._proxy))
 
     def poll(self) -> int | None:
         rc = _run_sync(self._proxy.poll())
@@ -190,6 +222,7 @@ def run(
     placement: str | int = "local",
     system=None,
     name: str | None = None,
+    resources: dict | None = None,
 ) -> CompletedProcess:
     """Run a command, wait for it, return CompletedProcess. Mirrors subprocess.run()."""
     if capture_output:
@@ -217,8 +250,12 @@ def run(
         placement=placement,
         system=system,
         name=name,
+        resources=resources,
     )
-    out, err = proc.communicate(input)
+    try:
+        out, err = proc.communicate(input)
+    finally:
+        proc.close()
     result = CompletedProcess(
         args=args, returncode=proc.returncode, stdout=out, stderr=err
     )
@@ -227,20 +264,42 @@ def run(
     return result
 
 
-def call(args, *, timeout=None, placement="local", system=None, **kwargs) -> int:
+def call(
+    args, *, timeout=None, placement="local", system=None, resources=None, **kwargs
+) -> int:
     return run(
-        args, timeout=timeout, placement=placement, system=system, **kwargs
+        args,
+        timeout=timeout,
+        placement=placement,
+        system=system,
+        resources=resources,
+        **kwargs,
     ).returncode
 
 
-def check_call(args, *, timeout=None, placement="local", system=None, **kwargs) -> int:
+def check_call(
+    args, *, timeout=None, placement="local", system=None, resources=None, **kwargs
+) -> int:
     return run(
-        args, timeout=timeout, check=True, placement=placement, system=system, **kwargs
+        args,
+        timeout=timeout,
+        check=True,
+        placement=placement,
+        system=system,
+        resources=resources,
+        **kwargs,
     ).returncode
 
 
 def check_output(
-    args, *, stderr=None, timeout=None, placement="local", system=None, **kwargs
+    args,
+    *,
+    stderr=None,
+    timeout=None,
+    placement="local",
+    system=None,
+    resources=None,
+    **kwargs,
 ) -> bytes | str:
     return run(
         args,
@@ -250,5 +309,6 @@ def check_output(
         check=True,
         placement=placement,
         system=system,
+        resources=resources,
         **kwargs,
     ).stdout

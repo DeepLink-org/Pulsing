@@ -76,7 +76,15 @@ def _check_response(resp, ref) -> Any:
     if isinstance(resp, Message):
         if resp.is_stream:
             return resp
-        resp = resp.to_json()
+        try:
+            resp = resp.to_json()
+        except ValueError:
+            # HTTP/2 transport doesn't preserve msg_type in responses,
+            # so pickle-encoded Python actor responses arrive with empty msg_type.
+            # Fall back to pickle deserialization.
+            import pickle
+
+            resp = pickle.loads(resp.payload)
     if isinstance(resp, dict):
         result, error = _unwrap_response(resp)
         if error:

@@ -63,7 +63,7 @@ def run(num_workers=20):
     actors = [Counter.remote(name, names) for name in names]
     pids = ray.get([a.get_pid.remote() for a in actors])
     assert len(set(pids)) == num_workers, "Not enough worker processes"
-    print(f"[counting_game] {num_workers} nodes ready ({time.time()-t0:.1f}s)")
+    print(f"[counting_game] {num_workers} nodes ready ({time.time() - t0:.1f}s)")
 
     # 2) node_00 yields -> auto relays to node_19
     print("[counting_game] node_00 starting count ...")
@@ -89,10 +89,10 @@ def run(num_workers=20):
     # 4) Verify: each log entry's 'from' should match the number
     for entries in logs:
         for e in entries:
-            assert e["from"] == f"node_{e['number']-1:02d}"
+            assert e["from"] == f"node_{e['number'] - 1:02d}"
 
     # 5) Print results
-    order = " → ".join(f"{i+1}:{names[i]}" for i in range(min(5, num_workers)))
+    order = " → ".join(f"{i + 1}:{names[i]}" for i in range(min(5, num_workers)))
     if num_workers > 5:
         order += f" → ... → {num_workers}:{names[-1]}"
     elapsed = time.time() - t0
