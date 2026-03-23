@@ -28,7 +28,9 @@ PIPE = subprocess.PIPE
 
 def run_demos():
     # run() — 等价于 subprocess.run()
-    result = subprocess.run(["echo", "hello"], capture_output=True)
+    result = subprocess.run(
+        ["echo", "hello"], resources={"num_cpus": 2}, capture_output=True
+    )
     print("run()        →", result.stdout.decode().strip())
 
     # check_output() — 等价于 subprocess.check_output()
@@ -36,14 +38,14 @@ def run_demos():
     print("check_output →", hostname.decode().strip())
 
     # Popen + communicate() — stdin 管道传数据
-    proc = subprocess.Popen(["cat"], stdin=PIPE, stdout=PIPE)
+    proc = subprocess.Popen(["cat"], stdin=PIPE, stdout=PIPE, resources={"num_cpus": 2})
     stdout, _ = proc.communicate(input=b"pipe test")
     print("Popen        →", stdout.decode().strip())
 
 
 async def main():
     if pul:
-        await pul.init()
+        await pul.init(ray_init=True)
 
     if pul:
         # pulsing.subprocess 是同步阻塞调用，需在工作线程里执行

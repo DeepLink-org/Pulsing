@@ -18,6 +18,7 @@ Simple API:
 """
 
 import asyncio
+import os
 
 from pulsing._core import (
     ActorId,
@@ -48,6 +49,8 @@ async def init(
     passphrase: str = None,
     head_addr: str = None,
     is_head_node: bool = False,
+    ray_init: bool | None = None,
+    ray_address: str | None = None,
 ) -> ActorSystem:
     """Initialize Pulsing actor system
 
@@ -57,6 +60,8 @@ async def init(
         passphrase: Enable TLS with this passphrase.
         head_addr: Address of head node (worker mode). Mutually exclusive with is_head_node.
         is_head_node: If True, this node runs as head. Mutually exclusive with head_addr.
+        ray_init: Explicitly enable/disable Ray initialization. Falls back to PULSING_RAY_INIT env var.
+        ray_address: Address passed to ray.init(address=...). None starts a new local cluster. Falls back to PULSING_RAY_ADDRESS env var.
 
     Returns:
         ActorSystem instance
@@ -68,6 +73,26 @@ async def init(
 
     if is_head_node and head_addr:
         raise ValueError("Cannot set both is_head_node and head_addr")
+
+    # Optionally initialize Ray
+    should_ray = (
+        ray_init
+        if ray_init is not None
+        else os.environ.get("PULSING_RAY_INIT", "").lower() in ("1", "true")
+    )
+    if should_ray:
+        try:
+            import ray
+
+            if not ray.is_initialized():
+                _ray_addr = (
+                    ray_address
+                    if ray_address is not None
+                    else os.environ.get("PULSING_RAY_ADDRESS")
+                )
+                ray.init(address=_ray_addr)
+        except ImportError:
+            pass
 
     if addr:
         config = SystemConfig.with_addr(addr)
