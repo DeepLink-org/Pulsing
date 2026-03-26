@@ -42,6 +42,29 @@ def run_demos():
     stdout, _ = proc.communicate(input=b"pipe test")
     print("Popen        →", stdout.decode().strip())
 
+    # 示例1：只读取输出
+    proc = subprocess.Popen(
+        ["ls", "-la"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    stdout, stderr = proc.communicate()
+    print(stdout.decode())
+
+    # 示例2：发送输入并读取输出
+    proc = subprocess.Popen(
+        ["python3", "-c", "print(input())"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
+    stdout, stderr = proc.communicate(input=b"Hello World")
+    print(stdout.decode())  # Hello World
+
+    # 示例3：设置超时
+    try:
+        stdout, stderr = proc.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+
 
 async def main():
     if pul:

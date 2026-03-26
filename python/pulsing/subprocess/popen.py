@@ -26,6 +26,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
+from pulsing.exceptions import PulsingActorError
+
 from .process import ProcessActor, _StdinProxy, _StdoutProxy, _StderrProxy
 
 
@@ -67,6 +69,18 @@ def _run_sync(awaitable) -> Any:
     return asyncio.run_coroutine_threadsafe(
         _ensure_coro(awaitable), _get_pulsing_loop()
     ).result()
+
+
+def _maybe_raise_timeout_expired(
+    error: PulsingActorError, args: Any, timeout: float | None
+) -> None:
+    if timeout is None:
+        raise error
+
+    if "timed out after" not in str(error):
+        raise error
+
+    raise subprocess.TimeoutExpired(args, timeout) from error
 
 
 # ---------------------------------------------------------------------------
@@ -180,13 +194,16 @@ class Popen:
         self.returncode = rc
         return rc
 
-    def communicate(self, input=None) -> tuple:
+    def communicate(self, input=None, timeout: float | None = None) -> tuple:
         async def _do():
-            stdout, stderr = await self._proxy.communicate(input)
+            stdout, stderr = await self._proxy.communicate(input, timeout)
             self.returncode = await self._proxy.returncode()
             return stdout, stderr
 
-        return _run_sync(_do())
+        try:
+            return _run_sync(_do())
+        except PulsingActorError as error:
+            _maybe_raise_timeout_expired(error, self._args, timeout)
 
     def send_signal(self, sig: int) -> None:
         _run_sync(self._proxy.send_signal(sig))
@@ -253,7 +270,7 @@ def run(
         resources=resources,
     )
     try:
-        out, err = proc.communicate(input)
+        out, err = proc.communicate(input=input, timeout=timeout)
     finally:
         proc.close()
     result = CompletedProcess(
