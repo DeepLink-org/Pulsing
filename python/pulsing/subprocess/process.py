@@ -76,9 +76,13 @@ class ProcessActor:
             None, lambda: self._proc.wait(timeout=timeout)
         )
 
-    async def communicate(self, input: bytes | str | None = None) -> tuple:
+    async def communicate(
+        self, input: bytes | str | None = None, timeout: float | None = None
+    ) -> tuple:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: self._proc.communicate(input))
+        return await loop.run_in_executor(
+            None, lambda: self._proc.communicate(input=input, timeout=timeout)
+        )
 
     def send_signal(self, sig: int) -> None:
         self._proc.send_signal(sig)

@@ -60,6 +60,34 @@ async def test_popen_communicate_captures_stdout():
 
 
 @pytest.mark.asyncio
+async def test_popen_communicate_accepts_timeout():
+    def _test():
+        proc = Popen(["python3", "-c", "print('ok')"], stdout=PIPE, stderr=PIPE)
+        stdout, stderr = proc.communicate(timeout=1)
+        assert stdout.strip() == b"ok"
+        assert stderr == b""
+        assert proc.returncode == 0
+
+    await _in_executor(_test)
+
+
+@pytest.mark.asyncio
+async def test_popen_communicate_timeout_raises_stdlib_error():
+    def _test():
+        proc = Popen(
+            ["python3", "-c", "import time; time.sleep(1)"],
+            stdout=PIPE,
+            stderr=PIPE,
+        )
+        with pytest.raises(_subprocess.TimeoutExpired):
+            proc.communicate(timeout=0.01)
+        proc.kill()
+        proc.communicate()
+
+    await _in_executor(_test)
+
+
+@pytest.mark.asyncio
 async def test_popen_nonzero_returncode():
     def _test():
         proc = Popen(["false"])
@@ -197,6 +225,19 @@ async def test_run_stdin_input():
         result = run(["cat"], input=b"piped input", capture_output=True)
         assert result.returncode == 0
         assert result.stdout == b"piped input"
+
+    await _in_executor(_test)
+
+
+@pytest.mark.asyncio
+async def test_run_timeout_raises():
+    def _test():
+        with pytest.raises(_subprocess.TimeoutExpired):
+            run(
+                ["python3", "-c", "import time; time.sleep(1)"],
+                timeout=0.01,
+                capture_output=True,
+            )
 
     await _in_executor(_test)
 
