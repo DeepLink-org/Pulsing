@@ -151,6 +151,33 @@ class WorkerPool:
         return stats
 ```
 
+### Subprocess
+
+Run shell commands with a stdlib-compatible API:
+
+```python
+import pulsing.subprocess as subprocess
+
+result = subprocess.run(["echo", "hello"], capture_output=True, text=True)
+print(result.stdout.strip())
+
+remote = subprocess.run(
+    ["hostname"],
+    capture_output=True,
+    text=True,
+    resources={"num_cpus": 1},
+)
+print(remote.stdout.strip())
+```
+
+Run the full example:
+
+```bash
+python examples/python/subprocess_example.py
+python examples/python/subprocess_example.py --resources
+USE_POLSING_SUBPROCESS=1 python examples/python/subprocess_example.py --resources
+```
+
 ## LLM Inference Examples
 
 ### Simple LLM Service
@@ -274,6 +301,7 @@ cd examples/agent/langgraph && ./run_distributed.sh
 
 - [Ping-Pong](ping_pong.md) - Basic actor communication
 - [Distributed Counter](distributed_counter.md) - Shared state across nodes
+- [Subprocess](subprocess.md) - Subprocess-compatible command execution
 - [LLM Inference](llm_inference.md) - Building inference services
 - [AutoGen Integration](../agent/autogen.md) - Distributed AutoGen agents
 - [LangGraph Integration](../agent/langgraph.md) - Distributed LangGraph workflows
@@ -285,6 +313,7 @@ Most examples can be run directly:
 ```bash
 # Run a single example
 python examples/hello_world.py
+python examples/python/subprocess_example.py
 
 # Run distributed examples (need multiple terminals)
 # Terminal 1:

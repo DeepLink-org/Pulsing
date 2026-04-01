@@ -15,6 +15,7 @@ Pulsing is built around the [Actor Model](https://en.wikipedia.org/wiki/Actor_mo
 - **Zero External Dependencies**: Pure Rust + Tokio implementation
 - **Built-in Service Discovery**: SWIM/Gossip protocol for cluster management
 - **Streaming Support**: Native support for streaming requests/responses
+- **Subprocess-Compatible Execution**: `pulsing.subprocess` can keep stdlib semantics while optionally routing commands through Pulsing
 - **Multi-Language**: Python-first with Rust core, extensible to other languages
 
 ## Quick Start
@@ -160,6 +161,26 @@ async def handle(msg):
 
 await reader.start()
 ```
+
+### Subprocess
+
+Use a stdlib-compatible synchronous API for command execution:
+
+```python
+import pulsing.subprocess as subprocess
+
+result = subprocess.run(["echo", "hello"], capture_output=True, text=True)
+remote = subprocess.run(
+    ["hostname"],
+    capture_output=True,
+    text=True,
+    resources={"num_cpus": 1},
+)
+```
+
+Without `resources`, calls behave like Python's native `subprocess`. With
+`resources` and `USE_POLSING_SUBPROCESS=1`, commands are executed through the
+Pulsing backend. See [Subprocess Example](../examples/subprocess.md).
 
 ### Under the Hood
 

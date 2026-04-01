@@ -17,6 +17,7 @@ In one sentence: turn any Python class into a distributed Actor with `@remote` �
 | **LLM inference services** | Scalable backends with streaming, OpenAI-compatible API, and optional vLLM/Transformers workers. |
 | **Distributed agents** | Multi-agent systems with native integration for AutoGen and LangGraph; same code runs locally or across machines. |
 | **Enhance Ray communication** | Add streaming, actor discovery, and cross-cluster calls to Ray actors via `pul.mount()`. Use Ray for scheduling, Pulsing for communication. |
+| **Resource-aware subprocess execution** | Keep a `subprocess`-compatible API while optionally routing commands through Pulsing when `resources` are provided. |
 | **Custom distributed apps** | Build services and workers that discover each other via built-in gossip or a head node, over a single HTTP/2 port. |
 
 ---
@@ -38,6 +39,7 @@ You don't need to be a distributed systems expert to get value — the API is de
 - **Zero external dependencies** — Pure Rust core + Tokio; no etcd, NATS, or Redis. Cluster discovery uses built-in gossip or an optional head node.
 - **Location transparency** — Same API for local and remote actors: `await actor.method()` whether the actor is on this process or another machine.
 - **Python first** — `@pul.remote` turns a class into an Actor; `spawn()` and `resolve()` for creation and discovery; native async/await and streaming.
+- **Incremental adoption** — `pulsing.subprocess` keeps the stdlib call style and lets you opt into Pulsing-backed execution only when needed.
 - **Single port** — Actor RPC and cluster protocol share one HTTP/2 port per node, simplifying deployment and firewalls.
 
 ---
@@ -46,3 +48,4 @@ You don't need to be a distributed systems expert to get value — the API is de
 
 - **[Quick Start](quickstart/index.md)** — Run your first Actor in minutes, then go stateful and distributed.
 - **[Ray + Pulsing](quickstart/migrate_from_ray.md)** — Use Pulsing as Ray's communication layer, or use the standalone API.
+- **[Subprocess Example](examples/subprocess.md)** — Run commands through a subprocess-compatible API with optional resource scheduling.

@@ -347,6 +347,64 @@ impl Http2ServerHandler for SystemMessageHandler {
         serde_json::json!(actors)
     }
 
+    async fn handle_client_resolve(&self, path: &str) -> serde_json::Value {
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            let actor_path = match ActorPath::new(path) {
+                Ok(p) => p,
+                Err(_) => {
+                    return serde_json::json!({
+                        "found": false,
+                        "path": path,
+                        "gateway": "",
+                        "instance_count": 0,
+                    });
+                }
+            };
+
+            let info = cluster.lookup_named_actor(&actor_path).await;
+            match info {
+                Some(info) => {
+                    let local_addr = cluster.local_addr();
+                    serde_json::json!({
+                        "found": true,
+                        "path": path,
+                        "gateway": local_addr.to_string(),
+                        "instance_count": info.instance_count(),
+                    })
+                }
+                None => {
+                    serde_json::json!({
+                        "found": false,
+                        "path": path,
+                        "gateway": "",
+                        "instance_count": 0,
+                    })
+                }
+            }
+        } else {
+            // Standalone mode: check local registry
+            let found = self.registry.get_actor_name_by_path(path).is_some();
+            serde_json::json!({
+                "found": found,
+                "path": path,
+                "gateway": "",
+                "instance_count": if found { 1 } else { 0 },
+            })
+        }
+    }
+
+    async fn handle_client_members(&self) -> serde_json::Value {
+        let cluster_guard = self.cluster.read().await;
+        if let Some(cluster) = cluster_guard.as_ref() {
+            let members = cluster.alive_members().await;
+            let gateways: Vec<String> = members.iter().map(|m| m.addr.to_string()).collect();
+            serde_json::json!({ "gateways": gateways })
+        } else {
+            serde_json::json!({ "gateways": [] })
+        }
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

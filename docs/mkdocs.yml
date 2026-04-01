@@ -105,6 +105,7 @@ plugins:
             Actors: Actor 指南
             Communication Patterns: 通信范式
             Remote Actors: 远程 Actor
+            Out-Cluster Connect: 集群外连接
             Operations: CLI 运维
             Reliability: 可靠性
             Security: 安全
@@ -115,6 +116,7 @@ plugins:
             Examples: 示例
             Ping-Pong: Ping-Pong
             Distributed Counter: 分布式计数器
+            Subprocess: 子进程
             API Reference: API 参考
             API Overview: API 概述
             Python: Python API
@@ -161,6 +163,7 @@ nav:
     - Actor Basics: guide/actors.md
     - Communication Patterns: guide/communication_patterns.md
     - Remote Actors: guide/remote_actors.md
+    - Out-Cluster Connect: guide/connect.md
     - Reliability: guide/reliability.md
   - User Guides:
     - Operations: guide/operations.md
@@ -177,6 +180,7 @@ nav:
       - Overview: examples/index.md
       - Ping-Pong: examples/ping_pong.md
       - Distributed Counter: examples/distributed_counter.md
+      - Subprocess: examples/subprocess.md
   - API Reference:
     - API Overview: api/overview.md
     - Complete Reference: api_reference.md
@@ -197,6 +201,7 @@ nav:
     - Implementation:
       - AS Actor Decorator: design/as-actor-decorator.md
       - Communication Evolution: design/cluster-communication-evolution.md
+      - Out-Cluster Connect: design/out-cluster-connect.md
 
 extra:
   generator: false

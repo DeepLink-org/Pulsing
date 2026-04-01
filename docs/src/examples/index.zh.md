@@ -145,6 +145,33 @@ class WorkerPool:
         return await asyncio.gather(*futures)
 ```
 
+### Subprocess
+
+使用与标准库兼容的 API 执行命令：
+
+```python
+import pulsing.subprocess as subprocess
+
+result = subprocess.run(["echo", "hello"], capture_output=True, text=True)
+print(result.stdout.strip())
+
+remote = subprocess.run(
+    ["hostname"],
+    capture_output=True,
+    text=True,
+    resources={"num_cpus": 1},
+)
+print(remote.stdout.strip())
+```
+
+运行完整示例：
+
+```bash
+python examples/python/subprocess_example.py
+python examples/python/subprocess_example.py --resources
+USE_POLSING_SUBPROCESS=1 python examples/python/subprocess_example.py --resources
+```
+
 ## LLM 推理示例
 
 ### 简单 LLM 服务
@@ -237,6 +264,7 @@ cd examples/agent/langgraph && ./run_distributed.sh
 
 - [Ping-Pong](ping_pong.zh.md) - 基本 Actor 通信
 - [分布式计数器](distributed_counter.zh.md) - 跨节点共享状态
+- [子进程](subprocess.zh.md) - 兼容 `subprocess` 的命令执行
 - [LLM 推理](llm_inference.zh.md) - 构建推理服务
 - [AutoGen 集成](../agent/autogen.zh.md) - 分布式 AutoGen Agent
 - [LangGraph 集成](../agent/langgraph.zh.md) - 分布式 LangGraph 工作流
@@ -248,6 +276,7 @@ cd examples/agent/langgraph && ./run_distributed.sh
 ```bash
 # 运行单个示例
 python examples/hello_world.py
+python examples/python/subprocess_example.py
 
 # 运行分布式示例（需要多个终端）
 # 终端 1：

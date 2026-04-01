@@ -89,6 +89,7 @@ def _replace_addr_with_routable_ip(addr: str, *, force_local: bool = False) -> s
         # For single-machine Ray testing, keep localhost
         try:
             import ray
+
             if ray.is_initialized():
                 # Check if Ray cluster is local (single node)
                 nodes = ray.nodes()

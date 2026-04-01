@@ -81,6 +81,17 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
         serde_json::json!([])
     }
 
+    /// Handle client resolve request (out-cluster).
+    async fn handle_client_resolve(&self, path: &str) -> serde_json::Value {
+        let _ = path;
+        serde_json::json!({"found": false, "path": path, "gateway": "", "instance_count": 0})
+    }
+
+    /// Handle client members request (out-cluster).
+    async fn handle_client_members(&self) -> serde_json::Value {
+        serde_json::json!({"gateways": []})
+    }
+
     /// Get as Any for downcasting.
     fn as_any(&self) -> &dyn std::any::Any;
 
@@ -318,6 +329,35 @@ impl Http2Server {
                 .unwrap_or(false);
             let actors = handler.actors_list(include_internal).await;
             let body = serde_json::to_vec(&actors).unwrap_or_default();
+            return Ok(json_response(StatusCode::OK, body));
+        }
+
+        // Client resolve endpoint (out-cluster)
+        if path == "/client/resolve" && method == Method::POST {
+            let body_bytes = match req.collect().await {
+                Ok(collected) => collected.to_bytes().to_vec(),
+                Err(e) => {
+                    return Ok(error_response(
+                        StatusCode::BAD_REQUEST,
+                        format!("Failed to read body: {}", e).into_bytes(),
+                    ));
+                }
+            };
+            let resolve_req: serde_json::Value =
+                serde_json::from_slice(&body_bytes).unwrap_or_default();
+            let actor_path = resolve_req
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let result = handler.handle_client_resolve(actor_path).await;
+            let body = serde_json::to_vec(&result).unwrap_or_default();
+            return Ok(json_response(StatusCode::OK, body));
+        }
+
+        // Client members endpoint (out-cluster)
+        if path == "/client/members" && method == Method::GET {
+            let result = handler.handle_client_members().await;
+            let body = serde_json::to_vec(&result).unwrap_or_default();
             return Ok(json_response(StatusCode::OK, body));
         }
 

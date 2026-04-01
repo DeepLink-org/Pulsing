@@ -33,3 +33,12 @@ pip install -e .
 ## Queue Module
 
 ::: pulsing.streaming
+
+## Subprocess Module
+
+`pulsing.subprocess` provides a subprocess-compatible synchronous API.
+Without `resources`, calls fall back to Python's native `subprocess`.
+When `resources` is provided and `USE_POLSING_SUBPROCESS=1` is set, the
+command is executed through Pulsing's backend.
+
+::: pulsing.subprocess

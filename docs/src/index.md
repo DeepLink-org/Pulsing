@@ -75,6 +75,14 @@ A distributed actor runtime built in Rust, designed for Python. Connect AI agent
 
     [:octicons-arrow-right-24: Ray + Pulsing](quickstart/migrate_from_ray.md)
 
+-   :material-console-line:{ .lg .middle } **Subprocess with Resources**
+
+    ---
+
+    Keep the Python `subprocess` call style and optionally route commands through Pulsing when you attach `resources`.
+
+    [:octicons-arrow-right-24: Subprocess Example](examples/subprocess.md)
+
 </div>
 
 ---
@@ -119,6 +127,7 @@ asyncio.run(main())
 | What is Pulsing / who is it for? | [Overview](overview.md) |
 | Understand the Actor model | [Actor Basics](guide/actors.md) |
 | Build a cluster | [Remote Actors](guide/remote_actors.md) |
+| Run commands with `pulsing.subprocess` | [Subprocess Example](examples/subprocess.md) |
 | Operate your system | [CLI Operations](guide/operations.md) |
 | Architecture and design | [Architecture & Design](design/architecture.md) |
 | API details | [API Overview](api/overview.md) |

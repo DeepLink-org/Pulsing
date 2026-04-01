@@ -75,6 +75,14 @@ Actor 运行时。流式优先。零依赖。内置发现。
 
     [:octicons-arrow-right-24: Ray + Pulsing](quickstart/migrate_from_ray.zh.md)
 
+-   :material-console-line:{ .lg .middle } **带资源约束的子进程**
+
+    ---
+
+    保持 Python `subprocess` 的调用方式，并在附带 `resources` 时按需切到 Pulsing 执行后端。
+
+    [:octicons-arrow-right-24: 子进程示例](examples/subprocess.zh.md)
+
 </div>
 
 ---
@@ -119,6 +127,7 @@ asyncio.run(main())
 | Pulsing 是什么 / 适合谁？ | [概述](overview.zh.md) |
 | 理解 Actor 模型 | [Actor 基础](guide/actors.zh.md) |
 | 构建集群 | [远程 Actor](guide/remote_actors.zh.md) |
+| 使用 `pulsing.subprocess` 执行命令 | [子进程示例](examples/subprocess.zh.md) |
 | 运维系统 | [CLI 运维](guide/operations.zh.md) |
 | 架构与设计 | [架构与设计](design/architecture.zh.md) |
 | API 详情 | [API 概述](api/overview.zh.md) |

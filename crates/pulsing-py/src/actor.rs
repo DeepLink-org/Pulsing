@@ -367,7 +367,7 @@ impl PyMessage {
 
 impl PyMessage {
     /// Convert to Rust Message
-    fn to_message(&self) -> Message {
+    pub(crate) fn to_message(&self) -> Message {
         if self.stream_reader.is_some() {
             Message::single(&self.msg_type, Vec::new())
         } else {
@@ -376,7 +376,7 @@ impl PyMessage {
     }
 
     /// Create from Rust Message (supports both single and stream)
-    fn from_rust_message(msg: Message) -> Self {
+    pub(crate) fn from_rust_message(msg: Message) -> Self {
         match msg {
             Message::Single { msg_type, data } => Self {
                 msg_type,
@@ -741,7 +741,7 @@ async fn reassemble_zerocopy_stream(
 ///
 /// Small zerocopy payloads → `Message::Single`; large ones → `Message::Stream`
 /// (descriptor-first + chunked data). Non-zerocopy objects → pickle.
-fn encode_python_payload(py: Python<'_>, obj: &PyObject) -> PyResult<Message> {
+pub(crate) fn encode_python_payload(py: Python<'_>, obj: &PyObject) -> PyResult<Message> {
     match zerocopy_mode().as_str() {
         "off" => Ok(Message::single(SEALED_PY_MSG_TYPE, pickle_object(py, obj)?)),
         "force" => {
@@ -775,7 +775,7 @@ fn encode_zerocopy_message(
 
 /// Unified decoder: converts any `Message` (pickle / zerocopy-single / zerocopy-stream / other)
 /// into a Python object.
-async fn decode_message_to_pyobject(msg: Message) -> PyResult<PyObject> {
+pub(crate) async fn decode_message_to_pyobject(msg: Message) -> PyResult<PyObject> {
     match msg {
         Message::Single {
             ref msg_type,

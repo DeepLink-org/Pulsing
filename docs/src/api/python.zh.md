@@ -33,3 +33,12 @@ pip install -e .
 ## 队列模块
 
 ::: pulsing.streaming
+
+## Subprocess 模块
+
+`pulsing.subprocess` 提供与标准库 `subprocess` 兼容的同步 API。
+不传 `resources` 时会回退到 Python 原生 `subprocess`；
+传入 `resources` 且设置 `USE_POLSING_SUBPROCESS=1` 时，
+命令会通过 Pulsing 后端执行。
+
+::: pulsing.subprocess

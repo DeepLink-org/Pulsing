@@ -65,10 +65,13 @@ cd examples/agent/langgraph && ./run_distributed.sh
 | `named_actors.py` | 服务发现 |
 | `cluster.py` | 集群通信 |
 | `remote_actor_example.py` | @remote 装饰器 |
+| `subprocess_example.py` | `subprocess` 兼容 API |
 
 ```bash
 python examples/python/ping_pong.py
 python examples/python/cluster.py --port 8000
+python examples/python/subprocess_example.py
+USE_POLSING_SUBPROCESS=1 python examples/python/subprocess_example.py --resources
 ```
 
 ### ⭐⭐ CLI 工具 (`inspect/`)
@@ -131,6 +134,7 @@ cargo run --example behavior_fsm -p pulsing-actor
 | AI 辩论/讨论 | `agent/pulsing/mbti_discussion.py` |
 | 并行任务竞争 | `agent/pulsing/parallel_ideas_async.py` |
 | 集群部署 | `python/cluster.py` |
+| 子进程资源调度 | `python/subprocess_example.py` |
 | 学习 CLI 工具 | `inspect/demo_service.py` |
 | 接入 AutoGen | `agent/autogen/` |
 | 接入 LangGraph | `agent/langgraph/` |

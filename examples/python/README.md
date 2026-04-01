@@ -31,6 +31,8 @@ python examples/python/ping_pong.py        # Basic communication
 python examples/python/message_patterns.py # RPC and streaming
 python examples/python/named_actors.py     # Service discovery
 python examples/python/cluster.py          # Multi-node (see --help)
+python examples/python/subprocess_example.py            # Native subprocess-compatible API
+USE_POLSING_SUBPROCESS=1 python examples/python/subprocess_example.py --resources  # Pulsing backend
 ```
 
 ## API 选择

@@ -6,6 +6,7 @@
 use pyo3::prelude::*;
 
 mod actor;
+mod connect;
 mod errors;
 mod policies;
 mod python_error_converter;
@@ -43,6 +44,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Add load balancing policies
     policies::add_to_module(m)?;
+
+    // Add out-cluster connect
+    connect::add_to_module(m)?;
 
     // Add version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
