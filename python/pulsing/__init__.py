@@ -304,6 +304,9 @@ class _GlobalTopicAPI:
 queue = _GlobalQueueAPI()
 topic = _GlobalTopicAPI()
 
+# Transfer queue (lazy import submodule)
+from pulsing import transfer_queue
+
 
 # Export all public APIs
 __all__ = [
@@ -327,6 +330,8 @@ __all__ = [
     # Queue & Topic (global entry points)
     "queue",
     "topic",
+    # Transfer queue
+    "transfer_queue",
     # Ray integration
     "init_inside_ray",
     "cleanup_ray",
