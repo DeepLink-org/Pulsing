@@ -381,7 +381,7 @@ async def test_data_integrity_under_stress(actor_system, temp_storage_path):
         actual_checksum = hashlib.md5(
             f"{record_id}:{record['value']}".encode()
         ).hexdigest()
-        assert (
-            record["checksum"] == expected_checksum
-        ), f"Checksum mismatch for {record_id}"
+        assert record["checksum"] == expected_checksum, (
+            f"Checksum mismatch for {record_id}"
+        )
         assert actual_checksum == expected_checksum, f"Value corruption for {record_id}"

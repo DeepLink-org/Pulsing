@@ -57,9 +57,9 @@ async def test_system_actor_auto_registered(system):
 async def test_python_actor_service_auto_registered(system):
     """PythonActorService should be automatically registered on startup."""
     actors = system.local_actor_names()
-    assert (
-        "system/python_actor_service" in actors
-    ), "PythonActorService should be registered"
+    assert "system/python_actor_service" in actors, (
+        "PythonActorService should be registered"
+    )
 
 
 # ============================================================================

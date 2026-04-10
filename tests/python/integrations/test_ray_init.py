@@ -15,6 +15,13 @@ import pytest
 # Skip all tests if ray is not installed
 ray = pytest.importorskip("ray")
 
+from pulsing._async_bridge import (
+    clear_pulsing_loop,
+    get_shared_loop,
+    stop_shared_loop,
+    submit_on_shared_loop,
+)
+
 
 def _reset_pulsing_state():
     """Reset all Pulsing module state (system, background loop, KV)."""
@@ -22,28 +29,17 @@ def _reset_pulsing_state():
     import pulsing.integrations.ray as pray
 
     # Shutdown Pulsing system via background loop
-    if pc._global_system is not None and pray._loop is not None:
+    if pc._global_system is not None and get_shared_loop() is not None:
         try:
-            pray._run_sync(pray._do_shutdown())
+            submit_on_shared_loop(pray._do_shutdown(), timeout=30)
         except Exception:
             pass
 
     # Force clear global system (safety net)
     pc._global_system = None
 
-    # Stop background event loop
-    if pray._loop is not None:
-        try:
-            pray._loop.call_soon_threadsafe(pray._loop.stop)
-        except Exception:
-            pass
-    if pray._thread is not None:
-        try:
-            pray._thread.join(timeout=5)
-        except Exception:
-            pass
-    pray._loop = None
-    pray._thread = None
+    stop_shared_loop()
+    clear_pulsing_loop()
 
     # Clean KV store
     try:
@@ -195,15 +191,15 @@ def test_multi_actor_same_seed(ray_env):
     pids = ray.get([w.setup.remote() for w in workers])
 
     # Verify multi-process: all PIDs different from driver
-    assert all(
-        pid != driver_pid for pid in pids
-    ), "Workers should run in separate processes"
+    assert all(pid != driver_pid for pid in pids), (
+        "Workers should run in separate processes"
+    )
 
     # Verify multi-process: workers are in distinct processes
     unique_pids = set(pids)
-    assert (
-        len(unique_pids) == NUM_WORKERS
-    ), f"Expected {NUM_WORKERS} distinct processes, got {len(unique_pids)}"
+    assert len(unique_pids) == NUM_WORKERS, (
+        f"Expected {NUM_WORKERS} distinct processes, got {len(unique_pids)}"
+    )
 
     # All workers see the same seed
     seeds = ray.get([w.get_seed.remote() for w in workers])
@@ -237,9 +233,9 @@ def test_concurrent_init_without_driver(ray_env):
 
     # Verify multi-process: all workers in distinct processes
     unique_pids = set(pids)
-    assert (
-        len(unique_pids) == NUM_WORKERS
-    ), f"Expected {NUM_WORKERS} distinct processes, got {len(unique_pids)}"
+    assert len(unique_pids) == NUM_WORKERS, (
+        f"Expected {NUM_WORKERS} distinct processes, got {len(unique_pids)}"
+    )
     # None should be the driver
     assert os.getpid() not in unique_pids
 
@@ -250,9 +246,9 @@ def test_concurrent_init_without_driver(ray_env):
     # All workers see the same seed
     seeds = ray.get([w.get_seed.remote() for w in workers])
     unique_seeds = set(seeds)
-    assert (
-        len(unique_seeds) == 1
-    ), f"Expected 1 seed, got {len(unique_seeds)}: {unique_seeds}"
+    assert len(unique_seeds) == 1, (
+        f"Expected 1 seed, got {len(unique_seeds)}: {unique_seeds}"
+    )
 
     # The seed must be one of the workers' addresses
     seed = unique_seeds.pop()

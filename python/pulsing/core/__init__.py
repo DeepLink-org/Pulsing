@@ -19,6 +19,7 @@ Simple API:
 
 import asyncio
 
+from pulsing._async_bridge import clear_user_loop, set_user_loop
 from pulsing._core import (
     ActorId,
     ActorRef,
@@ -89,14 +90,7 @@ async def init(
 
     service = PythonActorService(_global_system)
     await _global_system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
-
-    # Notify pulsing.subprocess of the loop so sync callers can submit coroutines
-    try:
-        from pulsing.subprocess.popen import _set_pulsing_loop
-
-        _set_pulsing_loop(loop)
-    except ImportError:
-        pass
+    set_user_loop(loop)
 
     return _global_system
 
@@ -108,6 +102,14 @@ async def shutdown() -> None:
     if _global_system is not None:
         await _global_system.shutdown()
         _global_system = None
+    clear_user_loop()
+
+    try:
+        from pulsing._runtime import clear_module_ownership
+
+        clear_module_ownership()
+    except ImportError:
+        pass
 
 
 def get_system() -> ActorSystem:

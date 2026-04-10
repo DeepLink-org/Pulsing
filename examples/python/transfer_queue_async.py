@@ -25,9 +25,6 @@ async def main():
     logger.info("=== Transfer Queue Example ===\n")
 
     try:
-        # Initialize pulsing (user must call this explicitly)
-        await pul.init()
-
         # Get an async client for partition "demo"
         client = pul.transfer_queue.get_async_client(
             partition_id="demo", num_buckets=2, batch_size=4
@@ -90,8 +87,7 @@ async def main():
         logger.info("Example completed!")
 
     finally:
-        await pul.shutdown()
-        logger.info("System shutdown")
+        logger.info("Example finished (transfer_queue runtime cleanup is automatic)")
 
 
 if __name__ == "__main__":

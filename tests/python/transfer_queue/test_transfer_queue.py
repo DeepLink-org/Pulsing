@@ -16,6 +16,7 @@ import asyncio
 import pytest
 
 import pulsing as pul
+from pulsing._async_bridge import get_shared_loop
 from pulsing.transfer_queue.backend import TransferBackend
 from pulsing.transfer_queue.client import AsyncTransferQueueClient
 from pulsing.transfer_queue.storage import StorageUnit
@@ -47,7 +48,9 @@ async def client(actor_system):
 
     await ensure_storage_managers(actor_system._inner)
     c = AsyncTransferQueueClient(
-        partition_id="test", num_buckets=2, batch_size=10,
+        partition_id="test",
+        num_buckets=2,
+        batch_size=10,
         system=actor_system._inner,
     )
     yield c
@@ -286,9 +289,7 @@ async def test_client_get_incomplete_samples_excluded(client):
     await client.async_put(sample_idx=0, data={"prompt": "hello"})
     # sample 0 only has prompt — response missing
 
-    samples = await client.async_get(
-        data_fields=["prompt", "response"], batch_size=10
-    )
+    samples = await client.async_get(data_fields=["prompt", "response"], batch_size=10)
     assert len(samples) == 0
 
 
@@ -368,9 +369,7 @@ async def test_client_concurrent_writes(client):
 
     await asyncio.gather(*(write(i) for i in range(num_samples)))
 
-    samples = await client.async_get(
-        data_fields=["a", "b"], batch_size=num_samples
-    )
+    samples = await client.async_get(data_fields=["a", "b"], batch_size=num_samples)
     assert len(samples) == num_samples
 
 
@@ -383,7 +382,10 @@ def _make_sync_env():
     """Helper: spin up a background event loop and return (loop, loop_thread, system, sync_client)."""
     import threading
 
-    from pulsing.transfer_queue.client import AsyncTransferQueueClient, TransferQueueClient
+    from pulsing.transfer_queue.client import (
+        AsyncTransferQueueClient,
+        TransferQueueClient,
+    )
     from pulsing.transfer_queue.manager import ensure_storage_managers
 
     loop = asyncio.new_event_loop()
@@ -394,19 +396,22 @@ def _make_sync_env():
         system = await pul.actor_system()
         await ensure_storage_managers(system._inner)
         inner = AsyncTransferQueueClient(
-            partition_id="sync_test", num_buckets=2, batch_size=10,
+            partition_id="sync_test",
+            num_buckets=2,
+            batch_size=10,
             system=system._inner,
         )
         return system, inner
 
     future = asyncio.run_coroutine_threadsafe(setup(), loop)
     system, inner = future.result(timeout=10)
-    sync_client = TransferQueueClient(inner, loop)
+    sync_client = TransferQueueClient(inner)
     return loop, loop_thread, system, sync_client
 
 
 def _teardown_sync_env(loop, loop_thread, system):
     """Helper: shutdown system and stop the background loop."""
+
     async def cleanup():
         await system.shutdown()
 
@@ -439,9 +444,7 @@ def test_sync_client_incomplete_excluded():
         client.put(sample_idx=0, data={"prompt": "hello"})
         # response missing
 
-        samples = client.get(
-            data_fields=["prompt", "response"], batch_size=10
-        )
+        samples = client.get(data_fields=["prompt", "response"], batch_size=10)
         assert len(samples) == 0
     finally:
         _teardown_sync_env(loop, loop_thread, system)
@@ -530,3 +533,143 @@ def test_sync_client_partition_id():
         assert client.partition_id == "sync_test"
     finally:
         _teardown_sync_env(loop, loop_thread, system)
+
+
+@pytest.mark.asyncio
+async def test_async_client_auto_initializes_global_system():
+    """Async client should lazily initialize Pulsing on first use."""
+    assert not pul.is_initialized()
+
+    client = pul.transfer_queue.get_async_client(
+        partition_id="auto_async", num_buckets=2, batch_size=10
+    )
+
+    try:
+        await client.async_put(sample_idx=0, data={"prompt": "hello"})
+        await client.async_put(sample_idx=0, data={"response": "world"})
+
+        samples = await client.async_get(
+            data_fields=["prompt", "response"], batch_size=10, task_name="auto"
+        )
+        assert len(samples) == 1
+        assert samples[0] == {"prompt": "hello", "response": "world"}
+        assert pul.is_initialized()
+    finally:
+        if pul.is_initialized():
+            await pul.shutdown()
+
+
+def test_get_client_auto_initializes_and_shutdown_cleans_up():
+    """Sync get_client should auto-init and transfer_queue.shutdown should clean up."""
+    import pulsing._runtime as runtime
+
+    assert not pul.is_initialized()
+
+    client = pul.transfer_queue.get_client(
+        partition_id="auto_sync", num_buckets=2, batch_size=10
+    )
+
+    try:
+        client.put(sample_idx=0, data={"prompt": "hello"})
+        client.put(sample_idx=0, data={"response": "world"})
+
+        samples = client.get(
+            data_fields=["prompt", "response"], batch_size=10, task_name="auto"
+        )
+        assert len(samples) == 1
+        assert samples[0] == {"prompt": "hello", "response": "world"}
+        assert pul.is_initialized()
+        assert runtime.owns_system() is True
+        assert get_shared_loop() is not None
+    finally:
+        pul.transfer_queue.shutdown()
+
+    assert not pul.is_initialized()
+    assert get_shared_loop() is None
+    assert runtime.is_cleanup_registered() is True
+
+
+@pytest.mark.asyncio
+async def test_get_client_reuses_explicit_init_loop_without_module_runtime():
+    """Sync client should reuse an explicitly initialized global system."""
+    import pulsing._runtime as runtime
+
+    await pul.init()
+
+    try:
+        client = pul.transfer_queue.get_client(
+            partition_id="reuse_sync", num_buckets=2, batch_size=10
+        )
+
+        await asyncio.to_thread(client.put, sample_idx=0, data={"prompt": "hello"})
+        await asyncio.to_thread(client.put, sample_idx=0, data={"response": "world"})
+
+        samples = await asyncio.to_thread(
+            client.get,
+            data_fields=["prompt", "response"],
+            batch_size=10,
+            task_name="reuse",
+        )
+        assert len(samples) == 1
+        assert samples[0] == {"prompt": "hello", "response": "world"}
+        assert get_shared_loop() is None
+        assert runtime.owns_system() is False
+    finally:
+        if pul.is_initialized():
+            await pul.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_get_client_same_thread_async_before_init_raises():
+    with pytest.raises(
+        RuntimeError, match="sync auto-init cannot run on the same thread"
+    ):
+        pul.transfer_queue.get_client(
+            partition_id="before_init_same_thread",
+            num_buckets=1,
+            batch_size=10,
+        )
+
+
+@pytest.mark.asyncio
+async def test_sync_client_same_loop_fast_fail():
+    """Sync client should fail fast when called on the owning event loop."""
+    await pul.init()
+
+    try:
+        client = pul.transfer_queue.get_client(
+            partition_id="same_loop", num_buckets=1, batch_size=10
+        )
+
+        with pytest.raises(RuntimeError, match="cannot block on the same event loop"):
+            client.put(sample_idx=0, data={"prompt": "hello"})
+    finally:
+        if pul.is_initialized():
+            await pul.shutdown()
+
+
+def test_async_auto_initialized_runtime_can_cleanup_without_public_shutdown():
+    """Async auto-init should not require calling pul.transfer_queue.shutdown()."""
+    import pulsing._runtime as runtime
+
+    async def main():
+        client = pul.transfer_queue.get_async_client(
+            partition_id="auto_async_cleanup", num_buckets=2, batch_size=10
+        )
+        await client.async_put(sample_idx=0, data={"prompt": "hello"})
+        await client.async_put(sample_idx=0, data={"response": "world"})
+        rows = await client.async_get(
+            data_fields=["prompt", "response"], batch_size=10, task_name="cleanup"
+        )
+        assert rows == [{"prompt": "hello", "response": "world"}]
+
+    try:
+        asyncio.run(main())
+        assert pul.is_initialized()
+        assert runtime.is_cleanup_registered() is True
+        runtime.shutdown()
+        assert not pul.is_initialized()
+        assert get_shared_loop() is None
+    finally:
+        if pul.is_initialized():
+            runtime.shutdown()

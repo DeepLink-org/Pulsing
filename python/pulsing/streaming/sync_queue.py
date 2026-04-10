@@ -9,16 +9,20 @@ as it will block the event loop.
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from pulsing._async_bridge import bind_run_sync
+
 if TYPE_CHECKING:
     from .queue import Queue, QueueReader
 
 
-def _run_sync(loop: asyncio.AbstractEventLoop | None, coro):
-    if loop is None or not loop.is_running():
-        raise RuntimeError(
-            "Event loop not running. Sync wrapper requires a running event loop."
-        )
-    return asyncio.run_coroutine_threadsafe(coro, loop).result()
+_SAME_LOOP_MESSAGE = (
+    "pulsing.streaming sync wrappers cannot block on the same event loop that owns "
+    "the underlying queue. Use the async queue API from async code or call the sync "
+    "wrapper from another thread."
+)
+_MISSING_LOOP_MESSAGE = (
+    "Event loop not running. Sync wrapper requires a running event loop."
+)
 
 
 class SyncQueue:
@@ -27,9 +31,16 @@ class SyncQueue:
     def __init__(self, queue: "Queue"):
         self._queue = queue
         self._loop = queue._loop
+        self._run_sync = bind_run_sync(
+            loop=self._loop,
+            same_loop="raise",
+            same_loop_message=_SAME_LOOP_MESSAGE,
+            missing_loop="raise",
+            missing_loop_message=_MISSING_LOOP_MESSAGE,
+        )
 
     def put(self, record: dict[str, Any] | list[dict[str, Any]]):
-        return _run_sync(self._loop, self._queue.put(record))
+        return self._run_sync(self._queue.put(record))
 
     def get(
         self,
@@ -39,15 +50,13 @@ class SyncQueue:
         wait: bool = False,
         timeout: float | None = None,
     ) -> list[dict[str, Any]]:
-        return _run_sync(
-            self._loop, self._queue.get(bucket_id, limit, offset, wait, timeout)
-        )
+        return self._run_sync(self._queue.get(bucket_id, limit, offset, wait, timeout))
 
     def flush(self) -> None:
-        _run_sync(self._loop, self._queue.flush())
+        self._run_sync(self._queue.flush())
 
     def stats(self) -> dict[str, Any]:
-        return _run_sync(self._loop, self._queue.stats())
+        return self._run_sync(self._queue.stats())
 
 
 class SyncQueueReader:
@@ -56,9 +65,16 @@ class SyncQueueReader:
     def __init__(self, reader: "QueueReader"):
         self._reader = reader
         self._loop = reader.queue._loop
+        self._run_sync = bind_run_sync(
+            loop=self._loop,
+            same_loop="raise",
+            same_loop_message=_SAME_LOOP_MESSAGE,
+            missing_loop="raise",
+            missing_loop_message=_MISSING_LOOP_MESSAGE,
+        )
 
     def get(self, limit: int = 100, wait: bool = False, timeout: float | None = None):
-        return _run_sync(self._loop, self._reader.get(limit, wait, timeout))
+        return self._run_sync(self._reader.get(limit, wait, timeout))
 
     def reset(self) -> None:
         self._reader.reset()

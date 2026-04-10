@@ -6,6 +6,12 @@ import asyncio
 import logging
 from typing import Any
 
+from pulsing._runtime import ensure_async_runtime
+from pulsing._async_bridge import (
+    bind_run_sync,
+    get_loop,
+    valid_loop,
+)
 from pulsing.core import ActorSystem, get_system
 from pulsing.core.remote import ActorProxy
 
@@ -35,10 +41,27 @@ class AsyncTransferQueueClient:
         self.num_buckets = num_buckets
         self.batch_size = batch_size
         self._system = system
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+        self._auto_init = system is None
+        self._runtime_ready = system is not None
 
         self._bucket_refs: dict[int, ActorProxy] = {}
         self._bucket_locks: dict[int, asyncio.Lock] = {}
         self._bucket_locks_meta = asyncio.Lock()
+        self._runtime_lock = asyncio.Lock()
+
+    async def _ensure_runtime(self) -> None:
+        if not self._auto_init or self._runtime_ready:
+            return
+
+        async with self._runtime_lock:
+            if self._runtime_ready:
+                return
+            await ensure_async_runtime()
+            self._runtime_ready = True
 
     def _get_system(self) -> ActorSystem:
         if self._system is not None:
@@ -46,6 +69,8 @@ class AsyncTransferQueueClient:
         return get_system()
 
     async def _ensure_bucket(self, bucket_id: int) -> ActorProxy:
+        await self._ensure_runtime()
+
         if bucket_id in self._bucket_refs:
             return self._bucket_refs[bucket_id]
 
@@ -70,9 +95,7 @@ class AsyncTransferQueueClient:
             )
             return self._bucket_refs[bucket_id]
 
-    async def async_put(
-        self, sample_idx: int, data: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def async_put(self, sample_idx: int, data: dict[str, Any]) -> dict[str, Any]:
         """Write (merge) *data* into the sample identified by *sample_idx*.
 
         Returns a BatchMeta-compatible dict.
@@ -113,6 +136,7 @@ class AsyncTransferQueueClient:
 
     async def async_clear(self) -> None:
         """Clear all instantiated buckets."""
+        await self._ensure_runtime()
         for bucket_id, unit in list(self._bucket_refs.items()):
             await unit.clear()
 
@@ -120,27 +144,33 @@ class AsyncTransferQueueClient:
 class TransferQueueClient:
     """Synchronous wrapper around AsyncTransferQueueClient.
 
-    Uses ``asyncio.run_coroutine_threadsafe`` so it can be called from
-    non-async threads while the event loop runs in another thread.
+    Uses the shared sync bridge so it can be called from synchronous code
+    or from another thread while Pulsing runs elsewhere. Same-thread async
+    callers should use ``get_async_client()`` instead.
     """
 
-    def __init__(self, inner: AsyncTransferQueueClient, loop: asyncio.AbstractEventLoop):
+    def __init__(self, inner: AsyncTransferQueueClient):
         self._inner = inner
-        self._loop = loop
-
-    def _run(self, coro):
-        if self._loop is None or not self._loop.is_running():
-            raise RuntimeError(
+        self._run_sync = bind_run_sync(
+            loop=lambda: get_loop() or valid_loop(self._inner._loop),
+            same_loop="raise",
+            same_loop_message=(
+                "pulsing.transfer_queue cannot block on the same event loop that "
+                "owns the active Pulsing system. Use get_async_client() from async "
+                "code or call the sync client from another thread."
+            ),
+            missing_loop="raise",
+            missing_loop_message=(
                 "Event loop not running. Sync wrapper requires a running event loop."
-            )
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+            ),
+        )
 
     @property
     def partition_id(self) -> str:
         return self._inner.partition_id
 
     def put(self, sample_idx: int, data: dict[str, Any]) -> dict[str, Any]:
-        return self._run(self._inner.async_put(sample_idx, data))
+        return self._run_sync(self._inner.async_put(sample_idx, data))
 
     def get(
         self,
@@ -148,7 +178,7 @@ class TransferQueueClient:
         batch_size: int | None = None,
         task_name: str = "default",
     ) -> list[dict[str, Any]]:
-        return self._run(self._inner.async_get(data_fields, batch_size, task_name))
+        return self._run_sync(self._inner.async_get(data_fields, batch_size, task_name))
 
     def clear(self) -> None:
-        self._run(self._inner.async_clear())
+        self._run_sync(self._inner.async_clear())

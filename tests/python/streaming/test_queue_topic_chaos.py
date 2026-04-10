@@ -134,9 +134,9 @@ async def test_queue_chaos_concurrent_producer_consumer(
     for _, seen in results:
         consumed_all |= seen
 
-    assert (
-        len(consumed_all) == total_expected
-    ), f"expected {total_expected} unique ids, got {len(consumed_all)}; produced={len(produced_ids)}"
+    assert len(consumed_all) == total_expected, (
+        f"expected {total_expected} unique ids, got {len(consumed_all)}; produced={len(produced_ids)}"
+    )
     assert consumed_all == produced_ids, "consumed set != produced set"
 
 
@@ -166,7 +166,7 @@ async def test_queue_chaos_many_buckets_parallel_handles(
                 await w.put(
                     [
                         {"id": f"w{wid}_{i}", "v": i},
-                        {"id": f"w{wid}_{i+1}", "v": i + 1},
+                        {"id": f"w{wid}_{i + 1}", "v": i + 1},
                     ]
                 )
                 i += 2
@@ -196,9 +196,9 @@ async def test_queue_chaos_many_buckets_parallel_handles(
         await _chaos_sleep(1, 20, None)
 
     all_ids = {rec.get("id") for rec in collected}
-    assert (
-        len(all_ids) == expected_count
-    ), f"expected {expected_count} unique ids, got {len(all_ids)}"
+    assert len(all_ids) == expected_count, (
+        f"expected {expected_count} unique ids, got {len(all_ids)}"
+    )
 
 
 @pytest.mark.asyncio
@@ -297,9 +297,9 @@ async def test_topic_chaos_subscribers_join_leave_during_publish(actor_system):
         await reader.stop()
 
     for rid, rec_list in received_by_id.items():
-        assert (
-            len(rec_list) > 0
-        ), f"reader {rid} should have received at least one message"
+        assert len(rec_list) > 0, (
+            f"reader {rid} should have received at least one message"
+        )
 
 
 @pytest.mark.asyncio
@@ -343,9 +343,9 @@ async def test_topic_chaos_many_publishers_many_subscribers(actor_system):
     await asyncio.sleep(0.6)
 
     for i in range(num_subscribers):
-        assert (
-            len(received[i]) == total_messages
-        ), f"subscriber {i} expected {total_messages}, got {len(received[i])}"
+        assert len(received[i]) == total_messages, (
+            f"subscriber {i} expected {total_messages}, got {len(received[i])}"
+        )
 
     for r in readers:
         await r.stop()
@@ -385,9 +385,9 @@ async def test_topic_chaos_slow_callback_best_effort(actor_system):
 
     await asyncio.sleep(0.5)
 
-    assert (
-        len(fast_recv) == num_messages
-    ), f"fast subscriber should get all {num_messages}, got {len(fast_recv)}"
+    assert len(fast_recv) == num_messages, (
+        f"fast subscriber should get all {num_messages}, got {len(fast_recv)}"
+    )
     await reader_fast.stop()
     await reader_slow.stop()
 
@@ -467,7 +467,7 @@ async def test_chaos_rapid_open_close_handles(actor_system, temp_storage_path):
             num_buckets=num_buckets,
             storage_path=temp_storage_path,
         )
-        await w.put({"id": f"x{random.randint(0,1000)}", "v": 1})
+        await w.put({"id": f"x{random.randint(0, 1000)}", "v": 1})
         await w.flush()
         del w
         await _chaos_sleep(1, 15, 40)
@@ -516,7 +516,7 @@ async def test_queue_chaos_storm_random_params(actor_system, temp_storage_path):
             if random.random() < 0.15 and i + 1 < messages_per_producer:
                 batch = [
                     {"id": f"storm_p{pid}_{i}", "p": pid, "i": i},
-                    {"id": f"storm_p{pid}_{i+1}", "p": pid, "i": i + 1},
+                    {"id": f"storm_p{pid}_{i + 1}", "p": pid, "i": i + 1},
                 ]
                 await w.put(batch)
                 async with plock:
@@ -563,9 +563,9 @@ async def test_queue_chaos_storm_random_params(actor_system, temp_storage_path):
     for s in results:
         consumed_all |= s
 
-    assert (
-        consumed_all == produced_ids
-    ), f"storm: produced {len(produced_ids)} vs consumed {len(consumed_all)}"
+    assert consumed_all == produced_ids, (
+        f"storm: produced {len(produced_ids)} vs consumed {len(consumed_all)}"
+    )
 
 
 @pytest.mark.asyncio
@@ -607,9 +607,9 @@ async def test_topic_chaos_storm_random_params(actor_system):
     await asyncio.sleep(0.7)
 
     for i in range(num_subscribers):
-        assert (
-            len(received[i]) == total_messages
-        ), f"storm sub {i}: expected {total_messages}, got {len(received[i])}"
+        assert len(received[i]) == total_messages, (
+            f"storm sub {i}: expected {total_messages}, got {len(received[i])}"
+        )
     for r in readers:
         await r.stop()
 

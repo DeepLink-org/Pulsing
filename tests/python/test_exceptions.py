@@ -163,9 +163,9 @@ class TestExceptionHierarchy:
             PulsingUnsupportedError("op"),
         ]
         for exc in exceptions:
-            assert isinstance(
-                exc, PulsingError
-            ), f"{type(exc).__name__} not PulsingError"
+            assert isinstance(exc, PulsingError), (
+                f"{type(exc).__name__} not PulsingError"
+            )
 
     def test_catch_actor_errors_only(self):
         actor_errors = [

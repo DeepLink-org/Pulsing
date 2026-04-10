@@ -860,5 +860,14 @@ def test_sync_reader_offset_standalone():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+@pytest.mark.asyncio
+async def test_sync_queue_same_loop_fast_fail(queue):
+    """Sync queue wrapper should fail fast on its owning event loop."""
+    sync_queue = queue.sync()
+
+    with pytest.raises(RuntimeError, match="cannot block on the same event loop"):
+        sync_queue.put({"id": "same_loop", "value": 1})
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

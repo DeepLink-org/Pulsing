@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pulsing.core.helpers import run_until_signal, spawn_and_run
+from pulsing.core.helpers import run_sync, run_until_signal, spawn_and_run
 
 
 # ============================================================================
@@ -175,3 +175,29 @@ class TestSpawnAndRun:
         ):
             await spawn_and_run(MagicMock(), name="default_actor")
             mock_system.spawn.assert_awaited_once()
+
+
+# ============================================================================
+# run_sync
+# ============================================================================
+
+
+class TestRunSync:
+    def test_delegates_to_async_bridge(self):
+        coro = AsyncMock()
+        shared_loop = object()
+
+        with (
+            patch("pulsing.core.helpers.get_shared_loop", return_value=shared_loop),
+            patch(
+                "pulsing.core.helpers._bridge_run_sync", return_value="shared"
+            ) as bridge,
+        ):
+            assert run_sync(coro) == "shared"
+            bridge.assert_called_once_with(
+                coro,
+                loop=shared_loop,
+                timeout=30,
+                same_loop="worker",
+                missing_loop="run",
+            )

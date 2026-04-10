@@ -8,9 +8,7 @@ Usage:
     python examples/python/transfer_queue_sync.py
 """
 
-import asyncio
 import logging
-import threading
 
 import pulsing as pul
 
@@ -23,16 +21,10 @@ logger = logging.getLogger(__name__)
 def main():
     logger.info("=== Transfer Queue Sync Client Example ===\n")
 
-    # 1) Create a background event loop and initialize pulsing on it
-    loop = asyncio.new_event_loop()
-    threading.Thread(target=loop.run_forever, daemon=True, name="pulsing-loop").start()
-    asyncio.run_coroutine_threadsafe(pul.init(), loop).result(timeout=30)
-    logger.info("Pulsing initialized\n")
-
     try:
-        # 2) Get a sync client (using the background loop)
+        # 1) Get a sync client. transfer_queue bootstraps Pulsing internally.
         client = pul.transfer_queue.get_client(
-            partition_id="demo_sync", num_buckets=2, batch_size=4, loop=loop
+            partition_id="demo_sync", num_buckets=2, batch_size=4
         )
         logger.info("Transfer queue client created (2 buckets, batch_size=4)\n")
 
@@ -88,10 +80,7 @@ def main():
         logger.info("Example completed!")
 
     finally:
-        # 3) Shutdown pulsing and stop the background loop
-        asyncio.run_coroutine_threadsafe(pul.shutdown(), loop).result(timeout=10)
-        loop.call_soon_threadsafe(loop.stop)
-        logger.info("System shutdown")
+        logger.info("Example finished (transfer_queue runtime cleanup is automatic)")
 
 
 if __name__ == "__main__":

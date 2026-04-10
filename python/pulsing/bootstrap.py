@@ -152,6 +152,16 @@ def bootstrap(
         if is_initialized():
             _fire_on_ready()
 
+    if is_initialized():
+        return True if wait_timeout is not None else None
+
+    if _try_init_once(ray=ray, torchrun=torchrun):
+        _fire_on_ready()
+        return True if wait_timeout is not None else None
+
+    if wait_timeout == 0:
+        return False
+
     _start(interval_sec, ray=ray, torchrun=torchrun)
 
     if wait_timeout is None:

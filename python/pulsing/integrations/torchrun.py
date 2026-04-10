@@ -24,7 +24,6 @@ Usage:
 from __future__ import annotations
 
 import os
-import threading
 from typing import TYPE_CHECKING
 
 try:
@@ -34,43 +33,10 @@ except ImportError:
         "pulsing.integrations.torchrun requires PyTorch. Install with: pip install torch"
     )
 
-import asyncio
+from pulsing._async_bridge import submit_on_shared_loop
 
 if TYPE_CHECKING:
     from pulsing.core import ActorSystem
-
-
-# Reuse async init helpers (same pattern as ray integration)
-def _start_background_loop():
-    """Start background event loop for sync init."""
-    global _loop, _thread
-    if _thread is not None:
-        return
-
-    ready = threading.Event()
-
-    def _run():
-        global _loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        _loop = loop
-        ready.set()
-        loop.run_forever()
-
-    _thread = threading.Thread(target=_run, daemon=True, name="pulsing-torchrun-loop")
-    _thread.start()
-    ready.wait()
-
-
-_loop = None
-_thread = None
-
-
-def _run_sync(coro):
-    """Run async init in background loop."""
-    _start_background_loop()
-    fut = asyncio.run_coroutine_threadsafe(coro, _loop)
-    return fut.result(timeout=60)
 
 
 async def _do_init(addr: str, seeds: list[str] | None = None):
@@ -101,7 +67,7 @@ def init_in_torchrun() -> ActorSystem:
 
     if rank == 0:
         # Rank 0: start Pulsing, get bound port, advertise MASTER_ADDR:port
-        system = _run_sync(_do_init("0.0.0.0:0"))
+        system = submit_on_shared_loop(_do_init("0.0.0.0:0"), timeout=60)
         bound = str(system.addr)
         # bound is e.g. "0.0.0.0:12345"; advertise as MASTER_ADDR:12345
         port = bound.split(":")[-1]
@@ -117,7 +83,7 @@ def init_in_torchrun() -> ActorSystem:
         return system
 
     # Non-rank0: join with seed
-    return _run_sync(_do_init("0.0.0.0:0", seeds=[seed_addr]))
+    return submit_on_shared_loop(_do_init("0.0.0.0:0", seeds=[seed_addr]), timeout=60)
 
 
 async def async_init_in_torchrun() -> ActorSystem:

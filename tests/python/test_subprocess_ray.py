@@ -5,9 +5,24 @@ import pytest
 ray = pytest.importorskip("ray")
 
 import pulsing as pul
+from pulsing._async_bridge import (
+    clear_pulsing_loop,
+    get_shared_loop,
+    stop_shared_loop,
+    submit_on_shared_loop,
+)
+import pulsing._runtime as _rt
 import pulsing.subprocess.popen as popen_module
 from pulsing.subprocess import PIPE, Popen, run
 from pulsing.subprocess.ray_spawn import cleanup_ray_actor
+
+
+def _assert_has_bound_addr() -> None:
+    addr = str(pul.get_system().addr)
+    host, sep, port = addr.rpartition(":")
+    assert sep == ":"
+    assert host
+    assert port.isdigit()
 
 
 def _enable_pulsing_backend(monkeypatch, value: str = "1") -> None:
@@ -23,11 +38,14 @@ def clear_subprocess_env(monkeypatch):
 async def ray_and_subprocess_backend():
     if not ray.is_initialized():
         ray.init(num_cpus=2)
+    stop_shared_loop()
+    clear_pulsing_loop()
     yield
-    popen_module._shutdown_module_runtime()
+    _rt.shutdown()
     if pul.is_initialized():
         await pul.shutdown()
-    popen_module._set_pulsing_loop(None)
+    stop_shared_loop()
+    clear_pulsing_loop()
     ray.shutdown()
 
 
@@ -45,8 +63,24 @@ def test_non_empty_resources_with_env_disabled_stays_native():
     assert not pul.is_initialized()
 
 
-@pytest.mark.asyncio
-async def test_popen_close_cleans_up_ray_actor(monkeypatch):
+def test_resources_backend_prefers_bootstrap_when_ray_is_ready(monkeypatch):
+    _enable_pulsing_backend(monkeypatch)
+
+    result = run(
+        ["echo", "bootstrap"],
+        capture_output=True,
+        resources={"num_cpus": 1},
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == b"bootstrap"
+    assert pul.is_initialized()
+    assert _rt.owns_system() is False
+    assert get_shared_loop() is not None
+    _assert_has_bound_addr()
+
+
+def test_popen_close_cleans_up_ray_actor(monkeypatch):
     _enable_pulsing_backend(monkeypatch)
     proc = Popen(
         ["echo", "hello"],
@@ -58,7 +92,7 @@ async def test_popen_close_cleans_up_ray_actor(monkeypatch):
 
     assert handle is not None
     assert pul.is_initialized()
-    assert str(pul.get_system().addr).startswith("0.0.0.0:")
+    _assert_has_bound_addr()
 
     proc.close()
     assert proc._proxy._ray_node_actor is None
@@ -67,8 +101,7 @@ async def test_popen_close_cleans_up_ray_actor(monkeypatch):
         ray.get(handle.shutdown.remote())
 
 
-@pytest.mark.asyncio
-async def test_popen_context_manager_cleans_up_ray(monkeypatch):
+def test_popen_context_manager_cleans_up_ray(monkeypatch):
     _enable_pulsing_backend(monkeypatch)
     with Popen(
         ["echo", "ctx"],
@@ -82,8 +115,7 @@ async def test_popen_context_manager_cleans_up_ray(monkeypatch):
     assert proc._proxy._ray_node_actor is None
 
 
-@pytest.mark.asyncio
-async def test_double_close_is_noop(monkeypatch):
+def test_double_close_is_noop(monkeypatch):
     _enable_pulsing_backend(monkeypatch)
     proc = Popen(
         ["echo", "twice"],
@@ -95,8 +127,7 @@ async def test_double_close_is_noop(monkeypatch):
     proc.close()
 
 
-@pytest.mark.asyncio
-async def test_cleanup_ray_actor_directly(monkeypatch):
+def test_cleanup_ray_actor_directly(monkeypatch):
     _enable_pulsing_backend(monkeypatch)
     proc = Popen(
         ["echo", "direct"],
@@ -108,12 +139,11 @@ async def test_cleanup_ray_actor_directly(monkeypatch):
 
     assert handle is not None
 
-    popen_module._run_sync(cleanup_ray_actor(proc._proxy))
+    submit_on_shared_loop(cleanup_ray_actor(proc._proxy), timeout=30)
     assert proc._proxy._ray_node_actor is None
 
 
-@pytest.mark.asyncio
-async def test_run_helper_cleans_up_ray(monkeypatch):
+def test_run_helper_cleans_up_ray(monkeypatch):
     _enable_pulsing_backend(monkeypatch)
     result = run(
         ["echo", "run_cleanup"],

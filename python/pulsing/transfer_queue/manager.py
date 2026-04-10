@@ -63,7 +63,9 @@ class StorageManager:
         self._members_updated_at: float = 0
 
     def on_start(self, actor_id: ActorId) -> None:
-        logger.info(f"TransferQueue StorageManager started on node {self.system.node_id}")
+        logger.info(
+            f"TransferQueue StorageManager started on node {self.system.node_id}"
+        )
 
     def on_stop(self) -> None:
         logger.info("TransferQueue StorageManager stopping")

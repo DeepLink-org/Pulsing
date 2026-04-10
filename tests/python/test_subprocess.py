@@ -7,6 +7,8 @@ import threading
 import pytest
 
 import pulsing as pul
+from pulsing._async_bridge import clear_pulsing_loop, get_shared_loop
+import pulsing._runtime as _rt
 import pulsing.subprocess.popen as popen_module
 from pulsing.subprocess import (
     PIPE,
@@ -17,6 +19,14 @@ from pulsing.subprocess import (
     check_call,
     run,
 )
+
+
+def _assert_has_bound_addr() -> None:
+    addr = str(pul.get_system().addr)
+    host, sep, port = addr.rpartition(":")
+    assert sep == ":"
+    assert host
+    assert port.isdigit()
 
 
 def _require_ray():
@@ -35,10 +45,10 @@ def clear_subprocess_env(monkeypatch):
 @pytest.fixture(autouse=True)
 async def clean_subprocess_state():
     yield
-    popen_module._shutdown_module_runtime()
+    _rt.shutdown()
     if pul.is_initialized():
         await pul.shutdown()
-    popen_module._set_pulsing_loop(None)
+    clear_pulsing_loop()
     try:
         ray = __import__("ray")
     except ImportError:
@@ -62,7 +72,7 @@ def test_native_backend_is_default_and_ignores_pulsing_kwargs_when_env_disabled(
     assert result.returncode == 0
     assert result.stdout.strip() == b"native"
     assert not pul.is_initialized()
-    assert popen_module._module_loop is None
+    assert get_shared_loop() is None
 
 
 def test_empty_resources_stays_native_even_with_env_enabled(monkeypatch):
@@ -156,9 +166,9 @@ def test_resources_backend_auto_inits(monkeypatch):
     assert result.returncode == 0
     assert result.stdout.strip() == b"pulsing"
     assert pul.is_initialized()
-    assert popen_module._module_owns_system is True
-    assert popen_module._module_loop is not None
-    assert str(pul.get_system().addr).startswith("0.0.0.0:")
+    assert _rt.owns_system() is True
+    assert get_shared_loop() is not None
+    _assert_has_bound_addr()
 
 
 def test_resources_backend_reuses_auto_initialized_system(monkeypatch):
@@ -166,12 +176,14 @@ def test_resources_backend_reuses_auto_initialized_system(monkeypatch):
     _enable_pulsing_backend(monkeypatch)
 
     first = run(["echo", "one"], capture_output=True, resources={"num_cpus": 1})
+    shared_loop = get_shared_loop()
     system = pul.get_system()
     second = run(["echo", "two"], capture_output=True, resources={"num_cpus": 1})
 
     assert first.stdout.strip() == b"one"
     assert second.stdout.strip() == b"two"
     assert pul.get_system() is system
+    assert get_shared_loop() is shared_loop
 
 
 def test_resources_popen_text_mode(monkeypatch):
@@ -205,20 +217,20 @@ def test_resources_timeout_raises_stdlib_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sync_api_can_be_called_directly_inside_async_with_resources(
+async def test_sync_api_inside_async_before_init_raises_clear_error_for_resources(
     monkeypatch,
 ):
     _require_ray()
     _enable_pulsing_backend(monkeypatch)
 
-    result = run(
-        ["echo", "inside_async"],
-        capture_output=True,
-        resources={"num_cpus": 1},
-    )
-
-    assert result.returncode == 0
-    assert result.stdout.strip() == b"inside_async"
+    with pytest.raises(
+        RuntimeError, match="sync auto-init cannot run on the same thread"
+    ):
+        run(
+            ["echo", "inside_async"],
+            capture_output=True,
+            resources={"num_cpus": 1},
+        )
 
 
 @pytest.mark.asyncio
@@ -260,7 +272,7 @@ def test_reuses_explicitly_initialized_background_system_with_resources(monkeypa
         result = run(["echo", "reused"], capture_output=True, resources={"num_cpus": 1})
         assert result.stdout.strip() == b"reused"
         assert pul.get_system() is system
-        assert popen_module._module_owns_system is False
+        assert _rt.owns_system() is False
     finally:
         stop.set()
         thread.join(timeout=5)

@@ -1,10 +1,15 @@
 """Actor helper functions - lifecycle management and sync/async bridge."""
 
 import asyncio
-import concurrent.futures
 import signal
 import sys
 from typing import TYPE_CHECKING, Any
+
+from pulsing._async_bridge import (
+    get_loop,
+    get_shared_loop,
+    run_sync as _bridge_run_sync,
+)
 
 if TYPE_CHECKING:
     from . import Actor, ActorSystem
@@ -95,35 +100,26 @@ async def spawn_and_run(
 
 
 def run_sync(coro) -> Any:
-    """Execute a coroutine synchronously on the Pulsing background event loop.
+    """Execute a coroutine synchronously on the Pulsing shared background event loop.
 
     Handles three environments:
-    - Ray: submits to the background loop started by ``init_in_ray``
+    - Shared Pulsing background loop: submits to the singleton background loop
     - Standalone (no running loop): uses ``asyncio.run``
     - Inside a running loop (e.g. a Jupyter cell): runs in a thread-pool worker
 
     Raises:
         TimeoutError: if the coroutine does not complete within 30 s.
     """
-    try:
-        from pulsing.integrations.ray import _loop
-
-        if _loop is not None:
-            fut = asyncio.run_coroutine_threadsafe(coro, _loop)
-            return fut.result(timeout=30)
-    except ImportError:
-        pass
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is None:
-        return asyncio.run(coro)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result(timeout=30)
+    # Keep a concrete, patchable loop lookup here for backwards compatibility with
+    # older tests and callers that monkeypatch ``get_shared_loop`` directly.
+    dispatch_loop = get_loop() or get_shared_loop()
+    return _bridge_run_sync(
+        coro,
+        loop=dispatch_loop,
+        timeout=30,
+        same_loop="worker",
+        missing_loop="run",
+    )
 
 
 # ---------------------------------------------------------------------------

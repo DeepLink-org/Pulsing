@@ -541,9 +541,9 @@ async def test_concurrent_subscribers(actor_system):
 
     # All subscribers should receive all messages
     for i in range(num_subscribers):
-        assert (
-            len(results[i]) == num_messages
-        ), f"Subscriber {i} got {len(results[i])} messages, expected {num_messages}"
+        assert len(results[i]) == num_messages, (
+            f"Subscriber {i} got {len(results[i])} messages, expected {num_messages}"
+        )
 
     for reader in readers:
         await reader.stop()

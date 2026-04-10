@@ -28,14 +28,9 @@ except ImportError:
         "pulsing.integrations.ray requires Ray. Install with: pip install 'ray[default]'"
     )
 
-import asyncio
-import threading
+from pulsing._async_bridge import submit_on_shared_loop
 
 _SEED_KEY = "pulsing:seed_addr"
-
-# Background event loop (for sync init)
-_loop = None
-_thread = None
 
 
 def _get_node_ip():
@@ -46,33 +41,6 @@ def _get_node_ip():
         if node["NodeID"] == node_id and node["Alive"]:
             return node["NodeManagerAddress"]
     raise RuntimeError("Cannot get current Ray node IP")
-
-
-def _start_background_loop():
-    """Start background event loop thread"""
-    global _loop, _thread
-    if _thread is not None:
-        return
-
-    ready = threading.Event()
-
-    def _run():
-        global _loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        _loop = loop
-        ready.set()
-        loop.run_forever()
-
-    _thread = threading.Thread(target=_run, daemon=True, name="pulsing-event-loop")
-    _thread.start()
-    ready.wait()
-
-
-def _run_sync(coro):
-    """Execute coroutine synchronously in background event loop"""
-    fut = asyncio.run_coroutine_threadsafe(coro, _loop)
-    return fut.result(timeout=30)
 
 
 async def _do_init(addr, seeds=None):
@@ -116,23 +84,26 @@ def init_in_ray():
         raise RuntimeError("Ray not initialized, please call ray.init() first")
 
     node_ip = _get_node_ip()
-    _start_background_loop()
 
     # Seed exists -> join directly
     seed_addr = _get_seed()
     if seed_addr is not None:
-        return _run_sync(_do_init(f"{node_ip}:0", seeds=[seed_addr]))
+        return submit_on_shared_loop(
+            _do_init(f"{node_ip}:0", seeds=[seed_addr]), timeout=30
+        )
 
     # Start as potential seed
-    system = _run_sync(_do_init(f"{node_ip}:0"))
+    system = submit_on_shared_loop(_do_init(f"{node_ip}:0"), timeout=30)
     my_addr = str(system.addr)
 
     if _try_set_seed(my_addr):
         return system  # Write succeeded, I am seed
 
     # Race lost (rare), re-join with actual seed
-    _run_sync(_do_shutdown())
-    return _run_sync(_do_init(f"{node_ip}:0", seeds=[_get_seed()]))
+    submit_on_shared_loop(_do_shutdown(), timeout=30)
+    return submit_on_shared_loop(
+        _do_init(f"{node_ip}:0", seeds=[_get_seed()]), timeout=30
+    )
 
 
 async def async_init_in_ray():
@@ -164,4 +135,4 @@ def cleanup():
     _internal_kv_del(_SEED_KEY)
 
 
-__all__ = ["init_in_ray", "async_init_in_ray", "cleanup", "_get_seed", "_loop"]
+__all__ = ["init_in_ray", "async_init_in_ray", "cleanup", "_get_seed"]
