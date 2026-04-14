@@ -19,7 +19,7 @@ Simple API:
 
 import asyncio
 
-from pulsing._async_bridge import clear_user_loop, set_user_loop
+from pulsing._async_bridge import clear_pulsing_loop, set_pulsing_loop
 from pulsing._core import (
     ActorId,
     ActorRef,
@@ -90,7 +90,7 @@ async def init(
 
     service = PythonActorService(_global_system)
     await _global_system.spawn(service, name=PYTHON_ACTOR_SERVICE_NAME, public=True)
-    set_user_loop(loop)
+    set_pulsing_loop(loop)
 
     return _global_system
 
@@ -102,7 +102,7 @@ async def shutdown() -> None:
     if _global_system is not None:
         await _global_system.shutdown()
         _global_system = None
-    clear_user_loop()
+    clear_pulsing_loop()
 
     try:
         from pulsing._runtime import clear_module_ownership

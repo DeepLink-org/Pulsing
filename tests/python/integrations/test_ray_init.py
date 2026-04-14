@@ -10,6 +10,9 @@ Tests:
 - Error cases
 """
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
 # Skip all tests if ray is not installed
@@ -18,8 +21,8 @@ ray = pytest.importorskip("ray")
 from pulsing._async_bridge import (
     clear_pulsing_loop,
     get_shared_loop,
+    run_sync,
     stop_shared_loop,
-    submit_on_shared_loop,
 )
 
 
@@ -31,7 +34,7 @@ def _reset_pulsing_state():
     # Shutdown Pulsing system via background loop
     if pc._global_system is not None and get_shared_loop() is not None:
         try:
-            submit_on_shared_loop(pray._do_shutdown(), timeout=30)
+            run_sync(pray._do_shutdown(), timeout=30)
         except Exception:
             pass
 
@@ -316,3 +319,57 @@ def test_counting_game(ray_env):
     from pulsing.examples.counting_game import run
 
     run(num_workers=NUM_WORKERS)
+
+
+def test_init_in_ray_uses_run_sync_to_join_existing_seed(monkeypatch):
+    import pulsing.integrations.ray as pray
+
+    async def fake_do_init(addr, seeds=None):
+        return SimpleNamespace(addr=f"{addr}|{seeds[0]}")
+
+    monkeypatch.setattr(pray.ray, "is_initialized", lambda: True)
+    monkeypatch.setattr(pray, "_get_node_ip", lambda: "10.0.0.1")
+    monkeypatch.setattr(pray, "_get_seed", lambda: "10.0.0.2:1234")
+    monkeypatch.setattr(pray, "_do_init", fake_do_init)
+    monkeypatch.setattr(
+        pray, "run_sync", lambda awaitable, timeout=None: asyncio.run(awaitable)
+    )
+
+    system = pray.init_in_ray()
+
+    assert system.addr == "10.0.0.1:0|10.0.0.2:1234"
+
+
+def test_init_in_ray_race_lost_rejoins_with_seed(monkeypatch):
+    import pulsing.integrations.ray as pray
+
+    seed_values = iter([None, "10.0.0.9:3456"])
+    events = []
+
+    async def fake_do_init(addr, seeds=None):
+        events.append(("init", addr, seeds))
+        if seeds is None:
+            return SimpleNamespace(addr="10.0.0.1:4567")
+        return SimpleNamespace(addr=f"joined:{seeds[0]}")
+
+    async def fake_do_shutdown():
+        events.append(("shutdown",))
+
+    monkeypatch.setattr(pray.ray, "is_initialized", lambda: True)
+    monkeypatch.setattr(pray, "_get_node_ip", lambda: "10.0.0.1")
+    monkeypatch.setattr(pray, "_get_seed", lambda: next(seed_values))
+    monkeypatch.setattr(pray, "_try_set_seed", lambda addr: False)
+    monkeypatch.setattr(pray, "_do_init", fake_do_init)
+    monkeypatch.setattr(pray, "_do_shutdown", fake_do_shutdown)
+    monkeypatch.setattr(
+        pray, "run_sync", lambda awaitable, timeout=None: asyncio.run(awaitable)
+    )
+
+    system = pray.init_in_ray()
+
+    assert system.addr == "joined:10.0.0.9:3456"
+    assert events == [
+        ("init", "10.0.0.1:0", None),
+        ("shutdown",),
+        ("init", "10.0.0.1:0", ["10.0.0.9:3456"]),
+    ]

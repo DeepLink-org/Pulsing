@@ -1,4 +1,4 @@
-"""Actor helper functions - lifecycle management and sync/async bridge."""
+"""Actor helper functions - lifecycle management helpers."""
 
 import asyncio
 import signal
@@ -6,9 +6,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from pulsing._async_bridge import (
-    get_loop,
-    get_shared_loop,
-    run_sync as _bridge_run_sync,
+    run_sync,
 )
 
 if TYPE_CHECKING:
@@ -95,34 +93,6 @@ async def spawn_and_run(
 
 
 # ---------------------------------------------------------------------------
-# Sync/async bridge — single implementation used by mount/unmount
-# ---------------------------------------------------------------------------
-
-
-def run_sync(coro) -> Any:
-    """Execute a coroutine synchronously on the Pulsing shared background event loop.
-
-    Handles three environments:
-    - Shared Pulsing background loop: submits to the singleton background loop
-    - Standalone (no running loop): uses ``asyncio.run``
-    - Inside a running loop (e.g. a Jupyter cell): runs in a thread-pool worker
-
-    Raises:
-        TimeoutError: if the coroutine does not complete within 30 s.
-    """
-    # Keep a concrete, patchable loop lookup here for backwards compatibility with
-    # older tests and callers that monkeypatch ``get_shared_loop`` directly.
-    dispatch_loop = get_loop() or get_shared_loop()
-    return _bridge_run_sync(
-        coro,
-        loop=dispatch_loop,
-        timeout=30,
-        same_loop="worker",
-        missing_loop="run",
-    )
-
-
-# ---------------------------------------------------------------------------
 # mount / unmount — sync API to expose Python objects as Pulsing actors
 # ---------------------------------------------------------------------------
 
@@ -189,7 +159,7 @@ def mount(instance: Any, *, name: str, public: bool = True) -> None:
     async def _do_mount():
         return await system.spawn(wrapped, name=actor_name, public=public)
 
-    actor_ref = run_sync(_do_mount())
+    actor_ref = run_sync(_do_mount(), timeout=30)
     wrapped._inject_delayed(actor_ref)
     _register_actor_metadata(actor_name, type(instance))
 
@@ -210,4 +180,4 @@ def unmount(name: str) -> None:
     async def _do_unmount():
         await _global_system.stop(actor_name)
 
-    run_sync(_do_unmount())
+    run_sync(_do_unmount(), timeout=30)

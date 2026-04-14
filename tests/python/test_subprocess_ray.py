@@ -8,8 +8,8 @@ import pulsing as pul
 from pulsing._async_bridge import (
     clear_pulsing_loop,
     get_shared_loop,
+    run_sync,
     stop_shared_loop,
-    submit_on_shared_loop,
 )
 import pulsing._runtime as _rt
 import pulsing.subprocess.popen as popen_module
@@ -75,7 +75,8 @@ def test_resources_backend_prefers_bootstrap_when_ray_is_ready(monkeypatch):
     assert result.returncode == 0
     assert result.stdout.strip() == b"bootstrap"
     assert pul.is_initialized()
-    assert _rt.owns_system() is False
+    assert _rt.owns_system() is True
+    assert _rt.is_cleanup_registered() is True
     assert get_shared_loop() is not None
     _assert_has_bound_addr()
 
@@ -139,7 +140,7 @@ def test_cleanup_ray_actor_directly(monkeypatch):
 
     assert handle is not None
 
-    submit_on_shared_loop(cleanup_ray_actor(proc._proxy), timeout=30)
+    run_sync(cleanup_ray_actor(proc._proxy), timeout=30)
     assert proc._proxy._ray_node_actor is None
 
 

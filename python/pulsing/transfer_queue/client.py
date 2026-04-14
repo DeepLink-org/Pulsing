@@ -1,75 +1,81 @@
-"""Transfer queue client - async and sync wrappers."""
+"""Transfer queue client - async and sync exact-read wrappers."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
-from pulsing._runtime import ensure_async_runtime
-from pulsing._async_bridge import (
-    bind_run_sync,
-    get_loop,
-    valid_loop,
-)
+from pulsing._async_bridge import get_loop, get_running_loop, run_sync
 from pulsing.core import ActorSystem, get_system
 from pulsing.core.remote import ActorProxy
+from pulsing.exceptions import PulsingActorError
 
 from .manager import get_unit_ref
 
 logger = logging.getLogger(__name__)
 
+_GET_POLL_INTERVAL_SECONDS = 0.05
+
 
 class AsyncTransferQueueClient:
-    """Async client for the transfer queue.
-
-    Args:
-        partition_id: Logical partition identifier (used as the queue topic)
-        num_buckets: Number of buckets to shard across
-        batch_size: Default batch size passed to StorageUnit
-        system: Explicit ActorSystem. Falls back to the global system if None.
-    """
+    """Async client for the transfer queue exact-read API."""
 
     def __init__(
         self,
-        partition_id: str,
+        topic: str,
         num_buckets: int,
-        batch_size: int,
+        bucket_capacity: int,
         system: ActorSystem | None = None,
     ):
-        self.partition_id = partition_id
-        self.num_buckets = num_buckets
-        self.batch_size = batch_size
-        self._system = system
-        try:
-            self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = None
-        self._auto_init = system is None
-        self._runtime_ready = system is not None
+        if num_buckets <= 0:
+            raise ValueError("num_buckets must be greater than 0")
+        if bucket_capacity <= 0:
+            raise ValueError("bucket_capacity must be greater than 0")
 
+        self.topic = topic
+        self.num_buckets = num_buckets
+        self.bucket_capacity = bucket_capacity
+        self._system = system
+
+        self._bound_loop = get_running_loop() or get_loop()
         self._bucket_refs: dict[int, ActorProxy] = {}
         self._bucket_locks: dict[int, asyncio.Lock] = {}
         self._bucket_locks_meta = asyncio.Lock()
-        self._runtime_lock = asyncio.Lock()
-
-    async def _ensure_runtime(self) -> None:
-        if not self._auto_init or self._runtime_ready:
-            return
-
-        async with self._runtime_lock:
-            if self._runtime_ready:
-                return
-            await ensure_async_runtime()
-            self._runtime_ready = True
 
     def _get_system(self) -> ActorSystem:
         if self._system is not None:
             return self._system
         return get_system()
 
+    def _bind_or_validate_loop(self) -> None:
+        running_loop = get_running_loop()
+        if running_loop is None:
+            raise RuntimeError(
+                "AsyncTransferQueueClient methods must run inside an event loop."
+            )
+
+        if self._bound_loop is None:
+            self._bound_loop = running_loop
+            return
+
+        if running_loop is not self._bound_loop:
+            raise RuntimeError(
+                "AsyncTransferQueueClient is bound to a different event loop. "
+                "Create a new client in the current loop, or use get_async_client() "
+                "instead of TransferQueueClient from async code."
+            )
+
+    def _validate_bucket_id(self, bucket_id: int) -> None:
+        if not 0 <= bucket_id < self.num_buckets:
+            raise ValueError(
+                f"bucket_id must be in [0, {self.num_buckets - 1}], got {bucket_id}"
+            )
+
     async def _ensure_bucket(self, bucket_id: int) -> ActorProxy:
-        await self._ensure_runtime()
+        self._bind_or_validate_loop()
+        self._validate_bucket_id(bucket_id)
 
         if bucket_id in self._bucket_refs:
             return self._bucket_refs[bucket_id]
@@ -84,101 +90,107 @@ class AsyncTransferQueueClient:
                 return self._bucket_refs[bucket_id]
 
             system = self._get_system()
-            self._bucket_refs[bucket_id] = await get_unit_ref(
-                system,
-                topic=self.partition_id,
-                bucket_id=bucket_id,
-                batch_size=self.batch_size,
-            )
-            logger.debug(
-                f"Resolved transfer queue unit {self.partition_id}:{bucket_id}"
-            )
+            try:
+                self._bucket_refs[bucket_id] = await get_unit_ref(
+                    system,
+                    topic=self.topic,
+                    bucket_id=bucket_id,
+                    bucket_capacity=self.bucket_capacity,
+                )
+            except PulsingActorError as exc:
+                if "different bucket_capacity" in str(exc):
+                    raise ValueError(str(exc)) from exc
+                raise
+            logger.debug(f"Resolved transfer queue unit {self.topic}:{bucket_id}")
             return self._bucket_refs[bucket_id]
 
-    async def async_put(self, sample_idx: int, data: dict[str, Any]) -> dict[str, Any]:
-        """Write (merge) *data* into the sample identified by *sample_idx*.
+    @staticmethod
+    def _deadline_from_timeout(timeout: float | None) -> float | None:
+        if timeout is None or timeout <= 0:
+            return None
+        return time.monotonic() + timeout
 
-        Returns a BatchMeta-compatible dict.
-        """
-        bucket_id = sample_idx % self.num_buckets
+    async def async_put(
+        self,
+        sample_idx: int,
+        data: dict[str, Any],
+        bucket_id: int = 0,
+    ) -> dict[str, Any]:
+        """Write (merge) *data* into one sample in the selected bucket."""
+        self._bind_or_validate_loop()
         unit = await self._ensure_bucket(bucket_id)
         meta = await unit.put(sample_idx=sample_idx, data=data)
-        meta["partition_id"] = self.partition_id
+        meta["topic"] = self.topic
+        meta["bucket_id"] = bucket_id
         return meta
 
     async def async_get(
         self,
         data_fields: list[str],
-        batch_size: int | None = None,
-        task_name: str = "default",
-    ) -> list[dict[str, Any]]:
-        """Collect up to *batch_size* complete samples across all buckets.
+        sample_idx: int,
+        bucket_id: int = 0,
+        timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Read one sample from one bucket, optionally waiting up to *timeout*."""
+        self._bind_or_validate_loop()
+        unit = await self._ensure_bucket(bucket_id)
+        deadline = self._deadline_from_timeout(timeout)
 
-        A sample is "complete" when all *data_fields* have been written.
-        """
-        batch_size = batch_size or self.batch_size
-        collected: list[dict[str, Any]] = []
-        remaining = batch_size
+        while True:
+            row = await unit.get_data(fields=data_fields, sample_idx=sample_idx)
+            if row is not None:
+                return row
 
-        for bucket_id in range(self.num_buckets):
-            if remaining <= 0:
-                break
-            unit = await self._ensure_bucket(bucket_id)
-            rows = await unit.get_data(
-                fields=data_fields,
-                batch_size=remaining,
-                task_name=task_name,
-            )
-            collected.extend(rows)
-            remaining -= len(rows)
+            if deadline is None:
+                return None
 
-        return collected[:batch_size]
+            remaining_time = deadline - time.monotonic()
+            if remaining_time <= 0:
+                return None
+
+            await asyncio.sleep(min(_GET_POLL_INTERVAL_SECONDS, remaining_time))
 
     async def async_clear(self) -> None:
-        """Clear all instantiated buckets."""
-        await self._ensure_runtime()
-        for bucket_id, unit in list(self._bucket_refs.items()):
+        """Clear all buckets for this topic."""
+        self._bind_or_validate_loop()
+        for bucket_id in range(self.num_buckets):
+            unit = await self._ensure_bucket(bucket_id)
             await unit.clear()
 
 
 class TransferQueueClient:
-    """Synchronous wrapper around AsyncTransferQueueClient.
-
-    Uses the shared sync bridge so it can be called from synchronous code
-    or from another thread while Pulsing runs elsewhere. Same-thread async
-    callers should use ``get_async_client()`` instead.
-    """
+    """Synchronous wrapper around AsyncTransferQueueClient."""
 
     def __init__(self, inner: AsyncTransferQueueClient):
         self._inner = inner
-        self._run_sync = bind_run_sync(
-            loop=lambda: get_loop() or valid_loop(self._inner._loop),
-            same_loop="raise",
-            same_loop_message=(
-                "pulsing.transfer_queue cannot block on the same event loop that "
-                "owns the active Pulsing system. Use get_async_client() from async "
-                "code or call the sync client from another thread."
-            ),
-            missing_loop="raise",
-            missing_loop_message=(
-                "Event loop not running. Sync wrapper requires a running event loop."
-            ),
-        )
 
     @property
-    def partition_id(self) -> str:
-        return self._inner.partition_id
+    def topic(self) -> str:
+        return self._inner.topic
 
-    def put(self, sample_idx: int, data: dict[str, Any]) -> dict[str, Any]:
-        return self._run_sync(self._inner.async_put(sample_idx, data))
+    def put(
+        self,
+        sample_idx: int,
+        data: dict[str, Any],
+        bucket_id: int = 0,
+    ) -> dict[str, Any]:
+        return run_sync(self._inner.async_put(sample_idx, data, bucket_id=bucket_id))
 
     def get(
         self,
         data_fields: list[str],
-        batch_size: int | None = None,
-        task_name: str = "default",
-    ) -> list[dict[str, Any]]:
-        return self._run_sync(self._inner.async_get(data_fields, batch_size, task_name))
+        sample_idx: int,
+        bucket_id: int = 0,
+        timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        return run_sync(
+            self._inner.async_get(
+                data_fields=data_fields,
+                sample_idx=sample_idx,
+                bucket_id=bucket_id,
+                timeout=timeout,
+            )
+        )
 
     def clear(self) -> None:
-        self._run_sync(self._inner.async_clear())
+        run_sync(self._inner.async_clear())

@@ -1,12 +1,13 @@
-"""Tests for core/helpers.py — covers run_until_signal and spawn_and_run with mocking."""
+"""Tests for core/helpers.py with mocked lifecycle and sync-bridge behavior."""
 
+import importlib
 import asyncio
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pulsing.core.helpers import run_sync, run_until_signal, spawn_and_run
+from pulsing.core.helpers import mount, run_until_signal, spawn_and_run, unmount
 
 
 # ============================================================================
@@ -178,26 +179,55 @@ class TestSpawnAndRun:
 
 
 # ============================================================================
-# run_sync
+# mount / unmount
 # ============================================================================
 
 
-class TestRunSync:
-    def test_delegates_to_async_bridge(self):
-        coro = AsyncMock()
-        shared_loop = object()
+class TestMountUnmount:
+    def test_mount_uses_async_bridge_with_timeout(self):
+        instance = MagicMock()
+        system = MagicMock()
+        wrapped = MagicMock()
+        remote_module = importlib.import_module("pulsing.core.remote")
 
         with (
-            patch("pulsing.core.helpers.get_shared_loop", return_value=shared_loop),
-            patch(
-                "pulsing.core.helpers._bridge_run_sync", return_value="shared"
-            ) as bridge,
+            patch("pulsing.core._global_system", system),
+            patch("pulsing.core.helpers.run_sync", return_value="actor_ref") as bridge,
+            patch.object(remote_module, "_WrappedActor", return_value=wrapped),
+            patch.object(
+                remote_module, "_register_actor_metadata"
+            ) as register_metadata,
         ):
-            assert run_sync(coro) == "shared"
-            bridge.assert_called_once_with(
-                coro,
-                loop=shared_loop,
-                timeout=30,
-                same_loop="worker",
-                missing_loop="run",
-            )
+            mount(instance, name="test", public=False)
+
+        called_coro = bridge.call_args.args[0]
+        called_coro.close()
+
+        bridge.assert_called_once()
+        assert bridge.call_args.kwargs == {"timeout": 30}
+        wrapped._inject_delayed.assert_called_once_with("actor_ref")
+        register_metadata.assert_called_once_with("actors/test", type(instance))
+
+    def test_unmount_uses_async_bridge_with_timeout(self):
+        system = MagicMock()
+
+        with (
+            patch("pulsing.core._global_system", system),
+            patch("pulsing.core.helpers.run_sync") as bridge,
+        ):
+            unmount("test")
+
+        called_coro = bridge.call_args.args[0]
+        called_coro.close()
+
+        bridge.assert_called_once()
+        assert bridge.call_args.kwargs == {"timeout": 30}
+
+    def test_unmount_without_global_system_returns_early(self):
+        with (
+            patch("pulsing.core._global_system", None),
+            patch("pulsing.core.helpers.run_sync") as bridge,
+        ):
+            unmount("test")
+
+        bridge.assert_not_called()

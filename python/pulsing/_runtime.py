@@ -12,11 +12,11 @@ import threading
 
 from pulsing._async_bridge import (
     get_loop,
+    get_running_loop as _get_running_loop,
     get_shared_loop,
-    get_sync_auto_init_loop,
-    run_sync as _bridge_run_sync,
+    run_sync as bridge_run_sync,
+    set_pulsing_loop,
     stop_shared_loop,
-    submit_to_loop,
 )
 
 _lock = threading.Lock()
@@ -47,6 +47,13 @@ def is_cleanup_registered() -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _claim_module_runtime() -> None:
+    """Mark the current global Pulsing system for module-managed cleanup."""
+    global _module_owns_system
+    _register_cleanup()
+    _module_owns_system = True
+
+
 def _register_cleanup() -> None:
     global _atexit_registered
     if _atexit_registered:
@@ -72,7 +79,6 @@ def _get_async_init_lock() -> asyncio.Lock:
 def ensure_sync_runtime(
     *,
     addr: str | None = None,
-    same_thread_message: str | None = None,
     require_addr: bool = False,
 ) -> None:
     """Ensure a dispatch loop and global Pulsing system for sync callers.
@@ -81,8 +87,6 @@ def ensure_sync_runtime(
     ----------
     addr:
         Address to pass to ``pul.init()`` when auto-initializing.
-    same_thread_message:
-        Custom error when called from the same thread as an existing loop.
     require_addr:
         If ``True``, raise when an already-initialized system has no routable
         address (used by subprocess).
@@ -101,16 +105,13 @@ def ensure_sync_runtime(
                         "Initialize Pulsing explicitly with pul.init(addr='0.0.0.0:0')."
                     )
             dispatch_loop = get_loop()
-            if dispatch_loop is None and not require_addr:
+            if dispatch_loop is None:
                 raise RuntimeError(
-                    "pulsing.transfer_queue found an initialized Pulsing system, "
-                    "but its event loop is unavailable. Re-initialize Pulsing on a "
-                    "running loop or let transfer_queue auto-initialize it."
+                    "Found an initialized Pulsing system, but its dispatch loop is "
+                    "unavailable. Re-initialize Pulsing on a running loop or let the "
+                    "sync API auto-initialize it again."
                 )
-            _module_owns_system = False
             return
-
-        loop = get_sync_auto_init_loop(same_thread_message=same_thread_message)
 
         if pul.bootstrap(wait_timeout=0):
             if require_addr:
@@ -120,20 +121,20 @@ def ensure_sync_runtime(
                         "resources requires a routable Pulsing address. "
                         "Initialize Pulsing explicitly with pul.init(addr='0.0.0.0:0')."
                     )
-            if not require_addr and get_loop() is None:
+            if get_loop() is None:
                 raise RuntimeError(
-                    "pulsing.transfer_queue bootstrapped Pulsing, but no running "
-                    "dispatch loop was exposed."
+                    "Bootstrapped Pulsing, but no running dispatch loop was exposed."
                 )
-            _module_owns_system = False
+            _claim_module_runtime()
             return
 
-        _register_cleanup()
-        _module_owns_system = True
-        if addr:
-            submit_to_loop(loop, pul.init(addr=addr), ensure_coro=True)
-        else:
-            submit_to_loop(loop, pul.init())
+        _claim_module_runtime()
+        init_coro = pul.init(addr=addr) if addr else pul.init()
+        try:
+            bridge_run_sync(init_coro)
+        except Exception:
+            _module_owns_system = False
+            raise
 
 
 async def ensure_async_runtime() -> None:
@@ -149,12 +150,13 @@ async def ensure_async_runtime() -> None:
         if pul.is_initialized():
             return
 
+        set_pulsing_loop(_get_running_loop())
         if await asyncio.to_thread(pul.bootstrap, wait_timeout=0):
+            _claim_module_runtime()
             return
 
         await pul.init()
-        _module_owns_system = True
-        _register_cleanup()
+        _claim_module_runtime()
 
 
 # ---------------------------------------------------------------------------
@@ -170,34 +172,13 @@ def _shutdown_all(*, best_effort: bool = True) -> None:
 
     with _lock:
         owns = _module_owns_system
-        dispatch_loop = get_loop()
 
         if owns and pul.is_initialized():
-            if dispatch_loop is None:
+            try:
+                bridge_run_sync(pul.shutdown())
+            except Exception:
                 if not best_effort:
-                    raise RuntimeError(
-                        "Module owns the active Pulsing system, but "
-                        "its event loop is not running."
-                    )
-                try:
-                    asyncio.run(pul.shutdown())
-                except Exception:
-                    pass
-            else:
-                try:
-                    _bridge_run_sync(
-                        pul.shutdown(),
-                        loop=dispatch_loop,
-                        same_loop="raise",
-                        same_loop_message=(
-                            "Cannot block on the same event loop that owns "
-                            "the active Pulsing system."
-                        ),
-                        missing_loop="run",
-                    )
-                except Exception:
-                    if not best_effort:
-                        raise
+                    raise
 
         if owns and get_shared_loop() is not None:
             try:

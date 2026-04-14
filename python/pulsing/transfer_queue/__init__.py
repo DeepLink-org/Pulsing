@@ -1,59 +1,89 @@
-"""pulsing.transfer_queue - Data transfer queue for training-inference pipelines.
+"""pulsing.transfer_queue - Fixed-capacity transfer buckets with exact reads.
 
-Supports incremental field-by-field writing to samples keyed by sample_idx,
-and batch reading of complete samples.
+Each transfer queue topic owns ``num_buckets`` independent buckets. Callers
+choose the target bucket explicitly on ``put()``/``get()`` via ``bucket_id``.
+Each bucket stores up to ``bucket_capacity`` samples in a ring buffer; once the
+bucket is full, inserting a new ``sample_idx`` overwrites the oldest stored
+sample in that bucket.
 
 Usage (async)::
 
     import pulsing as pul
 
-    client = pul.transfer_queue.get_async_client(
-        partition_id="train", num_buckets=2, batch_size=10
+    client = await pul.transfer_queue.get_async_client(
+        topic="train", num_buckets=2, bucket_capacity=10
     )
-    await client.async_put(sample_idx=0, data={"prompt": "hello"})
-    await client.async_put(sample_idx=0, data={"response": "world"})
+    await client.async_put(
+        sample_idx=0,
+        data={"prompt": "hello"},
+        bucket_id=1,
+    )
+    await client.async_put(
+        sample_idx=0,
+        data={"response": "world"},
+        bucket_id=1,
+    )
 
-    samples = await client.async_get(
-        data_fields=["prompt", "response"], batch_size=2, task_name="train"
+    sample = await client.async_get(
+        data_fields=["prompt", "response"],
+        sample_idx=0,
+        bucket_id=1,
+        timeout=1.0,
     )
 
 Usage (sync)::
 
     import pulsing as pul
 
-    client = pul.transfer_queue.get_client(partition_id="train", num_buckets=2, batch_size=10)
-    client.put(sample_idx=0, data={"prompt": "hello"})
-    client.put(sample_idx=0, data={"response": "world"})
+    client = pul.transfer_queue.get_client(
+        topic="train", num_buckets=2, bucket_capacity=10
+    )
+    client.put(sample_idx=0, data={"prompt": "hello"}, bucket_id=1)
+    client.put(sample_idx=0, data={"response": "world"}, bucket_id=1)
 
-    samples = client.get(
-        data_fields=["prompt", "response"], batch_size=2, task_name="train"
+    sample = client.get(
+        data_fields=["prompt", "response"],
+        sample_idx=0,
+        bucket_id=1,
+        timeout=1.0,
     )
 
-The sync client auto-initializes Pulsing only for synchronous callers (or
-cross-thread use). Same-thread async callers should use ``get_async_client()``.
+The sync client auto-initializes Pulsing for synchronous callers and
+cross-thread use. Async callers running on the active event loop should use
+``await get_async_client()`` instead, or move both ``get_client()`` and sync
+client calls to another thread. The synchronous client must not be called from
+the active Pulsing event loop thread; use ``asyncio.to_thread(...)`` if you
+need it from async code.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from pulsing._async_bridge import get_running_loop as _get_running_loop
+from pulsing._async_bridge import run_sync as _run_sync
 import pulsing._runtime as _runtime
 
 from .client import AsyncTransferQueueClient, TransferQueueClient
 
-_SYNC_AUTO_INIT_SAME_THREAD_MESSAGE = (
-    "pulsing.transfer_queue sync auto-init cannot run on the same "
-    "thread as a running event loop. Use get_async_client() from "
-    "async code or call get_client() from synchronous code or "
-    "another thread."
-)
+
+async def _ensure_local_storage_manager() -> None:
+    from pulsing.core import get_system
+    from .manager import ensure_storage_managers
+
+    await ensure_storage_managers(get_system())
+
+
+def _ensure_sync_local_storage_manager() -> None:
+    _run_sync(_ensure_local_storage_manager())
 
 
 @dataclass
 class BatchMeta:
     """Metadata returned by a put operation."""
 
-    partition_id: str
+    topic: str
+    bucket_id: int
     sample_idx: int
     fields: list[str] = field(default_factory=list)
     status: str = "ok"
@@ -64,47 +94,40 @@ def shutdown():
     _runtime.shutdown(best_effort=False)
 
 
-def get_async_client(
-    partition_id: str,
+async def get_async_client(
+    topic: str,
     num_buckets: int = 1,
-    batch_size: int = 10,
+    bucket_capacity: int = 10,
 ) -> AsyncTransferQueueClient:
-    """Return an async client for *partition_id*.
-
-    Args:
-        partition_id: Logical partition identifier.
-        num_buckets: Number of buckets to shard data across.
-        batch_size: Default batch size for reads.
-    """
+    """Return an async client for *topic*."""
+    await _runtime.ensure_async_runtime()
+    await _ensure_local_storage_manager()
     return AsyncTransferQueueClient(
-        partition_id=partition_id,
+        topic=topic,
         num_buckets=num_buckets,
-        batch_size=batch_size,
+        bucket_capacity=bucket_capacity,
     )
 
 
 def get_client(
-    partition_id: str,
+    topic: str,
     num_buckets: int = 1,
-    batch_size: int = 10,
+    bucket_capacity: int = 10,
 ) -> TransferQueueClient:
-    """Return a synchronous client for *partition_id*.
+    """Return a synchronous client for *topic*."""
+    if _get_running_loop() is not None:
+        raise RuntimeError(
+            "get_client() cannot be called from an active event loop. "
+            "Use await get_async_client() or call get_client() from "
+            "asyncio.to_thread(...)."
+        )
 
-    Args:
-        partition_id: Logical partition identifier.
-        num_buckets: Number of buckets to shard data across.
-        batch_size: Default batch size for reads.
-
-    This sync helper is intended for non-async code or for threads other than
-    the one currently running the Pulsing event loop.
-    """
-    _runtime.ensure_sync_runtime(
-        same_thread_message=_SYNC_AUTO_INIT_SAME_THREAD_MESSAGE,
-    )
+    _runtime.ensure_sync_runtime()
+    _ensure_sync_local_storage_manager()
     inner = AsyncTransferQueueClient(
-        partition_id=partition_id,
+        topic=topic,
         num_buckets=num_buckets,
-        batch_size=batch_size,
+        bucket_capacity=bucket_capacity,
     )
     return TransferQueueClient(inner)
 

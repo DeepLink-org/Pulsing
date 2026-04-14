@@ -1,30 +1,18 @@
-"""
-Tests for the Pulsing Transfer Queue.
+"""Tests for the Pulsing transfer_queue exact-read API."""
 
-Covers:
-- TransferBackend (incremental merge, get_data, clear, stats)
-- StorageUnit @remote actor (put, get_data, clear, stats)
-- AsyncTransferQueueClient (async_put, async_get, async_clear)
-- TransferQueueClient (sync wrapper)
-- Multi-bucket sharding
-- Consumption tracking (task_name isolation)
-- Concurrent writes
-"""
+from __future__ import annotations
 
 import asyncio
 
 import pytest
 
 import pulsing as pul
-from pulsing._async_bridge import get_shared_loop
+from pulsing._async_bridge import get_pulsing_loop, get_shared_loop, run_sync
+from pulsing.exceptions import PulsingActorError
 from pulsing.transfer_queue.backend import TransferBackend
 from pulsing.transfer_queue.client import AsyncTransferQueueClient
+from pulsing.transfer_queue.manager import STORAGE_MANAGER_NAME, StorageManager
 from pulsing.transfer_queue.storage import StorageUnit
-
-
-# ============================================================================
-# Fixtures
-# ============================================================================
 
 
 @pytest.fixture
@@ -38,7 +26,38 @@ async def actor_system():
 @pytest.fixture
 def backend():
     """Create a TransferBackend for direct testing."""
-    return TransferBackend(bucket_id=0, batch_size=10)
+    return TransferBackend(bucket_id=0, bucket_capacity=2)
+
+
+def test_backend_rejects_non_positive_capacity():
+    with pytest.raises(ValueError, match="bucket_capacity must be greater than 0"):
+        TransferBackend(bucket_id=0, bucket_capacity=0)
+
+
+async def _resolve_local_storage_manager():
+    system = pul.get_system()
+    return await StorageManager.resolve(
+        STORAGE_MANAGER_NAME,
+        system=system,
+        node_id=system.node_id.id,
+    )
+
+
+async def _wait_for_local_storage_manager(
+    retries: int = 20,
+    delay: float = 0.05,
+):
+    for attempt in range(retries):
+        try:
+            return await _resolve_local_storage_manager()
+        except Exception:
+            if attempt == retries - 1:
+                raise
+            await asyncio.sleep(delay)
+
+
+def _resolve_local_storage_manager_sync():
+    return run_sync(_resolve_local_storage_manager())
 
 
 @pytest.fixture
@@ -47,14 +66,14 @@ async def client(actor_system):
     from pulsing.transfer_queue.manager import ensure_storage_managers
 
     await ensure_storage_managers(actor_system._inner)
-    c = AsyncTransferQueueClient(
-        partition_id="test",
+    queue_client = AsyncTransferQueueClient(
+        topic="test",
         num_buckets=2,
-        batch_size=10,
+        bucket_capacity=2,
         system=actor_system._inner,
     )
-    yield c
-    await c.async_clear()
+    yield queue_client
+    await queue_client.async_clear()
 
 
 # ============================================================================
@@ -64,16 +83,15 @@ async def client(actor_system):
 
 @pytest.mark.asyncio
 async def test_backend_put_creates_sample(backend):
-    """put() should create a new sample entry."""
     meta = await backend.put(0, {"prompt": "hello"})
+    assert meta["bucket_id"] == 0
     assert meta["sample_idx"] == 0
-    assert "prompt" in meta["fields"]
+    assert meta["fields"] == ["prompt"]
     assert meta["status"] == "ok"
 
 
 @pytest.mark.asyncio
-async def test_backend_put_merges_fields(backend):
-    """Successive put() calls merge fields into the same sample."""
+async def test_backend_put_merges_existing_sample(backend):
     await backend.put(0, {"prompt": "hello"})
     meta = await backend.put(0, {"response": "world"})
     assert sorted(meta["fields"]) == ["prompt", "response"]
@@ -81,125 +99,89 @@ async def test_backend_put_merges_fields(backend):
 
 @pytest.mark.asyncio
 async def test_backend_get_data_requires_all_fields(backend):
-    """get_data only returns samples where all requested fields are present."""
     await backend.put(0, {"prompt": "hello"})
-    # Only prompt written — requesting both should yield nothing
-    rows = await backend.get_data(fields=["prompt", "response"], batch_size=10)
-    assert rows == []
-
-    # Now complete the sample
-    await backend.put(0, {"response": "world"})
-    rows = await backend.get_data(fields=["prompt", "response"], batch_size=10)
-    assert len(rows) == 1
-    assert rows[0]["prompt"] == "hello"
-    assert rows[0]["response"] == "world"
-
-
-@pytest.mark.asyncio
-async def test_backend_get_data_respects_batch_size(backend):
-    """get_data should return at most batch_size samples."""
-    for i in range(5):
-        await backend.put(i, {"a": i, "b": i})
-
-    rows = await backend.get_data(fields=["a", "b"], batch_size=3)
-    assert len(rows) == 3
-
-
-@pytest.mark.asyncio
-async def test_backend_get_data_consumption_tracking(backend):
-    """Consumed samples should not be returned again for the same task_name."""
-    for i in range(3):
-        await backend.put(i, {"x": i})
-
-    batch1 = await backend.get_data(fields=["x"], batch_size=2, task_name="t1")
-    assert len(batch1) == 2
-
-    batch2 = await backend.get_data(fields=["x"], batch_size=2, task_name="t1")
-    assert len(batch2) == 1  # only 1 left
-
-
-@pytest.mark.asyncio
-async def test_backend_query_cache_updates_incrementally(backend):
-    """A cached query should see samples that become ready after the cache is built."""
-    await backend.put(0, {"prompt": "hello"})
-
-    rows = await backend.get_data(fields=["prompt", "response"], batch_size=10)
-    assert rows == []
+    assert await backend.get_data(fields=["prompt", "response"], sample_idx=0) is None
 
     await backend.put(0, {"response": "world"})
-
-    rows = await backend.get_data(fields=["prompt", "response"], batch_size=10)
-    assert rows == [{"prompt": "hello", "response": "world"}]
-
-
-@pytest.mark.asyncio
-async def test_backend_query_cache_tracks_repeated_reads_in_stats(backend):
-    """Repeated reads of the same field-set should reuse the cached query state."""
-    await backend.put(0, {"x": 1})
-
-    await backend.get_data(fields=["x"], batch_size=1, task_name="t1")
-    await backend.get_data(fields=["x"], batch_size=1, task_name="t2")
-
-    stats = await backend.stats()
-    assert stats["cached_queries"] >= 1
-    assert stats["cached_query_hits"]["x"] >= 1
-    assert stats["implementation"] == "indexed"
+    assert await backend.get_data(
+        fields=["prompt", "response"],
+        sample_idx=0,
+    ) == {"prompt": "hello", "response": "world"}
 
 
 @pytest.mark.asyncio
-async def test_backend_get_data_different_tasks_independent(backend):
-    """Different task_names have independent consumption tracking."""
-    for i in range(3):
-        await backend.put(i, {"x": i})
-
-    await backend.get_data(fields=["x"], batch_size=3, task_name="t1")
-    rows = await backend.get_data(fields=["x"], batch_size=3, task_name="t2")
-    assert len(rows) == 3  # t2 hasn't consumed anything
-
-
-@pytest.mark.asyncio
-async def test_backend_get_data(backend):
-    """get_data returns correct sample content."""
-    await backend.put(0, {"prompt": "hello", "response": "world"})
-    await backend.put(1, {"prompt": "foo", "response": "bar"})
-
-    rows = await backend.get_data(fields=["prompt", "response"], batch_size=2)
-    assert len(rows) == 2
-    assert rows[0]["prompt"] == "hello"
-    assert rows[1]["response"] == "bar"
-
-
-@pytest.mark.asyncio
-async def test_backend_get_data_with_field_filter(backend):
-    """get_data respects the fields filter."""
+async def test_backend_get_data_returns_filtered_fields(backend):
     await backend.put(0, {"prompt": "hello", "response": "world", "extra": 42})
+    assert await backend.get_data(fields=["response"], sample_idx=0) == {
+        "response": "world"
+    }
 
-    rows = await backend.get_data(fields=["prompt", "response"], batch_size=1)
-    assert len(rows) == 1
-    assert "extra" not in rows[0]
-    assert rows[0]["prompt"] == "hello"
+
+@pytest.mark.asyncio
+async def test_backend_overwrites_oldest_when_full(backend):
+    await backend.put(0, {"value": "oldest"})
+    await backend.put(1, {"value": "middle"})
+    await backend.put(2, {"value": "newest"})
+
+    assert await backend.get_data(fields=["value"], sample_idx=0) is None
+    assert await backend.get_data(fields=["value"], sample_idx=1) == {"value": "middle"}
+    assert await backend.get_data(fields=["value"], sample_idx=2) == {"value": "newest"}
+
+
+@pytest.mark.asyncio
+async def test_backend_updating_existing_sample_does_not_refresh_fifo(backend):
+    await backend.put(0, {"value": "oldest"})
+    await backend.put(1, {"value": "middle"})
+    await backend.put(0, {"extra": "still-oldest"})
+    await backend.put(2, {"value": "newest"})
+
+    assert await backend.get_data(fields=["value"], sample_idx=0) is None
+    assert await backend.get_data(fields=["value"], sample_idx=1) == {"value": "middle"}
 
 
 @pytest.mark.asyncio
 async def test_backend_clear(backend):
-    """clear() resets all state."""
     await backend.put(0, {"a": 1})
     await backend.clear()
-
-    rows = await backend.get_data(fields=["a"], batch_size=10)
-    assert rows == []
+    assert await backend.get_data(fields=["a"], sample_idx=0) is None
 
 
 @pytest.mark.asyncio
 async def test_backend_stats(backend):
-    """stats() returns diagnostic info."""
     await backend.put(0, {"a": 1})
     await backend.put(1, {"a": 2})
+    stats = await backend.stats()
+    assert stats["bucket_id"] == 0
+    assert stats["bucket_capacity"] == 2
+    assert stats["sample_count"] == 2
+    assert stats["backend"] == "transfer_ring_buffer"
 
-    s = await backend.stats()
-    assert s["bucket_id"] == 0
-    assert s["sample_count"] == 2
-    assert s["backend"] == "transfer_memory"
+
+@pytest.mark.asyncio
+async def test_backend_rejects_empty_field_requests(backend):
+    with pytest.raises(ValueError, match="data_fields must not be empty"):
+        await backend.get_data(fields=[], sample_idx=0)
+
+
+@pytest.mark.asyncio
+async def test_backend_recovers_from_missing_slot_entry(backend):
+    backend._sample_to_slot[3] = 0
+    backend._slots[0] = None
+
+    meta = await backend.put(3, {"value": "recovered"})
+
+    assert meta["sample_idx"] == 3
+    assert await backend.get_data(fields=["value"], sample_idx=3) == {
+        "value": "recovered"
+    }
+
+
+@pytest.mark.asyncio
+async def test_backend_get_data_rejects_stale_slot_mapping(backend):
+    backend._sample_to_slot[9] = 0
+    backend._slots[0] = backend._store_new_sample(1, {"value": "other"})
+
+    assert await backend.get_data(fields=["value"], sample_idx=9) is None
 
 
 # ============================================================================
@@ -209,10 +191,9 @@ async def test_backend_stats(backend):
 
 @pytest.fixture
 async def storage_unit(actor_system):
-    """Spawn a StorageUnit actor for testing."""
     proxy = await StorageUnit.spawn(
         bucket_id=0,
-        batch_size=10,
+        bucket_capacity=2,
         system=actor_system._inner,
         name="test_storage_unit_0",
         public=True,
@@ -221,42 +202,28 @@ async def storage_unit(actor_system):
 
 
 @pytest.mark.asyncio
-async def test_storage_unit_put(storage_unit):
-    """StorageUnit.put merges data and returns meta."""
-    meta = await storage_unit.put(sample_idx=0, data={"prompt": "hello"})
-    assert meta["status"] == "ok"
-    assert meta["sample_idx"] == 0
+async def test_storage_unit_put_and_get(storage_unit):
+    await storage_unit.put(sample_idx=0, data={"prompt": "hello"})
+    await storage_unit.put(sample_idx=0, data={"response": "world"})
+    row = await storage_unit.get_data(
+        fields=["prompt", "response"],
+        sample_idx=0,
+    )
+    assert row == {"prompt": "hello", "response": "world"}
 
 
 @pytest.mark.asyncio
-async def test_storage_unit_get_data(storage_unit):
-    """StorageUnit supports get_data directly."""
-    await storage_unit.put(sample_idx=0, data={"a": 1, "b": 2})
-    await storage_unit.put(sample_idx=1, data={"a": 3, "b": 4})
-
-    rows = await storage_unit.get_data(fields=["a", "b"], batch_size=10)
-    assert len(rows) == 2
-    assert rows[0]["a"] == 1
-    assert rows[1]["a"] == 3
+async def test_storage_unit_get_config(storage_unit):
+    config = await storage_unit.get_config()
+    assert config == {"bucket_id": 0, "bucket_capacity": 2}
 
 
 @pytest.mark.asyncio
 async def test_storage_unit_clear(storage_unit):
-    """StorageUnit.clear resets backend."""
     await storage_unit.put(sample_idx=0, data={"x": 1})
     result = await storage_unit.clear()
     assert result["status"] == "ok"
-
-    rows = await storage_unit.get_data(fields=["x"], batch_size=10)
-    assert rows == []
-
-
-@pytest.mark.asyncio
-async def test_storage_unit_stats(storage_unit):
-    """StorageUnit.stats returns backend diagnostics."""
-    await storage_unit.put(sample_idx=0, data={"x": 1})
-    s = await storage_unit.stats()
-    assert s["sample_count"] == 1
+    assert await storage_unit.get_data(fields=["x"], sample_idx=0) is None
 
 
 # ============================================================================
@@ -265,112 +232,236 @@ async def test_storage_unit_stats(storage_unit):
 
 
 @pytest.mark.asyncio
-async def test_client_put_and_get(client):
-    """End-to-end: put incremental fields, then get complete samples."""
-    await client.async_put(sample_idx=0, data={"prompt": "hello"})
-    await client.async_put(sample_idx=0, data={"response": "world"})
-    await client.async_put(sample_idx=1, data={"prompt": "foo"})
-    await client.async_put(sample_idx=1, data={"response": "bar"})
+async def test_client_put_and_get_exact_bucket(client):
+    await client.async_put(sample_idx=0, data={"prompt": "hello"}, bucket_id=1)
+    await client.async_put(sample_idx=0, data={"response": "world"}, bucket_id=1)
 
-    samples = await client.async_get(
-        data_fields=["prompt", "response"], batch_size=10, task_name="train"
+    row = await client.async_get(
+        data_fields=["prompt", "response"],
+        sample_idx=0,
+        bucket_id=1,
     )
-    assert len(samples) == 2
-
-    prompts = sorted(s["prompt"] for s in samples)
-    responses = sorted(s["response"] for s in samples)
-    assert prompts == ["foo", "hello"]
-    assert responses == ["bar", "world"]
+    assert row == {"prompt": "hello", "response": "world"}
 
 
 @pytest.mark.asyncio
-async def test_client_get_incomplete_samples_excluded(client):
-    """Samples missing required fields are not returned."""
-    await client.async_put(sample_idx=0, data={"prompt": "hello"})
-    # sample 0 only has prompt — response missing
-
-    samples = await client.async_get(data_fields=["prompt", "response"], batch_size=10)
-    assert len(samples) == 0
+async def test_client_get_wrong_bucket_returns_none(client):
+    await client.async_put(sample_idx=0, data={"value": "bucket-1"}, bucket_id=1)
+    row = await client.async_get(
+        data_fields=["value"],
+        sample_idx=0,
+        bucket_id=0,
+        timeout=0.1,
+    )
+    assert row is None
 
 
 @pytest.mark.asyncio
-async def test_client_get_respects_batch_size(client):
-    """async_get returns at most batch_size samples."""
-    for i in range(5):
-        await client.async_put(sample_idx=i, data={"a": i, "b": i})
+async def test_client_get_waits_for_missing_fields(client):
+    import time
 
-    samples = await client.async_get(data_fields=["a", "b"], batch_size=3)
-    assert len(samples) == 3
+    await client.async_put(sample_idx=0, data={"prompt": "hello"}, bucket_id=0)
+
+    async def delayed_put():
+        await asyncio.sleep(0.1)
+        await client.async_put(sample_idx=0, data={"response": "world"}, bucket_id=0)
+
+    producer = asyncio.create_task(delayed_put())
+    start = time.monotonic()
+    row = await client.async_get(
+        data_fields=["prompt", "response"],
+        sample_idx=0,
+        bucket_id=0,
+        timeout=0.5,
+    )
+    elapsed = time.monotonic() - start
+    await producer
+
+    assert elapsed >= 0.09
+    assert row == {"prompt": "hello", "response": "world"}
 
 
 @pytest.mark.asyncio
-async def test_client_consumption_tracking(client):
-    """Same task_name should not receive the same sample twice."""
-    for i in range(3):
-        await client.async_put(sample_idx=i, data={"x": i})
+async def test_client_get_timeout_returns_none(client):
+    import time
 
-    batch1 = await client.async_get(
-        data_fields=["x"], batch_size=2, task_name="consumer"
+    await client.async_put(sample_idx=0, data={"prompt": "hello"}, bucket_id=0)
+    start = time.monotonic()
+    row = await client.async_get(
+        data_fields=["prompt", "response"],
+        sample_idx=0,
+        bucket_id=0,
+        timeout=0.3,
     )
-    assert len(batch1) == 2
+    elapsed = time.monotonic() - start
 
-    batch2 = await client.async_get(
-        data_fields=["x"], batch_size=2, task_name="consumer"
-    )
-    assert len(batch2) == 1
+    assert elapsed >= 0.25
+    assert row is None
 
-    batch3 = await client.async_get(
-        data_fields=["x"], batch_size=2, task_name="consumer"
-    )
-    assert len(batch3) == 0
+
+@pytest.mark.asyncio
+async def test_client_bucket_validation(client):
+    with pytest.raises(ValueError, match="bucket_id must be in"):
+        await client.async_put(sample_idx=0, data={"x": 1}, bucket_id=2)
+
+    with pytest.raises(ValueError, match="bucket_id must be in"):
+        await client.async_get(data_fields=["x"], sample_idx=0, bucket_id=-1)
 
 
 @pytest.mark.asyncio
 async def test_client_clear(client):
-    """async_clear resets all buckets."""
-    for i in range(4):
-        await client.async_put(sample_idx=i, data={"x": i})
-
+    await client.async_put(sample_idx=0, data={"x": 0}, bucket_id=0)
+    await client.async_put(sample_idx=1, data={"x": 1}, bucket_id=1)
     await client.async_clear()
-
-    samples = await client.async_get(data_fields=["x"], batch_size=10)
-    assert len(samples) == 0
+    assert await client.async_get(data_fields=["x"], sample_idx=0, bucket_id=0) is None
+    assert await client.async_get(data_fields=["x"], sample_idx=1, bucket_id=1) is None
 
 
 @pytest.mark.asyncio
 async def test_client_put_returns_meta(client):
-    """async_put returns a BatchMeta-compatible dict."""
-    meta = await client.async_put(sample_idx=42, data={"prompt": "hi"})
-    assert meta["partition_id"] == "test"
+    meta = await client.async_put(sample_idx=42, data={"prompt": "hi"}, bucket_id=1)
+    assert meta["topic"] == "test"
+    assert meta["bucket_id"] == 1
     assert meta["sample_idx"] == 42
     assert "prompt" in meta["fields"]
     assert meta["status"] == "ok"
 
 
 @pytest.mark.asyncio
-async def test_client_multi_bucket_distribution(client):
-    """Samples are sharded across buckets by sample_idx % num_buckets."""
-    # client has num_buckets=2
-    for i in range(6):
-        await client.async_put(sample_idx=i, data={"v": i})
+async def test_client_multi_bucket_isolation(client):
+    await client.async_put(sample_idx=7, data={"value": "left"}, bucket_id=0)
+    await client.async_put(sample_idx=7, data={"value": "right"}, bucket_id=1)
 
-    # Even indices (0,2,4) go to bucket 0; odd (1,3,5) go to bucket 1
-    assert 0 in client._bucket_refs
-    assert 1 in client._bucket_refs
+    left = await client.async_get(data_fields=["value"], sample_idx=7, bucket_id=0)
+    right = await client.async_get(data_fields=["value"], sample_idx=7, bucket_id=1)
+    assert left == {"value": "left"}
+    assert right == {"value": "right"}
+
+
+@pytest.mark.asyncio
+async def test_client_ring_buffer_overwrite(client):
+    await client.async_put(sample_idx=0, data={"value": "oldest"}, bucket_id=0)
+    await client.async_put(sample_idx=1, data={"value": "middle"}, bucket_id=0)
+    await client.async_put(sample_idx=2, data={"value": "newest"}, bucket_id=0)
+
+    assert (
+        await client.async_get(
+            data_fields=["value"],
+            sample_idx=0,
+            bucket_id=0,
+            timeout=0.1,
+        )
+        is None
+    )
+    assert await client.async_get(
+        data_fields=["value"],
+        sample_idx=2,
+        bucket_id=0,
+    ) == {"value": "newest"}
 
 
 @pytest.mark.asyncio
 async def test_client_concurrent_writes(client):
-    """Concurrent async_put calls should not lose data."""
-    num_samples = 20
+    async def write(idx: int):
+        await client.async_put(
+            sample_idx=idx,
+            data={"value": idx},
+            bucket_id=idx % 2,
+        )
 
-    async def write(idx):
-        await client.async_put(sample_idx=idx, data={"a": idx, "b": idx * 10})
+    await asyncio.gather(*(write(i) for i in range(4)))
+    for idx in range(4):
+        row = await client.async_get(
+            data_fields=["value"],
+            sample_idx=idx,
+            bucket_id=idx % 2,
+        )
+        assert row == {"value": idx}
 
-    await asyncio.gather(*(write(i) for i in range(num_samples)))
 
-    samples = await client.async_get(data_fields=["a", "b"], batch_size=num_samples)
-    assert len(samples) == num_samples
+@pytest.mark.asyncio
+async def test_client_capacity_mismatch_raises(actor_system):
+    from pulsing.transfer_queue.manager import ensure_storage_managers
+
+    await ensure_storage_managers(actor_system._inner)
+    client_a = AsyncTransferQueueClient(
+        topic="cfg",
+        num_buckets=1,
+        bucket_capacity=1,
+        system=actor_system._inner,
+    )
+    client_b = AsyncTransferQueueClient(
+        topic="cfg",
+        num_buckets=1,
+        bucket_capacity=3,
+        system=actor_system._inner,
+    )
+
+    await client_a.async_put(sample_idx=0, data={"x": 1}, bucket_id=0)
+    with pytest.raises(ValueError, match="different bucket_capacity"):
+        await client_b.async_put(sample_idx=1, data={"x": 2}, bucket_id=0)
+
+    await client_a.async_clear()
+
+
+def test_client_init_validation():
+    with pytest.raises(ValueError, match="num_buckets must be greater than 0"):
+        AsyncTransferQueueClient(topic="bad", num_buckets=0, bucket_capacity=1)
+
+    with pytest.raises(ValueError, match="bucket_capacity must be greater than 0"):
+        AsyncTransferQueueClient(topic="bad", num_buckets=1, bucket_capacity=0)
+
+
+def test_client_methods_require_event_loop():
+    client = AsyncTransferQueueClient(
+        topic="sync_only", num_buckets=1, bucket_capacity=1
+    )
+
+    with pytest.raises(RuntimeError, match="must run inside an event loop"):
+        client._bind_or_validate_loop()
+
+
+@pytest.mark.asyncio
+async def test_client_binds_to_first_running_loop_when_created_sync(actor_system):
+    from pulsing.transfer_queue.manager import ensure_storage_managers
+
+    await ensure_storage_managers(actor_system._inner)
+    client = await asyncio.to_thread(
+        AsyncTransferQueueClient,
+        "late_bound",
+        1,
+        2,
+        actor_system._inner,
+    )
+
+    assert client._bound_loop is None
+
+    await client.async_put(sample_idx=0, data={"value": "ok"}, bucket_id=0)
+
+    assert client._bound_loop is asyncio.get_running_loop()
+
+
+@pytest.mark.asyncio
+async def test_client_rejects_different_event_loop(client):
+    with pytest.raises(RuntimeError, match="bound to a different event loop"):
+        await asyncio.to_thread(asyncio.run, client.async_clear())
+
+
+@pytest.mark.asyncio
+async def test_client_reraises_unrelated_actor_errors(actor_system, monkeypatch):
+    async def fail_get_unit_ref(*args, **kwargs):
+        raise PulsingActorError("unexpected failure")
+
+    monkeypatch.setattr("pulsing.transfer_queue.client.get_unit_ref", fail_get_unit_ref)
+    queue_client = AsyncTransferQueueClient(
+        topic="test",
+        num_buckets=1,
+        bucket_capacity=2,
+        system=actor_system._inner,
+    )
+
+    with pytest.raises(PulsingActorError, match="unexpected failure"):
+        await queue_client._ensure_bucket(0)
 
 
 # ============================================================================
@@ -378,181 +469,170 @@ async def test_client_concurrent_writes(client):
 # ============================================================================
 
 
-def _make_sync_env():
-    """Helper: spin up a background event loop and return (loop, loop_thread, system, sync_client)."""
-    import threading
-
-    from pulsing.transfer_queue.client import (
-        AsyncTransferQueueClient,
-        TransferQueueClient,
+def _make_sync_client(topic: str = "sync_test", bucket_capacity: int = 2):
+    if pul.is_initialized():
+        pul.transfer_queue.shutdown()
+    assert not pul.is_initialized()
+    return pul.transfer_queue.get_client(
+        topic=topic,
+        num_buckets=2,
+        bucket_capacity=bucket_capacity,
     )
-    from pulsing.transfer_queue.manager import ensure_storage_managers
-
-    loop = asyncio.new_event_loop()
-    loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
-    loop_thread.start()
-
-    async def setup():
-        system = await pul.actor_system()
-        await ensure_storage_managers(system._inner)
-        inner = AsyncTransferQueueClient(
-            partition_id="sync_test",
-            num_buckets=2,
-            batch_size=10,
-            system=system._inner,
-        )
-        return system, inner
-
-    future = asyncio.run_coroutine_threadsafe(setup(), loop)
-    system, inner = future.result(timeout=10)
-    sync_client = TransferQueueClient(inner)
-    return loop, loop_thread, system, sync_client
 
 
-def _teardown_sync_env(loop, loop_thread, system):
-    """Helper: shutdown system and stop the background loop."""
-
-    async def cleanup():
-        await system.shutdown()
-
-    asyncio.run_coroutine_threadsafe(cleanup(), loop).result(timeout=10)
-    loop.call_soon_threadsafe(loop.stop)
-    loop_thread.join(timeout=5)
+def _teardown_sync_client() -> None:
+    if pul.is_initialized():
+        pul.transfer_queue.shutdown()
 
 
 def test_sync_client_put_and_get():
-    """Sync client: incremental put then get complete samples."""
-    loop, loop_thread, system, client = _make_sync_env()
+    client = _make_sync_client()
     try:
-        client.put(sample_idx=0, data={"prompt": "hello"})
-        client.put(sample_idx=0, data={"response": "world"})
-
-        samples = client.get(
-            data_fields=["prompt", "response"], batch_size=10, task_name="sync"
+        client.put(sample_idx=0, data={"prompt": "hello"}, bucket_id=1)
+        client.put(sample_idx=0, data={"response": "world"}, bucket_id=1)
+        row = client.get(
+            data_fields=["prompt", "response"],
+            sample_idx=0,
+            bucket_id=1,
         )
-        assert len(samples) == 1
-        assert samples[0]["prompt"] == "hello"
-        assert samples[0]["response"] == "world"
+        assert row == {"prompt": "hello", "response": "world"}
     finally:
-        _teardown_sync_env(loop, loop_thread, system)
+        _teardown_sync_client()
 
 
-def test_sync_client_incomplete_excluded():
-    """Sync client: incomplete samples are not returned."""
-    loop, loop_thread, system, client = _make_sync_env()
+def test_sync_client_waits_for_fields():
+    import threading
+    import time
+
+    client = _make_sync_client()
+    writer_thread = None
     try:
-        client.put(sample_idx=0, data={"prompt": "hello"})
-        # response missing
+        client.put(sample_idx=0, data={"prompt": "hello"}, bucket_id=0)
 
-        samples = client.get(data_fields=["prompt", "response"], batch_size=10)
-        assert len(samples) == 0
+        def delayed_put():
+            time.sleep(0.1)
+            client.put(sample_idx=0, data={"response": "world"}, bucket_id=0)
+
+        writer_thread = threading.Thread(target=delayed_put, daemon=True)
+        writer_thread.start()
+
+        start = time.monotonic()
+        row = client.get(
+            data_fields=["prompt", "response"],
+            sample_idx=0,
+            bucket_id=0,
+            timeout=0.5,
+        )
+        elapsed = time.monotonic() - start
+
+        assert elapsed >= 0.09
+        assert row == {"prompt": "hello", "response": "world"}
     finally:
-        _teardown_sync_env(loop, loop_thread, system)
+        if writer_thread is not None:
+            writer_thread.join(timeout=1)
+        _teardown_sync_client()
 
 
-def test_sync_client_batch_size():
-    """Sync client: get respects batch_size."""
-    loop, loop_thread, system, client = _make_sync_env()
+def test_sync_client_timeout_returns_none():
+    client = _make_sync_client()
     try:
-        for i in range(5):
-            client.put(sample_idx=i, data={"a": i, "b": i})
-
-        samples = client.get(data_fields=["a", "b"], batch_size=3)
-        assert len(samples) == 3
+        client.put(sample_idx=0, data={"prompt": "hello"}, bucket_id=0)
+        row = client.get(
+            data_fields=["prompt", "response"],
+            sample_idx=0,
+            bucket_id=0,
+            timeout=0.1,
+        )
+        assert row is None
     finally:
-        _teardown_sync_env(loop, loop_thread, system)
+        _teardown_sync_client()
 
 
-def test_sync_client_consumption_tracking():
-    """Sync client: same task_name does not receive the same sample twice."""
-    loop, loop_thread, system, client = _make_sync_env()
+def test_sync_client_wrong_bucket_returns_none():
+    client = _make_sync_client()
     try:
-        for i in range(4):
-            client.put(sample_idx=i, data={"x": i})
-
-        batch1 = client.get(data_fields=["x"], batch_size=2, task_name="c1")
-        assert len(batch1) == 2
-
-        batch2 = client.get(data_fields=["x"], batch_size=2, task_name="c1")
-        assert len(batch2) == 2
-
-        batch3 = client.get(data_fields=["x"], batch_size=2, task_name="c1")
-        assert len(batch3) == 0
+        client.put(sample_idx=0, data={"value": "bucket-1"}, bucket_id=1)
+        row = client.get(
+            data_fields=["value"],
+            sample_idx=0,
+            bucket_id=0,
+            timeout=0.1,
+        )
+        assert row is None
     finally:
-        _teardown_sync_env(loop, loop_thread, system)
+        _teardown_sync_client()
 
 
-def test_sync_client_multi_bucket():
-    """Sync client: data is sharded across buckets."""
-    loop, loop_thread, system, client = _make_sync_env()
+def test_sync_client_bucket_validation():
+    client = _make_sync_client()
     try:
-        # num_buckets=2, so even/odd go to different buckets
-        for i in range(6):
-            client.put(sample_idx=i, data={"v": i})
+        with pytest.raises(ValueError, match="bucket_id must be in"):
+            client.put(sample_idx=0, data={"x": 1}, bucket_id=2)
 
-        samples = client.get(data_fields=["v"], batch_size=10)
-        assert len(samples) == 6
-        values = sorted(s["v"] for s in samples)
-        assert values == list(range(6))
+        with pytest.raises(ValueError, match="bucket_id must be in"):
+            client.get(data_fields=["x"], sample_idx=0, bucket_id=-1)
     finally:
-        _teardown_sync_env(loop, loop_thread, system)
+        _teardown_sync_client()
 
 
 def test_sync_client_clear():
-    """Sync client: clear resets all data."""
-    loop, loop_thread, system, client = _make_sync_env()
+    client = _make_sync_client()
     try:
-        for i in range(3):
-            client.put(sample_idx=i, data={"x": i})
-
+        client.put(sample_idx=0, data={"x": 0}, bucket_id=0)
+        client.put(sample_idx=1, data={"x": 1}, bucket_id=1)
         client.clear()
-
-        samples = client.get(data_fields=["x"], batch_size=10)
-        assert len(samples) == 0
+        assert client.get(data_fields=["x"], sample_idx=0, bucket_id=0) is None
+        assert client.get(data_fields=["x"], sample_idx=1, bucket_id=1) is None
     finally:
-        _teardown_sync_env(loop, loop_thread, system)
+        _teardown_sync_client()
 
 
 def test_sync_client_put_returns_meta():
-    """Sync client: put returns a BatchMeta-compatible dict."""
-    loop, loop_thread, system, client = _make_sync_env()
+    client = _make_sync_client()
     try:
-        meta = client.put(sample_idx=7, data={"prompt": "hi"})
-        assert meta["partition_id"] == "sync_test"
+        meta = client.put(sample_idx=7, data={"prompt": "hi"}, bucket_id=1)
+        assert meta["topic"] == "sync_test"
+        assert meta["bucket_id"] == 1
         assert meta["sample_idx"] == 7
         assert "prompt" in meta["fields"]
-        assert meta["status"] == "ok"
     finally:
-        _teardown_sync_env(loop, loop_thread, system)
+        _teardown_sync_client()
 
 
-def test_sync_client_partition_id():
-    """Sync client: partition_id property is accessible."""
-    loop, loop_thread, system, client = _make_sync_env()
+def test_sync_client_topic_property():
+    client = _make_sync_client()
     try:
-        assert client.partition_id == "sync_test"
+        assert client.topic == "sync_test"
     finally:
-        _teardown_sync_env(loop, loop_thread, system)
+        _teardown_sync_client()
+
+
+# ============================================================================
+# Runtime / Factory Tests
+# ============================================================================
 
 
 @pytest.mark.asyncio
 async def test_async_client_auto_initializes_global_system():
-    """Async client should lazily initialize Pulsing on first use."""
     assert not pul.is_initialized()
 
-    client = pul.transfer_queue.get_async_client(
-        partition_id="auto_async", num_buckets=2, batch_size=10
+    client = await pul.transfer_queue.get_async_client(
+        topic="auto_async",
+        num_buckets=2,
+        bucket_capacity=2,
     )
+    assert pul.is_initialized()
+    assert await _resolve_local_storage_manager() is not None
 
     try:
-        await client.async_put(sample_idx=0, data={"prompt": "hello"})
-        await client.async_put(sample_idx=0, data={"response": "world"})
-
-        samples = await client.async_get(
-            data_fields=["prompt", "response"], batch_size=10, task_name="auto"
+        await client.async_put(sample_idx=0, data={"prompt": "hello"}, bucket_id=0)
+        await client.async_put(sample_idx=0, data={"response": "world"}, bucket_id=0)
+        row = await client.async_get(
+            data_fields=["prompt", "response"],
+            sample_idx=0,
+            bucket_id=0,
         )
-        assert len(samples) == 1
-        assert samples[0] == {"prompt": "hello", "response": "world"}
+        assert row == {"prompt": "hello", "response": "world"}
         assert pul.is_initialized()
     finally:
         if pul.is_initialized():
@@ -560,27 +640,30 @@ async def test_async_client_auto_initializes_global_system():
 
 
 def test_get_client_auto_initializes_and_shutdown_cleans_up():
-    """Sync get_client should auto-init and transfer_queue.shutdown should clean up."""
     import pulsing._runtime as runtime
 
     assert not pul.is_initialized()
 
     client = pul.transfer_queue.get_client(
-        partition_id="auto_sync", num_buckets=2, batch_size=10
+        topic="auto_sync",
+        num_buckets=2,
+        bucket_capacity=2,
     )
 
     try:
-        client.put(sample_idx=0, data={"prompt": "hello"})
-        client.put(sample_idx=0, data={"response": "world"})
-
-        samples = client.get(
-            data_fields=["prompt", "response"], batch_size=10, task_name="auto"
+        assert _resolve_local_storage_manager_sync() is not None
+        client.put(sample_idx=0, data={"prompt": "hello"}, bucket_id=0)
+        client.put(sample_idx=0, data={"response": "world"}, bucket_id=0)
+        row = client.get(
+            data_fields=["prompt", "response"],
+            sample_idx=0,
+            bucket_id=0,
         )
-        assert len(samples) == 1
-        assert samples[0] == {"prompt": "hello", "response": "world"}
+        assert row == {"prompt": "hello", "response": "world"}
         assert pul.is_initialized()
         assert runtime.owns_system() is True
         assert get_shared_loop() is not None
+        assert get_pulsing_loop() is get_shared_loop()
     finally:
         pul.transfer_queue.shutdown()
 
@@ -591,27 +674,33 @@ def test_get_client_auto_initializes_and_shutdown_cleans_up():
 
 @pytest.mark.asyncio
 async def test_get_client_reuses_explicit_init_loop_without_module_runtime():
-    """Sync client should reuse an explicitly initialized global system."""
     import pulsing._runtime as runtime
 
     await pul.init()
 
     try:
-        client = pul.transfer_queue.get_client(
-            partition_id="reuse_sync", num_buckets=2, batch_size=10
+        client = await asyncio.to_thread(
+            pul.transfer_queue.get_client,
+            topic="reuse_sync",
+            num_buckets=2,
+            bucket_capacity=2,
+        )
+        assert await _wait_for_local_storage_manager() is not None
+
+        await asyncio.to_thread(
+            client.put, sample_idx=0, data={"prompt": "hello"}, bucket_id=0
+        )
+        await asyncio.to_thread(
+            client.put, sample_idx=0, data={"response": "world"}, bucket_id=0
         )
 
-        await asyncio.to_thread(client.put, sample_idx=0, data={"prompt": "hello"})
-        await asyncio.to_thread(client.put, sample_idx=0, data={"response": "world"})
-
-        samples = await asyncio.to_thread(
+        row = await asyncio.to_thread(
             client.get,
             data_fields=["prompt", "response"],
-            batch_size=10,
-            task_name="reuse",
+            sample_idx=0,
+            bucket_id=0,
         )
-        assert len(samples) == 1
-        assert samples[0] == {"prompt": "hello", "response": "world"}
+        assert row == {"prompt": "hello", "response": "world"}
         assert get_shared_loop() is None
         assert runtime.owns_system() is False
     finally:
@@ -620,48 +709,45 @@ async def test_get_client_reuses_explicit_init_loop_without_module_runtime():
 
 
 @pytest.mark.asyncio
-async def test_get_client_same_thread_async_before_init_raises():
-    with pytest.raises(
-        RuntimeError, match="sync auto-init cannot run on the same thread"
-    ):
-        pul.transfer_queue.get_client(
-            partition_id="before_init_same_thread",
-            num_buckets=1,
-            batch_size=10,
-        )
-
-
-@pytest.mark.asyncio
-async def test_sync_client_same_loop_fast_fail():
-    """Sync client should fail fast when called on the owning event loop."""
-    await pul.init()
+async def test_get_client_same_thread_async_before_init_rejects_direct_call():
+    import pulsing._runtime as runtime
 
     try:
-        client = pul.transfer_queue.get_client(
-            partition_id="same_loop", num_buckets=1, batch_size=10
-        )
+        with pytest.raises(
+            RuntimeError, match="cannot be called from an active event loop"
+        ):
+            pul.transfer_queue.get_client(
+                topic="before_init_same_thread",
+                num_buckets=1,
+                bucket_capacity=2,
+            )
 
-        with pytest.raises(RuntimeError, match="cannot block on the same event loop"):
-            client.put(sample_idx=0, data={"prompt": "hello"})
+        assert not pul.is_initialized()
+        assert runtime.owns_system() is False
+        assert get_shared_loop() is None
+        assert get_pulsing_loop() is None
     finally:
         if pul.is_initialized():
-            await pul.shutdown()
+            pul.transfer_queue.shutdown()
 
 
 def test_async_auto_initialized_runtime_can_cleanup_without_public_shutdown():
-    """Async auto-init should not require calling pul.transfer_queue.shutdown()."""
     import pulsing._runtime as runtime
 
     async def main():
-        client = pul.transfer_queue.get_async_client(
-            partition_id="auto_async_cleanup", num_buckets=2, batch_size=10
+        client = await pul.transfer_queue.get_async_client(
+            topic="auto_async_cleanup",
+            num_buckets=2,
+            bucket_capacity=2,
         )
-        await client.async_put(sample_idx=0, data={"prompt": "hello"})
-        await client.async_put(sample_idx=0, data={"response": "world"})
-        rows = await client.async_get(
-            data_fields=["prompt", "response"], batch_size=10, task_name="cleanup"
+        await client.async_put(sample_idx=0, data={"prompt": "hello"}, bucket_id=0)
+        await client.async_put(sample_idx=0, data={"response": "world"}, bucket_id=0)
+        row = await client.async_get(
+            data_fields=["prompt", "response"],
+            sample_idx=0,
+            bucket_id=0,
         )
-        assert rows == [{"prompt": "hello", "response": "world"}]
+        assert row == {"prompt": "hello", "response": "world"}
 
     try:
         asyncio.run(main())

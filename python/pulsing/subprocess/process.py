@@ -6,6 +6,7 @@ import asyncio
 import subprocess
 
 import pulsing as pul
+from pulsing._async_bridge import run_sync
 
 
 @pul.remote
@@ -197,8 +198,8 @@ class ProcessActor:
 # stdin / stdout / stderr proxy objects
 #
 # subprocess.Popen exposes .stdin / .stdout / .stderr as file-like objects.
-# These proxies replicate that interface, forwarding each call to the
-# corresponding actor method via an injected run_sync function.
+# These proxies replicate that interface, forwarding each call through the
+# shared Pulsing sync bridge.
 #
 #     proc.stdin.write(b"hello")
 #     proc.stdin.close()
@@ -209,64 +210,61 @@ class ProcessActor:
 class _StdinProxy:
     """Mirrors proc.stdin: write / flush / close / fileno."""
 
-    def __init__(self, actor_proxy, run_sync):
+    def __init__(self, actor_proxy):
         self._proxy = actor_proxy
-        self._run_sync = run_sync
 
     def write(self, data: bytes | str) -> None:
-        self._run_sync(self._proxy.stdin_write(data))
+        run_sync(self._proxy.stdin_write(data))
 
     def flush(self) -> None:
-        self._run_sync(self._proxy.stdin_flush())
+        run_sync(self._proxy.stdin_flush())
 
     def close(self) -> None:
-        self._run_sync(self._proxy.stdin_close())
+        run_sync(self._proxy.stdin_close())
 
     def fileno(self) -> int | None:
-        return self._run_sync(self._proxy.stdin_fileno())
+        return run_sync(self._proxy.stdin_fileno())
 
 
 class _StdoutProxy:
     """Mirrors proc.stdout: read / readline / readlines / close / fileno."""
 
-    def __init__(self, actor_proxy, run_sync):
+    def __init__(self, actor_proxy):
         self._proxy = actor_proxy
-        self._run_sync = run_sync
 
     def read(self, n: int = -1) -> bytes | None:
-        return self._run_sync(self._proxy.stdout_read(n))
+        return run_sync(self._proxy.stdout_read(n))
 
     def readline(self) -> bytes | None:
-        return self._run_sync(self._proxy.stdout_readline())
+        return run_sync(self._proxy.stdout_readline())
 
     def readlines(self) -> list | None:
-        return self._run_sync(self._proxy.stdout_readlines())
+        return run_sync(self._proxy.stdout_readlines())
 
     def close(self) -> None:
-        self._run_sync(self._proxy.stdout_close())
+        run_sync(self._proxy.stdout_close())
 
     def fileno(self) -> int | None:
-        return self._run_sync(self._proxy.stdout_fileno())
+        return run_sync(self._proxy.stdout_fileno())
 
 
 class _StderrProxy:
     """Mirrors proc.stderr: read / readline / readlines / close / fileno."""
 
-    def __init__(self, actor_proxy, run_sync):
+    def __init__(self, actor_proxy):
         self._proxy = actor_proxy
-        self._run_sync = run_sync
 
     def read(self, n: int = -1) -> bytes | None:
-        return self._run_sync(self._proxy.stderr_read(n))
+        return run_sync(self._proxy.stderr_read(n))
 
     def readline(self) -> bytes | None:
-        return self._run_sync(self._proxy.stderr_readline())
+        return run_sync(self._proxy.stderr_readline())
 
     def readlines(self) -> list | None:
-        return self._run_sync(self._proxy.stderr_readlines())
+        return run_sync(self._proxy.stderr_readlines())
 
     def close(self) -> None:
-        self._run_sync(self._proxy.stderr_close())
+        run_sync(self._proxy.stderr_close())
 
     def fileno(self) -> int | None:
-        return self._run_sync(self._proxy.stderr_fileno())
+        return run_sync(self._proxy.stderr_fileno())

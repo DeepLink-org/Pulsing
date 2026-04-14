@@ -28,7 +28,7 @@ except ImportError:
         "pulsing.integrations.ray requires Ray. Install with: pip install 'ray[default]'"
     )
 
-from pulsing._async_bridge import submit_on_shared_loop
+from pulsing._async_bridge import run_sync
 
 _SEED_KEY = "pulsing:seed_addr"
 
@@ -88,22 +88,18 @@ def init_in_ray():
     # Seed exists -> join directly
     seed_addr = _get_seed()
     if seed_addr is not None:
-        return submit_on_shared_loop(
-            _do_init(f"{node_ip}:0", seeds=[seed_addr]), timeout=30
-        )
+        return run_sync(_do_init(f"{node_ip}:0", seeds=[seed_addr]), timeout=30)
 
     # Start as potential seed
-    system = submit_on_shared_loop(_do_init(f"{node_ip}:0"), timeout=30)
+    system = run_sync(_do_init(f"{node_ip}:0"), timeout=30)
     my_addr = str(system.addr)
 
     if _try_set_seed(my_addr):
         return system  # Write succeeded, I am seed
 
     # Race lost (rare), re-join with actual seed
-    submit_on_shared_loop(_do_shutdown(), timeout=30)
-    return submit_on_shared_loop(
-        _do_init(f"{node_ip}:0", seeds=[_get_seed()]), timeout=30
-    )
+    run_sync(_do_shutdown(), timeout=30)
+    return run_sync(_do_init(f"{node_ip}:0", seeds=[_get_seed()]), timeout=30)
 
 
 async def async_init_in_ray():

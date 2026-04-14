@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Transfer Queue (sync client) example — using TransferQueueClient from plain threads.
-
-Shows how to use the synchronous TransferQueueClient when the caller code is
-plain synchronous Python (e.g. a training loop, a data-loading worker thread).
+"""Transfer Queue sync example - exact reads from synchronous code.
 
 Usage:
     python examples/python/transfer_queue_sync.py
@@ -19,66 +16,70 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    logger.info("=== Transfer Queue Sync Client Example ===\n")
+    logger.info("=== Transfer Queue Sync Example ===\n")
 
     try:
-        # 1) Get a sync client. transfer_queue bootstraps Pulsing internally.
         client = pul.transfer_queue.get_client(
-            partition_id="demo_sync", num_buckets=2, batch_size=4
+            topic="demo_sync",
+            num_buckets=2,
+            bucket_capacity=2,
         )
-        logger.info("Transfer queue client created (2 buckets, batch_size=4)\n")
+        logger.info("Transfer queue client created (2 buckets, bucket_capacity=2)\n")
 
-        # --- Phase 1: Simulate inference producing prompts ---
-        logger.info("--- Phase 1: Writing prompts ---")
-        for i in range(6):
-            meta = client.put(sample_idx=i, data={"prompt": f"Question {i}"})
-            logger.info(f"  sample {i}: wrote prompt, fields={meta['fields']}")
+        logger.info("--- Phase 1: Incremental writes into bucket 1 ---")
+        meta = client.put(sample_idx=0, data={"prompt": "Question 0"}, bucket_id=1)
+        logger.info("sample 0 prompt write: %s", meta)
 
-        # Try to read — samples are incomplete (no response yet)
-        incomplete = client.get(
-            data_fields=["prompt", "response"], batch_size=10, task_name="train"
+        missing = client.get(
+            data_fields=["prompt", "response"],
+            sample_idx=0,
+            bucket_id=1,
+            timeout=0.1,
         )
-        logger.info(
-            f"\nAfter prompts only: {len(incomplete)} complete samples (expected 0)\n"
-        )
+        logger.info("before response arrives: %s", missing)
 
-        # --- Phase 2: Simulate inference producing responses ---
-        logger.info("--- Phase 2: Writing responses ---")
-        for i in range(6):
-            meta = client.put(sample_idx=i, data={"response": f"Answer {i}"})
-            logger.info(f"  sample {i}: wrote response, fields={meta['fields']}")
+        meta = client.put(sample_idx=0, data={"response": "Answer 0"}, bucket_id=1)
+        logger.info("sample 0 response write: %s", meta)
 
-        # --- Phase 3: Consume complete samples in batches ---
-        logger.info("\n--- Phase 3: Consuming complete samples ---")
-        batch1 = client.get(
-            data_fields=["prompt", "response"], batch_size=4, task_name="train"
+        row = client.get(
+            data_fields=["prompt", "response"],
+            sample_idx=0,
+            bucket_id=1,
+            timeout=1.0,
         )
-        logger.info(f"Batch 1 ({len(batch1)} samples):")
-        for s in batch1:
-            logger.info(f"  prompt={s['prompt']!r}, response={s['response']!r}")
+        logger.info("exact read from bucket 1: %s", row)
 
-        batch2 = client.get(
-            data_fields=["prompt", "response"], batch_size=4, task_name="train"
+        logger.info("\n--- Phase 2: Reads are bucket-local ---")
+        wrong_bucket = client.get(
+            data_fields=["prompt", "response"],
+            sample_idx=0,
+            bucket_id=0,
+            timeout=0.1,
         )
-        logger.info(f"Batch 2 ({len(batch2)} samples):")
-        for s in batch2:
-            logger.info(f"  prompt={s['prompt']!r}, response={s['response']!r}")
+        logger.info("same sample_idx from bucket 0: %s", wrong_bucket)
 
-        # --- Phase 4: Independent consumer reads the same data ---
-        logger.info("\n--- Phase 4: Independent consumer (different task_name) ---")
-        eval_batch = client.get(
-            data_fields=["prompt", "response"], batch_size=10, task_name="eval"
-        )
-        logger.info(
-            f"Eval consumer got {len(eval_batch)} samples "
-            f"(same data, independent tracking)"
-        )
+        logger.info("\n--- Phase 3: Ring buffer overwrite ---")
+        client.put(sample_idx=10, data={"value": "oldest"}, bucket_id=0)
+        client.put(sample_idx=11, data={"value": "middle"}, bucket_id=0)
+        client.put(sample_idx=12, data={"value": "newest"}, bucket_id=0)
 
-        # --- Cleanup ---
+        evicted = client.get(
+            data_fields=["value"],
+            sample_idx=10,
+            bucket_id=0,
+            timeout=0.1,
+        )
+        newest = client.get(
+            data_fields=["value"],
+            sample_idx=12,
+            bucket_id=0,
+            timeout=0.1,
+        )
+        logger.info("evicted sample 10: %s", evicted)
+        logger.info("newest sample 12: %s", newest)
+
         client.clear()
         logger.info("\nCleared all data")
-        logger.info("Example completed!")
-
     finally:
         logger.info("Example finished (transfer_queue runtime cleanup is automatic)")
 

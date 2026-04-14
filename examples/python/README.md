@@ -24,6 +24,10 @@ python examples/python/native_async_example.py
 
 在 Ray 中希望使用 Pulsing 做通信时，请用 **Bridge 模式**（保留 Ray 调度，用 `pul.mount()` 将现有对象挂到 Pulsing 网络），或参考文档 [Tutorial: Ray + Pulsing](../../docs/src/quickstart/migrate_from_ray.md)。Ray 风格兼容层（`pulsing.compat.ray`）已移除，推荐使用原生 `await pul.init()` + `@pul.remote` 或 Bridge 模式。
 
+```bash
+python examples/python/transfer_queue_ray_rollout.py  # Ray rollout -> 3 transfer_queue buckets -> 3 trainer ranks
+```
+
 ### 基础示例
 
 ```bash
@@ -34,6 +38,11 @@ python examples/python/cluster.py          # Multi-node (see --help)
 python examples/python/subprocess_example.py            # Native subprocess-compatible API
 USE_POLSING_SUBPROCESS=1 python examples/python/subprocess_example.py --resources  # Pulsing backend
 ```
+
+同步包装器说明：
+
+- `transfer_queue.get_client()`、`queue.sync()`、`pulsing.subprocess` 的 Pulsing 后端都依赖 Pulsing 自己维护的 event loop。
+- 这些同步 API 应该从同步代码或另一个线程里调用；如果当前已经在 async / Pulsing event loop 线程里，请改用 async API，或者放到 `asyncio.to_thread(...)` 里。
 
 ## API 选择
 

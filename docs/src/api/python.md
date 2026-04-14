@@ -34,6 +34,17 @@ pip install -e .
 
 ::: pulsing.streaming
 
+## Sync API Event Loop Requirements
+
+Pulsing's synchronous wrappers, including `transfer_queue.get_client()`,
+`queue.sync()` / `reader.sync()`, and the Pulsing-backed path in
+`pulsing.subprocess`, submit work onto a dedicated Pulsing event loop.
+
+- Call them from synchronous code, or from another thread.
+- Do not call them from the active async / Pulsing event loop thread.
+- In async code, prefer the native async APIs, or move the sync entrypoint and
+  subsequent sync calls into `asyncio.to_thread(...)`.
+
 ## Subprocess Module
 
 `pulsing.subprocess` provides a subprocess-compatible synchronous API.

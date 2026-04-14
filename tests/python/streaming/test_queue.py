@@ -16,10 +16,12 @@ import hashlib
 import shutil
 import tempfile
 import time
+from types import SimpleNamespace
 
 import pytest
 
 import pulsing as pul
+import pulsing.streaming.sync_queue as sync_queue_module
 from pulsing.streaming import (
     BucketStorage,
     Queue,
@@ -651,222 +653,223 @@ async def test_bucket_storage_put_batch(actor_system, temp_storage_path):
 # ============================================================================
 
 
-def test_sync_queue_standalone():
-    """Test sync queue wrapper.
-
-    Note: Sync wrappers are designed for non-async code. Event loop runs
-    in background thread while sync operations are called from main thread.
-    """
-    import tempfile
-    import shutil
-    import threading
-
-    temp_dir = tempfile.mkdtemp(prefix="sync_test_")
-
-    try:
-        # Create event loop in background thread
-        loop = asyncio.new_event_loop()
-        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
-        loop_thread.start()
-
-        try:
-            # Setup in background loop
-            async def setup():
-                import pulsing as pul
-                from pulsing.streaming import write_queue, read_queue
-
-                system = await pul.actor_system()
-                writer = await write_queue(
-                    system,
-                    "sync_test",
-                    bucket_column="id",
-                    num_buckets=2,
-                    batch_size=10,
-                    storage_path=temp_dir,
-                )
-                reader = await read_queue(
-                    system, "sync_test", num_buckets=2, storage_path=temp_dir
-                )
-                return system, writer, reader
-
-            future = asyncio.run_coroutine_threadsafe(setup(), loop)
-            system, writer, reader = future.result(timeout=10)
-
-            # Get sync wrappers (they will use the background loop)
-            sync_writer = writer.sync()
-            sync_reader = reader.sync()
-
-            # Test sync put (from main thread)
-            for i in range(5):
-                result = sync_writer.put({"id": f"sync_{i}", "value": i})
-                assert result["status"] == "ok"
-
-            sync_writer.flush()
-
-            # Test sync get
-            records = sync_reader.get(limit=10)
-            assert len(records) == 5
-
-            # Cleanup
-            async def cleanup():
-                await system.shutdown()
-
-            future = asyncio.run_coroutine_threadsafe(cleanup(), loop)
-            future.result(timeout=10)
-
-        finally:
-            loop.call_soon_threadsafe(loop.stop)
-            loop_thread.join(timeout=5)
-
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def test_sync_writer_reader_standalone():
-    """Test SyncQueue (write) and SyncQueueReader."""
-    import tempfile
-    import shutil
-    import threading
-
-    temp_dir = tempfile.mkdtemp(prefix="sync_wr_test_")
-
-    try:
-        loop = asyncio.new_event_loop()
-        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
-        loop_thread.start()
-
-        try:
-
-            async def setup():
-                import pulsing as pul
-                from pulsing.streaming import write_queue, read_queue
-
-                system = await pul.actor_system()
-                writer = await write_queue(
-                    system,
-                    "sync_wr",
-                    bucket_column="id",
-                    num_buckets=2,
-                    batch_size=10,
-                    storage_path=temp_dir,
-                )
-                reader = await read_queue(
-                    system, "sync_wr", num_buckets=2, storage_path=temp_dir
-                )
-                return system, writer, reader
-
-            future = asyncio.run_coroutine_threadsafe(setup(), loop)
-            system, writer, reader = future.result(timeout=10)
-
-            sync_writer = writer.sync()
-            sync_reader = reader.sync()
-
-            # Write
-            for i in range(10):
-                sync_writer.put({"id": f"item_{i}", "data": f"value_{i}"})
-            sync_writer.flush()
-
-            # Read
-            records = sync_reader.get(limit=20)
-            assert len(records) == 10
-
-            ids = {r["id"] for r in records}
-            assert ids == {f"item_{i}" for i in range(10)}
-
-            # Cleanup
-            async def cleanup():
-                await system.shutdown()
-
-            future = asyncio.run_coroutine_threadsafe(cleanup(), loop)
-            future.result(timeout=10)
-
-        finally:
-            loop.call_soon_threadsafe(loop.stop)
-            loop_thread.join(timeout=5)
-
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def test_sync_reader_offset_standalone():
-    """Test SyncQueueReader offset management."""
-    import tempfile
-    import shutil
-    import threading
-
-    temp_dir = tempfile.mkdtemp(prefix="sync_offset_test_")
-
-    try:
-        loop = asyncio.new_event_loop()
-        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
-        loop_thread.start()
-
-        try:
-
-            async def setup():
-                import pulsing as pul
-                from pulsing.streaming import write_queue, read_queue
-
-                system = await pul.actor_system()
-                writer = await write_queue(
-                    system,
-                    "offset_test",
-                    bucket_column="id",
-                    num_buckets=1,
-                    batch_size=100,
-                    storage_path=temp_dir,
-                )
-                reader = await read_queue(
-                    system, "offset_test", num_buckets=1, storage_path=temp_dir
-                )
-                return system, writer, reader
-
-            future = asyncio.run_coroutine_threadsafe(setup(), loop)
-            system, writer, reader = future.result(timeout=10)
-
-            sync_writer = writer.sync()
-            sync_reader = reader.sync()
-
-            # Write 10 records
-            for i in range(10):
-                sync_writer.put({"id": "same_key", "seq": i})
-            sync_writer.flush()
-
-            # Read first 5
-            records1 = sync_reader.get(limit=5)
-            assert len(records1) == 5
-
-            # Read next 5
-            records2 = sync_reader.get(limit=5)
-            assert len(records2) == 5
-
-            # Reset and read all
-            sync_reader.reset()
-            all_records = sync_reader.get(limit=20)
-            assert len(all_records) == 10
-
-            # Cleanup
-            async def cleanup():
-                await system.shutdown()
-
-            future = asyncio.run_coroutine_threadsafe(cleanup(), loop)
-            future.result(timeout=10)
-
-        finally:
-            loop.call_soon_threadsafe(loop.stop)
-            loop_thread.join(timeout=5)
-
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+@pytest.mark.asyncio
+async def test_sync_queue_requires_global_runtime(queue):
+    """Standalone actor_system() queues should not expose sync wrappers."""
+    with pytest.raises(RuntimeError, match="require the global Pulsing runtime"):
+        queue.sync()
 
 
 @pytest.mark.asyncio
-async def test_sync_queue_same_loop_fast_fail(queue):
-    """Sync queue wrapper should fail fast on its owning event loop."""
-    sync_queue = queue.sync()
+async def test_sync_writer_reader_use_global_bridge(temp_storage_path):
+    """Sync queue wrappers should work on the global Pulsing bridge."""
+    await pul.init()
 
-    with pytest.raises(RuntimeError, match="cannot block on the same event loop"):
-        sync_queue.put({"id": "same_loop", "value": 1})
+    try:
+        writer = await write_queue(
+            pul.get_system(),
+            "sync_global",
+            bucket_column="id",
+            num_buckets=2,
+            batch_size=10,
+            storage_path=temp_storage_path,
+        )
+        reader = await read_queue(
+            pul.get_system(),
+            "sync_global",
+            num_buckets=2,
+            storage_path=temp_storage_path,
+        )
+
+        sync_writer = writer.sync()
+        sync_reader = reader.sync()
+
+        for i in range(10):
+            result = await asyncio.to_thread(
+                sync_writer.put, {"id": f"item_{i}", "data": f"value_{i}"}
+            )
+            assert result["status"] == "ok"
+        await asyncio.to_thread(sync_writer.flush)
+
+        records = await asyncio.to_thread(sync_reader.get, 20)
+        assert len(records) == 10
+        ids = {r["id"] for r in records}
+        assert ids == {f"item_{i}" for i in range(10)}
+    finally:
+        if pul.is_initialized():
+            await pul.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_sync_reader_offset_uses_global_bridge(temp_storage_path):
+    """SyncQueueReader offset helpers should work with the global bridge."""
+    await pul.init()
+
+    try:
+        writer = await write_queue(
+            pul.get_system(),
+            "offset_test",
+            bucket_column="id",
+            num_buckets=1,
+            batch_size=100,
+            storage_path=temp_storage_path,
+        )
+        reader = await read_queue(
+            pul.get_system(),
+            "offset_test",
+            num_buckets=1,
+            storage_path=temp_storage_path,
+        )
+
+        sync_writer = writer.sync()
+        sync_reader = reader.sync()
+
+        for i in range(10):
+            result = await asyncio.to_thread(
+                sync_writer.put, {"id": "same_key", "seq": i}
+            )
+            assert result["status"] == "ok"
+        await asyncio.to_thread(sync_writer.flush)
+
+        records1 = await asyncio.to_thread(sync_reader.get, 5)
+        assert len(records1) == 5
+
+        records2 = await asyncio.to_thread(sync_reader.get, 5)
+        assert len(records2) == 5
+
+        sync_reader.reset()
+        all_records = await asyncio.to_thread(sync_reader.get, 20)
+        assert len(all_records) == 10
+    finally:
+        if pul.is_initialized():
+            await pul.shutdown()
+
+
+def test_sync_queue_get_and_stats_use_bridge(monkeypatch):
+    class FakeBucket:
+        def __init__(self, bucket_id: int):
+            self.bucket_id = bucket_id
+
+        async def stats(self):
+            return {"bucket_id": self.bucket_id, "count": self.bucket_id + 1}
+
+    class FakeQueueImpl:
+        def __init__(self):
+            self.get_calls = []
+
+        async def get(self, bucket_id, limit, offset, wait, timeout):
+            self.get_calls.append((bucket_id, limit, offset, wait, timeout))
+            return [{"bucket_id": bucket_id, "limit": limit, "offset": offset}]
+
+        async def _ensure_bucket(self, bucket_id):
+            return FakeBucket(bucket_id)
+
+    fake_queue = SimpleNamespace(
+        system=object(),
+        topic="sync_unit",
+        bucket_column="id",
+        num_buckets=2,
+        batch_size=10,
+        storage_path="/tmp/sync_queue_unit",
+        backend="memory",
+        backend_options={},
+    )
+    impl = FakeQueueImpl()
+
+    monkeypatch.setattr(
+        sync_queue_module, "_ensure_global_runtime", lambda system: None
+    )
+    monkeypatch.setattr(
+        sync_queue_module, "run_sync", lambda awaitable: asyncio.run(awaitable)
+    )
+    monkeypatch.setattr(
+        sync_queue_module.SyncQueue,
+        "_make_queue",
+        lambda self: impl,
+    )
+
+    sync_queue = sync_queue_module.SyncQueue(fake_queue)
+
+    rows = sync_queue.get(bucket_id=1, limit=2, offset=3, wait=True, timeout=0.4)
+    stats = sync_queue.stats()
+
+    assert rows == [{"bucket_id": 1, "limit": 2, "offset": 3}]
+    assert impl.get_calls == [(1, 2, 3, True, 0.4)]
+    assert stats == {
+        "topic": "sync_unit",
+        "bucket_column": "id",
+        "num_buckets": 2,
+        "buckets": {
+            0: {"bucket_id": 0, "count": 1},
+            1: {"bucket_id": 1, "count": 2},
+        },
+    }
+
+
+def test_sync_queue_reader_set_offset_updates_all_buckets(monkeypatch):
+    fake_queue = SimpleNamespace(
+        system=object(),
+        topic="sync_unit",
+        bucket_column="id",
+        num_buckets=3,
+        batch_size=10,
+        storage_path="/tmp/sync_queue_unit",
+        backend="memory",
+        backend_options={},
+    )
+    fake_reader = SimpleNamespace(queue=fake_queue, bucket_ids=None, _offsets={})
+
+    monkeypatch.setattr(
+        sync_queue_module, "_ensure_global_runtime", lambda system: None
+    )
+
+    reader = sync_queue_module.SyncQueueReader(fake_reader)
+    reader.set_offset(7)
+
+    assert reader._offsets == {0: 7, 1: 7, 2: 7}
+
+
+def test_sync_queue_rejects_non_global_system(monkeypatch):
+    local_system = object()
+    global_system = object()
+    fake_queue = SimpleNamespace(
+        system=local_system,
+        topic="sync_unit",
+        bucket_column="id",
+        num_buckets=1,
+        batch_size=10,
+        storage_path="/tmp/sync_queue_unit",
+        backend="memory",
+        backend_options={},
+    )
+
+    monkeypatch.setattr(pul, "is_initialized", lambda: True)
+    monkeypatch.setattr(pul, "get_system", lambda: global_system)
+    monkeypatch.setattr(sync_queue_module, "get_loop", lambda: object())
+
+    with pytest.raises(RuntimeError, match="require the global Pulsing runtime"):
+        sync_queue_module.SyncQueue(fake_queue)
+
+
+def test_sync_queue_rejects_missing_dispatch_loop(monkeypatch):
+    system = object()
+    fake_queue = SimpleNamespace(
+        system=system,
+        topic="sync_unit",
+        bucket_column="id",
+        num_buckets=1,
+        batch_size=10,
+        storage_path="/tmp/sync_queue_unit",
+        backend="memory",
+        backend_options={},
+    )
+
+    monkeypatch.setattr(pul, "is_initialized", lambda: True)
+    monkeypatch.setattr(pul, "get_system", lambda: system)
+    monkeypatch.setattr(sync_queue_module, "get_loop", lambda: None)
+
+    with pytest.raises(RuntimeError, match="require the global Pulsing runtime"):
+        sync_queue_module.SyncQueue(fake_queue)
 
 
 if __name__ == "__main__":
