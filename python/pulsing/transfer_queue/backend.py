@@ -106,6 +106,27 @@ class TransferBackend:
         query_state.ready_queue.append(sample_idx)
         query_state.ready_set.add(sample_idx)
 
+    def _build_result_row(
+        self,
+        sample_idx: int,
+        query_key: QueryKey,
+        required_fields: frozenset[str],
+        *,
+        include_sample_idx: bool = False,
+    ) -> dict[str, Any] | None:
+        sample_fields = self._field_status.get(sample_idx)
+        if sample_fields is None or not required_fields.issubset(sample_fields):
+            return None
+
+        sample = self._samples.get(sample_idx)
+        if sample is None:
+            return None
+
+        row = {field_name: sample[field_name] for field_name in query_key}
+        if include_sample_idx:
+            return {"sample_idx": sample_idx, **row}
+        return row
+
     def _update_query_caches(self, sample_idx: int, new_fields: set[str]) -> None:
         if not new_fields:
             return
@@ -154,12 +175,33 @@ class TransferBackend:
         fields: list[str],
         batch_size: int,
         task_name: str = "default",
+        sample_idxs: list[int] | None = None,
     ) -> list[dict[str, Any]]:
         """Return up to *batch_size* unread samples that contain all *fields*."""
         query_key = self._normalize_query_key(fields)
-        query_state = self._get_query_state(query_key)
-
         consumed = self._consumed.setdefault(task_name, set())
+        required_fields = frozenset(query_key)
+
+        if sample_idxs is not None:
+            results: list[dict[str, Any]] = []
+            for sample_idx in sample_idxs:
+                if sample_idx in consumed:
+                    continue
+
+                row = self._build_result_row(
+                    sample_idx,
+                    query_key,
+                    required_fields,
+                    include_sample_idx=True,
+                )
+                if row is None:
+                    continue
+
+                consumed.add(sample_idx)
+                results.append(row)
+            return results
+
+        query_state = self._get_query_state(query_key)
         cursors = self._consumer_cursors.setdefault(task_name, {})
         cursor = cursors.setdefault(query_key, _ConsumerCursor())
 
@@ -173,12 +215,12 @@ class TransferBackend:
             if sample_idx in consumed:
                 continue
 
-            sample = self._samples.get(sample_idx)
-            if sample is None:
+            row = self._build_result_row(sample_idx, query_key, required_fields)
+            if row is None:
                 continue
 
             consumed.add(sample_idx)
-            results.append({field_name: sample[field_name] for field_name in query_key})
+            results.append(row)
 
         cursor.next_pos = pos
         return results

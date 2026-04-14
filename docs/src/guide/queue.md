@@ -104,7 +104,9 @@ records = reader.get(limit=10)
 writer.flush()
 ```
 
-Note: don't call the sync wrapper **inside** an async function (it blocks).
+Note: don't call the sync wrapper from the active Pulsing event loop thread.
+In async code, prefer the native async queue API, or move both `.sync()` and
+the subsequent blocking calls into `asyncio.to_thread(...)`.
 
 ## Partitioning & bucketing
 

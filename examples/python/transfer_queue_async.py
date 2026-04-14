@@ -26,7 +26,7 @@ async def main():
 
     try:
         # Get an async client for partition "demo"
-        client = pul.transfer_queue.get_async_client(
+        client = await pul.transfer_queue.get_async_client(
             partition_id="demo", num_buckets=2, batch_size=4
         )
         logger.info("Transfer queue client created (2 buckets, batch_size=4)\n")
@@ -79,6 +79,20 @@ async def main():
         logger.info(
             f"Eval consumer got {len(eval_batch)} samples "
             f"(same data, independent tracking)"
+        )
+
+        # --- Phase 5: Targeted fetch with sample_idxs + timeout ---
+        logger.info("\n--- Phase 5: Targeted sample_idxs fetch ---")
+        subset = await client.async_get(
+            data_fields=["prompt", "response"],
+            sample_idxs=[3, 1],
+            batch_size=2,
+            task_name="debug_subset",
+            timeout=0.5,
+        )
+        logger.info(
+            "Subset fetch returned sample_idxs=%s",
+            [row["sample_idx"] for row in subset],
         )
 
         # --- Cleanup ---

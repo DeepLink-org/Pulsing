@@ -104,7 +104,9 @@ records = reader.get(limit=10)
 writer.flush()
 ```
 
-注意：不要在 async 函数内部使用同步包装器（会阻塞事件循环）。
+注意：不要在当前活跃的 Pulsing event loop 线程里直接调用同步包装器。
+在 async 代码里，优先使用原生 async queue API；如果确实要使用 `.sync()`，
+请把 `.sync()` 的构造和后续阻塞调用一起放到 `asyncio.to_thread(...)` 里。
 
 ## 分区与分桶
 

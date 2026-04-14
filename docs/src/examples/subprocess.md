@@ -51,3 +51,6 @@ The full example also covers:
 - Import it as `import pulsing.subprocess as subprocess` to keep the same calling style as the stdlib.
 - The resource-backed path is opt-in, so existing `subprocess`-style code can migrate incrementally.
 - In resource-backed mode, Pulsing is initialized lazily by the module itself.
+- These synchronous wrappers must run outside the active Pulsing event loop
+  thread. In async code, call them through `asyncio.to_thread(...)`, or stay on
+  async APIs.

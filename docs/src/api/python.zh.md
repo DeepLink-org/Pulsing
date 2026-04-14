@@ -34,6 +34,18 @@ pip install -e .
 
 ::: pulsing.streaming
 
+## 同步 API 的 Event Loop 要求
+
+Pulsing 的同步包装器，包括 `transfer_queue.get_client()`、
+`queue.sync()` / `reader.sync()`，以及 `pulsing.subprocess` 的
+Pulsing 后端路径，都会把工作提交到 Pulsing 自己维护的 event loop。
+
+- 这些同步 API 应该从同步代码里调用，或从另一个线程调用。
+- 不要在当前活跃的 async / Pulsing event loop 线程里直接调用它们。
+- 在 async 代码里，优先使用原生 async API；如果确实要用同步入口，请把
+  `get_client()` / `subprocess.run()` 以及后续同步调用一起放到
+  `asyncio.to_thread(...)` 里。
+
 ## Subprocess 模块
 
 `pulsing.subprocess` 提供与标准库 `subprocess` 兼容的同步 API。

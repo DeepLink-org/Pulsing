@@ -33,7 +33,7 @@ except ImportError:
         "pulsing.integrations.torchrun requires PyTorch. Install with: pip install torch"
     )
 
-from pulsing._async_bridge import submit_on_shared_loop
+from pulsing._async_bridge import run_sync
 
 if TYPE_CHECKING:
     from pulsing.core import ActorSystem
@@ -67,7 +67,7 @@ def init_in_torchrun() -> ActorSystem:
 
     if rank == 0:
         # Rank 0: start Pulsing, get bound port, advertise MASTER_ADDR:port
-        system = submit_on_shared_loop(_do_init("0.0.0.0:0"), timeout=60)
+        system = run_sync(_do_init("0.0.0.0:0"), timeout=60)
         bound = str(system.addr)
         # bound is e.g. "0.0.0.0:12345"; advertise as MASTER_ADDR:12345
         port = bound.split(":")[-1]
@@ -83,7 +83,7 @@ def init_in_torchrun() -> ActorSystem:
         return system
 
     # Non-rank0: join with seed
-    return submit_on_shared_loop(_do_init("0.0.0.0:0", seeds=[seed_addr]), timeout=60)
+    return run_sync(_do_init("0.0.0.0:0", seeds=[seed_addr]), timeout=60)
 
 
 async def async_init_in_torchrun() -> ActorSystem:

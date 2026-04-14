@@ -51,3 +51,6 @@ stdout, _ = proc.communicate(input="pipe test")
 - 建议使用 `import pulsing.subprocess as subprocess`，保持和标准库一致的调用方式。
 - 资源调度路径是显式开启的，已有 `subprocess` 风格代码可以渐进迁移。
 - 在资源后端模式下，模块会懒初始化 Pulsing，无需调用方提前 `await pul.init()`。
+- 这些同步包装器不能在当前活跃的 Pulsing event loop 线程里直接调用。
+  如果在 async 代码里需要它们，请用 `asyncio.to_thread(...)`，或者直接改用
+  async API。

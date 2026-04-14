@@ -43,9 +43,10 @@ class StorageUnit:
         fields: list[str],
         batch_size: int,
         task_name: str = "default",
+        sample_idxs: list[int] | None = None,
     ) -> list[dict]:
         """Return sample dicts for all fields, optionally filtered by fields."""
-        return await self._backend.get_data(fields, batch_size, task_name)
+        return await self._backend.get_data(fields, batch_size, task_name, sample_idxs)
 
     async def clear(self) -> dict:
         """Reset all state in this bucket."""

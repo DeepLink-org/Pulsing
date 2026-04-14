@@ -62,12 +62,6 @@ class Queue:
         self._bucket_locks: dict[int, asyncio.Lock] = {}
         self._bucket_locks_meta = asyncio.Lock()
 
-        # Save event loop reference (for sync wrapper)
-        try:
-            self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = None
-
     def _hash_partition(self, value: Any) -> int:
         """Calculate bucket ID based on value"""
         if value is None:
@@ -208,10 +202,10 @@ class Queue:
         return self._hash_partition(partition_value)
 
     def sync(self) -> "SyncQueue":
-        """Return synchronous wrapper
+        """Return a synchronous wrapper backed by the global Pulsing bridge.
 
         Example:
-            queue = Queue(system, topic="test")
+            queue = Queue(pul.get_system(), topic="test")
             sync_queue = queue.sync()
             sync_queue.put({"id": "1", "value": 100})  # Synchronous write
             records = sync_queue.get(limit=10)  # Synchronous read
@@ -278,7 +272,7 @@ class QueueReader:
                 self._offsets[bid] = offset
 
     def sync(self) -> "SyncQueueReader":
-        """Return synchronous wrapper"""
+        """Return a synchronous wrapper backed by the global Pulsing bridge."""
         from .sync_queue import SyncQueueReader
 
         return SyncQueueReader(self)

@@ -9,7 +9,9 @@ Resource-backed Pulsing mode is enabled only when both of these are true:
 
 In that resource-backed mode this module lazily initializes Pulsing
 internally when called from synchronous code or another thread, so
-callers do not need to call ``await pul.init()`` first.
+callers do not need to call ``await pul.init()`` first. Do not use these
+blocking wrappers from the active Pulsing event loop thread; in async code use
+``asyncio.to_thread(...)`` or stay on an async API.
 """
 
 from __future__ import annotations
@@ -18,10 +20,7 @@ import os
 import subprocess
 from typing import Any
 
-from pulsing._async_bridge import (
-    bind_run_sync,
-    get_loop,
-)
+from pulsing._async_bridge import run_sync
 from pulsing._runtime import ensure_sync_runtime
 from pulsing.exceptions import PulsingActorError
 
@@ -29,26 +28,7 @@ from .process import _StderrProxy, _StdinProxy, _StdoutProxy
 
 _USE_PULSING_SUBPROCESS_ENV = "USE_POLSING_SUBPROCESS"
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
-_AUTO_INIT_SAME_THREAD_MESSAGE = (
-    "pulsing.subprocess sync auto-init cannot run on the same thread as a "
-    "running event loop. Use async Pulsing APIs from async code or call "
-    "pulsing.subprocess from synchronous code or another thread."
-)
-_ACTIVE_LOOP_MESSAGE = (
-    "pulsing.subprocess cannot block on the same event loop that owns "
-    "the active Pulsing system. Use async Pulsing APIs from async code "
-    "or call pulsing.subprocess from another thread."
-)
-
 CompletedProcess = subprocess.CompletedProcess
-
-_SUBPROCESS_RUN_SYNC = bind_run_sync(
-    loop=get_loop,
-    ensure_coro=True,
-    same_loop="raise",
-    same_loop_message=_ACTIVE_LOOP_MESSAGE,
-    missing_loop="run",
-)
 
 
 def _env_enabled(name: str) -> bool:
@@ -98,12 +78,11 @@ class Popen:
         if self._uses_pulsing:
             ensure_sync_runtime(
                 addr="0.0.0.0:0",
-                same_thread_message=_AUTO_INIT_SAME_THREAD_MESSAGE,
                 require_addr=True,
             )
             spawn_coro = self._aspawn()
             try:
-                _SUBPROCESS_RUN_SYNC(spawn_coro)
+                run_sync(spawn_coro)
             except Exception:
                 spawn_coro.close()
                 raise
@@ -132,9 +111,9 @@ class Popen:
         )
 
         self.pid = await self._proxy.pid()
-        self.stdin = _StdinProxy(self._proxy, _SUBPROCESS_RUN_SYNC)
-        self.stdout = _StdoutProxy(self._proxy, _SUBPROCESS_RUN_SYNC)
-        self.stderr = _StderrProxy(self._proxy, _SUBPROCESS_RUN_SYNC)
+        self.stdin = _StdinProxy(self._proxy)
+        self.stdout = _StdoutProxy(self._proxy)
+        self.stderr = _StderrProxy(self._proxy)
 
     def __enter__(self):
         if self._native is not None:
@@ -168,7 +147,7 @@ class Popen:
 
             cleanup_coro = cleanup_ray_actor(self._proxy)
             try:
-                _SUBPROCESS_RUN_SYNC(cleanup_coro)
+                run_sync(cleanup_coro)
             except Exception:
                 cleanup_coro.close()
                 raise
@@ -178,7 +157,7 @@ class Popen:
             self.returncode = self._native.poll()
             return self.returncode
 
-        rc = _SUBPROCESS_RUN_SYNC(self._proxy.poll())
+        rc = run_sync(self._proxy.poll())
         self.returncode = rc
         return rc
 
@@ -187,7 +166,7 @@ class Popen:
             self.returncode = self._native.wait(timeout=timeout)
             return self.returncode
 
-        rc = _SUBPROCESS_RUN_SYNC(self._proxy.wait(timeout))
+        rc = run_sync(self._proxy.wait(timeout))
         self.returncode = rc
         return rc
 
@@ -203,7 +182,7 @@ class Popen:
             return stdout, stderr
 
         try:
-            return _SUBPROCESS_RUN_SYNC(_do())
+            return run_sync(_do())
         except PulsingActorError as error:
             _maybe_raise_timeout_expired(error, self._args, timeout)
 
@@ -211,19 +190,19 @@ class Popen:
         if self._native is not None:
             self._native.send_signal(sig)
             return
-        _SUBPROCESS_RUN_SYNC(self._proxy.send_signal(sig))
+        run_sync(self._proxy.send_signal(sig))
 
     def terminate(self) -> None:
         if self._native is not None:
             self._native.terminate()
             return
-        _SUBPROCESS_RUN_SYNC(self._proxy.terminate())
+        run_sync(self._proxy.terminate())
 
     def kill(self) -> None:
         if self._native is not None:
             self._native.kill()
             return
-        _SUBPROCESS_RUN_SYNC(self._proxy.kill())
+        run_sync(self._proxy.kill())
 
 
 def run(

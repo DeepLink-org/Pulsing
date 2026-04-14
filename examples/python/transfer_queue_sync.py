@@ -3,6 +3,9 @@
 
 Shows how to use the synchronous TransferQueueClient when the caller code is
 plain synchronous Python (e.g. a training loop, a data-loading worker thread).
+Do not call this sync client from the active Pulsing event loop thread; use
+``await pul.transfer_queue.get_async_client()`` there, or move sync usage into
+``asyncio.to_thread(...)``.
 
 Usage:
     python examples/python/transfer_queue_sync.py
@@ -72,6 +75,20 @@ def main():
         logger.info(
             f"Eval consumer got {len(eval_batch)} samples "
             f"(same data, independent tracking)"
+        )
+
+        # --- Phase 5: Targeted fetch with sample_idxs + timeout ---
+        logger.info("\n--- Phase 5: Targeted sample_idxs fetch ---")
+        subset = client.get(
+            data_fields=["prompt", "response"],
+            sample_idxs=[3, 1],
+            batch_size=2,
+            task_name="debug_subset",
+            timeout=0.5,
+        )
+        logger.info(
+            "Subset fetch returned sample_idxs=%s",
+            [row["sample_idx"] for row in subset],
         )
 
         # --- Cleanup ---

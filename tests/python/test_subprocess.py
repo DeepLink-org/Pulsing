@@ -7,7 +7,12 @@ import threading
 import pytest
 
 import pulsing as pul
-from pulsing._async_bridge import clear_pulsing_loop, get_shared_loop
+from pulsing._async_bridge import (
+    clear_pulsing_loop,
+    get_shared_loop,
+    run_sync,
+    stop_shared_loop,
+)
 import pulsing._runtime as _rt
 import pulsing.subprocess.popen as popen_module
 from pulsing.subprocess import (
@@ -37,6 +42,16 @@ def _enable_pulsing_backend(monkeypatch, value: str = "1") -> None:
     monkeypatch.setenv("USE_POLSING_SUBPROCESS", value)
 
 
+async def _shutdown_ray_on_shared_loop() -> None:
+    try:
+        import ray
+    except ImportError:
+        return
+
+    if ray.is_initialized():
+        ray.shutdown()
+
+
 @pytest.fixture(autouse=True)
 def clear_subprocess_env(monkeypatch):
     monkeypatch.delenv("USE_POLSING_SUBPROCESS", raising=False)
@@ -45,9 +60,15 @@ def clear_subprocess_env(monkeypatch):
 @pytest.fixture(autouse=True)
 async def clean_subprocess_state():
     yield
+    if get_shared_loop() is not None:
+        try:
+            run_sync(_shutdown_ray_on_shared_loop(), timeout=30)
+        except Exception:
+            pass
     _rt.shutdown()
     if pul.is_initialized():
         await pul.shutdown()
+    stop_shared_loop()
     clear_pulsing_loop()
     try:
         ray = __import__("ray")
@@ -217,30 +238,45 @@ def test_resources_timeout_raises_stdlib_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sync_api_inside_async_before_init_raises_clear_error_for_resources(
+async def test_sync_api_inside_async_before_init_auto_inits_for_resources(
     monkeypatch,
 ):
     _require_ray()
     _enable_pulsing_backend(monkeypatch)
 
-    with pytest.raises(
-        RuntimeError, match="sync auto-init cannot run on the same thread"
-    ):
-        run(
-            ["echo", "inside_async"],
-            capture_output=True,
-            resources={"num_cpus": 1},
-        )
+    result = run(
+        ["echo", "inside_async"],
+        capture_output=True,
+        resources={"num_cpus": 1},
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == b"inside_async"
+    assert pul.is_initialized()
+    assert _rt.owns_system() is True
+    assert get_shared_loop() is not None
+    _assert_has_bound_addr()
 
 
 @pytest.mark.asyncio
-async def test_same_loop_explicit_init_raises_clear_error_for_resources(monkeypatch):
+async def test_async_context_with_explicit_init_supports_threaded_sync_resources(
+    monkeypatch,
+):
     _require_ray()
     _enable_pulsing_backend(monkeypatch)
-    await pul.init()
+    await pul.init(addr="127.0.0.1:0")
 
-    with pytest.raises(RuntimeError, match="cannot block on the same event loop"):
-        run(["echo", "blocked"], capture_output=True, resources={"num_cpus": 1})
+    result = await asyncio.to_thread(
+        run,
+        ["echo", "blocked"],
+        capture_output=True,
+        resources={"num_cpus": 1},
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == b"blocked"
+    assert get_shared_loop() is None
+    assert _rt.owns_system() is False
 
 
 def test_reuses_explicitly_initialized_background_system_with_resources(monkeypatch):

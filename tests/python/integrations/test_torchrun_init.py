@@ -12,12 +12,11 @@ pytest.importorskip("torch.distributed")
 import pulsing.integrations.torchrun as ptorch
 
 
-def test_init_in_torchrun_uses_shared_loop_bridge():
+def test_init_in_torchrun_uses_run_sync_bridge():
     system = SimpleNamespace(addr="0.0.0.0:12345")
 
-    def fake_submit(awaitable, *, timeout=None, ensure_coro=False):
+    def fake_run_sync(awaitable, timeout=None):
         assert timeout == 60
-        assert ensure_coro is False
         awaitable.close()
         return system
 
@@ -25,10 +24,7 @@ def test_init_in_torchrun_uses_shared_loop_bridge():
         patch.object(ptorch.dist, "is_initialized", return_value=True),
         patch.object(ptorch.dist, "get_rank", return_value=0),
         patch.object(ptorch.dist, "broadcast_object_list") as mock_broadcast,
-        patch(
-            "pulsing.integrations.torchrun.submit_on_shared_loop",
-            side_effect=fake_submit,
-        ),
+        patch("pulsing.integrations.torchrun.run_sync", side_effect=fake_run_sync),
     ):
         assert ptorch.init_in_torchrun() is system
 

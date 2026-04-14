@@ -18,8 +18,8 @@ ray = pytest.importorskip("ray")
 from pulsing._async_bridge import (
     clear_pulsing_loop,
     get_shared_loop,
+    run_sync,
     stop_shared_loop,
-    submit_on_shared_loop,
 )
 
 
@@ -31,7 +31,7 @@ def _reset_pulsing_state():
     # Shutdown Pulsing system via background loop
     if pc._global_system is not None and get_shared_loop() is not None:
         try:
-            submit_on_shared_loop(pray._do_shutdown(), timeout=30)
+            run_sync(pray._do_shutdown(), timeout=30)
         except Exception:
             pass
 
