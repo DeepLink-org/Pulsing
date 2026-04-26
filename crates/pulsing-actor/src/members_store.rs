@@ -9,20 +9,23 @@ use crate::cluster::NodeStatus;
 use probing_memtable::discover::ExposedHashTable;
 use probing_memtable::Value;
 use std::net::SocketAddr;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 
 static MEMBERS_HT: OnceLock<Mutex<ExposedHashTable>> = OnceLock::new();
+static INIT_MEMBERS_MEMTABLE: Once = Once::new();
 
 pub(crate) fn init_members_memtable() {
     // 64 buckets, 16 KiB arena — plenty for a cluster of dozens of nodes
-    match ExposedHashTable::create("pulsing.members", 64, 16384, 0) {
-        Ok(table) => {
-            let _ = MEMBERS_HT.set(Mutex::new(table));
+    INIT_MEMBERS_MEMTABLE.call_once(|| {
+        match ExposedHashTable::create("pulsing.members", 64, 16384, 0) {
+            Ok(table) => {
+                let _ = MEMBERS_HT.set(Mutex::new(table));
+            }
+            Err(e) => {
+                eprintln!("pulsing: failed to create members hash table: {e}");
+            }
         }
-        Err(e) => {
-            eprintln!("pulsing: failed to create members hash table: {e}");
-        }
-    }
+    });
 }
 
 fn status_str(s: NodeStatus) -> &'static str {

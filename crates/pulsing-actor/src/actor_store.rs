@@ -7,19 +7,25 @@ use crate::actor::{ActorId, NodeId, StopReason};
 use probing_memtable::discover::ExposedHashTable;
 use probing_memtable::Value;
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 
 static ACTOR_HT: OnceLock<Mutex<ExposedHashTable>> = OnceLock::new();
+static INIT_ACTOR_MEMTABLE: Once = Once::new();
 
 pub(crate) fn init_actor_memtable() {
-    match ExposedHashTable::create("pulsing.actors", 256, 65536, 0) {
-        Ok(table) => {
-            let _ = ACTOR_HT.set(Mutex::new(table));
+    // Only one create per process: repeated `ActorSystem::new` (e.g. parallel
+    // integration tests) must not call `ExposedHashTable::create` again — it
+    // truncates the same path and can race mmap to length 0.
+    INIT_ACTOR_MEMTABLE.call_once(|| {
+        match ExposedHashTable::create("pulsing.actors", 256, 65536, 0) {
+            Ok(table) => {
+                let _ = ACTOR_HT.set(Mutex::new(table));
+            }
+            Err(e) => {
+                eprintln!("pulsing: failed to create actor hash table: {e}");
+            }
         }
-        Err(e) => {
-            eprintln!("pulsing: failed to create actor hash table: {e}");
-        }
-    }
+    });
 }
 
 pub(crate) fn write_actor_spawned(

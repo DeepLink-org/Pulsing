@@ -5,30 +5,33 @@
 
 use probing_memtable::discover::ExposedTable;
 use probing_memtable::Value;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 
 static METRICS_MEMTABLE: OnceLock<Mutex<ExposedTable>> = OnceLock::new();
+static INIT_METRICS_MEMTABLE: Once = Once::new();
 
 pub(crate) fn init_metrics_memtable() {
     use probing_memtable::{DType, Schema};
 
-    let schema = Schema::new()
-        .col("timestamp_us", DType::I64)
-        .col("node_id", DType::Str)
-        .col("actors_count", DType::I64)
-        .col("messages_total", DType::I64)
-        .col("actors_created", DType::I64)
-        .col("actors_stopped", DType::I64)
-        .col("uptime_secs", DType::I64);
+    INIT_METRICS_MEMTABLE.call_once(|| {
+        let schema = Schema::new()
+            .col("timestamp_us", DType::I64)
+            .col("node_id", DType::Str)
+            .col("actors_count", DType::I64)
+            .col("messages_total", DType::I64)
+            .col("actors_created", DType::I64)
+            .col("actors_stopped", DType::I64)
+            .col("uptime_secs", DType::I64);
 
-    match ExposedTable::create("pulsing.metrics", &schema, 65536, 16) {
-        Ok(table) => {
-            let _ = METRICS_MEMTABLE.set(Mutex::new(table));
+        match ExposedTable::create("pulsing.metrics", &schema, 65536, 16) {
+            Ok(table) => {
+                let _ = METRICS_MEMTABLE.set(Mutex::new(table));
+            }
+            Err(e) => {
+                eprintln!("pulsing: failed to create metrics memtable: {e}");
+            }
         }
-        Err(e) => {
-            eprintln!("pulsing: failed to create metrics memtable: {e}");
-        }
-    }
+    });
 }
 
 pub(crate) fn write_metrics_snapshot(

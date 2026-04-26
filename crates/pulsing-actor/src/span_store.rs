@@ -10,7 +10,7 @@ use opentelemetry::KeyValue;
 use opentelemetry_sdk::export::trace::{ExportResult, SpanData, SpanExporter};
 use probing_memtable::discover::ExposedTable;
 use probing_memtable::Value;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_ATTR_ENTRIES: usize = 128;
@@ -34,37 +34,40 @@ const SPAN_ATTR_KEYS: &[(&str, &str)] = &[
 // ── memtable storage ───────────────────────────────────────────────────
 
 static SPAN_MEMTABLE: OnceLock<Mutex<ExposedTable>> = OnceLock::new();
+static INIT_SPAN_MEMTABLE: Once = Once::new();
 
 pub(crate) fn init_span_memtable() {
     use probing_memtable::{DType, Schema};
 
-    let mut schema = Schema::new()
-        .col("trace_id", DType::Str)
-        .col("span_id", DType::Str)
-        .col("parent_span_id", DType::Str)
-        .col("name", DType::Str)
-        .col("kind", DType::Str)
-        .col("start_us", DType::I64)
-        .col("end_us", DType::I64)
-        .col("duration_us", DType::I64)
-        .col("status_code", DType::Str)
-        .col("instrumentation_scope", DType::Str);
+    INIT_SPAN_MEMTABLE.call_once(|| {
+        let mut schema = Schema::new()
+            .col("trace_id", DType::Str)
+            .col("span_id", DType::Str)
+            .col("parent_span_id", DType::Str)
+            .col("name", DType::Str)
+            .col("kind", DType::Str)
+            .col("start_us", DType::I64)
+            .col("end_us", DType::I64)
+            .col("duration_us", DType::I64)
+            .col("status_code", DType::Str)
+            .col("instrumentation_scope", DType::Str);
 
-    for &(_, col_name) in SPAN_ATTR_KEYS {
-        schema = schema.col(col_name, DType::Str);
-    }
-    schema = schema
-        .col("events_json", DType::Str)
-        .col("links_json", DType::Str);
+        for &(_, col_name) in SPAN_ATTR_KEYS {
+            schema = schema.col(col_name, DType::Str);
+        }
+        schema = schema
+            .col("events_json", DType::Str)
+            .col("links_json", DType::Str);
 
-    match ExposedTable::create("pulsing.spans", &schema, 65536, 16) {
-        Ok(table) => {
-            let _ = SPAN_MEMTABLE.set(Mutex::new(table));
+        match ExposedTable::create("pulsing.spans", &schema, 65536, 16) {
+            Ok(table) => {
+                let _ = SPAN_MEMTABLE.set(Mutex::new(table));
+            }
+            Err(e) => {
+                eprintln!("pulsing: failed to create span memtable: {e}");
+            }
         }
-        Err(e) => {
-            eprintln!("pulsing: failed to create span memtable: {e}");
-        }
-    }
+    });
 }
 
 fn write_span_to_memtable(record: &SpanRecord) {
