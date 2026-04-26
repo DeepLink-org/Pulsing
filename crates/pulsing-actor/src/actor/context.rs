@@ -3,6 +3,9 @@
 use super::mailbox::Envelope;
 use super::reference::ActorRef;
 use super::traits::{ActorId, Message, NodeId};
+use crate::tracing::{
+    capture_linked_traceparent_for_mailbox, capture_linked_tracestate_for_mailbox,
+};
 use lru::LruCache;
 use serde::Serialize;
 use std::num::NonZeroUsize;
@@ -118,12 +121,16 @@ impl ActorContext {
         msg: M,
         delay: Duration,
     ) -> crate::error::Result<()> {
+        let tp = capture_linked_traceparent_for_mailbox();
+        let ts = capture_linked_tracestate_for_mailbox();
         let sender = self.self_sender.clone();
         let message = Message::pack(&msg)?;
 
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
-            let envelope = Envelope::tell(message);
+            let envelope = Envelope::tell(message)
+                .with_linked_traceparent(tp)
+                .with_linked_tracestate(ts);
             if let Err(e) = sender.send(envelope).await {
                 tracing::warn!("Failed to deliver scheduled message: {}", e);
             }

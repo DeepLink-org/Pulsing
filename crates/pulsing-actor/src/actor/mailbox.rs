@@ -22,6 +22,11 @@ impl Responder {
 pub struct Envelope {
     message: Message,
     respond_to: Option<ResponseChannel>,
+    /// W3C traceparent captured at send time so `actor.receive` can parent to the dispatcher span
+    /// (e.g. `http.request`) on a different task.
+    linked_traceparent: Option<String>,
+    /// W3C `tracestate` paired with [`Self::linked_traceparent`].
+    linked_tracestate: Option<String>,
 }
 
 impl Envelope {
@@ -29,6 +34,8 @@ impl Envelope {
         Self {
             message,
             respond_to: None,
+            linked_traceparent: None,
+            linked_tracestate: None,
         }
     }
 
@@ -36,15 +43,34 @@ impl Envelope {
         Self {
             message,
             respond_to: Some(respond_to),
+            linked_traceparent: None,
+            linked_tracestate: None,
         }
+    }
+
+    /// Attach trace link from [`crate::tracing::capture_linked_traceparent_for_mailbox`].
+    pub fn with_linked_traceparent(mut self, tp: Option<String>) -> Self {
+        self.linked_traceparent = tp;
+        self
+    }
+
+    /// Attach W3C `tracestate` from [`crate::tracing::capture_linked_tracestate_for_mailbox`].
+    pub fn with_linked_tracestate(mut self, ts: Option<String>) -> Self {
+        self.linked_tracestate = ts;
+        self
     }
 
     pub fn msg_type(&self) -> &str {
         self.message.msg_type()
     }
 
-    pub fn into_parts(self) -> (Message, Responder) {
-        (self.message, Responder(self.respond_to))
+    pub fn into_parts(self) -> (Message, Responder, Option<String>, Option<String>) {
+        (
+            self.message,
+            Responder(self.respond_to),
+            self.linked_traceparent,
+            self.linked_tracestate,
+        )
     }
 
     pub fn expects_response(&self) -> bool {
@@ -57,6 +83,8 @@ impl std::fmt::Debug for Envelope {
         f.debug_struct("Envelope")
             .field("msg_type", &self.message.msg_type())
             .field("expects_response", &self.respond_to.is_some())
+            .field("linked_trace", &self.linked_traceparent.is_some())
+            .field("linked_tracestate", &self.linked_tracestate.is_some())
             .finish()
     }
 }
@@ -154,7 +182,7 @@ mod tests {
         let envelope = Envelope::ask(msg, tx);
 
         assert!(envelope.expects_response());
-        let (_, responder) = envelope.into_parts();
+        let (_, responder, _, _) = envelope.into_parts();
         responder.send(Ok(Message::single("", b"world")));
 
         let result = rx.await.unwrap().unwrap();

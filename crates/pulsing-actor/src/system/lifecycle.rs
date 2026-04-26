@@ -195,11 +195,13 @@ impl ActorSystem {
         }
 
         // 3. Handle lifecycle cleanup
+        let reason_copy = reason.clone();
+        let actor_id = handle.actor_id;
         let registry = self.registry.clone();
         self.registry
             .lifecycle
             .handle_termination(
-                &handle.actor_id,
+                &actor_id,
                 named_path,
                 reason,
                 &registry.named_actor_paths,
@@ -210,5 +212,7 @@ impl ActorSystem {
                 },
             )
             .await;
+
+        self.notify_monitor_actor_stopped(actor_name, actor_id, &reason_copy);
     }
 }

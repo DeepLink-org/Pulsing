@@ -1,6 +1,7 @@
 """@remote decorator, ActorClass, and actor lifecycle management."""
 
 import asyncio
+import contextvars
 import inspect
 import logging
 import random
@@ -23,6 +24,16 @@ from .proxy import ActorProxy, _DelayedCallProxy
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# Trace context ContextVars — set by _WrappedActor.receive (from Rust handler
+# attributes), read by PyO3 ask()/tell() to propagate W3C traceparent across
+# actor-to-actor calls within the same asyncio Task.
+_current_traceparent: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_pulsing_tp", default=None
+)
+_current_tracestate: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_pulsing_ts", default=None
+)
 
 # ============================================================================
 # Actor base class
@@ -164,6 +175,10 @@ class _WrappedActor(Actor):
         return {}
 
     async def receive(self, msg) -> Any:
+        # Propagate trace context injected by Rust PythonActorWrapper::receive
+        _current_traceparent.set(getattr(self, "__pulsing_tp__", None))
+        _current_tracestate.set(getattr(self, "__pulsing_ts__", None))
+
         if isinstance(msg, dict):
             method, args, kwargs, is_async_call = _unwrap_call(msg)
 

@@ -18,6 +18,7 @@ Simple API:
 """
 
 import asyncio
+import os
 
 from pulsing._core import (
     ActorId,
@@ -28,6 +29,8 @@ from pulsing._core import (
     StreamWriter,
     SystemConfig,
     ZeroCopyDescriptor,
+    init_distributed_tracing,
+    shutdown_distributed_tracing,
 )
 from .messaging import (
     Message,
@@ -39,6 +42,22 @@ from .messaging import (
 # =============================================================================
 
 _global_system: ActorSystem = None
+
+
+def _init_rust_tracing_from_env() -> None:
+    """Enable Rust `tracing` + OpenTelemetry layer when ``PULSING_TRACING`` is truthy."""
+    if os.environ.get("PULSING_TRACING", "").lower() not in ("1", "true", "yes"):
+        return
+    console = os.environ.get("PULSING_TRACING_CONSOLE", "1").lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+    service = os.environ.get("PULSING_SERVICE_NAME") or None
+    init_distributed_tracing(
+        service_name=service,
+        console_output=console,
+    )
 
 
 async def init(
@@ -58,6 +77,14 @@ async def init(
         head_addr: Address of head node (worker mode). Mutually exclusive with is_head_node.
         is_head_node: If True, this node runs as head. Mutually exclusive with head_addr.
 
+    Tracing:
+        Set ``PULSING_TRACING=1`` to install the Rust subscriber (console + OTLP-ready layer).
+        Optional: ``PULSING_OTLP_ENDPOINT``, ``PULSING_SERVICE_NAME``, ``PULSING_TRACING_CONSOLE``,
+        ``PULSING_SPAN_HISTORY_CAPACITY`` (max retained completed spans, default 8192).
+
+    If the ``probing`` package is installed, ``PULSING_PROBING_AUTO_TRACING`` (default ``1``) may
+    install silent Rust tracing so ``pulsing.spans`` gets populated.
+
     Returns:
         ActorSystem instance
     """
@@ -65,6 +92,17 @@ async def init(
 
     if _global_system is not None:
         return _global_system
+
+    _init_rust_tracing_from_env()
+
+    try:
+        import probing  # noqa: F401
+
+        from pulsing.integrations.probing import ensure_tracing_for_span_capture
+
+        ensure_tracing_for_span_capture()
+    except ImportError:
+        pass
 
     if is_head_node and head_addr:
         raise ValueError("Cannot set both is_head_node and head_addr")
@@ -98,6 +136,13 @@ async def init(
     except ImportError:
         pass
 
+    try:
+        from pulsing.integrations.probing import start_probing_integration
+
+        start_probing_integration()
+    except ImportError:
+        pass
+
     return _global_system
 
 
@@ -105,9 +150,18 @@ async def shutdown() -> None:
     """Shutdown the global actor system"""
     global _global_system
 
+    try:
+        from pulsing.integrations.probing import stop_probing_integration
+
+        stop_probing_integration()
+    except ImportError:
+        pass
+
     if _global_system is not None:
         await _global_system.shutdown()
         _global_system = None
+
+    shutdown_distributed_tracing()
 
 
 def get_system() -> ActorSystem:
@@ -153,6 +207,8 @@ from pulsing.exceptions import (  # noqa: E402
 __all__ = [
     "init",
     "shutdown",
+    "init_distributed_tracing",
+    "shutdown_distributed_tracing",
     "remote",
     "resolve",
     "mount",

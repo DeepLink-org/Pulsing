@@ -91,16 +91,21 @@ pub use load_balancer::NodeLoadTracker;
 pub use registry::ActorRegistry;
 pub use traits::{ActorSystemCoreExt, ActorSystemOpsExt};
 
-use crate::actor::{ActorId, ActorPath, ActorRef, ActorResolver, ActorSystemRef, Envelope, NodeId};
+use crate::actor::{
+    ActorId, ActorPath, ActorRef, ActorResolver, ActorSystemRef, Envelope, NodeId, StopReason,
+};
 use crate::cluster::{GossipBackend, HeadNodeBackend, NamingBackend};
 use crate::error::{PulsingError, Result, RuntimeError};
+use crate::performance_store::{
+    PerformanceSnapshot, PerformanceStore, DEFAULT_PERFORMANCE_HISTORY_CAPACITY,
+};
 use crate::policies::{LoadBalancingPolicy, RoundRobinPolicy};
 use crate::system_actor::{BoxedActorFactory, SystemActor, SystemRef, SYSTEM_ACTOR_PATH};
 use crate::transport::Http2Transport;
 use dashmap::DashMap;
 use handler::SystemMessageHandler;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -136,6 +141,17 @@ pub struct ActorSystem {
 
     /// Per-node load tracking for remote nodes
     pub(crate) node_load: Arc<DashMap<SocketAddr, Arc<NodeLoadTracker>>>,
+
+    /// Shared [`SystemActor`] monitoring registry + metrics (filled when `system/core` starts).
+    pub(crate) system_monitor: Arc<
+        OnceLock<(
+            Arc<crate::system_actor::SystemMetrics>,
+            Arc<crate::system_actor::ActorRegistry>,
+        )>,
+    >,
+
+    /// Ring buffer of recent `GetMetrics` snapshots (for local analysis / SQL adapters).
+    pub(crate) performance_store: Arc<PerformanceStore>,
 }
 
 impl ActorSystem {
@@ -157,9 +173,22 @@ impl ActorSystem {
         let registry = Arc::new(ActorRegistry::new());
         let cluster_holder: Arc<RwLock<Option<Arc<dyn NamingBackend>>>> =
             Arc::new(RwLock::new(None));
+        let system_monitor: Arc<
+            OnceLock<(
+                Arc<crate::system_actor::SystemMetrics>,
+                Arc<crate::system_actor::ActorRegistry>,
+            )>,
+        > = Arc::new(OnceLock::new());
+        let performance_store =
+            Arc::new(PerformanceStore::new(DEFAULT_PERFORMANCE_HISTORY_CAPACITY));
 
         // Create message handler (needs registry and cluster reference)
-        let handler = SystemMessageHandler::new(node_id, registry.clone(), cluster_holder.clone());
+        let handler = SystemMessageHandler::new(
+            node_id,
+            registry.clone(),
+            cluster_holder.clone(),
+            system_monitor.clone(),
+        );
 
         // Clone http2_config before moving it to transport
         let http2_config_for_backend = config.http2_config.clone();
@@ -213,6 +242,16 @@ impl ActorSystem {
             backend.join(Vec::new()).await?;
         }
 
+        crate::actor_store::init_actor_memtable();
+        crate::metrics_store::init_metrics_memtable();
+        crate::members_store::init_members_memtable();
+        crate::members_store::upsert_member(
+            node_id,
+            actual_addr,
+            crate::cluster::NodeStatus::Online,
+            0,
+        );
+
         let system = Arc::new(Self {
             node_id,
             addr: actual_addr,
@@ -223,6 +262,8 @@ impl ActorSystem {
             cancel_token,
             default_lb_policy: Arc::new(RoundRobinPolicy::new()),
             node_load: Arc::new(DashMap::new()),
+            system_monitor,
+            performance_store,
         });
 
         // Start SystemActor
@@ -261,8 +302,15 @@ impl ActorSystem {
             named_actor_paths,
         });
 
-        // Create SystemActor with default factory
-        let system_actor = SystemActor::with_default_factory(system_ref);
+        let metrics = Arc::new(crate::system_actor::SystemMetrics::new());
+        let sa_registry = Arc::new(crate::system_actor::ActorRegistry::new());
+        let system_actor = SystemActor::with_default_factory_shared(
+            system_ref,
+            sa_registry.clone(),
+            metrics.clone(),
+            self.performance_store.clone(),
+        )
+        .with_system_registry(self.registry.clone());
 
         // Spawn as named actor with path "system" (use new_system to bypass namespace check)
         let system_path = ActorPath::new_system(SYSTEM_ACTOR_PATH)?;
@@ -270,6 +318,8 @@ impl ActorSystem {
             .path(system_path)
             .spawn(system_actor)
             .await?;
+
+        let _ = self.system_monitor.set((metrics, sa_registry));
 
         // Note: The local_actors_ref and actor_names_ref are used internally,
         // SystemRef snapshot may become stale for new actors but that's acceptable
@@ -303,8 +353,16 @@ impl ActorSystem {
             named_actor_paths: named_paths_snapshot,
         });
 
-        // Create SystemActor with custom factory
-        let system_actor = SystemActor::new(system_ref, factory);
+        let metrics = Arc::new(crate::system_actor::SystemMetrics::new());
+        let sa_registry = Arc::new(crate::system_actor::ActorRegistry::new());
+        let system_actor = SystemActor::new_shared(
+            system_ref,
+            factory,
+            sa_registry.clone(),
+            metrics.clone(),
+            self.performance_store.clone(),
+        )
+        .with_system_registry(self.registry.clone());
 
         // Spawn as named actor (use new_system to bypass namespace check)
         let system_path = ActorPath::new_system(SYSTEM_ACTOR_PATH)?;
@@ -312,6 +370,8 @@ impl ActorSystem {
             .path(system_path)
             .spawn(system_actor)
             .await?;
+
+        let _ = self.system_monitor.set((metrics, sa_registry));
 
         tracing::debug!(
             path = SYSTEM_ACTOR_PATH,
@@ -347,6 +407,65 @@ impl ActorSystem {
     /// This is an O(1) operation.
     pub fn local_actor_ref_by_name(&self, name: &str) -> Option<ActorRef> {
         self.registry.local_actor_ref_by_name(name)
+    }
+
+    /// Recent metric snapshots (newest first), recorded on each `GetMetrics` to `system/core`.
+    pub fn performance_recent(&self, limit: usize) -> Vec<PerformanceSnapshot> {
+        self.performance_store.recent(limit)
+    }
+
+    /// In-memory performance history store (same instance as [`SystemActor`] uses).
+    pub fn performance_store(&self) -> &Arc<PerformanceStore> {
+        &self.performance_store
+    }
+
+    /// Keep [`SystemActor`] `GetMetrics` / list in sync with real spawns (excludes `system/core`).
+    pub(crate) fn notify_monitor_actor_spawned(
+        &self,
+        name_str: &Option<String>,
+        actor_id: ActorId,
+        actor_metadata: &std::collections::HashMap<String, String>,
+    ) {
+        if name_str.as_deref() == Some(SYSTEM_ACTOR_PATH) {
+            return;
+        }
+        let key = match name_str {
+            Some(n) => n.clone(),
+            None => actor_id.to_string(),
+        };
+
+        crate::actor_store::write_actor_spawned(&key, actor_id, self.node_id, actor_metadata);
+
+        let Some((metrics, reg)) = self.system_monitor.get() else {
+            return;
+        };
+        let actor_type = actor_metadata
+            .get("class")
+            .or_else(|| actor_metadata.get("type"))
+            .cloned()
+            .unwrap_or_else(|| "Actor".to_string());
+        reg.register_with_metadata(&key, actor_id, &actor_type, actor_metadata.clone());
+        metrics.inc_actor_created();
+    }
+
+    pub(crate) fn notify_monitor_actor_stopped(
+        &self,
+        actor_name: &str,
+        actor_id: ActorId,
+        reason: &StopReason,
+    ) {
+        if actor_name == SYSTEM_ACTOR_PATH {
+            return;
+        }
+
+        crate::actor_store::write_actor_stopped(actor_name, actor_id, self.node_id, reason);
+
+        let Some((metrics, reg)) = self.system_monitor.get() else {
+            return;
+        };
+        if reg.unregister(actor_name).is_some() {
+            metrics.inc_actor_stopped();
+        }
     }
 }
 
