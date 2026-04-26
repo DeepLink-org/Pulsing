@@ -6,7 +6,7 @@ use pulsing_actor::prelude::*;
 use pulsing_actor::supervision::{BackoffStrategy, RestartPolicy, SupervisionSpec};
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyDict};
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::net::SocketAddr;
@@ -18,6 +18,18 @@ use tokio::sync::Mutex as TokioMutex;
 use crate::errors::pulsing_error_to_py_err;
 use crate::python_error_converter::convert_python_exception_to_actor_error;
 use crate::python_executor::python_executor;
+use pulsing_actor::tracing::{
+    capture_linked_traceparent_for_mailbox, capture_linked_tracestate_for_mailbox,
+};
+
+/// Read a ContextVar from `pulsing.core.remote` by attribute name.
+/// Returns `None` on any failure (module not loaded, var not set, etc.).
+fn read_python_contextvar(py: Python<'_>, var_name: &str) -> Option<String> {
+    let module = py.import("pulsing.core.remote").ok()?;
+    let cv = module.getattr(var_name).ok()?;
+    let val = cv.call_method0("get").ok()?;
+    val.extract::<Option<String>>().ok().flatten()
+}
 
 /// Special message type identifier for pickle-encoded Python objects
 const SEALED_PY_MSG_TYPE: &str = "__sealed_py_message__";
@@ -1066,7 +1078,6 @@ impl PyActorRef {
     fn ask<'py>(&self, py: Python<'py>, msg: PyObject) -> PyResult<Bound<'py, PyAny>> {
         let actor_ref = self.inner.clone();
 
-        // Check if msg is already a PyMessage
         let msg_bound = msg.bind(py);
         let actor_msg = if msg_bound.is_instance_of::<PyMessage>() {
             let py_msg: PyMessage = msg_bound.extract()?;
@@ -1075,8 +1086,18 @@ impl PyActorRef {
             encode_python_payload(py, &msg)?
         };
 
+        // Read trace context from Python ContextVar (set by _WrappedActor.receive),
+        // fall back to Rust tracing span for pure-Rust callers.
+        let tp = read_python_contextvar(py, "_current_traceparent")
+            .or_else(capture_linked_traceparent_for_mailbox);
+        let ts = read_python_contextvar(py, "_current_tracestate")
+            .or_else(capture_linked_tracestate_for_mailbox);
+
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let response = actor_ref.send(actor_msg).await.map_err(to_pyerr)?;
+            let response = actor_ref
+                .send_with_trace(actor_msg, tp, ts)
+                .await
+                .map_err(to_pyerr)?;
             decode_message_to_pyobject(response).await
         })
     }
@@ -1089,7 +1110,6 @@ impl PyActorRef {
     fn tell<'py>(&self, py: Python<'py>, msg: PyObject) -> PyResult<Bound<'py, PyAny>> {
         let actor_ref = self.inner.clone();
 
-        // Check if msg is already a PyMessage
         let msg_bound = msg.bind(py);
         let actor_msg = if msg_bound.is_instance_of::<PyMessage>() {
             let py_msg: PyMessage = msg_bound.extract()?;
@@ -1098,8 +1118,16 @@ impl PyActorRef {
             encode_python_payload(py, &msg)?
         };
 
+        let tp = read_python_contextvar(py, "_current_traceparent")
+            .or_else(capture_linked_traceparent_for_mailbox);
+        let ts = read_python_contextvar(py, "_current_tracestate")
+            .or_else(capture_linked_tracestate_for_mailbox);
+
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            actor_ref.send_oneway(actor_msg).await.map_err(to_pyerr)?;
+            actor_ref
+                .send_oneway_with_trace(actor_msg, tp, ts)
+                .await
+                .map_err(to_pyerr)?;
             Ok(())
         })
     }
@@ -1377,10 +1405,14 @@ impl Actor for PythonActorWrapper {
         msg: Message,
         _ctx: &mut ActorContext,
     ) -> pulsing_actor::error::Result<Message> {
+        // Capture trace context BEFORE any .await — at this point recv_span is
+        // still entered by Instrument::poll on the tokio thread.
+        let captured_tp = capture_linked_traceparent_for_mailbox();
+        let captured_ts = capture_linked_tracestate_for_mailbox();
+
         let (handler, event_loop) =
             Python::with_gil(|py| (self.handler.clone_ref(py), self.event_loop.clone_ref(py)));
 
-        // Decode-first: convert any message format to a Python object
         let call_arg = decode_message_to_pyobject(msg).await.map_err(|e| {
             pulsing_actor::error::PulsingError::from(pulsing_actor::error::RuntimeError::Other(
                 e.to_string(),
@@ -1390,6 +1422,17 @@ impl Actor for PythonActorWrapper {
         let response: Result<PyActorResponse, PyErr> = python_executor()
             .execute(move || {
                 Python::with_gil(|py| -> PyResult<PyActorResponse> {
+                    // Inject trace context as handler attributes so the Python
+                    // coroutine (on the asyncio event loop) can read them.
+                    match &captured_tp {
+                        Some(tp) => handler.setattr(py, "__pulsing_tp__", tp.as_str())?,
+                        None => handler.setattr(py, "__pulsing_tp__", py.None())?,
+                    }
+                    match &captured_ts {
+                        Some(ts) => handler.setattr(py, "__pulsing_ts__", ts.as_str())?,
+                        None => handler.setattr(py, "__pulsing_ts__", py.None())?,
+                    }
+
                     let receive_method = handler.getattr(py, "receive")?;
                     let result = match receive_method.call1(py, (&call_arg,)) {
                         Ok(value) => value,
@@ -1609,6 +1652,31 @@ impl PyActorSystem {
     #[getter]
     fn addr(&self) -> String {
         self.inner.addr().to_string()
+    }
+
+    /// Recent ``GetMetrics`` snapshots (newest first), for local analysis / DataFusion adapters.
+    ///
+    /// Rows are appended whenever ``system/core`` handles ``GetMetrics`` (e.g. ``get_metrics()``).
+    #[pyo3(signature = (limit=None))]
+    fn performance_history(&self, limit: Option<usize>) -> Vec<Py<PyDict>> {
+        let limit = limit.unwrap_or(256).min(10_000);
+        let snaps = self.inner.performance_recent(limit);
+        Python::with_gil(|py| {
+            snaps
+                .into_iter()
+                .map(|s| {
+                    let d = PyDict::new(py);
+                    let _ = d.set_item("ts_unix_micros", s.ts_unix_micros);
+                    let _ = d.set_item("node_id", s.node_id);
+                    let _ = d.set_item("actors_count", s.actors_count);
+                    let _ = d.set_item("messages_total", s.messages_total);
+                    let _ = d.set_item("actors_created", s.actors_created);
+                    let _ = d.set_item("actors_stopped", s.actors_stopped);
+                    let _ = d.set_item("uptime_secs", s.uptime_secs);
+                    d.unbind()
+                })
+                .collect()
+        })
     }
 
     #[pyo3(signature = (

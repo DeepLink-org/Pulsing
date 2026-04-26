@@ -3,9 +3,11 @@
 use super::handle::ActorStats;
 use crate::actor::{Actor, ActorContext, Envelope, StopReason};
 use crate::supervision::SupervisionSpec;
+use crate::tracing::actor_receive_span;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 /// Actor instance loop - runs a single instance of an actor
 pub(crate) async fn run_actor_instance<A: Actor>(
@@ -28,14 +30,29 @@ pub(crate) async fn run_actor_instance<A: Actor>(
                 match msg {
                     Some(envelope) => {
                         stats.inc_message();
-                        let (message, responder) = envelope.into_parts();
+                        let (message, responder, linked_tp, linked_ts) = envelope.into_parts();
 
-                        match actor.receive(message, ctx).await {
+                        let actor_name = ctx
+                            .named_path()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| ctx.id().to_string());
+                        let recv_span = actor_receive_span(
+                            &actor_name,
+                            message.msg_type(),
+                            linked_tp.as_deref(),
+                            linked_ts.as_deref(),
+                        );
+
+                        let result = actor
+                            .receive(message, ctx)
+                            .instrument(recv_span)
+                            .await;
+
+                        match result {
                             Ok(response) => {
                                 responder.send(Ok(response));
                             }
                             Err(e) => {
-                                // Business error: receive returns Err, only return error to caller, actor continues processing next message
                                 tracing::warn!(actor_id = ?ctx.id(), error = %e, "Receive returned error (returned to caller)");
                                 responder.send(Err(e));
                             }

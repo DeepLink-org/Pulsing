@@ -205,6 +205,7 @@ impl ClusterState {
                 if remote.epoch > existing.epoch
                     || (remote.epoch == existing.epoch && remote.status > existing.status)
                 {
+                    let old = existing.status;
                     nodes.insert(
                         remote.node_id,
                         ClusterNode {
@@ -215,6 +216,14 @@ impl ClusterState {
                             last_seen: remote.last_seen,
                         },
                     );
+                    if old != remote.status {
+                        crate::members_store::upsert_member(
+                            remote.node_id,
+                            fixed_addr,
+                            remote.status,
+                            remote.epoch,
+                        );
+                    }
                 }
             }
             None => {
@@ -228,6 +237,12 @@ impl ClusterState {
                         last_seen: remote.last_seen,
                     },
                 );
+                crate::members_store::upsert_member(
+                    remote.node_id,
+                    fixed_addr,
+                    remote.status,
+                    remote.epoch,
+                );
                 tracing::debug!(node_id = %remote.node_id, "Added new node from gossip");
             }
         }
@@ -240,6 +255,12 @@ impl ClusterState {
             if failure.epoch >= node.epoch && failure.status > node.status {
                 node.status = failure.status;
                 node.epoch = failure.epoch;
+                crate::members_store::upsert_member(
+                    failure.node_id,
+                    node.addr,
+                    failure.status,
+                    failure.epoch,
+                );
             }
         }
     }
@@ -262,11 +283,12 @@ impl ClusterState {
         let mut nodes = self.cluster_nodes.write().await;
         if let Some(node) = nodes.get_mut(&node_id) {
             node.last_seen = now_millis();
-            // Recover from any failed/tombstone state if node is seen alive
             if node.status.can_recover() {
                 let old_status = node.status;
                 node.status = NodeStatus::Online;
-                node.epoch = self.increment_epoch();
+                let epoch = self.increment_epoch();
+                node.epoch = epoch;
+                crate::members_store::upsert_member(node_id, node.addr, NodeStatus::Online, epoch);
                 tracing::info!(
                     node_id = %node_id,
                     old_status = ?old_status,
@@ -433,9 +455,9 @@ impl GossipCluster {
                 let fixed_addr = fix_addr(from_addr, peer_addr.ip());
 
                 let mut nodes = self.state.cluster_nodes.write().await;
-                nodes
-                    .entry(from)
-                    .and_modify(|n| {
+                match nodes.entry(from) {
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        let n = e.get_mut();
                         n.addr = fixed_addr;
                         n.last_seen = now_millis();
                         if n.epoch < current_epoch {
@@ -443,15 +465,30 @@ impl GossipCluster {
                         }
                         if n.status != NodeStatus::Online {
                             n.status = NodeStatus::Online;
+                            crate::members_store::upsert_member(
+                                from,
+                                fixed_addr,
+                                NodeStatus::Online,
+                                n.epoch,
+                            );
                         }
-                    })
-                    .or_insert_with(|| ClusterNode {
-                        node_id: from,
-                        addr: fixed_addr,
-                        status: NodeStatus::Online,
-                        epoch: current_epoch,
-                        last_seen: now_millis(),
-                    });
+                    }
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(ClusterNode {
+                            node_id: from,
+                            addr: fixed_addr,
+                            status: NodeStatus::Online,
+                            epoch: current_epoch,
+                            last_seen: now_millis(),
+                        });
+                        crate::members_store::upsert_member(
+                            from,
+                            fixed_addr,
+                            NodeStatus::Online,
+                            current_epoch,
+                        );
+                    }
+                }
                 drop(nodes);
 
                 // Return full cluster info to new node
@@ -843,7 +880,9 @@ impl GossipCluster {
         if let Some(node) = nodes.get_mut(&node_id) {
             if node.status == NodeStatus::Online {
                 node.status = NodeStatus::PFail;
-                node.epoch = self.state.increment_epoch();
+                let epoch = self.state.increment_epoch();
+                node.epoch = epoch;
+                crate::members_store::upsert_member(node_id, node.addr, NodeStatus::PFail, epoch);
                 tracing::warn!(node_id = %node_id, "Marked node as PFail");
             }
         }
@@ -854,7 +893,9 @@ impl GossipCluster {
         if let Some(node) = nodes.get_mut(&node_id) {
             if node.status != NodeStatus::Fail {
                 node.status = NodeStatus::Fail;
-                node.epoch = self.state.increment_epoch();
+                let epoch = self.state.increment_epoch();
+                node.epoch = epoch;
+                crate::members_store::upsert_member(node_id, node.addr, NodeStatus::Fail, epoch);
                 tracing::error!(node_id = %node_id, "Marked node as Fail");
             }
         }
@@ -1070,7 +1111,9 @@ async fn detect_failures(state: &ClusterState, config: &GossipConfig) {
             if node.status.can_recover() {
                 let old_status = node.status;
                 node.status = NodeStatus::Online;
-                node.epoch = state.increment_epoch();
+                let epoch = state.increment_epoch();
+                node.epoch = epoch;
+                crate::members_store::upsert_member(node_id, node.addr, NodeStatus::Online, epoch);
                 tracing::info!(
                     node_id = %node_id,
                     old_status = ?old_status,
@@ -1085,10 +1128,11 @@ async fn detect_failures(state: &ClusterState, config: &GossipConfig) {
     for node_id in pfail_nodes {
         let mut nodes = state.cluster_nodes.write().await;
         if let Some(node) = nodes.get_mut(&node_id) {
-            // Only mark as PFail if still Online (may have been updated by another thread)
             if node.status == NodeStatus::Online {
                 node.status = NodeStatus::PFail;
-                node.epoch = state.increment_epoch();
+                let epoch = state.increment_epoch();
+                node.epoch = epoch;
+                crate::members_store::upsert_member(node_id, node.addr, NodeStatus::PFail, epoch);
                 tracing::debug!(
                     node_id = %node_id,
                     elapsed_ms = now.saturating_sub(node.last_seen),
@@ -1102,12 +1146,11 @@ async fn detect_failures(state: &ClusterState, config: &GossipConfig) {
     for node_id in fail_nodes {
         let mut nodes = state.cluster_nodes.write().await;
         if let Some(node) = nodes.get_mut(&node_id) {
-            // Only mark as Fail if still in PFail state (may have recovered)
             if node.status == NodeStatus::PFail {
                 node.status = NodeStatus::Fail;
-                node.epoch = state.increment_epoch();
-                // Use warn level instead of error to reduce log noise in high-load scenarios
-                // This is often a false positive during stress tests
+                let epoch = state.increment_epoch();
+                node.epoch = epoch;
+                crate::members_store::upsert_member(node_id, node.addr, NodeStatus::Fail, epoch);
                 tracing::warn!(
                     node_id = %node_id,
                     elapsed_ms = now.saturating_sub(node.last_seen),
@@ -1126,13 +1169,19 @@ async fn detect_failures(state: &ClusterState, config: &GossipConfig) {
             if let Some(node) = nodes.get_mut(node_id) {
                 if node.status == NodeStatus::Fail {
                     node.status = NodeStatus::Tombstone;
-                    node.epoch = state.increment_epoch();
+                    let epoch = state.increment_epoch();
+                    node.epoch = epoch;
+                    crate::members_store::upsert_member(
+                        *node_id,
+                        node.addr,
+                        NodeStatus::Tombstone,
+                        epoch,
+                    );
                     tracing::info!(
                         node_id = %node_id,
                         "Tombstoned failed node (named actors cleared, node info retained)"
                     );
 
-                    // Clean up named actors on this node (but keep node info)
                     for info in named.values_mut() {
                         info.remove_instance(node_id);
                     }
@@ -1147,16 +1196,15 @@ async fn detect_failures(state: &ClusterState, config: &GossipConfig) {
         let mut nodes = state.cluster_nodes.write().await;
 
         for node_id in &remove_nodes {
-            if nodes
-                .get(node_id)
-                .map(|n| n.status == NodeStatus::Tombstone)
-                .unwrap_or(false)
-            {
-                tracing::info!(
-                    node_id = %node_id,
-                    "Permanently removing tombstoned node after retention period"
-                );
-                nodes.remove(node_id);
+            if let Some(removed) = nodes.get(node_id) {
+                if removed.status == NodeStatus::Tombstone {
+                    tracing::info!(
+                        node_id = %node_id,
+                        "Permanently removing tombstoned node after retention period"
+                    );
+                    crate::members_store::remove_member(*node_id);
+                    nodes.remove(node_id);
+                }
             }
         }
     }

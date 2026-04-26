@@ -96,7 +96,7 @@ impl ActorSystem {
                         cluster.register_named_actor(path.clone()).await;
                     } else {
                         cluster
-                            .register_named_actor_full(path.clone(), actor_id, metadata)
+                            .register_named_actor_full(path.clone(), actor_id, metadata.clone())
                             .await;
                     }
                     // So refer(actor_id) / lookup_actor can resolve this actor on any node
@@ -107,6 +107,8 @@ impl ActorSystem {
             // Anonymous actor: use actor_id as key
             self.registry.register_name(actor_id.to_string(), actor_id);
         }
+
+        self.notify_monitor_actor_spawned(&name_str, actor_id, &metadata);
 
         Ok(ActorRef::local(actor_id, sender))
     }

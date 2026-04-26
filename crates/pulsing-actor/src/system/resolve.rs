@@ -347,10 +347,11 @@ impl ActorSystem {
 
     /// Get cluster member information
     pub async fn members(&self) -> Vec<MemberInfo> {
-        match self.cluster_opt().await {
+        let members = match self.cluster_opt().await {
             Some(cluster) => cluster.all_members().await,
             None => Vec::new(),
-        }
+        };
+        members
     }
 
     /// Get all named actors in the cluster

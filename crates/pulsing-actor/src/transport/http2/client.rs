@@ -7,18 +7,23 @@ use super::stream::{BinaryFrameParser, StreamFrame, StreamHandle};
 use super::{headers, MessageMode, RequestType};
 use crate::actor::{Message, MessageStream};
 use crate::error::{PulsingError, Result, RuntimeError};
-use crate::tracing::{TraceContext, TRACEPARENT_HEADER};
+use crate::tracing::{
+    active_span_traceparent, active_span_tracestate, OpenTelemetrySpanExt, TRACEPARENT_HEADER,
+    TRACESTATE_HEADER,
+};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
 use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::{Method, Request};
+use opentelemetry::Context;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 /// Context for fault injection (testing / chaos).
 #[derive(Clone, Debug)]
@@ -346,20 +351,16 @@ impl Http2Client {
         use hyper_util::rt::{TokioExecutor, TokioIo};
         use tokio::net::TcpStream;
 
-        // Create trace context for outgoing streaming request
-        let trace_ctx = TraceContext::from_current()
-            .map(|p| p.child())
-            .unwrap_or_default();
-
+        let parent_otel = Context::current();
         let span = tracing::info_span!(
             "http.client.stream",
             otel.name = %format!("POST {} (stream)", path),
             http.method = "POST",
             http.url = %format!("http://{}{}", addr, path),
-            trace_id = %trace_ctx.trace_id,
-            span_id = %trace_ctx.span_id,
         );
-        let _enter = span.enter();
+        span.set_parent(parent_otel);
+        let (trace_header, trace_state_header) =
+            span.in_scope(|| (active_span_traceparent(), active_span_tracestate()));
 
         // Create a dedicated connection for streaming request
         let tcp_stream =
@@ -430,18 +431,22 @@ impl Http2Client {
             let body = StreamBody::new(body_stream);
 
             let uri = format!("http://{}{}", addr, path);
-            let request = Request::builder()
+            let mut req_b = Request::builder()
                 .method(Method::POST)
                 .uri(&uri)
                 .header(headers::MESSAGE_MODE, MessageMode::Ask.as_str())
                 .header(headers::MESSAGE_TYPE, msg_type)
                 .header(headers::REQUEST_TYPE, RequestType::Stream.as_str())
-                .header(TRACEPARENT_HEADER, trace_ctx.to_traceparent())
-                .header("content-type", "application/octet-stream")
-                .body(body)
-                .map_err(|e| {
-                    RuntimeError::protocol_error(format!("Failed to build request: {}", e))
-                })?;
+                .header("content-type", "application/octet-stream");
+            if let Some(ref h) = trace_header {
+                req_b = req_b.header(TRACEPARENT_HEADER, h);
+            }
+            if let Some(ref h) = trace_state_header {
+                req_b = req_b.header(TRACESTATE_HEADER, h);
+            }
+            let request = req_b.body(body).map_err(|e| {
+                RuntimeError::protocol_error(format!("Failed to build request: {}", e))
+            })?;
 
             let send_future = sender.send_request(request);
             let response = tokio::time::timeout(self.config.stream_timeout, send_future)
@@ -510,14 +515,20 @@ impl Http2Client {
 
         // Build request with streaming body and trace context
         let uri = format!("http://{}{}", addr, path);
-        let request = Request::builder()
+        let mut req_b = Request::builder()
             .method(Method::POST)
             .uri(&uri)
             .header(headers::MESSAGE_MODE, MessageMode::Ask.as_str())
             .header(headers::MESSAGE_TYPE, msg_type)
             .header(headers::REQUEST_TYPE, RequestType::Stream.as_str())
-            .header(TRACEPARENT_HEADER, trace_ctx.to_traceparent())
-            .header("content-type", "application/octet-stream")
+            .header("content-type", "application/octet-stream");
+        if let Some(ref h) = trace_header {
+            req_b = req_b.header(TRACEPARENT_HEADER, h);
+        }
+        if let Some(ref h) = trace_state_header {
+            req_b = req_b.header(TRACESTATE_HEADER, h);
+        }
+        let request = req_b
             .body(body)
             .map_err(|e| RuntimeError::protocol_error(format!("Failed to build request: {}", e)))?;
 
@@ -641,45 +652,53 @@ impl Http2Client {
         payload: Vec<u8>,
         mode: MessageMode,
     ) -> Result<hyper::Response<Incoming>> {
-        let trace_ctx = TraceContext::from_current()
-            .map(|p| p.child())
-            .unwrap_or_default();
-
+        let this = self.clone();
+        let path = path.to_string();
+        let msg_type = msg_type.to_string();
+        let parent_otel = Context::current();
         let span = tracing::info_span!(
             "http.client",
             otel.name = %format!("POST {}", path),
             http.method = "POST",
             http.url = %format!("http://{}{}", addr, path),
-            trace_id = %trace_ctx.trace_id,
-            span_id = %trace_ctx.span_id,
         );
-        let _enter = span.enter();
+        span.set_parent(parent_otel);
 
-        let conn_guard = self.pool.get_connection(addr).await?;
-        let mut conn = conn_guard.get().await;
+        async move {
+            let trace_header = active_span_traceparent();
+            let trace_state_header = active_span_tracestate();
+            let conn_guard = this.pool.get_connection(addr).await?;
+            let mut conn = conn_guard.get().await;
 
-        // Build request with trace context header
-        let uri = format!("http://{}{}", addr, path);
-        let request = Request::builder()
-            .method(Method::POST)
-            .uri(&uri)
-            .header(headers::MESSAGE_MODE, mode.as_str())
-            .header(headers::MESSAGE_TYPE, msg_type)
-            .header(TRACEPARENT_HEADER, trace_ctx.to_traceparent())
-            .header("content-type", "application/octet-stream")
-            .body(Full::new(Bytes::from(payload)))
-            .map_err(|e| RuntimeError::protocol_error(format!("Failed to build request: {}", e)))?;
+            let uri = format!("http://{}{}", addr, path);
+            let mut builder = Request::builder()
+                .method(Method::POST)
+                .uri(&uri)
+                .header(headers::MESSAGE_MODE, mode.as_str())
+                .header(headers::MESSAGE_TYPE, &msg_type)
+                .header("content-type", "application/octet-stream");
+            if let Some(ref h) = trace_header {
+                builder = builder.header(TRACEPARENT_HEADER, h);
+            }
+            if let Some(ref h) = trace_state_header {
+                builder = builder.header(TRACESTATE_HEADER, h);
+            }
+            let request = builder.body(Full::new(Bytes::from(payload))).map_err(|e| {
+                RuntimeError::protocol_error(format!("Failed to build request: {}", e))
+            })?;
 
-        // Send request with timeout
-        let send_future = conn.sender.send_request(request);
-        let response = tokio::time::timeout(self.config.request_timeout, send_future)
-            .await
-            .map_err(|_| {
-                RuntimeError::request_timeout(self.config.request_timeout.as_millis() as u64)
-            })?
-            .map_err(|e| RuntimeError::protocol_error(format!("Request failed: {}", e)))?;
+            let send_future = conn.sender.send_request(request);
+            let response = tokio::time::timeout(this.config.request_timeout, send_future)
+                .await
+                .map_err(|_| {
+                    RuntimeError::request_timeout(this.config.request_timeout.as_millis() as u64)
+                })?
+                .map_err(|e| RuntimeError::protocol_error(format!("Request failed: {}", e)))?;
 
-        Ok(response)
+            Ok(response)
+        }
+        .instrument(span)
+        .await
     }
 }
 

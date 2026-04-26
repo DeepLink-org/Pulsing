@@ -27,11 +27,12 @@ pub use messages::{ActorInfo, ActorStatusInfo, SystemMessage, SystemResponse};
 use crate::actor::{Actor, ActorContext, ActorId, Message};
 use crate::error::{PulsingError, Result, RuntimeError};
 use crate::metrics::SystemMetrics as PrometheusSystemMetrics;
+use crate::performance_store::{PerformanceSnapshot, PerformanceStore};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 /// Named path for SystemActor (system/core satisfies namespace/name format requirement)
@@ -83,6 +84,8 @@ struct ActorEntry {
     actor_id: ActorId,
     actor_type: String,
     created_at: Instant,
+    /// Spawn-time metadata (e.g. Python ``class`` / ``module`` / ``file``).
+    metadata: HashMap<String, String>,
 }
 
 /// Actor registry
@@ -99,12 +102,23 @@ impl ActorRegistry {
     }
 
     pub fn register(&self, name: &str, actor_id: ActorId, actor_type: &str) {
+        self.register_with_metadata(name, actor_id, actor_type, HashMap::new());
+    }
+
+    pub fn register_with_metadata(
+        &self,
+        name: &str,
+        actor_id: ActorId,
+        actor_type: &str,
+        metadata: HashMap<String, String>,
+    ) {
         self.actors.insert(
             name.to_string(),
             ActorEntry {
                 actor_id,
                 actor_type: actor_type.to_string(),
                 created_at: Instant::now(),
+                metadata,
             },
         );
     }
@@ -133,7 +147,7 @@ impl ActorRegistry {
                 actor_id: e.actor_id.0,
                 actor_type: e.actor_type.clone(),
                 uptime_secs: e.created_at.elapsed().as_secs(),
-                metadata: std::collections::HashMap::new(), // TODO: get from actor
+                metadata: e.metadata.clone(),
             })
             .collect()
     }
@@ -144,7 +158,7 @@ impl ActorRegistry {
             actor_id: e.actor_id.0,
             actor_type: e.actor_type.clone(),
             uptime_secs: e.created_at.elapsed().as_secs(),
-            metadata: std::collections::HashMap::new(), // TODO: get from actor
+            metadata: e.metadata.clone(),
         })
     }
 }
@@ -183,23 +197,80 @@ pub struct SystemActor {
 
     /// Start time
     start_time: Instant,
+
+    /// Ring buffer of recent `GetMetrics` samples
+    performance_store: Arc<PerformanceStore>,
+
+    /// System-level registry with per-actor stats (for accurate messages_total)
+    system_registry: Option<Arc<crate::system::registry::ActorRegistry>>,
 }
 
 impl SystemActor {
-    /// Create a new SystemActor
+    /// Create a new SystemActor (private registry + metrics).
     pub fn new(system_ref: Arc<SystemRef>, factory: BoxedActorFactory) -> Self {
-        Self {
-            registry: Arc::new(ActorRegistry::new()),
-            factory,
-            metrics: Arc::new(SystemMetrics::new()),
+        Self::new_shared(
             system_ref,
-            start_time: Instant::now(),
-        }
+            factory,
+            Arc::new(ActorRegistry::new()),
+            Arc::new(SystemMetrics::new()),
+            Arc::new(PerformanceStore::new(256)),
+        )
     }
 
     /// Create SystemActor with default factory
     pub fn with_default_factory(system_ref: Arc<SystemRef>) -> Self {
-        Self::new(system_ref, Box::new(DefaultActorFactory))
+        Self::with_default_factory_shared(
+            system_ref,
+            Arc::new(ActorRegistry::new()),
+            Arc::new(SystemMetrics::new()),
+            Arc::new(PerformanceStore::new(256)),
+        )
+    }
+
+    /// Shared registry + metrics (must match [`crate::system::ActorSystem::system_monitor`]).
+    pub fn with_default_factory_shared(
+        system_ref: Arc<SystemRef>,
+        registry: Arc<ActorRegistry>,
+        metrics: Arc<SystemMetrics>,
+        performance_store: Arc<PerformanceStore>,
+    ) -> Self {
+        Self {
+            registry,
+            factory: Box::new(DefaultActorFactory),
+            metrics,
+            system_ref,
+            start_time: Instant::now(),
+            performance_store,
+            system_registry: None,
+        }
+    }
+
+    /// Shared registry + metrics with a custom factory.
+    pub fn new_shared(
+        system_ref: Arc<SystemRef>,
+        factory: BoxedActorFactory,
+        registry: Arc<ActorRegistry>,
+        metrics: Arc<SystemMetrics>,
+        performance_store: Arc<PerformanceStore>,
+    ) -> Self {
+        Self {
+            registry,
+            factory,
+            metrics,
+            system_ref,
+            start_time: Instant::now(),
+            performance_store,
+            system_registry: None,
+        }
+    }
+
+    /// Attach the system-level registry for accurate global message counting.
+    pub fn with_system_registry(
+        mut self,
+        reg: Arc<crate::system::registry::ActorRegistry>,
+    ) -> Self {
+        self.system_registry = Some(reg);
+        self
     }
 
     /// Get registry (for Python bindings)
@@ -231,12 +302,44 @@ impl SystemActor {
 
     /// Handle GetMetrics request
     fn handle_get_metrics(&self) -> SystemResponse {
+        let actors_count = self.registry.count();
+        let messages_total = self.total_messages();
+        let actors_created = self.metrics.actors_created();
+        let actors_stopped = self.metrics.actors_stopped();
+        let uptime_secs = self.start_time.elapsed().as_secs();
+
+        let ts_unix_micros = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_micros() as u64)
+            .unwrap_or(0);
+        let node_id_str = self.system_ref.node_id.to_string();
+
+        self.performance_store.record(PerformanceSnapshot {
+            ts_unix_micros,
+            node_id: node_id_str.clone(),
+            actors_count: actors_count as u64,
+            messages_total,
+            actors_created,
+            actors_stopped,
+            uptime_secs,
+        });
+
+        crate::metrics_store::write_metrics_snapshot(
+            ts_unix_micros,
+            &node_id_str,
+            actors_count as u64,
+            messages_total,
+            actors_created,
+            actors_stopped,
+            uptime_secs,
+        );
+
         SystemResponse::Metrics {
-            actors_count: self.registry.count(),
-            messages_total: self.metrics.messages_total(),
-            actors_created: self.metrics.actors_created(),
-            actors_stopped: self.metrics.actors_stopped(),
-            uptime_secs: self.start_time.elapsed().as_secs(),
+            actors_count,
+            messages_total,
+            actors_created,
+            actors_stopped,
+            uptime_secs,
         }
     }
 
@@ -287,10 +390,24 @@ impl SystemActor {
         PrometheusSystemMetrics {
             node_id: self.system_ref.node_id.0,
             actors_count: self.registry.count(),
-            messages_total: self.metrics.messages_total(),
+            messages_total: self.total_messages(),
             actors_created: self.metrics.actors_created(),
             actors_stopped: self.metrics.actors_stopped(),
             cluster_members: HashMap::new(), // Will be filled by caller with cluster info
+        }
+    }
+
+    /// Sum message counts from all actors in the system-level registry,
+    /// falling back to `SystemMetrics::messages_total` (system-actor only) if unavailable.
+    fn total_messages(&self) -> u64 {
+        if let Some(reg) = &self.system_registry {
+            let mut total = 0u64;
+            for entry in reg.iter_actors() {
+                total += entry.value().stats.message_count.load(Ordering::Relaxed);
+            }
+            total
+        } else {
+            self.metrics.messages_total()
         }
     }
 

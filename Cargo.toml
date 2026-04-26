@@ -96,5 +96,6 @@ hf-hub = { version = "0.4", features = ["tokio"] }
 vergen-gitcl = "1.0"
 pkcs8 = { version = "0.10", features = ["alloc"] }
 sha2 = "0.10"
+probing-memtable = "0.2.4"
 ed25519-dalek = { version = "2.0", features = ["pkcs8"] }
 der = "0.7"

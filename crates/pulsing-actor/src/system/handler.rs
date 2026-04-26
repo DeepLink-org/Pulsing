@@ -6,12 +6,15 @@ use crate::cluster::{GossipBackend, GossipMessage, HeadNodeBackend, NamingBacken
 use crate::error::{PulsingError, Result, RuntimeError};
 use crate::metrics::{metrics, SystemMetrics as PrometheusMetrics};
 use crate::system::registry::ActorRegistry;
+use crate::tracing::{
+    capture_linked_traceparent_for_mailbox, capture_linked_tracestate_for_mailbox,
+};
 use crate::transport::Http2ServerHandler;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::{mpsc, RwLock};
 
 /// Unified message handler for HTTP/2 transport.
@@ -23,6 +26,13 @@ pub(crate) struct SystemMessageHandler {
     registry: Arc<ActorRegistry>,
     /// Cluster backend
     cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
+    /// Same state as [`SystemActor`] metrics registry (after `system/core` starts).
+    system_monitor: Arc<
+        OnceLock<(
+            Arc<crate::system_actor::SystemMetrics>,
+            Arc<crate::system_actor::ActorRegistry>,
+        )>,
+    >,
 }
 
 impl SystemMessageHandler {
@@ -30,11 +40,18 @@ impl SystemMessageHandler {
         node_id: NodeId,
         registry: Arc<ActorRegistry>,
         cluster: Arc<RwLock<Option<Arc<dyn NamingBackend>>>>,
+        system_monitor: Arc<
+            OnceLock<(
+                Arc<crate::system_actor::SystemMetrics>,
+                Arc<crate::system_actor::ActorRegistry>,
+            )>,
+        >,
     ) -> Self {
         Self {
             node_id,
             registry,
             cluster,
+            system_monitor,
         }
     }
 
@@ -71,7 +88,11 @@ impl SystemMessageHandler {
         let sender = self.find_actor_sender(actor_name)?;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let envelope = Envelope::ask(msg, tx);
+        let tp = capture_linked_traceparent_for_mailbox();
+        let ts = capture_linked_tracestate_for_mailbox();
+        let envelope = Envelope::ask(msg, tx)
+            .with_linked_traceparent(tp)
+            .with_linked_tracestate(ts);
 
         sender
             .send(envelope)
@@ -84,7 +105,11 @@ impl SystemMessageHandler {
 
     async fn tell_local_actor(&self, actor_name: &str, msg: Message) -> Result<()> {
         let sender = self.find_actor_sender(actor_name)?;
-        let envelope = Envelope::tell(msg);
+        let tp = capture_linked_traceparent_for_mailbox();
+        let ts = capture_linked_tracestate_for_mailbox();
+        let envelope = Envelope::tell(msg)
+            .with_linked_traceparent(tp)
+            .with_linked_tracestate(ts);
 
         sender
             .send(envelope)
@@ -254,13 +279,20 @@ impl Http2ServerHandler for SystemMessageHandler {
             total_messages += entry.value().stats.message_count.load(Ordering::Relaxed);
         }
 
+        let (actors_count, actors_created, actors_stopped) =
+            if let Some((m, r)) = self.system_monitor.get() {
+                (r.count(), m.actors_created(), m.actors_stopped())
+            } else {
+                (self.registry.actor_count(), 0u64, 0u64)
+            };
+
         // Build system metrics
         let system_metrics = PrometheusMetrics {
             node_id: self.node_id.0,
-            actors_count: self.registry.actor_count(),
+            actors_count,
             messages_total: total_messages,
-            actors_created: self.registry.actor_count() as u64,
-            actors_stopped: 0,
+            actors_created,
+            actors_stopped,
             cluster_members,
         };
 
@@ -542,6 +574,16 @@ mod tests {
     use super::*;
     use crate::system::handle::{ActorStats, LocalActorHandle};
     use std::collections::HashMap;
+    use std::sync::OnceLock;
+
+    fn empty_monitor() -> Arc<
+        OnceLock<(
+            Arc<crate::system_actor::SystemMetrics>,
+            Arc<crate::system_actor::ActorRegistry>,
+        )>,
+    > {
+        Arc::new(OnceLock::new())
+    }
 
     fn make_mock_actor(
         _actor_id: ActorId,
@@ -549,7 +591,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<Envelope>(8);
         let join = tokio::spawn(async move {
             while let Some(env) = rx.recv().await {
-                let (_, responder) = env.into_parts();
+                let (_, responder, _, _) = env.into_parts();
                 responder.send(Ok(Message::single("pong", vec![1, 2, 3])));
             }
         });
@@ -560,7 +602,8 @@ mod tests {
     async fn test_dispatch_message_invalid_path() {
         let registry = Arc::new(ActorRegistry::new());
         let cluster = Arc::new(RwLock::new(None));
-        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+        let handler =
+            SystemMessageHandler::new(NodeId::generate(), registry, cluster, empty_monitor());
         let msg = Message::single("ping", vec![]);
 
         let err = handler
@@ -575,7 +618,8 @@ mod tests {
     async fn test_dispatch_message_actor_not_found() {
         let registry = Arc::new(ActorRegistry::new());
         let cluster = Arc::new(RwLock::new(None));
-        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+        let handler =
+            SystemMessageHandler::new(NodeId::generate(), registry, cluster, empty_monitor());
         let msg = Message::single("ping", vec![]);
 
         let err = handler
@@ -590,7 +634,8 @@ mod tests {
     async fn test_dispatch_message_named_actor_not_found() {
         let registry = Arc::new(ActorRegistry::new());
         let cluster = Arc::new(RwLock::new(None));
-        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+        let handler =
+            SystemMessageHandler::new(NodeId::generate(), registry, cluster, empty_monitor());
         let msg = Message::single("ping", vec![]);
 
         let err = handler
@@ -623,7 +668,8 @@ mod tests {
         registry.register_name("test-actor".to_string(), actor_id);
 
         let cluster = Arc::new(RwLock::new(None));
-        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+        let handler =
+            SystemMessageHandler::new(NodeId::generate(), registry, cluster, empty_monitor());
         let msg = Message::single("ping", vec![]);
 
         let response = handler
@@ -652,7 +698,8 @@ mod tests {
         registry.register_name("simple".to_string(), actor_id);
 
         let cluster = Arc::new(RwLock::new(None));
-        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+        let handler =
+            SystemMessageHandler::new(NodeId::generate(), registry, cluster, empty_monitor());
 
         let response = handler
             .handle_message_simple("/actors/simple", "req", vec![1, 2, 3])
@@ -665,7 +712,8 @@ mod tests {
     async fn test_dispatch_tell_actor_not_found() {
         let registry = Arc::new(ActorRegistry::new());
         let cluster = Arc::new(RwLock::new(None));
-        let handler = SystemMessageHandler::new(NodeId::generate(), registry, cluster);
+        let handler =
+            SystemMessageHandler::new(NodeId::generate(), registry, cluster, empty_monitor());
 
         let err = handler
             .handle_tell("/actors/missing", "msg", vec![])

@@ -5,7 +5,7 @@ use super::stream::{BinaryFrameParser, StreamFrame};
 use super::{headers, MessageMode, RequestType};
 use crate::actor::Message;
 use crate::error::{PulsingError, Result, RuntimeError};
-use crate::tracing::{TraceContext, TRACEPARENT_HEADER};
+use crate::tracing::{OpenTelemetrySpanExt, TraceContext, TRACEPARENT_HEADER, TRACESTATE_HEADER};
 use bytes::Bytes;
 use futures::StreamExt;
 use http_body_util::{BodyExt, Full, StreamBody};
@@ -21,6 +21,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 /// Handler trait for HTTP/2 server.
 #[async_trait::async_trait]
@@ -275,30 +276,32 @@ impl Http2Server {
         let path = req.uri().path().to_string();
         let method = req.method().clone();
 
-        // Extract trace context from incoming request
-        let parent_trace = req
+        // Link to upstream trace: W3C traceparent + optional tracestate → remote parent → child span
+        let tp = req
             .headers()
             .get(TRACEPARENT_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(TraceContext::from_traceparent);
+            .and_then(|v| v.to_str().ok());
+        let ts = req
+            .headers()
+            .get(TRACESTATE_HEADER)
+            .and_then(|v| v.to_str().ok());
+        let parent_trace = tp.and_then(|tp| TraceContext::from_w3c_headers(tp, ts));
 
-        // Create a child span ID for this request
-        let trace_ctx = parent_trace.map(|p| p.child()).unwrap_or_default();
+        let parent_otel = parent_trace
+            .as_ref()
+            .map(TraceContext::remote_parent_context)
+            .unwrap_or_default();
 
-        // Create span with trace context
         let span = tracing::info_span!(
             "http.request",
             otel.name = %format!("{} {}", method, path),
             http.method = %method,
             http.route = %path,
             http.peer = %peer_addr,
-            trace_id = %trace_ctx.trace_id,
-            span_id = %trace_ctx.span_id,
         );
+        span.set_parent(parent_otel);
 
-        // Enter the span for the duration of request handling
-        let _enter = span.enter();
-
+        async move {
         // Health check endpoint
         if path == "/health" && method == Method::GET {
             let health = handler.health_check().await;
@@ -483,6 +486,9 @@ impl Http2Server {
                 }
             }
         }
+        }
+        .instrument(span)
+        .await
     }
 
     /// Parse a streaming request body (binary frames) into Message::Stream

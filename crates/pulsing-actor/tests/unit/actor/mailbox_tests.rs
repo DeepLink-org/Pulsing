@@ -39,7 +39,7 @@ async fn test_mailbox_send_receive() {
     assert_eq!(received.msg_type(), "test");
 
     // Extract payload from message
-    let (message, _) = received.into_parts();
+    let (message, _, _, _) = received.into_parts();
     if let Message::Single { data, .. } = message {
         assert_eq!(data, vec![1, 2, 3]);
     } else {
@@ -57,7 +57,7 @@ async fn test_mailbox_ask_pattern() {
     let receiver_task = tokio::spawn(async move {
         if let Some(envelope) = receiver.recv().await {
             assert!(envelope.expects_response());
-            let (_, responder) = envelope.into_parts();
+            let (_, responder, _, _) = envelope.into_parts();
             responder.send(Ok(Message::single("", vec![42, 43, 44])));
         }
     });
@@ -76,6 +76,26 @@ async fn test_mailbox_ask_pattern() {
     assert_eq!(data, vec![42, 43, 44]);
 
     receiver_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_envelope_linked_traceparent_roundtrip() {
+    let tp = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01".to_string();
+    let msg = Message::single("t", vec![]);
+    let env = Envelope::tell(msg).with_linked_traceparent(Some(tp.clone()));
+    let (_, _, got_tp, got_ts) = env.into_parts();
+    assert_eq!(got_tp.as_deref(), Some(tp.as_str()));
+    assert!(got_ts.is_none());
+}
+
+#[tokio::test]
+async fn test_envelope_linked_tracestate_roundtrip() {
+    let ts = "vendor1=opaque1".to_string();
+    let msg = Message::single("t", vec![]);
+    let env = Envelope::tell(msg).with_linked_tracestate(Some(ts.clone()));
+    let (_, _, got_tp, got_ts) = env.into_parts();
+    assert!(got_tp.is_none());
+    assert_eq!(got_ts.as_deref(), Some(ts.as_str()));
 }
 
 #[tokio::test]
@@ -275,7 +295,7 @@ async fn test_mailbox_no_message_loss() {
     // Receiver collects all message IDs
     let receiver_task = tokio::spawn(async move {
         while let Some(envelope) = receiver.recv().await {
-            let (message, _) = envelope.into_parts();
+            let (message, _, _, _) = envelope.into_parts();
             if let Message::Single { data, .. } = message {
                 if data.len() >= 4 {
                     let id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
@@ -321,7 +341,7 @@ async fn test_mailbox_response_delivery() {
     let receiver_task = tokio::spawn(async move {
         while let Some(envelope) = receiver.recv().await {
             let expects = envelope.expects_response();
-            let (message, responder) = envelope.into_parts();
+            let (message, responder, _, _) = envelope.into_parts();
             if expects {
                 // Echo back the payload doubled
                 if let Message::Single { ref data, .. } = message {
@@ -371,7 +391,7 @@ async fn test_mailbox_empty_payload() {
     let received = receiver.recv().await.unwrap();
     assert_eq!(received.msg_type(), "empty");
 
-    let (message, _) = received.into_parts();
+    let (message, _, _, _) = received.into_parts();
     if let Message::Single { data, .. } = message {
         assert!(data.is_empty());
     } else {
@@ -391,7 +411,7 @@ async fn test_mailbox_large_payload() {
     sender.send(envelope).await.unwrap();
 
     let received = receiver.recv().await.unwrap();
-    let (message, _) = received.into_parts();
+    let (message, _, _, _) = received.into_parts();
 
     if let Message::Single { data, .. } = message {
         assert_eq!(data.len(), 1_000_000);

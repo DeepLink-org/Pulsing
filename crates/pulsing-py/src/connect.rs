@@ -7,6 +7,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::actor::PyMessage;
+use pulsing_actor::tracing::span_python_actor_boundary;
+use tracing::Instrument;
 
 fn to_pyerr(err: pulsing_actor::error::PulsingError) -> PyErr {
     crate::errors::pulsing_error_to_py_err(err)
@@ -129,10 +131,15 @@ impl PyConnectActorRef {
             crate::actor::encode_python_payload(py, &msg)?
         };
 
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let response = actor_ref.send_message(actor_msg).await.map_err(to_pyerr)?;
-            crate::actor::decode_message_to_pyobject(response).await
-        })
+        let span = span_python_actor_boundary("ConnectActorRef.ask");
+        pyo3_async_runtimes::tokio::future_into_py(
+            py,
+            async move {
+                let response = actor_ref.send_message(actor_msg).await.map_err(to_pyerr)?;
+                crate::actor::decode_message_to_pyobject(response).await
+            }
+            .instrument(span),
+        )
     }
 
     /// Fire-and-forget message.
@@ -147,17 +154,22 @@ impl PyConnectActorRef {
             crate::actor::encode_python_payload(py, &msg)?
         };
 
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            match actor_msg {
-                pulsing_actor::actor::Message::Single { msg_type, data } => {
-                    actor_ref.tell(&msg_type, data).await.map_err(to_pyerr)?;
+        let span = span_python_actor_boundary("ConnectActorRef.tell");
+        pyo3_async_runtimes::tokio::future_into_py(
+            py,
+            async move {
+                match actor_msg {
+                    pulsing_actor::actor::Message::Single { msg_type, data } => {
+                        actor_ref.tell(&msg_type, data).await.map_err(to_pyerr)?;
+                    }
+                    _ => {
+                        return Err(PyRuntimeError::new_err("Streaming not supported for tell"));
+                    }
                 }
-                _ => {
-                    return Err(PyRuntimeError::new_err("Streaming not supported for tell"));
-                }
+                Ok(())
             }
-            Ok(())
-        })
+            .instrument(span),
+        )
     }
 
     /// Get the actor path.

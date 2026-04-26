@@ -4,6 +4,9 @@ use super::address::ActorPath;
 use super::mailbox::Envelope;
 use super::traits::{ActorId, Message};
 use crate::error::{PulsingError, Result, RuntimeError};
+use crate::tracing::{
+    capture_linked_traceparent_for_mailbox, capture_linked_tracestate_for_mailbox,
+};
 use serde::{de::DeserializeOwned, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -200,12 +203,33 @@ impl ActorRef {
     /// Use this when you need direct access to `Message`, e.g., for streaming.
     /// For type-safe communication, prefer `ask()` and `tell()`.
     pub async fn send(&self, msg: Message) -> Result<Message> {
+        let tp = capture_linked_traceparent_for_mailbox();
+        let ts = capture_linked_tracestate_for_mailbox();
+        self.send_with_trace(msg, tp, ts).await
+    }
+
+    /// Like [`send`](Self::send) but uses pre-captured W3C trace context instead
+    /// of reading from the current span. Use when the send happens on a different
+    /// tokio task from the one that owns the parent span (e.g. PyO3 bridge).
+    pub async fn send_with_trace(
+        &self,
+        msg: Message,
+        tp: Option<String>,
+        ts: Option<String>,
+    ) -> Result<Message> {
         match &self.inner {
             ActorRefInner::Local(sender) => {
                 let (tx, rx) = oneshot::channel();
-                sender.send(Envelope::ask(msg, tx)).await.map_err(|_| {
-                    PulsingError::from(RuntimeError::Other("Actor mailbox closed".into()))
-                })?;
+                sender
+                    .send(
+                        Envelope::ask(msg, tx)
+                            .with_linked_traceparent(tp)
+                            .with_linked_tracestate(ts),
+                    )
+                    .await
+                    .map_err(|_| {
+                        PulsingError::from(RuntimeError::Other("Actor mailbox closed".into()))
+                    })?;
                 rx.await
                     .map_err(|_| PulsingError::from(RuntimeError::Other("Actor dropped".into())))?
             }
@@ -213,28 +237,43 @@ impl ActorRef {
                 remote.transport.send_message(&self.actor_id, msg).await
             }
             ActorRefInner::Lazy(lazy) => {
-                // Resolve and delegate to the resolved reference
                 let resolved = lazy.get().await?;
-                // Box the recursive future to avoid infinite size
-                Box::pin(resolved.send(msg)).await
+                Box::pin(resolved.send_with_trace(msg, tp, ts)).await
             }
         }
     }
 
     /// Send a raw message without waiting for response (low-level fire-and-forget)
     pub async fn send_oneway(&self, msg: Message) -> Result<()> {
+        let tp = capture_linked_traceparent_for_mailbox();
+        let ts = capture_linked_tracestate_for_mailbox();
+        self.send_oneway_with_trace(msg, tp, ts).await
+    }
+
+    /// Like [`send_oneway`](Self::send_oneway) but with pre-captured trace context.
+    pub async fn send_oneway_with_trace(
+        &self,
+        msg: Message,
+        tp: Option<String>,
+        ts: Option<String>,
+    ) -> Result<()> {
         match &self.inner {
-            ActorRefInner::Local(sender) => sender.send(Envelope::tell(msg)).await.map_err(|_| {
-                PulsingError::from(RuntimeError::Other("Actor mailbox closed".into()))
-            }),
+            ActorRefInner::Local(sender) => sender
+                .send(
+                    Envelope::tell(msg)
+                        .with_linked_traceparent(tp)
+                        .with_linked_tracestate(ts),
+                )
+                .await
+                .map_err(|_| {
+                    PulsingError::from(RuntimeError::Other("Actor mailbox closed".into()))
+                }),
             ActorRefInner::Remote(remote) => {
                 remote.transport.send_oneway(&self.actor_id, msg).await
             }
             ActorRefInner::Lazy(lazy) => {
-                // Resolve and delegate to the resolved reference
                 let resolved = lazy.get().await?;
-                // Box the recursive future to avoid infinite size
-                Box::pin(resolved.send_oneway(msg)).await
+                Box::pin(resolved.send_oneway_with_trace(msg, tp, ts)).await
             }
         }
     }
@@ -328,7 +367,7 @@ mod tests {
 
         let reply_handle = tokio::spawn(async move {
             let envelope = rx.recv().await.unwrap();
-            let (msg, responder) = envelope.into_parts();
+            let (msg, responder, _, _) = envelope.into_parts();
             let req: TestMsg = msg.unpack().unwrap();
             responder.send(Ok(Message::pack(&TestReply {
                 result: req.value * 2,
@@ -473,7 +512,7 @@ mod tests {
                 let Some(envelope) = rx.recv().await else {
                     break;
                 };
-                let (msg, responder) = envelope.into_parts();
+                let (msg, responder, _, _) = envelope.into_parts();
                 let req: TestMsg = msg.unpack().unwrap();
                 responder.send(Ok(Message::pack(&TestReply {
                     result: req.value + 1,

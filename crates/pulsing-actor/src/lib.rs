@@ -134,13 +134,18 @@
 //! ```
 
 pub mod actor;
+pub(crate) mod actor_store;
 pub mod behavior;
 pub mod circuit_breaker;
 pub mod cluster;
 pub mod connect;
 pub mod error;
+pub(crate) mod members_store;
 pub mod metrics;
+pub(crate) mod metrics_store;
+pub mod performance_store;
 pub mod policies;
+pub mod span_store;
 pub mod supervision;
 pub mod system;
 pub mod system_actor;
@@ -184,6 +189,8 @@ pub mod test_helper;
 ///
 /// For advanced usage (ActorPath, ActorAddress, NodeId, etc.),
 /// import from `pulsing_actor::actor::*`.
+pub use performance_store::{PerformanceSnapshot, PerformanceStore};
+
 pub mod prelude {
     pub use crate::actor::{Actor, ActorContext, ActorRef, IntoActor, Message};
     pub use crate::supervision::{BackoffStrategy, RestartPolicy, SupervisionSpec};

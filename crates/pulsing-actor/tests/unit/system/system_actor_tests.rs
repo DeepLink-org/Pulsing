@@ -296,6 +296,23 @@ async fn test_system_actor_get_metrics() {
 }
 
 #[tokio::test]
+async fn test_performance_history_records_get_metrics() {
+    let system = create_test_system().await;
+    let sys_ref = system.system().await.unwrap();
+
+    for _ in 0..3 {
+        let msg = create_system_message(&SystemMessage::GetMetrics);
+        let _ = sys_ref.send(msg).await.unwrap();
+    }
+
+    let hist = system.performance_recent(10);
+    assert!(hist.len() >= 3);
+    assert_eq!(hist[0].actors_count as usize, hist[1].actors_count as usize);
+
+    system.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn test_system_actor_list_actors() {
     let system = create_test_system().await;
     let sys_ref = system.system().await.unwrap();
@@ -449,6 +466,19 @@ fn test_actor_registry_list_all() {
 
     let actors = registry.list_all();
     assert_eq!(actors.len(), 2);
+}
+
+#[test]
+fn test_actor_registry_metadata_roundtrip() {
+    let registry = ActorRegistry::new();
+    let mut meta = std::collections::HashMap::new();
+    meta.insert("class".to_string(), "MyActor".to_string());
+    meta.insert("module".to_string(), "my.mod".to_string());
+    registry.register_with_metadata("a1", ActorId::generate(), "MyActor", meta.clone());
+
+    let info = registry.get_info("a1").unwrap();
+    assert_eq!(info.metadata.get("class"), Some(&"MyActor".to_string()));
+    assert_eq!(info.metadata.get("module"), Some(&"my.mod".to_string()));
 }
 
 #[test]
