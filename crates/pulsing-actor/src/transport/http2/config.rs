@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 #[cfg(feature = "tls")]
-use crate::error::Result;
-#[cfg(feature = "tls")]
 use super::tls::TlsConfig;
+#[cfg(feature = "tls")]
+use crate::error::Result;
 
 /// HTTP/2 transport configuration.
 #[derive(Debug, Clone)]

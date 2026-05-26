@@ -418,9 +418,7 @@ impl ConnectionPool {
         };
 
         if did_expand_here {
-            self.stats
-                .pool_expansions
-                .fetch_add(1, Ordering::Relaxed);
+            self.stats.pool_expansions.fetch_add(1, Ordering::Relaxed);
         }
 
         tokio::time::timeout(
@@ -634,8 +632,7 @@ mod tests {
                     let service = service_fn(|_req: Request<hyper::body::Incoming>| async {
                         Ok::<_, Infallible>(Response::new(Full::new(Bytes::new())))
                     });
-                    let builder =
-                        hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+                    let builder = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
                     let conn = builder.serve_connection(io, service);
 
                     if let Err(e) = conn.await {
