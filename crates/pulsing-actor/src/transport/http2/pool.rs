@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 
 /// Connection pool statistics.
 #[derive(Debug, Default)]
@@ -21,6 +21,7 @@ pub struct PoolStats {
     pub connections_closed: AtomicU64,
     pub connections_reused: AtomicU64,
     pub connection_errors: AtomicU64,
+    pub pool_expansions: AtomicU64,
     pub active_connections: AtomicUsize,
     pub idle_connections: AtomicUsize,
 }
@@ -32,6 +33,7 @@ impl PoolStats {
             "connections_closed": self.connections_closed.load(Ordering::Relaxed),
             "connections_reused": self.connections_reused.load(Ordering::Relaxed),
             "connection_errors": self.connection_errors.load(Ordering::Relaxed),
+            "pool_expansions": self.pool_expansions.load(Ordering::Relaxed),
             "active_connections": self.active_connections.load(Ordering::Relaxed),
             "idle_connections": self.idle_connections.load(Ordering::Relaxed),
         })
@@ -54,10 +56,12 @@ pub struct PooledConnection {
     pub last_used: Instant,
     pub request_count: u64,
     pub state: ConnectionState,
+    /// Released on Drop; idle-reuse via `try_get_existing` does NOT consume new permits.
+    _permit: OwnedSemaphorePermit,
 }
 
 impl PooledConnection {
-    fn new(sender: http2::SendRequest<Full<Bytes>>) -> Self {
+    fn new(sender: http2::SendRequest<Full<Bytes>>, permit: OwnedSemaphorePermit) -> Self {
         let now = Instant::now();
         Self {
             sender,
@@ -65,6 +69,7 @@ impl PooledConnection {
             last_used: now,
             request_count: 0,
             state: ConnectionState::Idle,
+            _permit: permit,
         }
     }
 
@@ -130,7 +135,7 @@ pub struct PoolConfig {
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
-            max_connections_per_host: 10,
+            max_connections_per_host: 8,
             min_idle_per_host: 1,
             max_total_connections: 100,
             connect_timeout: Duration::from_secs(5),
@@ -159,6 +164,8 @@ struct HostPool {
     connections: Vec<Arc<Mutex<PooledConnection>>>,
     /// Semaphore for limiting concurrent connections
     semaphore: Arc<Semaphore>,
+    /// Current per-host live connection cap
+    current_cap: usize,
     /// Last connection error time
     last_error: Option<Instant>,
     /// Consecutive error count
@@ -166,10 +173,13 @@ struct HostPool {
 }
 
 impl HostPool {
-    fn new(max_connections: usize) -> Self {
+    fn new(initial_cap: usize) -> Self {
+        let cap = initial_cap.max(1).min(Semaphore::MAX_PERMITS);
+
         Self {
-            connections: Vec::with_capacity(max_connections),
-            semaphore: Arc::new(Semaphore::new(max_connections)),
+            connections: Vec::with_capacity(cap),
+            semaphore: Arc::new(Semaphore::new(cap)),
+            current_cap: cap,
             last_error: None,
             error_count: 0,
         }
@@ -182,6 +192,22 @@ impl HostPool {
 
     fn record_success(&mut self) {
         self.error_count = 0;
+    }
+
+    /// Double the host pool capacity up to Tokio's semaphore limit.
+    fn expand(&mut self) -> Option<(usize, usize)> {
+        let old = self.current_cap;
+        let target = old.saturating_mul(2).min(Semaphore::MAX_PERMITS);
+        let added = target.saturating_sub(old);
+
+        if added == 0 {
+            return None;
+        }
+
+        self.semaphore.add_permits(added);
+        self.current_cap = target;
+
+        Some((old, target))
     }
 
     /// Check if we should back off from connecting to this host
@@ -304,13 +330,14 @@ impl ConnectionPool {
             host_pool.semaphore.clone()
         };
 
-        // Acquire permit (limits concurrent connections per host)
-        let _permit = semaphore
-            .try_acquire()
-            .map_err(|_| anyhow::anyhow!("Connection pool exhausted for {}", addr))?;
+        // Acquire permit (limits live connections per host)
+        let permit = match semaphore.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => self.expand_and_acquire(addr, &semaphore).await?,
+        };
 
         // Create the connection
-        let result = self.create_connection_inner(addr).await;
+        let result = self.create_connection_inner(addr, permit).await;
 
         // Update host pool state
         {
@@ -333,7 +360,8 @@ impl ConnectionPool {
         {
             let mut pools = self.pools.write().await;
             if let Some(host_pool) = pools.get_mut(&addr) {
-                if host_pool.connections.len() < self.config.max_connections_per_host {
+                // invariant: permit was acquired above, so cap always has room
+                if host_pool.connections.len() < host_pool.current_cap {
                     host_pool.connections.push(conn.clone());
                 }
             }
@@ -352,8 +380,64 @@ impl ConnectionPool {
         })
     }
 
+    async fn expand_and_acquire(
+        &self,
+        addr: SocketAddr,
+        semaphore: &Arc<Semaphore>,
+    ) -> anyhow::Result<OwnedSemaphorePermit> {
+        // `did_expand_here` is true only when *this* task performed the expand;
+        // a concurrent task may have expanded already, in which case we just
+        // skip and wait on the existing permits.
+        let did_expand_here = {
+            let mut pools = self.pools.write().await;
+            let host_pool = pools
+                .get_mut(&addr)
+                .ok_or_else(|| anyhow::anyhow!("Host pool for {} disappeared", addr))?;
+
+            if host_pool.semaphore.available_permits() == 0 {
+                match host_pool.expand() {
+                    Some((old, new)) => {
+                        tracing::warn!(
+                            addr = %addr,
+                            old_cap = old,
+                            new_cap = new,
+                            "HTTP/2 connection pool exhausted, expanding capacity 2x"
+                        );
+                        true
+                    }
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "Connection pool for {} reached Semaphore::MAX_PERMITS",
+                            addr
+                        ));
+                    }
+                }
+            } else {
+                false
+            }
+        };
+
+        if did_expand_here {
+            self.stats
+                .pool_expansions
+                .fetch_add(1, Ordering::Relaxed);
+        }
+
+        tokio::time::timeout(
+            self.http2_config.connect_timeout,
+            semaphore.clone().acquire_owned(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Timed out waiting for connection pool permit on {}", addr))?
+        .map_err(|_| anyhow::anyhow!("Semaphore closed for {}", addr))
+    }
+
     /// Create the actual TCP + HTTP/2 connection
-    async fn create_connection_inner(&self, addr: SocketAddr) -> anyhow::Result<PooledConnection> {
+    async fn create_connection_inner(
+        &self,
+        addr: SocketAddr,
+        permit: OwnedSemaphorePermit,
+    ) -> anyhow::Result<PooledConnection> {
         let stream =
             tokio::time::timeout(self.http2_config.connect_timeout, TcpStream::connect(addr))
                 .await
@@ -384,7 +468,7 @@ impl ConnectionPool {
                 }
             });
 
-            let mut pooled = PooledConnection::new(sender);
+            let mut pooled = PooledConnection::new(sender, permit);
             pooled.mark_used();
             return Ok(pooled);
         }
@@ -402,7 +486,7 @@ impl ConnectionPool {
             }
         });
 
-        let mut pooled = PooledConnection::new(sender);
+        let mut pooled = PooledConnection::new(sender, permit);
         pooled.mark_used();
 
         Ok(pooled)
@@ -527,11 +611,51 @@ impl Drop for ConnectionGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyper::service::service_fn;
+    use hyper::{Request, Response};
+    use std::convert::Infallible;
+    use std::future::Future;
+    use std::task::{Context, Poll};
+    use tokio::net::TcpListener;
+
+    async fn spawn_h2c_server() -> SocketAddr {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let (stream, peer_addr) = match listener.accept().await {
+                    Ok(accepted) => accepted,
+                    Err(_) => break,
+                };
+
+                tokio::spawn(async move {
+                    let io = TokioIo::new(stream);
+                    let service = service_fn(|_req: Request<hyper::body::Incoming>| async {
+                        Ok::<_, Infallible>(Response::new(Full::new(Bytes::new())))
+                    });
+                    let builder =
+                        hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+                    let conn = builder.serve_connection(io, service);
+
+                    if let Err(e) = conn.await {
+                        tracing::debug!(
+                            peer = %peer_addr,
+                            error = %e,
+                            "Test HTTP/2 connection closed"
+                        );
+                    }
+                });
+            }
+        });
+
+        addr
+    }
 
     #[test]
     fn test_pool_config_default() {
         let config = PoolConfig::default();
-        assert_eq!(config.max_connections_per_host, 10);
+        assert_eq!(config.max_connections_per_host, 8);
         assert_eq!(config.min_idle_per_host, 1);
         assert!(config.max_connection_age.is_some());
     }
@@ -541,10 +665,12 @@ mod tests {
         let stats = PoolStats::default();
         stats.connections_created.fetch_add(1, Ordering::Relaxed);
         stats.connections_reused.fetch_add(5, Ordering::Relaxed);
+        stats.pool_expansions.fetch_add(2, Ordering::Relaxed);
 
         let json = stats.to_json();
         assert_eq!(json["connections_created"], 1);
         assert_eq!(json["connections_reused"], 5);
+        assert_eq!(json["pool_expansions"], 2);
     }
 
     #[test]
@@ -563,10 +689,117 @@ mod tests {
         assert_eq!(pool.error_count, 0);
     }
 
+    #[test]
+    fn test_host_pool_expand_doubles_capacity() {
+        let mut pool = HostPool::new(2);
+        let sem = pool.semaphore.clone();
+
+        let _p1 = sem.clone().try_acquire_owned().unwrap();
+        let _p2 = sem.clone().try_acquire_owned().unwrap();
+        assert!(sem.clone().try_acquire_owned().is_err());
+
+        let (old, new) = pool.expand().unwrap();
+        assert_eq!((old, new), (2, 4));
+        assert_eq!(pool.current_cap, 4);
+        assert_eq!(sem.available_permits(), 2);
+
+        let _p3 = sem.clone().try_acquire_owned().unwrap();
+        let _p4 = sem.clone().try_acquire_owned().unwrap();
+        assert!(sem.clone().try_acquire_owned().is_err());
+    }
+
+    #[test]
+    fn test_host_pool_expand_respects_max_permits() {
+        let mut pool = HostPool::new(1);
+        pool.current_cap = Semaphore::MAX_PERMITS;
+
+        assert!(pool.expand().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_expand_and_acquire_times_out_when_expanded_permit_is_taken() {
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let http2_config = Http2Config::default().connect_timeout(Duration::from_millis(10));
+        let pool = ConnectionPool::new(http2_config);
+
+        let semaphore = {
+            let mut pools = pool.pools.write().await;
+            let host_pool = pools.entry(addr).or_insert_with(|| HostPool::new(1));
+            host_pool.semaphore.clone()
+        };
+
+        let _held = semaphore.clone().try_acquire_owned().unwrap();
+        let mut queued = Box::pin(semaphore.clone().acquire_owned());
+        let waker = futures::task::noop_waker_ref();
+        let mut cx = Context::from_waker(waker);
+        assert!(matches!(queued.as_mut().poll(&mut cx), Poll::Pending));
+
+        let err = pool.expand_and_acquire(addr, &semaphore).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Timed out waiting for connection pool permit"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(pool.stats.pool_expansions.load(Ordering::Relaxed), 1);
+
+        let queued_permit = queued.await.unwrap();
+        drop(queued_permit);
+    }
+
     #[tokio::test]
     async fn test_connection_pool_creation() {
         let pool = ConnectionPool::new(Http2Config::default());
         let stats = pool.stats();
         assert_eq!(stats.connections_created.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_connection_pool_expands_and_releases_permits() {
+        let addr = spawn_h2c_server().await;
+        let http2_config = Http2Config::default().connect_timeout(Duration::from_secs(2));
+        let pool_config = PoolConfig {
+            max_connections_per_host: 2,
+            max_connection_age: None,
+            max_idle_time: Some(Duration::from_millis(10)),
+            max_requests_per_connection: None,
+            ..Default::default()
+        };
+        let pool = ConnectionPool::with_config(http2_config, pool_config);
+
+        let (g1, g2, g3, g4) = tokio::join!(
+            pool.get_connection(addr),
+            pool.get_connection(addr),
+            pool.get_connection(addr),
+            pool.get_connection(addr),
+        );
+        let guards = vec![g1.unwrap(), g2.unwrap(), g3.unwrap(), g4.unwrap()];
+
+        let info = pool.pool_info().await;
+        let hosts = info["hosts"].as_array().unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0]["total_connections"].as_u64().unwrap(), 4);
+        assert!(
+            info["stats"]["pool_expansions"].as_u64().unwrap() >= 1,
+            "pool_info did not report an expansion: {info}"
+        );
+
+        drop(guards);
+        // Wait past max_idle_time so cleanup() will treat all conns as stale.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        pool.cleanup().await;
+
+        let (total_connections, current_cap, semaphore) = {
+            let pools = pool.pools.read().await;
+            let host_pool = pools.get(&addr).unwrap();
+            (
+                host_pool.connections.len(),
+                host_pool.current_cap,
+                host_pool.semaphore.clone(),
+            )
+        };
+
+        assert_eq!(total_connections, 0);
+        assert_eq!(semaphore.available_permits(), current_cap);
+        let _permit = semaphore.try_acquire_owned().unwrap();
     }
 }

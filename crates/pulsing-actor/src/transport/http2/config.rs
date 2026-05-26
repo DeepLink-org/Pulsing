@@ -1,8 +1,9 @@
 //! HTTP/2 transport configuration.
 
-use crate::error::Result;
 use std::time::Duration;
 
+#[cfg(feature = "tls")]
+use crate::error::Result;
 #[cfg(feature = "tls")]
 use super::tls::TlsConfig;
 
@@ -17,6 +18,8 @@ pub struct Http2Config {
     pub connect_timeout: Duration,
     pub request_timeout: Duration,
     pub stream_timeout: Duration,
+    /// Initial per-host connection cap. The pool grows 2x on demand; this is
+    /// the starting point, not a hard ceiling.
     pub max_connections_per_host: usize,
     pub keepalive_interval: Option<Duration>,
     pub keepalive_timeout: Duration,
@@ -41,7 +44,7 @@ impl Default for Http2Config {
             connect_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(30),
             stream_timeout: Duration::from_secs(300),
-            max_connections_per_host: 10,
+            max_connections_per_host: 8,
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_timeout: Duration::from_secs(10),
             http2_prior_knowledge: true,

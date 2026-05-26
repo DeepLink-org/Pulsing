@@ -100,6 +100,10 @@ path = "../../examples/rust/behavior_counter.rs"
 name = "behavior_fsm"
 path = "../../examples/rust/behavior_fsm.rs"
 
+[[example]]
+name = "http2_pool_expand"
+path = "../../examples/rust/http2_pool_expand.rs"
+
 
 [[bench]]
 name = "tracing_overhead"
