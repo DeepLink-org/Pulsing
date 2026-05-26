@@ -744,6 +744,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_expand_and_acquire_uses_existing_permit_without_expanding() {
+        let addr: SocketAddr = "127.0.0.1:12346".parse().unwrap();
+        let pool = ConnectionPool::new(Http2Config::default());
+
+        let semaphore = {
+            let mut pools = pool.pools.write().await;
+            let host_pool = pools.entry(addr).or_insert_with(|| HostPool::new(1));
+            host_pool.semaphore.clone()
+        };
+
+        let permit = pool.expand_and_acquire(addr, &semaphore).await.unwrap();
+        assert_eq!(pool.stats.pool_expansions.load(Ordering::Relaxed), 0);
+        assert_eq!(semaphore.available_permits(), 0);
+
+        drop(permit);
+        assert_eq!(semaphore.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_expand_and_acquire_errors_when_host_pool_disappears() {
+        let addr: SocketAddr = "127.0.0.1:12347".parse().unwrap();
+        let pool = ConnectionPool::new(Http2Config::default());
+        let semaphore = Arc::new(Semaphore::new(1));
+
+        let err = pool.expand_and_acquire(addr, &semaphore).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Host pool for 127.0.0.1:12347 disappeared"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_expand_and_acquire_errors_at_semaphore_max_permits() {
+        let addr: SocketAddr = "127.0.0.1:12348".parse().unwrap();
+        let pool = ConnectionPool::new(Http2Config::default());
+
+        let (semaphore, _held) = {
+            let mut pools = pool.pools.write().await;
+            let host_pool = pools.entry(addr).or_insert_with(|| HostPool::new(1));
+            let semaphore = host_pool.semaphore.clone();
+            let held = semaphore.clone().try_acquire_owned().unwrap();
+            host_pool.current_cap = Semaphore::MAX_PERMITS;
+            (semaphore, held)
+        };
+
+        let err = pool.expand_and_acquire(addr, &semaphore).await.unwrap_err();
+        assert!(
+            err.to_string().contains("reached Semaphore::MAX_PERMITS"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(pool.stats.pool_expansions.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_expand_and_acquire_errors_when_semaphore_is_closed() {
+        let addr: SocketAddr = "127.0.0.1:12349".parse().unwrap();
+        let pool = ConnectionPool::new(Http2Config::default());
+
+        let semaphore = {
+            let mut pools = pool.pools.write().await;
+            let host_pool = pools.entry(addr).or_insert_with(|| HostPool::new(1));
+            host_pool.semaphore.clone()
+        };
+        semaphore.close();
+
+        let err = pool.expand_and_acquire(addr, &semaphore).await.unwrap_err();
+        assert!(
+            err.to_string().contains("Semaphore closed"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(pool.stats.pool_expansions.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
     async fn test_connection_pool_creation() {
         let pool = ConnectionPool::new(Http2Config::default());
         let stats = pool.stats();
