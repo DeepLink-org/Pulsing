@@ -174,7 +174,7 @@ struct HostPool {
 
 impl HostPool {
     fn new(initial_cap: usize) -> Self {
-        let cap = initial_cap.max(1).min(Semaphore::MAX_PERMITS);
+        let cap = initial_cap.clamp(1, Semaphore::MAX_PERMITS);
 
         Self {
             connections: Vec::with_capacity(cap),
