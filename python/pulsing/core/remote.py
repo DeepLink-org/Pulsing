@@ -2,6 +2,7 @@
 
 import asyncio
 import contextvars
+import copyreg
 import inspect
 import logging
 import random
@@ -41,7 +42,14 @@ _current_tracestate: contextvars.ContextVar[str | None] = contextvars.ContextVar
 
 
 class Actor(ABC):
-    """Base class for Python actors. Implement `receive` to handle messages."""
+    """Base class for Python actors. Implement `receive` to handle messages.
+
+    ``@remote`` user instances receive ``self.delayed(sec)`` after spawn:
+
+    * ``await proxy.method(...)`` — ask (caller waits for response).
+    * ``self.delayed(0).method(...)`` — tell self later (returns ``asyncio.Task``).
+      Use for async handoff: handler returns immediately while work queues on mailbox.
+    """
 
     def on_start(self, actor_id) -> None:  # noqa: B027
         pass
@@ -150,8 +158,8 @@ class _WrappedActor(Actor):
             return None
 
     def _inject_delayed(self, actor_ref: ActorRef) -> None:
-        """Inject ``self.delayed(sec)`` on the user instance after spawn."""
-        self._instance.delayed = lambda delay_sec: _DelayedCallProxy(
+        """Inject ``self.delayed(sec)`` — delayed tell-to-self (mailbox scheduling)."""
+        self._instance.delayed = lambda delay_sec=0.0: _DelayedCallProxy(
             actor_ref, delay_sec
         )
 
@@ -173,6 +181,22 @@ class _WrappedActor(Actor):
         if hasattr(self._instance, "metadata") and callable(self._instance.metadata):
             return self._instance.metadata()
         return {}
+
+    def __reduce_ex__(self, proto: int) -> tuple[Any, ...]:
+        """Avoid pickling ``_original_class`` as a global (breaks under ``@remote`` shadowing)."""
+        inst = self._instance
+        cls = inst.__class__
+        if hasattr(inst, "__getstate__"):
+            state = inst.__getstate__()
+        elif hasattr(inst, "__dict__"):
+            state = inst.__dict__.copy()
+        else:
+            state = {}
+        return _reconstruct_wrapped_actor_instance, (
+            cls.__module__,
+            cls.__qualname__,
+            state,
+        )
 
     async def receive(self, msg) -> Any:
         # Propagate trace context injected by Rust PythonActorWrapper::receive
@@ -208,7 +232,22 @@ class _WrappedActor(Actor):
             )
 
             if is_async_method and is_async_call:
-                return self._stream_result(func(*args, **kwargs))
+                # Async methods invoked with streaming RPC: only true streams/asyncgens
+                # use _stream_result. Plain ``async def`` coroutines must be awaited here
+                # so the Rust ask path gets a single Message; otherwise the background
+                # ``create_task(execute())`` can race stream consumption and surface as
+                # "Actor dropped" / "mailbox closed" (e.g. SessionActor.command_line).
+                maybe = func(*args, **kwargs)
+                if inspect.isasyncgen(maybe):
+                    return self._stream_result(maybe)
+                if asyncio.iscoroutine(maybe):
+                    result = await maybe
+                    if inspect.isgenerator(result) or inspect.isasyncgen(result):
+                        return self._stream_result(result)
+                    return _wrap_response(result=result)
+                return _wrap_response(
+                    error=f"unexpected async return from {method!r}: {type(maybe)!r}",
+                )
 
             try:
                 result = func(*args, **kwargs)
@@ -283,6 +322,28 @@ class _WrappedActor(Actor):
 from .service import PYTHON_ACTOR_SERVICE_NAME
 
 
+def _reduce_pulsing_remote_user_instance(obj: Any) -> tuple[Any, tuple[str, str, Any]]:
+    """Pickle reducer for instances of ``ActorClass._cls`` (module name shadows type).
+
+    ``@remote`` replaces the public class name with :class:`ActorClass`, so the
+    default ``reduce`` compares ``obj.__class__`` to ``sys.modules[...].Name`` and
+    fails. We persist ``(module, qualname, state)`` and rebuild via the public
+    name, unwrapping ``ActorClass._cls`` on load.
+    """
+    cls = obj.__class__
+    if hasattr(obj, "__getstate__"):
+        state = obj.__getstate__()
+    elif hasattr(obj, "__dict__"):
+        state = obj.__dict__.copy()
+    else:
+        state = {}
+    return _reconstruct_remote_user_instance, (
+        cls.__module__,
+        cls.__qualname__,
+        state,
+    )
+
+
 class ActorClass:
     """Actor class wrapper.
 
@@ -316,6 +377,9 @@ class ActorClass:
         self._methods, self._async_methods = _extract_methods(cls)
 
         _actor_class_registry[self._class_name] = cls
+
+        if self._ray_cls is None:
+            copyreg.pickle(self._cls, _reduce_pulsing_remote_user_instance)
 
         if self._ray_cls is not None:
             self.remote = self._ray_cls.remote
@@ -474,6 +538,42 @@ class ActorClass:
         return ActorProxy(actor_ref, self._methods, self._async_methods)
 
 
+def _resolve_dotted_from_module(mod: Any, qualname: str) -> Any:
+    obj: Any = mod
+    for part in qualname.split("."):
+        obj = getattr(obj, part)
+    return obj
+
+
+def _reconstruct_remote_user_instance(
+    module_name: str, qualname: str, state: Any
+) -> Any:
+    import importlib
+
+    mod = importlib.import_module(module_name)
+    public = _resolve_dotted_from_module(mod, qualname)
+    if isinstance(public, ActorClass):
+        real_cls = public._cls
+    else:
+        real_cls = public
+    inst = real_cls.__new__(real_cls)
+    if hasattr(inst, "__setstate__"):
+        inst.__setstate__(state)
+    elif isinstance(state, dict) and hasattr(inst, "__dict__"):
+        inst.__dict__.update(state)
+    elif isinstance(state, dict):
+        for k, v in state.items():
+            setattr(inst, k, v)
+    return inst
+
+
+def _reconstruct_wrapped_actor_instance(
+    module_name: str, qualname: str, state: Any
+) -> _WrappedActor:
+    inst = _reconstruct_remote_user_instance(module_name, qualname, state)
+    return _WrappedActor(inst)
+
+
 def remote(
     cls: type[T] | None = None,
     *,
@@ -482,7 +582,13 @@ def remote(
     min_backoff: float = 0.1,
     max_backoff: float = 30.0,
 ) -> ActorClass:
-    """@remote decorator — converts a regular class into a distributed Actor."""
+    """@remote decorator — converts a regular class into a distributed Actor.
+
+    Instances returned by ``MyActor()`` (``ActorClass.__call__``) pickle for
+    ``new_process=True`` isolated spawn: ``copyreg`` reduces by module + qualname +
+    state, and :class:`_WrappedActor` defines ``__reduce_ex__`` so the inner type
+    is never pickled as a global (the public name is shadowed by :class:`ActorClass`).
+    """
 
     def wrapper(cls):
         return ActorClass(

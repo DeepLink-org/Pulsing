@@ -37,6 +37,11 @@ python examples/python/named_actors.py     # Service discovery
 python examples/python/cluster.py          # Multi-node (see --help)
 python examples/python/subprocess_example.py            # Native subprocess-compatible API
 USE_POLSING_SUBPROCESS=1 python examples/python/subprocess_example.py --resources  # Pulsing backend
+python examples/python/isolated_actor_spawn.py          # Actor in child OS process; cluster sees parent bridge
+python examples/python/forge_minimal.py                 # Pulsing Forge (pulsing.forge) local + actor worker
+python examples/python/forge_custom_agent.py            # Embed Forge in your own agent framework
+python examples/python/forge_custom_agent.py --isolated # Same, tools in ToolWorkerActor subprocess
+python examples/python/forge_agent_quickstart.py       # ForgeAgent demo (no API key)
 ```
 
 同步包装器说明：

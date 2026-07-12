@@ -1,0 +1,53 @@
+[package]
+name = "pulsing-forge"
+version.workspace = true
+edition = "2024"
+authors.workspace = true
+license.workspace = true
+description = "Pulsing Forge — Codex-compatible agent tool runtime (sandbox + handlers)"
+repository.workspace = true
+
+[lib]
+name = "pulsing_forge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pulsing-forge-repl"
+path = "src/bin/pulsing-forge-repl.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+comfy-table = "7"
+futures = { workspace = true }
+glob = "0.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+portable-pty = "0.9"
+reedline = "0.39"
+regex = "1"
+reqwest = { workspace = true }
+shlex = "1"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha1 = "0.10"
+streaming-iterator = "0.1"
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["process", "io-util", "time", "rt-multi-thread", "macros", "sync"] }
+toml = "0.8"
+tracing = { workspace = true }
+tree-sitter = "0.24"
+tree-sitter-bash = "0.23"
+url = "2"
+uuid = { workspace = true, features = ["v4"] }
+rmcp = { version = "1.7.0", default-features = false, features = [
+    "auth",
+    "base64",
+    "client",
+    "macros",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+] }
+
+[dev-dependencies]
+tempfile = "3"

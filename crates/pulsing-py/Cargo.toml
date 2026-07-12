@@ -16,6 +16,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pulsing-actor = { workspace = true }
+pulsing-forge = { path = "../pulsing-forge" }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }

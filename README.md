@@ -73,6 +73,34 @@ asyncio.run(main())
 | **Distributed LLM inference** | `pulsing actor router/vllm` | GPU cluster inference service |
 | **Integrate AutoGen** | `examples/agent/autogen/` | One line to go distributed |
 | **Integrate LangGraph** | `examples/agent/langgraph/` | Execute graphs across nodes |
+| **Agent workspace CLI** | `pulsing agent init` | [Pulsing Agent](examples/agent/workspace-demo.md) — multi-agent in your repo |
+| **Agent tools & environment** | `examples/python/forge_minimal.py` | [Pulsing Forge](docs/src/forge/index.md) — sandboxed shell, files, plan |
+
+## 🔨 Pulsing Forge
+
+**A general-purpose tool and environment runtime for AI agents** — run shell commands, edit files, and manage plans inside a configurable sandbox. Embed in any agent framework, or deploy isolated workers via Pulsing Actors.
+
+```python
+from pulsing.forge import ForgeEnvironment
+
+env = ForgeEnvironment(cwd=".")
+env.runtime().call_tool("shell_command", {"cmd": "pytest -q", "workdir": "."})
+```
+
+Docs: [Forge chapter](docs/src/forge/index.md) · Package README: [python/pulsing/forge/README.md](python/pulsing/forge/README.md)
+
+## 🤖 Pulsing Agent
+
+**Workspace-scoped multi-agent SDK + CLI** — init a `.pulsing/` workspace, wake agents on the cluster, and collaborate with Forge tools.
+
+```bash
+pip install pulsing[agent]
+pulsing agent init
+pulsing agent wake --agents guide
+pulsing agent say guide "run pytest"
+```
+
+Docs: [workspace demo](examples/agent/workspace-demo.md) · SDK: `from pulsing.agent import Agent, spawn_agent`
 
 ## 🎯 Core Capabilities
 
@@ -136,10 +164,10 @@ Out-of-the-box GPU cluster inference:
 
 ```bash
 # Start Router (OpenAI-compatible API)
-pulsing actor pulsing.actors.Router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
 
 # Start vLLM Worker (can have multiple)
-pulsing actor pulsing.actors.VllmWorker --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+pulsing actor pulsing.serving.VllmWorker --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
 
 # Test
 curl http://localhost:8080/v1/chat/completions \

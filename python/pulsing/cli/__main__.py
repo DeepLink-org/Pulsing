@@ -2,6 +2,9 @@
 
 import hyperparameter as hp
 
+from pulsing.cli.actor_argv import rewrite_actor_argv
+from pulsing.cli.help_text import print_top_level_help
+
 
 @hp.param("actor")
 def actor(
@@ -313,50 +316,27 @@ def examples(name: str | None = None):
     print(f"Quick run:\n  python -m pulsing.examples.{name}")
 
 
-def _collect_key_value_pairs(tokens: list[str]) -> dict:
-    """Collect --key value pairs from token list into a dict. Keys normalized to snake_case."""
-    extra = {}
-    i = 0
-    while i < len(tokens):
-        a = tokens[i]
-        if a.startswith("--") and not a.startswith("---") and len(a) > 2:
-            key = a[2:].replace("-", "_")
-            if i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
-                extra[key] = tokens[i + 1]
-                i += 2
-                continue
-        i += 1
-    return extra
-
-
-def _actor_argv_rewrite(argv: list[str]) -> list[str]:
-    """Pre-parse 'pulsing actor ...' argv: split on \"--\" only.
-
-    - Before \"--\": entire token list is passed through to the actor subcommand (no name-based parsing).
-    - After \"--\": collected as --key value and injected as actor.extra_kwargs (constructor args).
-    - If there is no \"--\", argv is left unchanged.
-    """
-    import json
-
-    if len(argv) < 2 or argv[1] != "actor":
-        return argv
-    rest = argv[2:]
-    if "--" not in rest:
-        return argv
-    dash_idx = rest.index("--")
-    before, after = rest[:dash_idx], rest[dash_idx + 1 :]
-    extra = _collect_key_value_pairs(after)
-    if not extra:
-        return argv
-    return (
-        [argv[0], "actor"] + before + ["-D", f"actor.extra_kwargs={json.dumps(extra)}"]
-    )
-
-
 def main():
     import sys
 
-    # Make `pulsing examples <name>` work with positional arguments
+    if len(sys.argv) >= 2 and sys.argv[1] == "agent":
+        from pulsing.cli.agent.main import main as main_agent
+
+        main_agent(sys.argv[2:], prog="pulsing agent")
+        return
+
+    if len(sys.argv) >= 2 and sys.argv[1] == "forge":
+        from pulsing.forge.cli import main_pulsing_forge
+
+        main_pulsing_forge(sys.argv[2:])
+        return
+
+    if len(sys.argv) == 1 or (
+        len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help", "help")
+    ):
+        print_top_level_help()
+        return
+
     if (
         len(sys.argv) >= 3
         and sys.argv[1] == "examples"
@@ -364,8 +344,7 @@ def main():
     ):
         sys.argv = [sys.argv[0], "examples", "--name", sys.argv[2]] + sys.argv[3:]
 
-    # Pre-parse 'actor' so --model_name my-llm etc. become actor.extra_kwargs (avoids required kwargs positional)
-    sys.argv = _actor_argv_rewrite(sys.argv)
+    sys.argv = rewrite_actor_argv(sys.argv)
 
     hp.launch()
 

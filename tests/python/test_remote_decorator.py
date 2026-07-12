@@ -316,5 +316,31 @@ async def test_async_method_does_not_block_actor():
         await shutdown()
 
 
+@pytest.mark.asyncio
+async def test_actor_proxy_tell_oneway():
+    """ActorProxy.tell is oneway (no response wait)."""
+    from pulsing.core import init, remote, shutdown
+
+    @remote
+    class TellTarget:
+        def __init__(self):
+            self.msgs: list[str] = []
+
+        def append(self, text: str) -> None:
+            self.msgs.append(text)
+
+        def snapshot(self) -> list[str]:
+            return list(self.msgs)
+
+    await init()
+    try:
+        target = await TellTarget.spawn()
+        await target.tell("append", "via-tell")
+        await asyncio.sleep(0.05)
+        assert await target.snapshot() == ["via-tell"]
+    finally:
+        await shutdown()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
