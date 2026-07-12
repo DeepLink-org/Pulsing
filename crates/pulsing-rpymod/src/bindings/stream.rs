@@ -78,7 +78,11 @@ impl PyStreamWriter {
     }
 
     #[pymethod]
-    fn error(&self, msg: rustpython_vm::builtins::PyUtf8StrRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+    fn error(
+        &self,
+        msg: rustpython_vm::builtins::PyUtf8StrRef,
+        vm: &VirtualMachine,
+    ) -> PyResult<PyObjectRef> {
         let sender = self.sender.clone();
         let err = msg.as_str().to_string();
         let event_loop = current_event_loop(vm)?;
@@ -104,10 +108,9 @@ enum AnextOutcome {
 impl IntoPyResult for AnextOutcome {
     fn into_pyresult(self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
         match self {
-            AnextOutcome::Stop => Err(vm.new_exception(
-                vm.ctx.exceptions.stop_async_iteration.to_owned(),
-                vec![],
-            )),
+            AnextOutcome::Stop => {
+                Err(vm.new_exception(vm.ctx.exceptions.stop_async_iteration.to_owned(), vec![]))
+            }
             AnextOutcome::Message(msg) => {
                 let rt = crate::runtime::tokio_handle()
                     .map_err(|e| vm.new_runtime_error(e.to_string()))?;

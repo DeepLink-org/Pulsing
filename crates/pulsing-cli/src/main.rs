@@ -46,9 +46,7 @@ enum Command {
         message: Option<String>,
     },
     /// Restore workspace files from a checkpoint
-    Rollback {
-        revision: Option<String>,
-    },
+    Rollback { revision: Option<String> },
     /// Run a Python agent / application script
     Run(RunArgs),
     /// Pass-through to the Python CLI (actor, agent, inspect, forge, …)

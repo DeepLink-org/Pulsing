@@ -4,12 +4,19 @@ use rustpython::InterpreterBuilderExt;
 use rustpython_vm::class::PyClassImpl;
 use rustpython_vm::AsObject;
 
-fn has_attr(vm: &rustpython_vm::VirtualMachine, obj: rustpython_vm::PyObjectRef, name: &str) -> bool {
+fn has_attr(
+    vm: &rustpython_vm::VirtualMachine,
+    obj: rustpython_vm::PyObjectRef,
+    name: &str,
+) -> bool {
     let key = vm.ctx.intern_str(name);
     obj.get_attr(key, vm).is_ok()
 }
 
-fn type_attr_names(vm: &rustpython_vm::VirtualMachine, type_obj: rustpython_vm::PyObjectRef) -> Vec<String> {
+fn type_attr_names(
+    vm: &rustpython_vm::VirtualMachine,
+    type_obj: rustpython_vm::PyObjectRef,
+) -> Vec<String> {
     let dict = type_obj.get_attr("__dict__", vm).expect("type __dict__");
     let dict = dict
         .downcast_ref::<rustpython_vm::builtins::PyDict>()
@@ -35,7 +42,10 @@ fn runtime_type_exposes_spawn() {
         eprintln!("ActorSystem runtime attrs: {:?}", names);
         eprintln!(
             "ActorSystem METHOD_DEFS: {:?}",
-            PyActorSystem::METHOD_DEFS.iter().map(|m| m.name).collect::<Vec<_>>()
+            PyActorSystem::METHOD_DEFS
+                .iter()
+                .map(|m| m.name)
+                .collect::<Vec<_>>()
         );
         assert!(
             has_attr(vm, obj, "spawn"),

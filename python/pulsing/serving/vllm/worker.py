@@ -62,8 +62,9 @@ class VllmWorker:
         enable_expert_parallel: bool = False,  # EP: MoE model expert parallelism
         distributed_executor_backend: str | None = None,  # "mp" or "ray"
         # macOS Metal/MLX support parameters
-        mlx_device: str
-        | None = None,  # 'gpu' or 'cpu', default read from environment variable
+        mlx_device: (
+            str | None
+        ) = None,  # 'gpu' or 'cpu', default read from environment variable
         metal_memory_fraction: float | None = None,  # 0.0-1.0, default 0.8
         **kwargs,
     ):

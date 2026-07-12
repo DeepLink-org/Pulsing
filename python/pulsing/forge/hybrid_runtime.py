@@ -51,8 +51,9 @@ class HybridForgeRuntime:
         event_callback: Callable[[dict[str, Any]], None] | None = None,
         user_input_callback: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         exec_approval_callback: Callable[[dict[str, Any]], str] | None = None,
-        request_permissions_callback: Callable[[dict[str, Any]], dict[str, Any]]
-        | None = None,
+        request_permissions_callback: (
+            Callable[[dict[str, Any]], dict[str, Any]] | None
+        ) = None,
         tokens_remaining_callback: Callable[[], int | None] | None = None,
         plugin_install_callback: Callable[[dict[str, Any]], bool | str] | None = None,
         start_mcp: bool = True,

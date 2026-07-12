@@ -103,7 +103,7 @@ impl PyActorSystem {
                 None => {
                     if !matches!(policy, RestartPolicy::Never) {
                         return Err(
-                            "Anonymous actors do not support supervision/restart".to_string(),
+                            "Anonymous actors do not support supervision/restart".to_string()
                         );
                     }
                     let wrapper = PythonActorWrapper::new(actor, event_loop);
@@ -275,8 +275,12 @@ impl IntoPyResult for Vec<pulsing_actor::cluster::MemberInfo> {
                     .ok();
                 dict.set_item("addr", vm.ctx.new_str(m.addr.to_string()).into(), vm)
                     .ok();
-                dict.set_item("status", vm.ctx.new_str(format!("{:?}", m.status)).into(), vm)
-                    .ok();
+                dict.set_item(
+                    "status",
+                    vm.ctx.new_str(format!("{:?}", m.status)).into(),
+                    vm,
+                )
+                .ok();
                 dict.into()
             })
             .collect();
@@ -286,8 +290,6 @@ impl IntoPyResult for Vec<pulsing_actor::cluster::MemberInfo> {
 
 impl IntoPyResult for Arc<ActorSystem> {
     fn into_pyresult(self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-        Ok(PyActorSystem { system: self }
-            .into_ref(&vm.ctx)
-            .into())
+        Ok(PyActorSystem { system: self }.into_ref(&vm.ctx).into())
     }
 }

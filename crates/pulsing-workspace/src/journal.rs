@@ -120,9 +120,7 @@ pub fn checkpoint(layout: &WorkspaceLayout, opts: CheckpointOptions) -> Result<R
         id: next_id.clone(),
         parent,
         created_at: Utc::now().to_rfc3339(),
-        message: opts
-            .message
-            .unwrap_or_else(|| "checkpoint".to_string()),
+        message: opts.message.unwrap_or_else(|| "checkpoint".to_string()),
         author: opts.author.unwrap_or_else(|| "user".to_string()),
         files: records,
     };
@@ -145,8 +143,7 @@ pub fn rollback(layout: &WorkspaceLayout, opts: RollbackOptions) -> Result<Revis
     if !manifest_path.is_file() {
         bail!("revision {id} not found");
     }
-    let manifest: RevisionManifest =
-        serde_json::from_str(&fs::read_to_string(&manifest_path)?)?;
+    let manifest: RevisionManifest = serde_json::from_str(&fs::read_to_string(&manifest_path)?)?;
     let files_dir = rev_path.join("files");
 
     for file in &manifest.files {

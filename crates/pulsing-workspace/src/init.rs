@@ -57,10 +57,12 @@ pub fn init_workspace(root: &Path, opts: InitOptions) -> Result<InitResult> {
     }
 
     let cluster_id = cluster_id_for(&root);
-    let name = opts
-        .name
-        .clone()
-        .unwrap_or_else(|| root.file_name().and_then(|s| s.to_str()).unwrap_or("workspace").to_string());
+    let name = opts.name.clone().unwrap_or_else(|| {
+        root.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("workspace")
+            .to_string()
+    });
 
     fs::create_dir_all(layout.pulsing_dir())?;
     fs::create_dir_all(layout.hooks_dir())?;

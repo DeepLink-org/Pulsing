@@ -18,7 +18,10 @@ unsafe impl Sync for PythonActorWrapper {}
 
 impl PythonActorWrapper {
     pub fn new(handler: PyObjectRef, event_loop: PyObjectRef) -> Self {
-        Self { handler, event_loop }
+        Self {
+            handler,
+            event_loop,
+        }
     }
 }
 
@@ -44,8 +47,12 @@ impl Actor for PythonActorWrapper {
                 let receive = handler.get_attr("receive", vm)?;
                 let result = receive.call((py_arg,), vm)?;
                 if is_coroutine(vm, &result).unwrap_or(false) {
-                    return crate::interop::await_coroutine_on_running_loop(vm, &event_loop, result)
-                        .and_then(|py_result| encode_response(vm, py_result));
+                    return crate::interop::await_coroutine_on_running_loop(
+                        vm,
+                        &event_loop,
+                        result,
+                    )
+                    .and_then(|py_result| encode_response(vm, py_result));
                 }
                 encode_response(vm, result)
             })();
@@ -56,12 +63,11 @@ impl Actor for PythonActorWrapper {
             });
             let _ = tx.send(rust_result);
         }));
-        rx.await
-            .map_err(|_| {
-                pulsing_actor::error::PulsingError::from(pulsing_actor::error::RuntimeError::Other(
-                    "Python receive channel closed".into(),
-                ))
-            })?
+        rx.await.map_err(|_| {
+            pulsing_actor::error::PulsingError::from(pulsing_actor::error::RuntimeError::Other(
+                "Python receive channel closed".into(),
+            ))
+        })?
     }
 }
 

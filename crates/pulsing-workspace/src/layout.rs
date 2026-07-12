@@ -81,6 +81,11 @@ impl WorkspaceLayout {
 pub fn cluster_id_for(root: &Path) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    hasher.update(root.canonicalize().unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    hasher.update(
+        root.canonicalize()
+            .unwrap_or_else(|_| root.to_path_buf())
+            .to_string_lossy()
+            .as_bytes(),
+    );
     format!("{:x}", hasher.finalize())[..12].to_string()
 }

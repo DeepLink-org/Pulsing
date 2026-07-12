@@ -170,7 +170,9 @@ class _AllowlistRedirectHandler(HTTPRedirectHandler):
     def __init__(self, allowed: set[str]) -> None:
         self._allowed = allowed
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: N802 (stdlib override)
+    def redirect_request(
+        self, req, fp, code, msg, headers, newurl
+    ):  # noqa: N802 (stdlib override)
         error = _check_url_allowed(newurl, self._allowed)
         if error is not None:
             raise HTTPError(newurl, code, f"redirect blocked: {error}", headers, fp)

@@ -136,7 +136,9 @@ def checkpoint(
     return manifest
 
 
-def rollback(layout: WorkspaceLayout, *, revision_id: str | None = None) -> dict[str, Any]:
+def rollback(
+    layout: WorkspaceLayout, *, revision_id: str | None = None
+) -> dict[str, Any]:
     rev_id = revision_id or current_head(layout)
     if not rev_id:
         raise SystemExit("no checkpoint to roll back to")

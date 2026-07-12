@@ -57,8 +57,9 @@ class PermissionChecker:
         *,
         auto_approve: bool = False,
         prompt_callback: Callable[[str, str], CallbackDecision] | None = None,
-        exec_approval_callback: Callable[[dict[str, Any]], ExecApprovalDecision]
-        | None = None,
+        exec_approval_callback: (
+            Callable[[dict[str, Any]], ExecApprovalDecision] | None
+        ) = None,
         permissions_callback: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
         self._auto_approve = auto_approve

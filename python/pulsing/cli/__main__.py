@@ -12,8 +12,9 @@ def actor(
     addr: str | None = None,
     seeds: str | None = None,
     name: str = "worker",  # Actor name (default: "worker")
-    extra_kwargs: dict
-    | None = None,  # Additional arguments for Actor constructor (--key value from CLI)
+    extra_kwargs: (
+        dict | None
+    ) = None,  # Additional arguments for Actor constructor (--key value from CLI)
 ):
     r"""
     Start an Actor-based service.

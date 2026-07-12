@@ -129,12 +129,12 @@ def collect_discoverable_plugins(
                     description=description,
                     remote_plugin_id=_remote_plugin_id(pid),
                     has_skills=bool(manifest and manifest.has_skills),
-                    mcp_server_names=list(manifest.mcp_server_names)
-                    if manifest
-                    else [],
-                    app_connector_ids=list(manifest.app_connector_ids)
-                    if manifest
-                    else [],
+                    mcp_server_names=(
+                        list(manifest.mcp_server_names) if manifest else []
+                    ),
+                    app_connector_ids=(
+                        list(manifest.app_connector_ids) if manifest else []
+                    ),
                     installed=False,
                     marketplace_name=marketplace.name,
                 )

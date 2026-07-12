@@ -206,12 +206,14 @@ class PulsingRuntime:
         envelope = {
             "__autogen_msg__": True,
             "payload": message,
-            "sender": {
-                "type": sender.type if sender else None,
-                "key": sender.key if sender else None,
-            }
-            if sender
-            else None,
+            "sender": (
+                {
+                    "type": sender.type if sender else None,
+                    "key": sender.key if sender else None,
+                }
+                if sender
+                else None
+            ),
             "topic_id": None,
             "is_rpc": True,
             "message_id": msg_id,
@@ -291,12 +293,14 @@ class PulsingRuntime:
         envelope = {
             "__autogen_msg__": True,
             "payload": message,
-            "sender": {
-                "type": sender.type if sender else None,
-                "key": sender.key if sender else None,
-            }
-            if sender
-            else None,
+            "sender": (
+                {
+                    "type": sender.type if sender else None,
+                    "key": sender.key if sender else None,
+                }
+                if sender
+                else None
+            ),
             "topic_id": {
                 "type": topic_type,
                 "source": topic_source,

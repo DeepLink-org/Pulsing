@@ -30,8 +30,9 @@ class PermissionChecker:
         prompt_callback: Callable[[str, str], CallbackDecision] | None = None,
         user_input_callback: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         plugin_install_callback: Callable[[dict[str, Any]], bool | str] | None = None,
-        exec_approval_callback: Callable[[dict[str, Any]], ExecApprovalDecision]
-        | None = None,
+        exec_approval_callback: (
+            Callable[[dict[str, Any]], ExecApprovalDecision] | None
+        ) = None,
         permissions_callback: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
         self._auto_approve = auto_approve

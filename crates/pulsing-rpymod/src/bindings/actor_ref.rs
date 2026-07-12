@@ -91,8 +91,7 @@ impl PyActorRef {
 
 impl IntoPyResult for Message {
     fn into_pyresult(self, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-        let rt = crate::runtime::tokio_handle()
-            .map_err(|e| vm.new_runtime_error(e.to_string()))?;
+        let rt = crate::runtime::tokio_handle().map_err(|e| vm.new_runtime_error(e.to_string()))?;
         rt.block_on(decode_message_to_pyobject(vm, self))
     }
 }

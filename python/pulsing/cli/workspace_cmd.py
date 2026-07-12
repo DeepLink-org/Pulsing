@@ -21,7 +21,9 @@ def _add_init(sub: argparse._SubParsersAction) -> None:
         help="workspace template (default: agent)",
     )
     p.add_argument("--name", default=None, help="display name in cluster.json")
-    p.add_argument("--force", action="store_true", help="re-initialize existing workspace")
+    p.add_argument(
+        "--force", action="store_true", help="re-initialize existing workspace"
+    )
     p.set_defaults(func=cmd_init)
 
 
@@ -38,7 +40,9 @@ def _add_checkpoint(sub: argparse._SubParsersAction) -> None:
 
 def _add_rollback(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("rollback", help="Restore files from a checkpoint")
-    p.add_argument("revision", nargs="?", default=None, help="revision id (default: HEAD)")
+    p.add_argument(
+        "revision", nargs="?", default=None, help="revision id (default: HEAD)"
+    )
     p.set_defaults(func=cmd_rollback)
 
 
@@ -76,7 +80,9 @@ def cmd_history(_args: argparse.Namespace) -> None:
         return
     for rev in revs:
         mark = "*" if head == rev.id else " "
-        print(f"{mark} {rev.id}  {rev.created_at}  {rev.file_count} files  {rev.message}")
+        print(
+            f"{mark} {rev.id}  {rev.created_at}  {rev.file_count} files  {rev.message}"
+        )
 
 
 def cmd_checkpoint(args: argparse.Namespace) -> None:

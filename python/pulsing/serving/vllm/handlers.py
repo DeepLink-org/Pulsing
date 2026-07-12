@@ -582,9 +582,9 @@ class DecodeWorkerHandler(BaseWorkerHandler):
                 data_parallel_rank=dp_rank,
             ):
                 if prefill_result is not None and "completion_usage" in tok:
-                    tok["completion_usage"]["prompt_tokens_details"] = (
-                        prefill_prompt_tokens_details
-                    )
+                    tok["completion_usage"][
+                        "prompt_tokens_details"
+                    ] = prefill_prompt_tokens_details
                 yield tok
         except Exception as e:
             logger.exception(f"Error in decode generation: {e}")

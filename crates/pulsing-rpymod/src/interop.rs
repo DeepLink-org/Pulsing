@@ -57,7 +57,8 @@ where
                     let py_val = match val.into_pyresult(vm) {
                         Ok(v) => v,
                         Err(e) => {
-                            let _ = vm.call_method(py_future_done.as_object(), "set_exception", (e,));
+                            let _ =
+                                vm.call_method(py_future_done.as_object(), "set_exception", (e,));
                             return;
                         }
                     };

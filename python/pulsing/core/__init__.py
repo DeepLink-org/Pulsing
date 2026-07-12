@@ -20,7 +20,12 @@ Simple API:
 import asyncio
 import os
 
-from pulsing._async_bridge import clear_pulsing_loop, set_pulsing_loop, _is_rustpython, _start_shared_loop
+from pulsing._async_bridge import (
+    clear_pulsing_loop,
+    set_pulsing_loop,
+    _is_rustpython,
+    _start_shared_loop,
+)
 from pulsing._core import (
     ActorId,
     ActorRef,

@@ -1,8 +1,8 @@
-pub mod message;
-pub mod codec;
-pub mod python_actor;
 pub mod actor_ref;
 pub mod actor_system;
+pub mod codec;
+pub mod message;
+pub mod python_actor;
 pub mod stream;
 
 pub use actor_ref::PyActorRef;

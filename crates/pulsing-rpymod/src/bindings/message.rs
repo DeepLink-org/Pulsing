@@ -7,7 +7,9 @@ use pulsing_bindings_core::{parse_actor_id, PyActorIdView, PyNodeIdView};
 use rustpython_vm::builtins::{PyBytes, PyBytesRef, PyUtf8StrRef};
 use rustpython_vm::function::OptionalArg;
 use rustpython_vm::types::Constructor;
-use rustpython_vm::{AsObject, FromArgs, Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
+use rustpython_vm::{
+    AsObject, FromArgs, Py, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine,
+};
 use tokio::sync::Mutex as TokioMutex;
 
 use super::codec::ensure_contiguous_buffer;
@@ -192,9 +194,9 @@ impl PyMessage {
                 stream: stream.clone(),
             }
             .into_ref(&vm.ctx)),
-            None => Err(vm.new_value_error(
-                "This is not a stream message, access payload directly",
-            )),
+            None => {
+                Err(vm.new_value_error("This is not a stream message, access payload directly"))
+            }
         }
     }
 }
@@ -366,14 +368,19 @@ impl std::fmt::Debug for PyStreamReader {
 #[pyclass(module = "pulsing._core", name = "StreamWriter")]
 #[derive(Debug, PyPayload)]
 pub struct PyStreamWriter {
-    pub(crate) sender: Arc<TokioMutex<Option<tokio::sync::mpsc::Sender<pulsing_actor::error::Result<Message>>>>>,
+    pub(crate) sender:
+        Arc<TokioMutex<Option<tokio::sync::mpsc::Sender<pulsing_actor::error::Result<Message>>>>>,
 }
 
 #[pyclass(module = "pulsing._core", name = "StreamMessage")]
 #[derive(Debug, PyPayload)]
 pub struct PyStreamMessage {
     pub(crate) default_msg_type: String,
-    pub(crate) receiver: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<pulsing_actor::error::Result<Message>>>>>,
+    pub(crate) receiver: Arc<
+        std::sync::Mutex<
+            Option<tokio::sync::mpsc::Receiver<pulsing_actor::error::Result<Message>>>,
+        >,
+    >,
 }
 
 #[pyclass]

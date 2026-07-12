@@ -51,9 +51,9 @@ class Agent(AgentActor):
         short = self._cluster_short_name
         ws = self._workspace_id or ""
         return {
-            "full_name": full_agent_name(short, workspace_id=ws)
-            if short and ws
-            else None,
+            "full_name": (
+                full_agent_name(short, workspace_id=ws) if short and ws else None
+            ),
             "workspace_id": ws or None,
             "role": self._agent_role,
             "model": self._model,

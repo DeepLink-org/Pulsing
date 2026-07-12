@@ -82,9 +82,11 @@ def _from_dict(data: dict[str, Any]) -> NpcClass:
         prompt_extra=str(data.get("prompt_extra") or ""),
         default_tools=[str(t) for t in (data.get("default_tools") or [])],
         forbidden_tools=[str(t) for t in (data.get("forbidden_tools") or [])],
-        model_hint=(str(data["model_hint"]).strip() or None)
-        if data.get("model_hint")
-        else None,
+        model_hint=(
+            (str(data["model_hint"]).strip() or None)
+            if data.get("model_hint")
+            else None
+        ),
     )
 
 

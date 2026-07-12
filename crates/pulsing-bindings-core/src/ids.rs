@@ -18,7 +18,7 @@ impl PyNodeIdView {
     }
 
     pub fn id(&self) -> u128 {
-        self.0.0
+        self.0 .0
     }
 
     pub fn uuid(&self) -> String {
@@ -36,7 +36,7 @@ impl PyActorIdView {
     }
 
     pub fn id(&self) -> u128 {
-        self.0.0
+        self.0 .0
     }
 
     pub fn uuid(&self) -> String {

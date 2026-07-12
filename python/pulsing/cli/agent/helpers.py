@@ -56,9 +56,9 @@ async def spawn_npc(
         sandbox_policy=llm["sandbox"],
         agent_role=role,
         npc_class=npc_class,
-        shared_tool_worker=cfg.shared_tool_worker
-        if shared_tool_worker is None
-        else shared_tool_worker,
+        shared_tool_worker=(
+            cfg.shared_tool_worker if shared_tool_worker is None else shared_tool_worker
+        ),
     )
     return await _spawn_npc(
         config,

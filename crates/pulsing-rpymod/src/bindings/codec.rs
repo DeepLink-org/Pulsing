@@ -3,22 +3,24 @@ use std::cmp::min;
 use futures::StreamExt;
 use pulsing_actor::prelude::Message;
 use pulsing_bindings_core::{
-    reassemble_zerocopy_stream, zerocopy_mode, SEALED_PY_MSG_TYPE, SEALED_ZEROCOPY_MSG_TYPE,
-    ZC_CHUNK_MSG_TYPE, ZC_DESCRIPTOR_MSG_TYPE, ZeroCopyDescriptorHeader,
+    reassemble_zerocopy_stream, zerocopy_mode, ZeroCopyDescriptorHeader, SEALED_PY_MSG_TYPE,
+    SEALED_ZEROCOPY_MSG_TYPE, ZC_CHUNK_MSG_TYPE, ZC_DESCRIPTOR_MSG_TYPE,
 };
 use rustpython_vm::builtins::PyBytes;
 use rustpython_vm::{AsObject, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
 use tokio::sync::mpsc;
 
-use crate::interop::{pickle_object, unpickle_object};
 use super::message::{PyMessage, PyZeroCopyDescriptor};
+use crate::interop::{pickle_object, unpickle_object};
 
 pub fn encode_python_payload(vm: &VirtualMachine, obj: &PyObjectRef) -> PyResult<Message> {
     match zerocopy_mode().as_str() {
         "off" => Ok(Message::single(SEALED_PY_MSG_TYPE, pickle_object(vm, obj)?)),
         "force" => {
             let zc = try_zerocopy_descriptor(vm, obj)?.ok_or_else(|| {
-                vm.new_value_error("PULSING_ZEROCOPY=force but object does not provide __zerocopy__")
+                vm.new_value_error(
+                    "PULSING_ZEROCOPY=force but object does not provide __zerocopy__",
+                )
             })?;
             encode_zerocopy_message(vm, &zc)
         }
@@ -49,7 +51,10 @@ fn try_zerocopy_descriptor(
     }
 }
 
-fn encode_zerocopy_message(vm: &VirtualMachine, zc: &PyRef<PyZeroCopyDescriptor>) -> PyResult<Message> {
+fn encode_zerocopy_message(
+    vm: &VirtualMachine,
+    zc: &PyRef<PyZeroCopyDescriptor>,
+) -> PyResult<Message> {
     let total = zc.total_buffer_bytes(vm);
     if total >= pulsing_bindings_core::message::zerocopy_stream_threshold() {
         encode_zerocopy_stream(vm, zc)
@@ -59,10 +64,14 @@ fn encode_zerocopy_message(vm: &VirtualMachine, zc: &PyRef<PyZeroCopyDescriptor>
     }
 }
 
-fn encode_zerocopy_stream(vm: &VirtualMachine, zc: &PyRef<PyZeroCopyDescriptor>) -> PyResult<Message> {
+fn encode_zerocopy_stream(
+    vm: &VirtualMachine,
+    zc: &PyRef<PyZeroCopyDescriptor>,
+) -> PyResult<Message> {
     let chunk_len = pulsing_bindings_core::chunk_len();
     let header = zc.to_header(vm);
-    let header_bytes = bincode::serialize(&header).map_err(|e| vm.new_value_error(e.to_string()))?;
+    let header_bytes =
+        bincode::serialize(&header).map_err(|e| vm.new_value_error(e.to_string()))?;
     let buffer_data = zc.raw_buffer_data(vm)?;
 
     let (tx, rx) = mpsc::channel::<pulsing_actor::error::Result<Message>>(32);
@@ -92,7 +101,10 @@ fn encode_zerocopy_stream(vm: &VirtualMachine, zc: &PyRef<PyZeroCopyDescriptor>)
     Ok(Message::from_channel(ZC_DESCRIPTOR_MSG_TYPE, rx))
 }
 
-pub async fn decode_message_to_pyobject(vm: &VirtualMachine, msg: Message) -> PyResult<PyObjectRef> {
+pub async fn decode_message_to_pyobject(
+    vm: &VirtualMachine,
+    msg: Message,
+) -> PyResult<PyObjectRef> {
     match msg {
         Message::Single {
             ref msg_type,
@@ -120,13 +132,13 @@ pub async fn decode_message_to_pyobject(vm: &VirtualMachine, msg: Message) -> Py
                     ref data,
                 } if msg_type == ZC_DESCRIPTOR_MSG_TYPE => data.clone(),
                 _ => {
-                    return Err(vm.new_runtime_error(
-                        "First frame of zerocopy stream must be descriptor",
-                    ));
+                    return Err(
+                        vm.new_runtime_error("First frame of zerocopy stream must be descriptor")
+                    );
                 }
             };
-            let header: ZeroCopyDescriptorHeader =
-                bincode::deserialize(&header_data).map_err(|e| vm.new_value_error(e.to_string()))?;
+            let header: ZeroCopyDescriptorHeader = bincode::deserialize(&header_data)
+                .map_err(|e| vm.new_value_error(e.to_string()))?;
             let (header, raw_buffers) = reassemble_zerocopy_stream(header, &mut stream)
                 .await
                 .map_err(|e| vm.new_runtime_error(e.to_string()))?;
@@ -148,8 +160,8 @@ pub fn parse_zerocopy_single(vm: &VirtualMachine, data: &[u8]) -> PyResult<PyObj
     if data.len() < 4 + header_len {
         return Err(vm.new_value_error("Zerocopy payload truncated"));
     }
-    let header: ZeroCopyDescriptorHeader =
-        bincode::deserialize(&data[4..4 + header_len]).map_err(|e| vm.new_value_error(e.to_string()))?;
+    let header: ZeroCopyDescriptorHeader = bincode::deserialize(&data[4..4 + header_len])
+        .map_err(|e| vm.new_value_error(e.to_string()))?;
     let mut offset = 4 + header_len;
     let raw_buffers: Vec<Vec<u8>> = header
         .buffer_lengths
@@ -198,7 +210,8 @@ impl PyZeroCopyDescriptor {
 
     pub fn serialize_single(&self, vm: &VirtualMachine) -> PyResult<Vec<u8>> {
         let header = self.to_header(vm);
-        let header_bytes = bincode::serialize(&header).map_err(|e| vm.new_value_error(e.to_string()))?;
+        let header_bytes =
+            bincode::serialize(&header).map_err(|e| vm.new_value_error(e.to_string()))?;
         let header_len = header_bytes.len() as u32;
         let total_data: usize = header.buffer_lengths.iter().sum();
         let mut out = Vec::with_capacity(4 + header_bytes.len() + total_data);

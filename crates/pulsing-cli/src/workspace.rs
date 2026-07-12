@@ -121,10 +121,7 @@ pub fn run(cmd: WorkspaceCommand) -> Result<()> {
                     revision_id: revision,
                 },
             )?;
-            println!(
-                "rolled back to {} — {}",
-                manifest.id, manifest.message
-            );
+            println!("rolled back to {} — {}", manifest.id, manifest.message);
         }
     }
     Ok(())
