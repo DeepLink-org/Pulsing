@@ -41,9 +41,7 @@ impl Actor for PythonActorWrapper {
             let result = (|| -> PyResult<Message> {
                 let rt = crate::runtime::tokio_handle()
                     .map_err(|e| vm.new_runtime_error(e.to_string()))?;
-                let py_arg = rt
-                    .block_on(decode_message_to_pyobject(vm, msg))
-                    .map_err(|e| e)?;
+                let py_arg = rt.block_on(decode_message_to_pyobject(vm, msg))?;
                 let receive = handler.get_attr("receive", vm)?;
                 let result = receive.call((py_arg,), vm)?;
                 if is_coroutine(vm, &result).unwrap_or(false) {

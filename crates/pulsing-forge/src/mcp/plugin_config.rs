@@ -183,15 +183,14 @@ fn normalize_plugin_mcp_server_value(
         }
     }
 
-    if matches!(placement, PluginMcpServerPlacement::Declared) {
-        if let Some(JsonValue::String(cwd)) = object.get("cwd") {
-            if !Path::new(cwd).is_absolute() {
-                object.insert(
-                    "cwd".to_string(),
-                    JsonValue::String(plugin_root.join(cwd).display().to_string()),
-                );
-            }
-        }
+    if matches!(placement, PluginMcpServerPlacement::Declared)
+        && let Some(JsonValue::String(cwd)) = object.get("cwd")
+        && !Path::new(cwd).is_absolute()
+    {
+        object.insert(
+            "cwd".to_string(),
+            JsonValue::String(plugin_root.join(cwd).display().to_string()),
+        );
     }
 
     object

@@ -179,7 +179,7 @@ impl UnifiedExecManager {
             .or_else(|| args.get("input"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::respond("missing chars"))?;
-        let byte_len = chars.as_bytes().len();
+        let byte_len = chars.len();
         if byte_len > MAX_STDIN_BYTES {
             return Ok(ToolResult::err(format!(
                 "stdin input too large: {byte_len} bytes (max {MAX_STDIN_BYTES})"
@@ -630,7 +630,7 @@ mod tests {
             Arc::new(LocalToolSession::default().with_approval_policy(ApprovalPolicy::Always));
         let ctx = test_ctx(session, exec.clone());
         let huge = "\u{00e9}".repeat(MAX_STDIN_BYTES / 2 + 1);
-        assert!(huge.as_bytes().len() > MAX_STDIN_BYTES);
+        assert!(huge.len() > MAX_STDIN_BYTES);
         let out = exec
             .write_stdin(&ctx, &serde_json::json!({"session_id": 1, "chars": huge}))
             .await

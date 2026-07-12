@@ -14,6 +14,7 @@ REVISIONS_DIR = "revisions"
 HEAD_FILE = "HEAD"
 HOOKS_DIR = "hooks"
 SCRIPTS_DIR = "scripts"
+WORKFLOWS_DIR = "workflows"
 
 
 def workspace_cluster_id(root: Path) -> str:
@@ -62,6 +63,10 @@ class WorkspaceLayout:
     @property
     def scripts_dir(self) -> Path:
         return self.pulsing_dir / SCRIPTS_DIR
+
+    @property
+    def workflows_dir(self) -> Path:
+        return self.pulsing_dir / WORKFLOWS_DIR
 
     @property
     def history_dir(self) -> Path:

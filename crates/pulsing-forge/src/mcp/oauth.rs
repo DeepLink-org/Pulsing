@@ -55,9 +55,10 @@ impl OAuthCredentialsStore {
     }
 
     pub fn save(&self, server_name: &str, tokens: StoredOAuthTokens) -> std::io::Result<()> {
-        let mut guard = self.inner.lock().map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::Other, "credentials lock poisoned")
-        })?;
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| std::io::Error::other("credentials lock poisoned"))?;
         guard
             .mcp_oauth_tokens
             .insert(server_name.to_string(), tokens);
@@ -70,9 +71,10 @@ impl OAuthCredentialsStore {
     }
 
     pub fn delete(&self, server_name: &str) -> std::io::Result<()> {
-        let mut guard = self.inner.lock().map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::Other, "credentials lock poisoned")
-        })?;
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| std::io::Error::other("credentials lock poisoned"))?;
         guard.mcp_oauth_tokens.remove(server_name);
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;

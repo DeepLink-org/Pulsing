@@ -1,6 +1,6 @@
 //! Tab completion + inline hints.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use reedline::{Completer, Hinter, History, Span, Suggestion};
 
@@ -45,11 +45,11 @@ impl ForgeCompleter {
             .collect()
     }
 
-    fn path_suggestions(prefix: &str, span: Span, cwd: &PathBuf) -> Vec<Suggestion> {
+    fn path_suggestions(prefix: &str, span: Span, cwd: &Path) -> Vec<Suggestion> {
         let clean = prefix.trim_start_matches("./");
         let (dir, file_prefix) = match clean.rfind('/') {
             Some(i) => (cwd.join(&clean[..i]), &clean[i + 1..]),
-            None => (cwd.clone(), clean),
+            None => (cwd.to_path_buf(), clean),
         };
         let read_dir = match std::fs::read_dir(dir) {
             Ok(d) => d,
@@ -81,8 +81,8 @@ impl Completer for ForgeCompleter {
         let span = Span::new(start, end);
         let word = &line[start..end];
 
-        if line.starts_with('@') {
-            let needle = line[1..].trim_start();
+        if let Some(needle) = line.strip_prefix('@') {
+            let needle = needle.trim_start();
             return Self::path_suggestions(needle, Span::new(1, pos), &self.cwd)
                 .into_iter()
                 .map(|mut s| {
@@ -93,8 +93,8 @@ impl Completer for ForgeCompleter {
                 .collect();
         }
 
-        if line.starts_with('/') {
-            let needle = line[1..].trim_start();
+        if let Some(needle) = line.strip_prefix('/') {
+            let needle = needle.trim_start();
             return slash_completion_names()
                 .iter()
                 .filter(|(name, _)| name.starts_with(needle) || needle.is_empty())
@@ -284,15 +284,7 @@ impl Hinter for ForgeHinter {
 }
 
 fn suffix_after(line: &str, completion: &str) -> String {
-    if completion.starts_with(line) {
-        completion[line.len()..].to_string()
-    } else if line.starts_with('/') && completion.starts_with('/') {
-        completion[line.len()..].to_string()
-    } else if line.starts_with('@') && completion.starts_with('@') {
-        completion[line.len()..].to_string()
-    } else {
-        String::new()
-    }
+    completion.strip_prefix(line).unwrap_or("").to_string()
 }
 
 #[cfg(test)]

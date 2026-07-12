@@ -46,12 +46,47 @@ def after_checkpoint(ctx: dict[str, Any]) -> None:
 
 _SCRIPTS_README = """# Pulsing workspace scripts
 
-Place custom Python workflows here and run:
+Prefer workflows under `.pulsing/workflows/` (see `example.py`).
+
+Legacy location for ad-hoc scripts:
 
 ```bash
 pulsing run scripts/your_flow.py
 ```
 """
+
+_WORKFLOWS_README = """# Pulsing workflows
+
+Code-as-workflow: plain Python, no graph DSL.
+
+```bash
+pulsing run                  # immersive session (default: example.py)
+pulsing run my_workflow.py   # explicit script
+```
+
+After success you stay in the CLI (`›` prompt). Type `exit` to return to the shell.
+On failure you return to the shell — then `pulsing rollback` or safe-mode fix.
+"""
+
+_WORKFLOW_EXAMPLE = '''"""Example workflow — extension mode.
+
+Run: pulsing run
+"""
+
+from __future__ import annotations
+
+from pulsing.workflow import WorkflowContext, run
+
+
+async def main(ctx: WorkflowContext) -> None:
+    ctx.info(f"workspace: {ctx.root}")
+    rev = ctx.checkpoint("example workflow")
+    ctx.info(f"checkpoint {rev}")
+
+
+if __name__ == "__main__":
+    run(main)
+'''
 
 
 @dataclass
@@ -116,6 +151,16 @@ def _write_scripts_readme(layout: WorkspaceLayout) -> None:
         readme.write_text(_SCRIPTS_README, encoding="utf-8")
 
 
+def _write_workflows_scaffold(layout: WorkspaceLayout) -> None:
+    layout.workflows_dir.mkdir(parents=True, exist_ok=True)
+    readme = layout.workflows_dir / "README.md"
+    if not readme.is_file():
+        readme.write_text(_WORKFLOWS_README, encoding="utf-8")
+    example = layout.workflows_dir / "example.py"
+    if not example.is_file():
+        example.write_text(_WORKFLOW_EXAMPLE, encoding="utf-8")
+
+
 def init_workspace(
     root: Path | None = None,
     *,
@@ -123,6 +168,9 @@ def init_workspace(
     name: str | None = None,
     force: bool = False,
     seed_npcs: bool = True,
+    guide: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> InitResult:
     """Create ``.pulsing/`` layout, hooks, and an initial checkpoint."""
     root = (root or Path.cwd()).resolve()
@@ -138,6 +186,7 @@ def init_workspace(
     layout.pulsing_dir.mkdir(parents=True, exist_ok=True)
     layout.hooks_dir.mkdir(parents=True, exist_ok=True)
     layout.scripts_dir.mkdir(parents=True, exist_ok=True)
+    layout.workflows_dir.mkdir(parents=True, exist_ok=True)
     layout.revisions_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = {
@@ -147,6 +196,8 @@ def init_workspace(
         "cluster_id": cluster_id,
         "created_at": now,
     }
+    if guide:
+        manifest["init_guide"] = guide
     layout.workspace_file.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -162,6 +213,7 @@ def init_workspace(
 
     _write_hook_stubs(layout)
     _write_scripts_readme(layout)
+    _write_workflows_scaffold(layout)
 
     if seed_npcs and template == "agent":
         from pulsing.agent.npc.loader import seed_npc_defs
@@ -169,6 +221,32 @@ def init_workspace(
         seed_npc_defs(root)
 
     checkpoint(layout, message="workspace init", author="pulsing")
-    run_on_init({"root": str(root), "cluster_id": cluster_id, "template": template})
+    run_on_init(
+        {
+            "root": str(root),
+            "cluster_id": cluster_id,
+            "template": template,
+            "guide": guide or "",
+        },
+    )
+
+    if guide:
+        _run_init_guide_step(root, guide, layout, provider=provider, model=model)
 
     return InitResult(root=root, created=True, cluster_id=cluster_id)
+
+
+def _run_init_guide_step(
+    root: Path,
+    guide: str,
+    layout: WorkspaceLayout,
+    *,
+    provider: str | None,
+    model: str | None,
+) -> None:
+    from pulsing.workspace.init_guide import run_init_guide_sync
+
+    print("\n# LLM-guided bootstrap…", flush=True)
+    summary = run_init_guide_sync(root, guide, provider=provider, model=model)
+    print(f"\n{summary}\n")
+    checkpoint(layout, message="init guide", author="pulsing")

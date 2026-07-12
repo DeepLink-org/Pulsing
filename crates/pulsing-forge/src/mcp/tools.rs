@@ -89,10 +89,10 @@ impl ToolFilter {
     }
 
     pub fn allows(&self, tool_name: &str) -> bool {
-        if let Some(enabled) = &self.enabled {
-            if !enabled.contains(tool_name) {
-                return false;
-            }
+        if let Some(enabled) = &self.enabled
+            && !enabled.contains(tool_name)
+        {
+            return false;
         }
         !self.disabled.contains(tool_name)
     }

@@ -39,10 +39,10 @@ pub fn load_trace(path: &Path) -> Result<Vec<TraceRecord>> {
 }
 
 pub fn save_trace(path: &Path, records: &[TraceRecord]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     let mut file = File::create(path)?;
     for rec in records {

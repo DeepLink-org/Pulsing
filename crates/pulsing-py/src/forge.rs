@@ -493,7 +493,7 @@ fn map_decision_str(raw: &str, request: &ExecApprovalRequest) -> Result<ReviewDe
     }
 }
 
-fn block_on_tool<F, T>(f: F) -> T
+pub(crate) fn block_on_tool<F, T>(f: F) -> T
 where
     F: std::future::Future<Output = T>,
 {
@@ -508,14 +508,14 @@ where
     }
 }
 
-fn py_to_json(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
+pub(crate) fn py_to_json(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
     let py = obj.py();
     let json = py.import("json")?;
     let s: String = json.call_method1("dumps", (obj,))?.extract()?;
     serde_json::from_str(&s).map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
-fn json_to_py<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
+pub(crate) fn json_to_py<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
     let json = py.import("json")?;
     let s = serde_json::to_string(value).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     Ok(json.call_method1("loads", (s,))?)
@@ -533,5 +533,6 @@ fn tool_result_to_py(py: Python<'_>, r: &ToolResult) -> PyResult<PyObject> {
 
 pub fn add_to_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyForgeRuntime>()?;
+    crate::llm::add_to_module(m)?;
     Ok(())
 }

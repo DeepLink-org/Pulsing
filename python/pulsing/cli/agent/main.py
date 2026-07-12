@@ -29,7 +29,28 @@ def _build_parser(prog: str = DEFAULT_PROG) -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd")
 
-    sub.add_parser("init", help="create .pulsing/ workspace")
+    init_p = sub.add_parser("init", help="create .pulsing/ workspace")
+    init_p.add_argument(
+        "guide_words",
+        nargs="*",
+        help="natural-language goal for LLM-guided bootstrap",
+    )
+    init_p.add_argument(
+        "-g",
+        "--guide",
+        default=None,
+        help="same as trailing guide words",
+    )
+    init_p.add_argument(
+        "--template",
+        choices=("minimal", "agent"),
+        default="agent",
+    )
+    init_p.add_argument("--force", action="store_true")
+    init_p.add_argument(
+        "--provider", choices=("demo", "anthropic", "openai"), default=None
+    )
+    init_p.add_argument("--model", default=None)
 
     w = sub.add_parser("wake", help="start node and run NPCs (blocking)")
     w.add_argument("--agents", default=None)

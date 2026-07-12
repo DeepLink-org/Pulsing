@@ -4,7 +4,7 @@ use std::sync::Arc;
 use pulsing_actor::actor::{ActorId, NodeId};
 use pulsing_actor::prelude::{Message, SystemConfig};
 use pulsing_bindings_core::{parse_actor_id, PyActorIdView, PyNodeIdView};
-use rustpython_vm::builtins::{PyBytes, PyBytesRef, PyUtf8StrRef};
+use rustpython_vm::builtins::{PyBytesRef, PyUtf8StrRef};
 use rustpython_vm::function::OptionalArg;
 use rustpython_vm::types::Constructor;
 use rustpython_vm::{

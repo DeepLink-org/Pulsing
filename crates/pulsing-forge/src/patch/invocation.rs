@@ -21,10 +21,10 @@ pub enum MaybeApplyPatch {
 
 /// If `argv` is an apply_patch invocation, return parsed args; else `NotApplyPatch`.
 pub fn maybe_parse_apply_patch(argv: &[String]) -> MaybeApplyPatch {
-    if let [body] = argv {
-        if parse_patch(body).is_ok() {
-            return MaybeApplyPatch::ImplicitInvocation;
-        }
+    if let [body] = argv
+        && parse_patch(body).is_ok()
+    {
+        return MaybeApplyPatch::ImplicitInvocation;
     }
     match argv {
         [cmd, body] if APPLY_PATCH_COMMANDS.contains(&cmd.as_str()) => match parse_patch(body) {

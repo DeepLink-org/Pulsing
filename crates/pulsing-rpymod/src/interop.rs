@@ -112,6 +112,7 @@ pub fn is_coroutine(vm: &VirtualMachine, obj: &PyObjectRef) -> PyResult<bool> {
         .try_into_value(vm)
 }
 
+#[allow(dead_code)]
 pub fn run_on_event_loop(
     vm: &VirtualMachine,
     event_loop: &PyObjectRef,

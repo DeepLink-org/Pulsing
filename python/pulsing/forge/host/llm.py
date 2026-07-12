@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""LLM clients for Host applications (ForgeAgent, workspace agents, demos)."""
+"""LLM clients for Host applications — backed by Forge (Rust)."""
 
 from __future__ import annotations
 
@@ -7,16 +7,26 @@ import os
 from typing import Any
 
 from pulsing.agent.loop.deps import require_provider_deps
-from pulsing.agent.loop.llm_client import LLMClient, LLMMessage, LLMUsage
+from pulsing.forge.llm_client import LLMClient, LLMMessage, LLMUsage, RUST_LLM_AVAILABLE
 
 __all__ = [
     "LLMClient",
     "LLMMessage",
     "LLMUsage",
+    "RUST_LLM_AVAILABLE",
     "create_llm_client",
     "default_model",
+    "default_provider",
     "llm_runtime_options",
 ]
+
+
+def default_provider() -> str:
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return "anthropic"
+    if os.environ.get("OPENAI_API_KEY", "").strip():
+        return "openai"
+    return "demo"
 
 
 def default_model(provider: str, explicit: str | None = None) -> str:
@@ -38,15 +48,9 @@ def create_llm_client(
     base_url: str | None = None,
     max_tokens: int = 8192,
 ) -> LLMClient:
-    """Build an :class:`LLMClient` after optional-dependency checks."""
+    del max_tokens  # applied per stream_messages call
     require_provider_deps(provider)
-    return LLMClient(
-        provider=provider,
-        model=default_model(provider, model),
-        api_key=api_key,
-        base_url=base_url,
-        max_tokens=max_tokens,
-    )
+    return LLMClient(provider=provider, api_key=api_key, base_url=base_url)
 
 
 def llm_runtime_options(
@@ -56,7 +60,6 @@ def llm_runtime_options(
     auto_approve: bool = True,
     sandbox: str = "off",
 ) -> dict[str, Any]:
-    """Dict passed to workspace ``spawn_npc`` helpers."""
     return {
         "provider": provider,
         "model": default_model(provider, model),

@@ -170,7 +170,7 @@ impl CacheAwarePolicy {
     /// Remove a worker by URL
     pub fn remove_worker_by_url(&self, url: &str) {
         if let Ok(mut trees) = self.trees.lock() {
-            for (_model_id, tree) in trees.iter_mut() {
+            for tree in trees.values_mut() {
                 tree.remove_tenant(url);
             }
         }

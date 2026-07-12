@@ -276,9 +276,7 @@ class SimpleAgentFramework:
             plan_summary = "plan tracked in host session"
 
         tool_msgs = [m for m in self.messages if m.get("role") == "tool"]
-        return (
-            f"Agent finished after {len(tool_msgs)} tool result(s). " f"{plan_summary}."
-        )
+        return f"Agent finished after {len(tool_msgs)} tool result(s). {plan_summary}."
 
 
 # ---------------------------------------------------------------------------

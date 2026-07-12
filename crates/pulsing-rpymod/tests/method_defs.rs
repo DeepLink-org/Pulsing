@@ -1,15 +1,11 @@
-use pulsing_rpymod::{PyActorSystem, PyNodeId, PySystemConfig};
+use pulsing_rpymod::{PyActorSystem, PyNodeId};
 use rustpython_vm::class::PyClassImpl;
 
 #[test]
 fn actor_system_method_defs_include_spawn() {
     let names: Vec<&str> = PyActorSystem::METHOD_DEFS.iter().map(|m| m.name).collect();
     eprintln!("ActorSystem METHOD_DEFS: {:?}", names);
-    assert!(
-        names.iter().any(|n| *n == "spawn"),
-        "missing spawn in {:?}",
-        names
-    );
+    assert!(names.contains(&"spawn"), "missing spawn in {:?}", names);
 }
 
 #[test]

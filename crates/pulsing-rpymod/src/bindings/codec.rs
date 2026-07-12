@@ -184,7 +184,7 @@ pub fn py_message_to_rust(vm: &VirtualMachine, obj: &PyObjectRef) -> PyResult<Me
 }
 
 impl PyZeroCopyDescriptor {
-    pub fn total_buffer_bytes(&self, vm: &VirtualMachine) -> usize {
+    pub fn total_buffer_bytes(&self, _vm: &VirtualMachine) -> usize {
         self.buffers
             .iter()
             .filter_map(|b| b.downcast_ref::<PyBytes>().map(|x| x.as_bytes().len()))

@@ -1,6 +1,6 @@
 //! Shared subprocess execution for Codex shell tools and legacy `Bash`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -118,6 +118,7 @@ mod tests {
     use crate::context::{LocalToolSession, ToolCallContext};
     use crate::discovery::new_tool_catalog;
     use crate::unified_exec::UnifiedExecManager;
+    use std::path::Path;
     use std::sync::Arc;
 
     fn test_ctx(cwd: &Path) -> ToolCallContext {

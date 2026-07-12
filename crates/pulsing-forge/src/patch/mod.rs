@@ -76,7 +76,7 @@ pub(crate) fn normalize_lexically(path: &Path) -> PathBuf {
     for component in path.components() {
         match component {
             Component::CurDir => {}
-            Component::ParentDir => match out.components().last() {
+            Component::ParentDir => match out.components().next_back() {
                 Some(Component::Normal(_)) => {
                     out.pop();
                 }

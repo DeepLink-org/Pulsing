@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use pulsing_actor::prelude::Message;
-use rustpython_vm::{AsObject, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
+use rustpython_vm::{PyObjectRef, PyRef, PyResult, VirtualMachine};
 
 use super::codec::{decode_message_to_pyobject, encode_python_payload};
 use super::message::{PyStreamReader, PyStreamWriter};

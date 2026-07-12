@@ -2,7 +2,7 @@ use pulsing_actor::prelude::{ActorRef, Message};
 use pulsing_actor::tracing::{
     capture_linked_traceparent_for_mailbox, capture_linked_tracestate_for_mailbox,
 };
-use rustpython_vm::{AsObject, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
+use rustpython_vm::{AsObject, PyObjectRef, PyPayload, PyResult, VirtualMachine};
 
 use super::codec::{decode_message_to_pyobject, py_message_to_rust};
 use super::message::PyActorId;

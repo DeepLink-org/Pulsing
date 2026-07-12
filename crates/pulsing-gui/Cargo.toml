@@ -1,0 +1,22 @@
+[package]
+name = "pulsing-gui"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+description = "Pulsing desktop chat GUI (GPUI / Zed-style)"
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+gpui = { version = "0.2", features = ["runtime_shaders"] }
+gpui-component = "0.5"
+pulsing-forge = { path = "../pulsing-forge" }
+pulsing-workspace = { path = "../pulsing-workspace" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints.rust]
+dead_code = "allow"
+
+[lints.clippy]
+too_many_arguments = "allow"

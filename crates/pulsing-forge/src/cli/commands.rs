@@ -259,15 +259,15 @@ pub fn parse_line(line: &str) -> ParsedInput {
     if line.is_empty() {
         return ParsedInput::Empty;
     }
-    if line.starts_with('@') {
-        let path = line[1..].trim();
+    if let Some(path) = line.strip_prefix('@') {
+        let path = path.trim();
         if path.is_empty() {
             return ParsedInput::SlashMenu;
         }
         return ParsedInput::Mention(path.to_string());
     }
-    if line.starts_with('/') {
-        let rest = line[1..].trim();
+    if let Some(rest) = line.strip_prefix('/') {
+        let rest = rest.trim();
         if rest.is_empty() {
             return ParsedInput::SlashMenu;
         }
@@ -283,8 +283,8 @@ pub fn parse_line(line: &str) -> ParsedInput {
             args,
         };
     }
-    if line.starts_with(':') {
-        return ParsedInput::Meta(line[1..].trim().to_string());
+    if let Some(meta) = line.strip_prefix(':') {
+        return ParsedInput::Meta(meta.trim().to_string());
     }
     ParsedInput::Bare(line.to_string())
 }

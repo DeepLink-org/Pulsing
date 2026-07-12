@@ -171,7 +171,9 @@ class UnifiedExecManager:
                 exit_code = (
                     session.pty.poll()
                     if session.pty is not None
-                    else session.proc.poll() if session.proc is not None else None
+                    else session.proc.poll()
+                    if session.proc is not None
+                    else None
                 )
                 if exit_code is not None:
                     return ToolResult(

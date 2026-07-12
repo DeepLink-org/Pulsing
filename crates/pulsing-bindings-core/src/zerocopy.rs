@@ -4,9 +4,7 @@ use std::cmp::min;
 
 use pulsing_actor::prelude::Message;
 
-use crate::message::{
-    zerocopy_chunk_bytes, ZeroCopyDescriptorHeader, ZC_CHUNK_MSG_TYPE, ZC_DESCRIPTOR_MSG_TYPE,
-};
+use crate::message::{zerocopy_chunk_bytes, ZeroCopyDescriptorHeader, ZC_CHUNK_MSG_TYPE};
 
 pub async fn reassemble_zerocopy_stream(
     header: ZeroCopyDescriptorHeader,

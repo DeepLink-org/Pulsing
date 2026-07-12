@@ -9,7 +9,7 @@ import secrets
 import stat
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pulsing.forge.extension.memories.backend import (
@@ -74,7 +74,7 @@ def default_ad_hoc_filename(slug: str) -> str:
     The suffix keeps concurrent/rapid calls (second-granularity timestamp,
     possibly identical slug) from colliding on the same path.
     """
-    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
     clean = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-") or "note"
     suffix = f"-{secrets.token_hex(3)}"
     clean = clean[: AD_HOC_NOTE_SLUG_MAX_BYTES - len(suffix)]

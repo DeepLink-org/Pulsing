@@ -10,6 +10,7 @@ pub const REVISIONS_DIR: &str = "revisions";
 pub const HEAD_FILE: &str = "HEAD";
 pub const HOOKS_DIR: &str = "hooks";
 pub const SCRIPTS_DIR: &str = "scripts";
+pub const WORKFLOWS_DIR: &str = "workflows";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceManifest {
@@ -18,6 +19,8 @@ pub struct WorkspaceManifest {
     pub name: String,
     pub cluster_id: String,
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub init_guide: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +54,10 @@ impl WorkspaceLayout {
 
     pub fn scripts_dir(&self) -> PathBuf {
         self.pulsing_dir().join(SCRIPTS_DIR)
+    }
+
+    pub fn workflows_dir(&self) -> PathBuf {
+        self.pulsing_dir().join(WORKFLOWS_DIR)
     }
 
     pub fn history_dir(&self) -> PathBuf {

@@ -4,8 +4,9 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use pulsing_rpymod::ensure_runtime;
+use pulsing_workspace::find_workspace_root;
 use rustpython::InterpreterBuilder;
 use rustpython::InterpreterBuilderExt;
 use rustpython_vm as vm;
@@ -45,6 +46,7 @@ fn with_vm<F>(f: F) -> Result<ExitCode>
 where
     F: FnOnce(&vm::VirtualMachine) -> vm::PyResult<()>,
 {
+    prepare_extension_env();
     ensure_runtime().context("failed to start ActorSystem for pulsing-cli")?;
 
     let builder = InterpreterBuilder::new().init_stdlib();
@@ -58,6 +60,22 @@ where
         f(vm)
     });
     Ok(ExitCode::from(code as u8))
+}
+
+fn prepare_extension_env() {
+    if let Ok(exe) = env::current_exe() {
+        env::set_var("PULSING_BINARY", exe);
+    }
+    if let Ok(cwd) = env::current_dir() {
+        if let Some(root) = find_workspace_root(Some(&cwd)) {
+            env::set_var("PULSING_WORKSPACE_ROOT", root);
+        }
+    }
+}
+
+fn prepare_workflow_env() {
+    prepare_extension_env();
+    env::set_var("PULSING_WORKFLOW_SESSION", "1");
 }
 
 fn setup_paths(vm: &vm::VirtualMachine) -> vm::PyResult<()> {
@@ -79,6 +97,11 @@ fn run_source(vm: &vm::VirtualMachine, source: &str) -> vm::PyResult<()> {
     vm.run_code_obj(code, scope).map(|_| ())
 }
 
+/// Whether extension-mode Python sources are on ``sys.path`` (dev / embedded builds).
+pub fn extension_mode_available() -> bool {
+    repo_root().is_some()
+}
+
 /// Run ``pulsing.cli`` with the given arguments (post-binary argv slice).
 pub fn delegate_to_python_cli(args: &[String]) -> Result<ExitCode> {
     let mut argv = vec![String::new()];
@@ -90,11 +113,41 @@ pub fn delegate_to_python_cli(args: &[String]) -> Result<ExitCode> {
     with_vm(|vm| run_source(vm, &source))
 }
 
+/// Execute a user workflow script once; returns ``Ok`` on exit code 0.
+pub fn run_workflow_script(script: &Path, script_args: &[String]) -> Result<()> {
+    let code = run_python_script_inner(script, script_args, true)?;
+    if code == ExitCode::SUCCESS {
+        Ok(())
+    } else {
+        bail!("workflow exited with status {code:?}");
+    }
+}
+
 /// Execute a user ``.py`` script inside the RustPython VM.
+#[allow(dead_code)]
 pub fn run_python_script(script: &Path, script_args: &[String]) -> Result<ExitCode> {
+    run_python_script_inner(script, script_args, false)
+}
+
+fn run_python_script_inner(
+    script: &Path,
+    script_args: &[String],
+    workflow_session: bool,
+) -> Result<ExitCode> {
+    if workflow_session {
+        prepare_workflow_env();
+    } else {
+        prepare_extension_env();
+    }
+    ensure_runtime().context("failed to start ActorSystem for pulsing-cli")?;
+
     let script = script
         .canonicalize()
         .with_context(|| format!("script not found: {}", script.display()))?;
+
+    let builder = InterpreterBuilder::new().init_stdlib();
+    let core_def = pulsing_rpymod::module_def(&builder.ctx);
+    let interpreter = builder.add_native_module(core_def).interpreter();
 
     let mut argv = vec![script.to_string_lossy().into_owned()];
     argv.extend(script_args.iter().cloned());
@@ -103,7 +156,14 @@ pub fn run_python_script(script: &Path, script_args: &[String]) -> Result<ExitCo
         "import sys; sys.argv = {argv:?}; import runpy; \
          runpy.run_path({path:?}, run_name='__main__')"
     );
-    with_vm(|vm| run_source(vm, &source))
+
+    let code = interpreter.run(|vm| {
+        setup_paths(vm)?;
+        import_builtin(vm, "pulsing._core")?;
+        run_source(vm, BOOTSTRAP)?;
+        run_source(vm, &source)
+    });
+    Ok(ExitCode::from(code as u8))
 }
 
 fn repo_root() -> Option<PathBuf> {

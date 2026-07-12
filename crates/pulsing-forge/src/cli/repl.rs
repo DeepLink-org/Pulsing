@@ -195,7 +195,7 @@ impl ForgeRepl {
 
     fn dispatch_slash(&mut self, action: SlashAction, args: &str) -> Result<bool> {
         match action {
-            SlashAction::Meta(cmd) => self.dispatch_meta(&format!("{cmd} {args}").trim()),
+            SlashAction::Meta(cmd) => self.dispatch_meta(format!("{cmd} {args}").trim()),
             SlashAction::Clear => {
                 print!("\x1b[2J\x1b[H");
                 Ok(true)
@@ -357,11 +357,11 @@ impl ForgeRepl {
             self.exec_call(&tool, args)?;
             return Ok(true);
         }
-        if let Some((tool, rest)) = line.split_once(' ') {
-            if self.runtime.tool_names().iter().any(|n| n == tool) {
-                self.exec_call(tool, parse_tool_args(rest)?)?;
-                return Ok(true);
-            }
+        if let Some((tool, rest)) = line.split_once(' ')
+            && self.runtime.tool_names().iter().any(|n| n == tool)
+        {
+            self.exec_call(tool, parse_tool_args(rest)?)?;
+            return Ok(true);
         }
         if self.runtime.tool_names().iter().any(|n| n == line) {
             self.exec_call(line, json!({}))?;
@@ -389,9 +389,9 @@ impl ForgeRepl {
     }
 
     fn run_replay(&mut self, rest: &[&str]) -> Result<()> {
-        let dry = rest.iter().any(|p| *p == "dry");
-        let verify = rest.iter().any(|p| *p == "verify");
-        if rest.iter().any(|p| *p == "all") {
+        let dry = rest.contains(&"dry");
+        let verify = rest.contains(&"verify");
+        if rest.contains(&"all") {
             for msg in run_async(self.replay_all(dry, verify))?? {
                 println!("{msg}");
             }
@@ -444,10 +444,10 @@ impl ForgeRepl {
                     self.apply_session(snap);
                 }
             } else if rec.kind == "tool_call" && rec.seq <= step as u64 {
-                if let Some(tool) = &rec.tool {
-                    if self.runtime.tool_names().iter().any(|n| n == tool) {
-                        self.exec_call(tool, rec.arguments.clone().unwrap_or(json!({})))?;
-                    }
+                if let Some(tool) = &rec.tool
+                    && self.runtime.tool_names().iter().any(|n| n == tool)
+                {
+                    self.exec_call(tool, rec.arguments.clone().unwrap_or(json!({})))?;
                 }
                 self.replay_index += 1;
             }
@@ -532,18 +532,16 @@ impl ForgeRepl {
         }
         let out = self.runtime.call_tool(tool, args).await;
         self.last_result = Some(out.clone());
-        if verify {
-            if let Some(exp) = &rec.result {
-                let exp_err = exp
-                    .get("is_error")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if out.is_error != exp_err {
-                    return Ok(format!(
-                        "verify FAIL #{} {tool}: is_error expected {exp_err} got {}",
-                        rec.seq, out.is_error
-                    ));
-                }
+        if verify && let Some(exp) = &rec.result {
+            let exp_err = exp
+                .get("is_error")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if out.is_error != exp_err {
+                return Ok(format!(
+                    "verify FAIL #{} {tool}: is_error expected {exp_err} got {}",
+                    rec.seq, out.is_error
+                ));
             }
         }
         let flag = if out.is_error { "ERR" } else { "ok" };

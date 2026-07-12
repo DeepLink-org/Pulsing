@@ -1,50 +1,63 @@
 # pulsing-cli
 
-Rust entry point for the Pulsing command-line interface (**Path B**: RustPython).
+Single-binary CLI for Pulsing (**Path B**).
 
-## Dual build modes
+## Layout
 
-| Path | Command | Python runtime | Artifact |
-|------|---------|----------------|----------|
-| **A — wheel** | `just dev` / `just build-wheel` | User's CPython + `pulsing._core.so` (PyO3) | wheel / `pip install` |
-| **B — binary** | `just build-binary` | **RustPython** (`rustpython_vm`) in-process | `target/release/pulsing` |
+All **interactive UX** lives in this crate (`src/session/`). Downstream crates stay headless:
 
-Path B does **not** link `libpython` or use PyO3 `embedded`. It is a pure-Rust Python interpreter.
+| Crate | Responsibility |
+|-------|----------------|
+| **pulsing-cli** | clap routing, immersive session, slash commands, plain render (future TUI/GUI) |
+| **pulsing-forge** | agent loop, tools, LLM, sandbox |
+| **pulsing-workspace** | init, journal, checkpoint, rollback |
+| **pulsing-rpymod** | RustPython bindings for extension-mode workflows |
+
+```
+pulsing-cli/src/
+  main.rs          # clap only → dispatch
+  session/         # ★ interaction kernel
+    mod.rs         # unified REPL loop
+    commands.rs    # /help, /rollback, …
+    mode.rs        # safe | workflow
+    input.rs       # stdin (→ reedline later)
+    render.rs      # plain text (→ ratatui / egui later)
+    config.rs      # provider, workspace LLM config
+    workspace.rs   # history, checkpoint, workflow list
+  codex.rs         # thin entry → session::run_safe
+  workflow.rs      # thin entry → session::run_workflow
+  embed/           # RustPython extension mode
+  workspace.rs     # pulsing init/history/… subcommands
+```
+
+## Modes
+
+| Mode | Commands | Python |
+|------|----------|--------|
+| **Safe** (default) | `pulsing`, `pulsing "task"`, `pulsing agent` | None |
+| **Extension** | `pulsing run`, `pulsing workflow` | RustPython + embedded sources |
+
+Immersive session: `/help`, `/exit`, agent tasks, workflow rerun — all via `session/`.
 
 ## Build
 
 ```bash
 just build-binary release=release
-# target/release/pulsing
+# target/release/pulsing  (~40MB release)
 ```
-
-No `PYO3_PYTHON` required.
 
 ## Usage
 
 ```bash
-./target/release/pulsing run examples/python/forge_agent_quickstart.py
-./target/release/pulsing actor --help
+pulsing init -g "Python CLI with pytest"
+pulsing                    # session (safe)
+pulsing run                # workflow → session
+pulsing /help              # inside session
 ```
-
-## API parity (Path A ≡ Path B)
-
-Both paths must expose the same ``pulsing._core`` Python API. Shared logic lives in
-``pulsing-bindings-core``; contract tests in ``tests/python/test_core_api_surface.py``.
-
-Path B is still catching up (``ActorSystem.create`` / ``spawn`` / policies / forge are stubs).
-Do not add Path-specific branches in application Python when bindings can be fixed instead.
-
-## Limitations (Path B today)
-
-- **No CPython extensions**: `pulsing._core` (PyO3/maturin), `pydantic_core`, `hyperparameter` C extensions do not load.
-- **Pure Python subset**: only packages compatible with RustPython run here.
-- **Native bridge (planned)**: expose Actor/Forge to RustPython via `#[pymodule]` in Rust, calling `pulsing-actor` / `pulsing-forge` directly.
-
-Path A (`maturin develop`) remains the full-fidelity development path until RustPython native modules land.
 
 ## Environment
 
 | Variable | Purpose |
 |----------|---------|
-| `PULSING_REPO_ROOT` | Repo root; adds `python/` to `sys.path` |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Live LLM providers |
+| `PULSING_REPO_ROOT` | Repo root for extension-mode `sys.path` |

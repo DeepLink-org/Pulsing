@@ -143,10 +143,10 @@ fn collect_file_system_path_strings(fs: &serde_json::Value) -> Vec<String> {
             let Some(path_obj) = path_val.as_object() else {
                 continue;
             };
-            if path_obj.get("type").and_then(|v| v.as_str()) == Some("path") {
-                if let Some(s) = path_obj.get("path").and_then(|v| v.as_str()) {
-                    out.push(s.to_string());
-                }
+            if path_obj.get("type").and_then(|v| v.as_str()) == Some("path")
+                && let Some(s) = path_obj.get("path").and_then(|v| v.as_str())
+            {
+                out.push(s.to_string());
             }
         }
     }

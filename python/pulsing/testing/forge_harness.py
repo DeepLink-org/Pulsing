@@ -60,7 +60,7 @@ def minimal_tool_args(name: str, tmp_path: Path) -> dict[str, Any]:
     """Arguments that exercise each registered tool without Unknown-tool failures."""
     seed_workspace(tmp_path)
     p = tmp_path / "sample.txt"
-    patch = "*** Begin Patch\n" "*** Add File: added.txt\n" "+added\n" "*** End Patch\n"
+    patch = "*** Begin Patch\n*** Add File: added.txt\n+added\n*** End Patch\n"
     common: dict[str, dict[str, Any]] = {
         "Read": {"file_path": str(p)},
         "Glob": {"pattern": "*.txt", "path": str(tmp_path)},

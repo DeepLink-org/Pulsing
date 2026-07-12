@@ -158,4 +158,6 @@ print(json.dumps(out))
     funcs = set(payload["funcs"])
 
     assert CORE_CLASSES <= classes, f"Path B missing classes: {CORE_CLASSES - classes}"
-    assert CORE_FUNCTIONS <= funcs, f"Path B missing functions: {CORE_FUNCTIONS - funcs}"
+    assert CORE_FUNCTIONS <= funcs, (
+        f"Path B missing functions: {CORE_FUNCTIONS - funcs}"
+    )

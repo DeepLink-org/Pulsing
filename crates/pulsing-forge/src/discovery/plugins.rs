@@ -85,16 +85,16 @@ pub fn load_plugin_manifests(dirs: &[PathBuf]) -> Vec<(PluginManifest, PathBuf)>
             if path.is_dir() {
                 for name in ["plugin.json", "manifest.json", "codex-plugin.json"] {
                     let mf = path.join(name);
-                    if mf.is_file() {
-                        if let Ok(m) = read_manifest(&mf) {
-                            out.push((m, mf));
-                        }
+                    if mf.is_file()
+                        && let Ok(m) = read_manifest(&mf)
+                    {
+                        out.push((m, mf));
                     }
                 }
-            } else if path.extension().is_some_and(|e| e == "json") {
-                if let Ok(m) = read_manifest(&path) {
-                    out.push((m, path));
-                }
+            } else if path.extension().is_some_and(|e| e == "json")
+                && let Ok(m) = read_manifest(&path)
+            {
+                out.push((m, path));
             }
         }
     }

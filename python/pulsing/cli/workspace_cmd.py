@@ -15,6 +15,17 @@ def _add_init(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("init", help="Bootstrap a Pulsing workspace")
     p.add_argument("dir", nargs="?", type=Path, default=None, help="target directory")
     p.add_argument(
+        "guide_words",
+        nargs="*",
+        help="natural-language goal for LLM-guided bootstrap",
+    )
+    p.add_argument(
+        "-g",
+        "--guide",
+        default=None,
+        help="same as trailing guide words",
+    )
+    p.add_argument(
         "--template",
         choices=("minimal", "agent"),
         default="agent",
@@ -24,6 +35,8 @@ def _add_init(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--force", action="store_true", help="re-initialize existing workspace"
     )
+    p.add_argument("--provider", choices=("demo", "anthropic", "openai"), default=None)
+    p.add_argument("--model", default=None)
     p.set_defaults(func=cmd_init)
 
 
@@ -53,12 +66,26 @@ def register_workspace_commands(sub: argparse._SubParsersAction) -> None:
     _add_rollback(sub)
 
 
+def _merge_guide(flag: str | None, words: list[str]) -> str | None:
+    if flag and flag.strip():
+        return flag.strip()
+    if not words:
+        return None
+    return " ".join(words)
+
+
 def cmd_init(args: argparse.Namespace) -> None:
+    guide = _merge_guide(
+        getattr(args, "guide", None), getattr(args, "guide_words", []) or []
+    )
     result = init_workspace(
         args.dir,
         template=args.template,
         name=args.name,
         force=args.force,
+        guide=guide,
+        provider=getattr(args, "provider", None),
+        model=getattr(args, "model", None),
     )
     if result.created:
         print(f"initialized {result.root}  (cluster_id={result.cluster_id})")

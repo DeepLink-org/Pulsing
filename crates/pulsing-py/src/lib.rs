@@ -9,6 +9,7 @@ mod actor;
 mod connect;
 mod errors;
 mod forge;
+mod llm;
 mod policies;
 mod python_error_converter;
 mod python_executor;

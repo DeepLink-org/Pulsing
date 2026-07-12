@@ -25,6 +25,15 @@ pub enum WorkspaceCommand {
         /// Re-initialize even if workspace exists
         #[arg(long)]
         force: bool,
+        /// Natural-language goal — LLM customizes workspace after scaffold
+        #[arg(short = 'g', long = "guide")]
+        guide_flag: Option<String>,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        guide_words: Vec<String>,
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
     },
     /// List workspace checkpoints
     History,
@@ -48,15 +57,21 @@ pub fn run(cmd: WorkspaceCommand) -> Result<()> {
             template,
             name,
             force,
+            guide_flag,
+            guide_words,
+            provider,
+            model,
         } => {
             let root = dir.unwrap_or_else(|| std::env::current_dir().expect("cwd"));
             let template = Template::parse(&template)?;
+            let guide = merge_guide(guide_flag, guide_words);
             let result = init_workspace(
                 &root,
                 InitOptions {
                     template,
                     name,
                     force,
+                    guide: guide.clone(),
                 },
             )?;
             if result.created {
@@ -65,13 +80,24 @@ pub fn run(cmd: WorkspaceCommand) -> Result<()> {
                     result.root.display(),
                     result.cluster_id
                 );
-                if template == Template::Agent {
-                    println!("  pulsing agent wake   # start agents");
+                if let Some(ref text) = guide {
+                    run_init_guide_step(&result.root, text, provider.as_deref(), model.as_deref())?;
                 }
+                println!("  pulsing              # safe-mode agent (interactive)");
+                println!("  pulsing \"your task\"  # safe-mode one-shot");
+                println!("  pulsing run          # immersive workflow session");
                 println!("  pulsing history      # list checkpoints");
                 println!("  pulsing checkpoint   # save workspace snapshot");
             } else {
                 println!("already initialized: {}", result.root.display());
+                if let Some(text) = guide.filter(|_| force) {
+                    run_init_guide_step(
+                        &result.root,
+                        &text,
+                        provider.as_deref(),
+                        model.as_deref(),
+                    )?;
+                }
             }
         }
         WorkspaceCommand::History => {
@@ -124,6 +150,45 @@ pub fn run(cmd: WorkspaceCommand) -> Result<()> {
             println!("rolled back to {} — {}", manifest.id, manifest.message);
         }
     }
+    Ok(())
+}
+
+fn merge_guide(flag: Option<String>, words: Vec<String>) -> Option<String> {
+    if let Some(g) = flag.filter(|s| !s.trim().is_empty()) {
+        return Some(g);
+    }
+    if words.is_empty() {
+        None
+    } else {
+        Some(words.join(" "))
+    }
+}
+
+fn run_init_guide_step(
+    root: &std::path::Path,
+    guide: &str,
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> Result<()> {
+    eprintln!("\n# LLM-guided bootstrap…");
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let summary = rt.block_on(pulsing_forge::run_init_guide(
+        root.to_path_buf(),
+        guide,
+        provider,
+        model,
+    ))?;
+    println!("\n{summary}\n");
+    let layout = WorkspaceLayout::new(root);
+    let _ = checkpoint(
+        &layout,
+        CheckpointOptions {
+            message: Some("init guide".into()),
+            author: Some("pulsing".into()),
+        },
+    );
     Ok(())
 }
 

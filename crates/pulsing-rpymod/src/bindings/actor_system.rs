@@ -7,7 +7,7 @@ use pulsing_actor::supervision::{BackoffStrategy, RestartPolicy, SupervisionSpec
 use pulsing_actor::system::ActorSystemCoreExt;
 use rustpython_vm::builtins::PyUtf8StrRef;
 use rustpython_vm::function::OptionalArg;
-use rustpython_vm::{AsObject, PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
+use rustpython_vm::{PyObjectRef, PyPayload, PyRef, PyResult, VirtualMachine};
 
 use super::message::{PyActorId, PyNodeId, PySystemConfig};
 use super::python_actor::PythonActorWrapper;
@@ -56,6 +56,7 @@ impl PyActorSystem {
     }
 
     #[pymethod]
+    #[allow(clippy::too_many_arguments)]
     fn spawn(
         &self,
         actor: PyObjectRef,

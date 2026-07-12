@@ -26,7 +26,7 @@ mod pulsing_core {
     use rustpython_vm::class::PyClassImpl;
     use rustpython_vm::extend_module;
     use rustpython_vm::function::OptionalArg;
-    use rustpython_vm::{AsObject, Py, PyPayload, PyRef, PyResult, VirtualMachine};
+    use rustpython_vm::{Py, PyPayload, PyRef, PyResult, VirtualMachine};
 
     use crate::bindings::{
         PyActorId, PyActorRef, PyActorSystem, PyMessage, PyNodeId, PyStreamMessage, PyStreamReader,

@@ -35,6 +35,8 @@ pub struct InitOptions {
     pub template: Template,
     pub name: Option<String>,
     pub force: bool,
+    /// Natural-language goal; stored in workspace.json and used for LLM-guided bootstrap.
+    pub guide: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +69,7 @@ pub fn init_workspace(root: &Path, opts: InitOptions) -> Result<InitResult> {
     fs::create_dir_all(layout.pulsing_dir())?;
     fs::create_dir_all(layout.hooks_dir())?;
     fs::create_dir_all(layout.scripts_dir())?;
+    fs::create_dir_all(layout.workflows_dir())?;
     fs::create_dir_all(layout.revisions_dir())?;
 
     let now = Utc::now().to_rfc3339();
@@ -76,6 +79,7 @@ pub fn init_workspace(root: &Path, opts: InitOptions) -> Result<InitResult> {
         name: name.clone(),
         cluster_id: cluster_id.clone(),
         created_at: now.clone(),
+        init_guide: opts.guide.clone(),
     };
     fs::write(
         layout.workspace_file(),
@@ -93,6 +97,7 @@ pub fn init_workspace(root: &Path, opts: InitOptions) -> Result<InitResult> {
 
     write_hook_stubs(&layout)?;
     write_scripts_readme(&layout)?;
+    write_workflows_scaffold(&layout)?;
 
     // Initial checkpoint
     crate::journal::checkpoint(
@@ -207,11 +212,53 @@ fn write_scripts_readme(layout: &WorkspaceLayout) -> Result<()> {
         fs::write(
             &readme,
             "# Pulsing workspace scripts\n\n\
-             Place custom Python workflows here and run:\n\n\
+             Prefer workflows under `.pulsing/workflows/` (see `example.py`).\n\n\
+             Legacy location for ad-hoc scripts:\n\n\
              ```bash\n\
              pulsing run scripts/your_flow.py\n\
              ```\n",
         )?;
+    }
+    Ok(())
+}
+
+const WORKFLOWS_README: &str = "# Pulsing workflows\n\n\
+Code-as-workflow: plain Python, no graph DSL.\n\n\
+```bash\n\
+pulsing run                  # immersive session (default: example.py)\n\
+pulsing run my_workflow.py   # explicit script\n\
+```\n\n\
+After success you stay in the CLI (`›` prompt). Type `exit` to return to the shell.\n\
+On failure you return to the shell — then `pulsing rollback` or safe-mode fix.\n";
+
+const WORKFLOW_EXAMPLE: &str = r#"""Example workflow — extension mode.
+
+Run: pulsing run
+"""
+
+from __future__ import annotations
+
+from pulsing.workflow import WorkflowContext, run
+
+
+async def main(ctx: WorkflowContext) -> None:
+    ctx.info(f"workspace: {ctx.root}")
+    rev = ctx.checkpoint("example workflow")
+    ctx.info(f"checkpoint {rev}")
+
+
+if __name__ == "__main__":
+    run(main)
+"#;
+
+fn write_workflows_scaffold(layout: &WorkspaceLayout) -> Result<()> {
+    let readme = layout.workflows_dir().join("README.md");
+    if !readme.exists() {
+        fs::write(&readme, WORKFLOWS_README)?;
+    }
+    let example = layout.workflows_dir().join("example.py");
+    if !example.exists() {
+        fs::write(&example, WORKFLOW_EXAMPLE)?;
     }
     Ok(())
 }

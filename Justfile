@@ -60,12 +60,15 @@ check-quick: check-fmt lint
     @echo ""
     @echo "✅ Format and lint checks passed!"
 
+# Python sources for ruff (docs markdown uses docs/pyproject.toml separately)
+ruff_paths := "python tests examples benchmarks crates/pulsing-bench-py"
+
 # 检查代码格式 (不修改)
 check-fmt:
     @echo "==> Checking Rust format..."
     cargo fmt --all -- --check
     @echo "==> Checking Python format..."
-    ruff format --check .
+    ruff format --check {{ruff_paths}}
 
 # Run all tests
 test: test-rust test-python
@@ -90,12 +93,12 @@ test-queue-topic-chaos:
 # Format all code (Rust + Python)
 fmt:
     cargo fmt
-    ruff format .
+    ruff format {{ruff_paths}}
 
 # Lint all code
 lint:
     cargo clippy --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets -- -D warnings
-    ruff check .
+    ruff check {{ruff_paths}}
 
 # =============================================================================
 # Coverage (本地查看覆盖率)

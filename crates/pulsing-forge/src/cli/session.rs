@@ -176,15 +176,15 @@ fn prompt_permissions(
 
 fn prompt_user_input(approve_auto: &AtomicBool, args: Value) -> Result<Value, ToolError> {
     if approve_auto.load(Ordering::Relaxed) {
-        if let Some(questions) = args.get("questions").and_then(|q| q.as_array()) {
-            if let Some(q0) = questions.first() {
-                let id = q0.get("id").and_then(|v| v.as_str()).unwrap_or("q0");
-                if let Some(opts) = q0.get("options").and_then(|o| o.as_array()) {
-                    if let Some(opt) = opts.first() {
-                        let label = opt.get("label").and_then(|v| v.as_str()).unwrap_or("yes");
-                        return Ok(json!({ "answers": { id: label } }));
-                    }
-                }
+        if let Some(questions) = args.get("questions").and_then(|q| q.as_array())
+            && let Some(q0) = questions.first()
+        {
+            let id = q0.get("id").and_then(|v| v.as_str()).unwrap_or("q0");
+            if let Some(opts) = q0.get("options").and_then(|o| o.as_array())
+                && let Some(opt) = opts.first()
+            {
+                let label = opt.get("label").and_then(|v| v.as_str()).unwrap_or("yes");
+                return Ok(json!({ "answers": { id: label } }));
             }
         }
         return Ok(json!({ "answers": {} }));

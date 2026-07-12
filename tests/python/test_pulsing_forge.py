@@ -112,12 +112,7 @@ def test_view_image_structured(tmp_path: Path) -> None:
 
 def test_apply_patch_add_file(tmp_path: Path) -> None:
     rt = LocalToolRuntime(cwd=str(tmp_path))
-    patch = (
-        "*** Begin Patch\n"
-        "*** Add File: hello.txt\n"
-        "+hello world\n"
-        "*** End Patch\n"
-    )
+    patch = "*** Begin Patch\n*** Add File: hello.txt\n+hello world\n*** End Patch\n"
     out = rt.call_tool("apply_patch", {"patch": patch})
     assert not out.is_error
     assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "hello world\n"

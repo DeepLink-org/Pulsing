@@ -216,11 +216,13 @@ mod tests {
                 template: Template::Minimal,
                 name: None,
                 force: false,
+                guide: None,
             },
         )
         .unwrap();
 
         let layout = WorkspaceLayout::new(root);
+        assert!(layout.workflows_dir().join("example.py").is_file());
         fs::write(root.join("hello.txt"), b"v2").unwrap();
         checkpoint(
             &layout,

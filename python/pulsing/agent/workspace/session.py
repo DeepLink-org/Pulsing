@@ -16,7 +16,7 @@ def require_seed(cfg: WorkspaceConfig) -> str:
     seed = cfg.seed_addr()
     if not seed:
         raise SystemExit(
-            "world asleep — run `pulsing agent wake` in " f"{cfg.root}",
+            f"world asleep — run `pulsing agent wake` in {cfg.root}",
         )
     return seed
 

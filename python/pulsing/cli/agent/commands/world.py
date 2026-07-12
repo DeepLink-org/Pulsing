@@ -29,7 +29,22 @@ async def run_init(args: Namespace, *, prog: str = DEFAULT_PROG) -> None:
     root = Path.cwd().resolve()
     template = getattr(args, "template", "agent") or "agent"
     force = bool(getattr(args, "force", False))
-    result = init_workspace(root, template=template, force=force)
+    guide_flag = getattr(args, "guide", None)
+    guide_words = getattr(args, "guide_words", None) or []
+    if guide_flag and str(guide_flag).strip():
+        guide = str(guide_flag).strip()
+    elif guide_words:
+        guide = " ".join(guide_words)
+    else:
+        guide = None
+    result = init_workspace(
+        root,
+        template=template,
+        force=force,
+        guide=guide,
+        provider=getattr(args, "provider", None),
+        model=getattr(args, "model", None),
+    )
     if result.created:
         print(f"initialized {result.root}  →  {prog} wake  ·  {prog} dashboard")
     else:

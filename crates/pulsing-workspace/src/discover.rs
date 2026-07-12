@@ -26,6 +26,7 @@ pub fn require_workspace_root(start: Option<&Path>) -> Result<PathBuf> {
     })
 }
 
+#[allow(dead_code)]
 pub fn layout_from_cwd() -> Result<WorkspaceLayout> {
     let root = require_workspace_root(None)?;
     Ok(WorkspaceLayout::new(root))
