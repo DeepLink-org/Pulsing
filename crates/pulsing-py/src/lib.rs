@@ -25,7 +25,7 @@ pub use python_executor::{init_python_executor, python_executor, ExecutorError};
 /// - Streaming: StreamReader, StreamWriter
 /// - Load balancing policies: Random, RoundRobin, PowerOfTwo, ConsistentHash, CacheAware
 #[pymodule]
-fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add error classes
     errors::add_to_module(m)?;
 

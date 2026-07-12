@@ -57,12 +57,14 @@ def _demo_llm_options(cfg: WorkspaceConfig, args: Namespace) -> dict:
         from pulsing.cli.agent.helpers import llm_options
 
         return llm_options(cfg, args)
-    return {
-        "provider": "demo",
-        "model": "demo",
-        "auto_approve": True,
-        "sandbox": cfg.sandbox,
-    }
+    from pulsing.forge.host.llm import llm_runtime_options
+
+    return llm_runtime_options(
+        provider="demo",
+        model="demo",
+        auto_approve=True,
+        sandbox=cfg.sandbox,
+    )
 
 
 def prepare_demo_workspace(root: Path, *, prog: str = DEFAULT_PROG) -> WorkspaceConfig:

@@ -6,6 +6,12 @@ def print_top_level_help() -> None:
     print(
         """usage: pulsing <command> [options]
 
+Workspace:
+  init        Bootstrap a Pulsing workspace (``.pulsing/``)
+  history     List workspace checkpoints
+  checkpoint  Save a workspace snapshot
+  rollback    Restore files from a checkpoint
+
 Runtime:
   actor       Start an Actor service (cluster member)
   inspect     Observe cluster via HTTP (non-member)
@@ -13,7 +19,7 @@ Runtime:
   examples    List or show built-in examples
 
 Agent (workspace):
-  agent       Workspace init, wake, spawn, task, watch, demo
+  agent       Workspace wake, spawn, task, watch, demo
 
 Forge (tools):
   forge       Session REPL and tool debugging (`pulsing forge repl`)

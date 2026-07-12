@@ -7,18 +7,44 @@ default: dev
 # Development
 # =============================================================================
 
-# Install all packages in development mode
+# Install Python package in development mode (wheel path: extension-module)
 dev:
-    @echo "Building core..."
+    @echo "==> Path A: maturin develop (extension-module)..."
     maturin develop
-    @echo "Building benchmarks..."
+    @echo "==> Building benchmarks..."
     maturin develop --manifest-path crates/pulsing-bench-py/Cargo.toml
-    @echo "Ready to code!"
+    @echo "Ready! Use: python -m pulsing.cli  |  just build-binary for Path B"
 
-# Build release wheels
-build:
+# Build and install pulsing-cli with embedded Python (binary path: embedded)
+dev-binary:
+    just build-binary
+
+# Path A: release wheels for PyPI (extension-module via pyproject.toml)
+build-wheel:
     maturin build --release
     maturin build --release --manifest-path crates/pulsing-bench-py/Cargo.toml
+
+# Path B: ``pulsing`` single binary (RustPython VM; no libpython / no PYO3_PYTHON)
+build-binary release="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "==> Path B: pulsing-cli (rustpython_vm)"
+    if [ "{{release}}" = "release" ]; then
+        cargo build --release -p pulsing-cli
+        echo "==> target/release/pulsing"
+    else
+        cargo build -p pulsing-cli
+        echo "==> target/debug/pulsing"
+    fi
+
+# Both distribution artifacts (separate Cargo invocations — PyO3 modes must not merge)
+build-all:
+    just build-wheel
+    just build-binary release=release
+    @echo "==> Path A: dist/*.whl  |  Path B: target/release/pulsing"
+
+# Build release wheels (alias for build-wheel)
+build: build-wheel
 
 # =============================================================================
 # Testing & QA
@@ -44,9 +70,10 @@ check-fmt:
 # Run all tests
 test: test-rust test-python
 
-# Run Rust tests
+# Run Rust tests (pulsing-py via maturin; pulsing-cli via separate `-p` graph)
 test-rust:
-    cargo test --workspace --exclude pulsing-bench-py --exclude pulsing-py
+    cargo test --workspace --exclude pulsing-bench-py --exclude pulsing-py --exclude pulsing-cli
+    cargo test -p pulsing-cli
 
 # Run Python tests
 test-python:

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pulsing-actor", "crates/pulsing-bench", "crates/pulsing-bench-py", "crates/pulsing-py", "crates/pulsing-forge"]
+members = ["crates/pulsing-actor", "crates/pulsing-bench", "crates/pulsing-bench-py", "crates/pulsing-py", "crates/pulsing-forge", "crates/pulsing-bindings-core", "crates/pulsing-rpymod", "crates/pulsing-workspace", "crates/pulsing-cli"]
 resolver = "3"
 
 # Allow coverage_nightly cfg for cargo-llvm-cov

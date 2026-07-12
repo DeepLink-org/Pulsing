@@ -6,9 +6,14 @@ authors.workspace = true
 license.workspace = true
 description = "Python bindings for Pulsing Actor System"
 
+# Dual distribution (pick one at build time):
+#   extension-module — maturin / pip wheel (cdylib loaded by user's Python)
+#   embedded         — pulsing-cli single binary (PyO3 auto-initialize + rlib)
 [features]
 default = ["tls"]
 tls = ["pulsing-actor/tls"]
+extension-module = ["pyo3/extension-module"]
+embedded = ["pyo3/auto-initialize"]
 
 [lib]
 name = "_core"
@@ -37,7 +42,6 @@ default-features = false
 features = [
   "macros",
   "experimental-async",
-  "extension-module",
   "py-clone",
   "abi3-py310",
 ]

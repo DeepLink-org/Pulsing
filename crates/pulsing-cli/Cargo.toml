@@ -1,0 +1,34 @@
+[package]
+name = "pulsing-cli"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+description = "Pulsing command-line interface (RustPython embedded VM)"
+repository.workspace = true
+
+# Path B: RustPython VM (no PyO3 / no libpython). Path A remains maturin + extension-module.
+[features]
+default = []
+
+[[bin]]
+name = "pulsing"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+pulsing-rpymod = { path = "../pulsing-rpymod" }
+pulsing-workspace = { path = "../pulsing-workspace" }
+rustpython = { version = "0.5", default-features = false, features = [
+    "stdlib",
+    "importlib",
+    "stdio",
+    "host_env",
+] }
+rustpython-vm = { version = "0.5", default-features = false, features = [
+    "compiler",
+    "stdio",
+    "host_env",
+    "importlib",
+] }

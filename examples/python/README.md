@@ -42,6 +42,8 @@ python examples/python/forge_minimal.py                 # Pulsing Forge (pulsing
 python examples/python/forge_custom_agent.py            # Embed Forge in your own agent framework
 python examples/python/forge_custom_agent.py --isolated # Same, tools in ToolWorkerActor subprocess
 python examples/python/forge_agent_quickstart.py       # ForgeAgent demo (no API key)
+./examples/python/workspace_demo.sh                    # workspace init → wake → say (demo LLM)
+python examples/python/workspace_minimal_demo.py       # same, single Python process
 ```
 
 同步包装器说明：

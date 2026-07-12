@@ -35,7 +35,7 @@ def _build_parser(prog: str = DEFAULT_PROG) -> argparse.ArgumentParser:
     w.add_argument("--agents", default=None)
     w.add_argument("--addr", default="127.0.0.1:0")
     w.add_argument("--auto-approve", action="store_true")
-    w.add_argument("--provider", choices=("anthropic", "openai"))
+    w.add_argument("--provider", choices=("anthropic", "openai", "demo"))
     w.add_argument("--model")
     w.add_argument(
         "--shared-tool-worker",
@@ -57,7 +57,7 @@ def _build_parser(prog: str = DEFAULT_PROG) -> argparse.ArgumentParser:
     s = sub.add_parser("spawn", help="spawn an agent")
     s.add_argument("name")
     s.add_argument("--role", default="")
-    s.add_argument("--provider", choices=("anthropic", "openai"))
+    s.add_argument("--provider", choices=("anthropic", "openai", "demo"))
     s.add_argument("--model")
 
     y = sub.add_parser("say", help="send a message to an agent")

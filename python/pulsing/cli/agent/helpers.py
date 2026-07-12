@@ -12,7 +12,7 @@ from pulsing.agent.cluster.constants import full_agent_name
 from pulsing.agent.cluster.discovery import list_cluster_agents
 from pulsing.agent.npc import spawn_npc as _spawn_npc
 from pulsing.agent.npc.config import NpcConfig
-from pulsing.agent.loop.deps import require_provider_deps
+from pulsing.forge.host.llm import llm_runtime_options
 from pulsing.agent.workspace.config import WorkspaceConfig, load_config
 from pulsing.agent.workspace.root import require_workspace_root
 from pulsing.agent.workspace.session import workspace_session
@@ -20,27 +20,21 @@ from pulsing.agent.workspace.session import workspace_session
 DEFAULT_PROG = "pulsing agent"
 
 
-def default_model(provider: str, explicit: str | None) -> str:
-    if explicit:
-        return explicit
-    if (provider or "anthropic").strip().lower() == "openai":
-        return os.environ.get("OPENAI_MODEL", "gpt-4o")
-    return os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
-
-
 def load_cfg() -> WorkspaceConfig:
     return load_config(require_workspace_root())
 
 
 def llm_options(cfg: WorkspaceConfig, args: Any) -> dict[str, Any]:
+    from pulsing.agent.loop.deps import require_provider_deps
+
     provider = getattr(args, "provider", None) or cfg.provider
     require_provider_deps(provider)
-    return {
-        "provider": provider,
-        "model": default_model(provider, getattr(args, "model", None) or cfg.model),
-        "auto_approve": bool(getattr(args, "auto_approve", False) or cfg.auto_approve),
-        "sandbox": cfg.sandbox,
-    }
+    return llm_runtime_options(
+        provider=provider,
+        model=getattr(args, "model", None) or cfg.model,
+        auto_approve=bool(getattr(args, "auto_approve", False) or cfg.auto_approve),
+        sandbox=cfg.sandbox,
+    )
 
 
 async def spawn_npc(

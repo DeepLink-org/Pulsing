@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pulsing.agent.loop.llm_client import LLMClient, LLMMessage
+from pulsing.forge.host.llm import LLMClient, LLMMessage
 from pulsing.forge.environment import ForgeEnvironment
 from pulsing.forge.host.cli_events import CliEventSink
 from pulsing.forge.hybrid_runtime import HybridForgeRuntime

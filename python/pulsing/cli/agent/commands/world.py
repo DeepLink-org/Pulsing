@@ -10,10 +10,8 @@ import sys
 from argparse import Namespace
 from pathlib import Path
 
-from pulsing.agent.npc.loader import seed_npc_defs
 from pulsing.agent.workspace.config import (
     clear_node_record,
-    default_config,
     load_config,
     save_config,
 )
@@ -25,18 +23,17 @@ from pulsing.agent.workspace.world_view import render_look
 from pulsing.cli.agent.helpers import DEFAULT_PROG, list_npcs, llm_options, spawn_npc
 
 
-async def run_init(_args: Namespace, *, prog: str = DEFAULT_PROG) -> None:
+async def run_init(args: Namespace, *, prog: str = DEFAULT_PROG) -> None:
+    from pulsing.workspace.bootstrap import init_workspace
+
     root = Path.cwd().resolve()
-    existing = find_workspace_root(root)
-    if existing:
-        cfg = load_config(existing)
-        seed_npc_defs(Path(cfg.root))
-        print(f"already initialized: {cfg.root}")
-        return
-    cfg = default_config(root)
-    save_config(cfg)
-    seed_npc_defs(root)
-    print(f"initialized {cfg.root}  →  {prog} wake  ·  {prog} dashboard")
+    template = getattr(args, "template", "agent") or "agent"
+    force = bool(getattr(args, "force", False))
+    result = init_workspace(root, template=template, force=force)
+    if result.created:
+        print(f"initialized {result.root}  →  {prog} wake  ·  {prog} dashboard")
+    else:
+        print(f"already initialized: {result.root}")
 
 
 async def run_look(args: Namespace, *, prog: str = DEFAULT_PROG) -> None:

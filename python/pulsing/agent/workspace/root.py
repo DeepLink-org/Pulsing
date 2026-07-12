@@ -31,6 +31,6 @@ def require_workspace_root(start: Path | None = None) -> Path:
     root = find_workspace_root(start)
     if root is None:
         raise SystemExit(
-            "not a workspace yet — run `pulsing agent init` in this project directory first",
+            "not a workspace yet — run `pulsing init` in this project directory first",
         )
     return root

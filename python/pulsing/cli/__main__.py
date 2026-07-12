@@ -317,7 +317,19 @@ def examples(name: str | None = None):
 
 
 def main():
+    import argparse
     import sys
+
+    workspace_cmds = {"init", "history", "checkpoint", "rollback"}
+    if len(sys.argv) >= 2 and sys.argv[1] in workspace_cmds:
+        parser = argparse.ArgumentParser(prog="pulsing")
+        sub = parser.add_subparsers(dest="command", required=True)
+        from pulsing.cli.workspace_cmd import register_workspace_commands
+
+        register_workspace_commands(sub)
+        args = parser.parse_args(sys.argv[1:])
+        args.func(args)
+        return
 
     if len(sys.argv) >= 2 and sys.argv[1] == "agent":
         from pulsing.cli.agent.main import main as main_agent
