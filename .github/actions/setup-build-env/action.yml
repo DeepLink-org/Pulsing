@@ -67,6 +67,7 @@ runs:
           libgl1-mesa-dev \
           libfontconfig1-dev \
           libfreetype6-dev \
+          libffi-dev \
           pkg-config
 
     - name: Install cargo tools

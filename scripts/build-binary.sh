@@ -44,9 +44,15 @@ done
 TAG="$(platform_tag)"
 mkdir -p "$OUT"
 
+# manylinux / headless Linux: skip egui (no X11 dev headers, smaller binary)
+if [[ "$NO_GUI" -eq 0 ]] && [[ "$(uname -s)" == "Linux" ]] && [[ ! -f /usr/include/X11/Xlib.h ]]; then
+  NO_GUI=1
+fi
+
 CARGO_ARGS=(-p pulsing-cli)
 if [[ "$NO_GUI" -eq 1 ]]; then
   CARGO_ARGS+=(--no-default-features)
+  echo "==> Building pulsing-cli without desktop GUI"
 fi
 
 if [[ "$RELEASE" -eq 1 ]]; then

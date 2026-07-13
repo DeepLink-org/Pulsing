@@ -180,7 +180,7 @@ ensure-rust:
 ci-setup-manylinux: ensure-rust ensure-uv
     #!/usr/bin/env bash
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-    yum install -y gcc gcc-c++ openssl-devel perl-IPC-Cmd
+    yum install -y gcc gcc-c++ openssl-devel perl-IPC-Cmd libffi-devel
     uv python install 3.10
     uv tool install maturin
     uv tool install pytest
@@ -199,7 +199,7 @@ ci-setup-fedora python_version="3.12": ensure-uv
     #!/usr/bin/env bash
     export PATH="$HOME/.local/bin:$PATH"
     # Install build dependencies
-    dnf install -y gcc gcc-c++ openssl-devel
+    dnf install -y gcc gcc-c++ openssl-devel libffi-devel
     # Use uv to install Python (consistent with manylinux setup)
     uv python install {{python_version}}
     uv tool install pytest
