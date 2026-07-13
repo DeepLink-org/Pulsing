@@ -12,10 +12,16 @@ pub struct WorkflowSession {
     pub script: PathBuf,
     pub script_args: Vec<String>,
     pub codex: CodexOptions,
+    pub batch: bool,
 }
 
 pub fn run_session(session: WorkflowSession) -> Result<ExitCode> {
-    crate::session::run_workflow(session.codex, session.script, session.script_args)
+    crate::session::run_workflow(
+        session.codex,
+        session.script,
+        session.script_args,
+        session.batch,
+    )
 }
 
 /// Resolve workflow script: explicit path, or default under `.pulsing/workflows/`.

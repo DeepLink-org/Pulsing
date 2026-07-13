@@ -533,8 +533,38 @@ mod list_available_plugins_tests {
     use crate::unified_exec::UnifiedExecManager;
     use std::fs;
     use std::path::Path;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
+
+    static CODEX_HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct CodexHomeEnv {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CodexHomeEnv {
+        fn set(home: &Path, discover_all: bool) -> Self {
+            let lock = CODEX_HOME_ENV_LOCK.lock().unwrap();
+            unsafe {
+                std::env::set_var("CODEX_HOME", home);
+                if discover_all {
+                    std::env::set_var("FORGE_PLUGIN_DISCOVER_ALL", "1");
+                } else {
+                    std::env::remove_var("FORGE_PLUGIN_DISCOVER_ALL");
+                }
+            }
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for CodexHomeEnv {
+        fn drop(&mut self) {
+            unsafe {
+                std::env::remove_var("CODEX_HOME");
+                std::env::remove_var("FORGE_PLUGIN_DISCOVER_ALL");
+            }
+        }
+    }
 
     fn test_ctx(catalog: Arc<std::sync::Mutex<crate::discovery::ToolCatalog>>) -> ToolCallContext {
         ToolCallContext::new(
@@ -587,16 +617,15 @@ mod list_available_plugins_tests {
     #[test]
     fn list_available_plugins_codex_wire() {
         let dir = TempDir::new().unwrap();
-        unsafe {
-            std::env::set_var("CODEX_HOME", dir.path());
-            std::env::set_var("FORGE_PLUGIN_DISCOVER_ALL", "1");
-        }
+        let _env = CodexHomeEnv::set(dir.path(), true);
         let plugin_id = scaffold_marketplace(dir.path());
         let ctx = test_ctx(new_tool_catalog());
         let out = list_plugins_impl(&ctx).unwrap();
         assert!(!out.is_error);
         let payload: Value = serde_json::from_str(&out.content).unwrap();
-        let entry = &payload["tools"][0];
+        let tools = payload["tools"].as_array().expect("tools array");
+        assert_eq!(tools.len(), 1, "expected one installable plugin");
+        let entry = &tools[0];
         assert_eq!(entry["tool_type"], "plugin");
         assert_eq!(entry["id"], plugin_id);
         let keys: std::collections::BTreeSet<_> = entry
@@ -619,25 +648,16 @@ mod list_available_plugins_tests {
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>()
         );
-        unsafe {
-            std::env::remove_var("CODEX_HOME");
-            std::env::remove_var("FORGE_PLUGIN_DISCOVER_ALL");
-        }
     }
 
     #[test]
     fn list_available_plugins_empty_catalog() {
         let dir = TempDir::new().unwrap();
-        unsafe {
-            std::env::set_var("CODEX_HOME", dir.path());
-        }
+        let _env = CodexHomeEnv::set(dir.path(), false);
         let ctx = test_ctx(new_tool_catalog());
         let out = list_plugins_impl(&ctx).unwrap();
         assert!(!out.is_error);
         let payload: Value = serde_json::from_str(&out.content).unwrap();
         assert!(payload["tools"].as_array().unwrap().is_empty());
-        unsafe {
-            std::env::remove_var("CODEX_HOME");
-        }
     }
 }

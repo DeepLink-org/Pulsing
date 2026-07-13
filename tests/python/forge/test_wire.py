@@ -9,12 +9,16 @@ import pytest
 
 from pulsing.forge.context import ToolCallContext
 from pulsing.forge.handlers import dispatch_tool
-from pulsing.testing.forge_harness import run_wire_check, wire_check_tools
+from pulsing.testing.forge_harness import (
+    run_wire_check,
+    wire_check_tools,
+    wire_check_tools_local,
+)
 
 pytestmark = [pytest.mark.forge, pytest.mark.forge_l2]
 
 
-@pytest.mark.parametrize("tool", sorted(wire_check_tools()))
+@pytest.mark.parametrize("tool", sorted(wire_check_tools_local()))
 def test_l2_wire_local(local_forge, forge_workspace, tool: str) -> None:
     run_wire_check(local_forge, forge_workspace, tool)
 

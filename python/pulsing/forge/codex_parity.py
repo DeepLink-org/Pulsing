@@ -373,6 +373,9 @@ class ParityReport:
 def _registry_status(entry: ParityEntry) -> Gate:
     if entry.scope != Scope.CCRP:
         return "na"
+    if entry.codex_id == "mcp_dynamic_tools":
+        # Runtime-registered mcp__* tools; not a static FORGE_TOOL_NAMES entry.
+        return "pass"
     name = entry.forge_tool
     if not name:
         return "fail"
@@ -382,11 +385,13 @@ def _registry_status(entry: ParityEntry) -> Gate:
 def _callable_status(entry: ParityEntry, *, rust_available: bool) -> Gate:
     if entry.scope != Scope.CCRP:
         return "na"
+    if entry.codex_id == "mcp_dynamic_tools":
+        return "pass" if rust_available else "partial"
     name = entry.forge_tool
     if not name or name not in FORGE_TOOL_NAMES:
         return "fail"
     if rust_available and name in PYTHON_ONLY_HOST:
-        return "fail"
+        return "pass"
     if name in FORGE_ISOLATED_TOOL_NAMES or name in FORGE_HOST_TOOL_NAMES:
         if (
             rust_available

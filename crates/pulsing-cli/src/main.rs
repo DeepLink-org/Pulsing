@@ -119,6 +119,9 @@ enum ForgeCommand {
 struct RunArgs {
     /// Workflow script (default: `.pulsing/workflows/example.py`)
     script: Option<PathBuf>,
+    /// Run script and exit (no interactive session)
+    #[arg(long)]
+    batch: bool,
     /// Arguments passed to the script
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     script_args: Vec<String>,
@@ -187,6 +190,7 @@ fn run() -> Result<ExitCode> {
                 script,
                 script_args: args.script_args,
                 codex: codex_opts,
+                batch: args.batch,
             })
         }
         Some(Command::Gui) => gui::run(codex_opts),
@@ -272,12 +276,14 @@ mod tests {
         let Command::Run(RunArgs {
             script,
             script_args,
+            batch,
         }) = cli.command.expect("run")
         else {
             panic!("expected Run");
         };
         assert_eq!(script, Some(PathBuf::from("app.py")));
         assert_eq!(script_args, vec!["arg"]);
+        assert!(!batch);
     }
 
     #[test]

@@ -184,6 +184,11 @@ def wire_check_tools() -> frozenset[str]:
     return frozenset(_WIRE_CHECKS)
 
 
+def wire_check_tools_local() -> frozenset[str]:
+    """L2 wire tools runnable on pure-Python LocalToolRuntime."""
+    return wire_check_tools() - RUST_ONLY_HOST_TOOLS
+
+
 def run_wire_check(rt: ForgeRuntime, tmp_path: Path, tool: str) -> None:
     fn = _WIRE_CHECKS.get(tool)
     if fn is None:

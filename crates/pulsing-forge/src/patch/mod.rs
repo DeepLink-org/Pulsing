@@ -91,6 +91,8 @@ pub(crate) fn normalize_lexically(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn rejects_relative_escape_outside_root() {
@@ -101,16 +103,20 @@ mod tests {
 
     #[test]
     fn allows_nested_path_within_root() {
-        let root = PathBuf::from("/tmp/workspace");
-        let got = resolve_patch_path(Path::new("a/b.txt"), &root, &root).unwrap();
-        assert_eq!(got, PathBuf::from("/tmp/workspace/a/b.txt"));
+        let root = tempdir().unwrap();
+        let root_path = root.path().to_path_buf();
+        fs::create_dir_all(root_path.join("a")).unwrap();
+        let got = resolve_patch_path(Path::new("a/b.txt"), &root_path, &root_path).unwrap();
+        assert_eq!(got, root_path.join("a/b.txt"));
     }
 
     #[test]
     fn allows_parent_hop_within_root_from_subdir() {
-        let root = PathBuf::from("/tmp/workspace");
-        let base = root.join("subdir");
-        let got = resolve_patch_path(Path::new("../sibling.txt"), &base, &root).unwrap();
-        assert_eq!(got, PathBuf::from("/tmp/workspace/sibling.txt"));
+        let root = tempdir().unwrap();
+        let root_path = root.path().to_path_buf();
+        let base = root_path.join("subdir");
+        fs::create_dir_all(&base).unwrap();
+        let got = resolve_patch_path(Path::new("../sibling.txt"), &base, &root_path).unwrap();
+        assert_eq!(got, root_path.join("sibling.txt"));
     }
 }

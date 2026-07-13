@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build wheel in manylinux container
+      - name: Build wheel + binary in manylinux container
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace -w /workspace \
@@ -29,7 +29,7 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-manylinux && \
-              just ci-build manylinux=true
+              just ci-build manylinux=true package=package
             "
 
       - name: Upload wheels
@@ -37,6 +37,14 @@ jobs:
         with:
           name: wheels-linux-x86-64
           path: dist
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-linux-x86-64
+          path: |
+            dist/bin/*
+            dist/pulsing-*.tar.gz
 
   # ============================================
   # Build Linux aarch64 wheels (使用 QEMU 仿真原生构建)
@@ -55,7 +63,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build wheel in QEMU
+      - name: Build wheel + binary in QEMU
         run: |
           docker run --rm --platform linux/arm64 \
             -v ${{ github.workspace }}:/workspace -w /workspace \
@@ -63,7 +71,7 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-manylinux && \
-              just ci-build manylinux=true
+              just ci-build manylinux=true package=package
             "
 
       - name: Upload wheels
@@ -71,6 +79,14 @@ jobs:
         with:
           name: wheels-linux-aarch64
           path: dist
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-linux-aarch64
+          path: |
+            dist/bin/*
+            dist/pulsing-*.tar.gz
 
   # ============================================
   # Build macOS wheels (arm64 + x86_64)
@@ -100,11 +116,22 @@ jobs:
           args: --release --out dist
           sccache: 'true'
 
+      - name: Build pulsing binary
+        run: bash scripts/build-binary.sh --release --package
+
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-macos
           path: dist
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-macos
+          path: |
+            dist/bin/*
+            dist/pulsing-*.tar.gz
 
   # ============================================
   # Build Windows wheels
@@ -129,11 +156,23 @@ jobs:
           args: --release --out dist
           sccache: 'true'
 
+      - name: Build pulsing binary
+        shell: bash
+        run: bash scripts/build-binary.sh --release --package
+
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-windows
           path: dist
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-windows
+          path: |
+            dist/bin/*
+            dist/pulsing-*.zip
 
   # ============================================
   # Build source distribution

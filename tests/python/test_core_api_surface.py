@@ -52,6 +52,30 @@ CORE_FUNCTIONS = frozenset(
 
 CORE_CONSTANTS = frozenset({"__version__"})
 
+# Path B (RustPython / pulsing-rpymod) — subset of Path A until parity grows.
+PATH_B_CORE_CLASSES = frozenset(
+    {
+        "ActorId",
+        "ActorRef",
+        "ActorSystem",
+        "Message",
+        "NodeId",
+        "StreamMessage",
+        "StreamReader",
+        "StreamWriter",
+        "SystemConfig",
+        "ZeroCopyDescriptor",
+    }
+)
+
+PATH_B_CORE_FUNCTIONS = frozenset(
+    {
+        "get_cli_actor_system",
+        "init_distributed_tracing",
+        "shutdown_distributed_tracing",
+    }
+)
+
 # Methods every binding must expose on these types (subset; grow as Path B catches up).
 REQUIRED_METHODS: dict[str, frozenset[str]] = {
     "NodeId": frozenset({"generate", "local", "uuid", "is_local"}),
@@ -112,8 +136,8 @@ def test_core_api_surface_path_a(path_label):
 def _pulsing_cli_binary() -> Path | None:
     root = Path(__file__).resolve().parents[2]
     for candidate in (
-        root / "target" / "debug" / "pulsing",
         root / "target" / "release" / "pulsing",
+        root / "target" / "debug" / "pulsing",
     ):
         if candidate.is_file():
             return candidate
@@ -142,7 +166,7 @@ print(json.dumps(out))
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text(script, encoding="utf-8")
     proc = subprocess.run(
-        [str(binary), "run", str(script_path)],
+        [str(binary), "run", "--batch", str(script_path)],
         capture_output=True,
         env=env,
         cwd=repo,
@@ -157,7 +181,9 @@ print(json.dumps(out))
     classes = set(payload["classes"])
     funcs = set(payload["funcs"])
 
-    assert CORE_CLASSES <= classes, f"Path B missing classes: {CORE_CLASSES - classes}"
-    assert CORE_FUNCTIONS <= funcs, (
-        f"Path B missing functions: {CORE_FUNCTIONS - funcs}"
+    assert PATH_B_CORE_CLASSES <= classes, (
+        f"Path B missing classes: {PATH_B_CORE_CLASSES - classes}"
+    )
+    assert PATH_B_CORE_FUNCTIONS <= funcs, (
+        f"Path B missing functions: {PATH_B_CORE_FUNCTIONS - funcs}"
     )

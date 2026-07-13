@@ -45,11 +45,12 @@ pub fn run_safe(opts: CodexOptions, initial_prompt: Option<&str>) -> Result<Exit
     Ok(ExitCode::SUCCESS)
 }
 
-/// Entry: `pulsing run` (workflow then immersive session).
+/// Entry: `pulsing run` (workflow then immersive session, unless ``batch``).
 pub fn run_workflow(
     opts: CodexOptions,
     script: PathBuf,
     script_args: Vec<String>,
+    batch: bool,
 ) -> Result<ExitCode> {
     ensure_workspace(opts.auto_init)?;
     require_extension_mode()?;
@@ -57,6 +58,16 @@ pub fn run_workflow(
     let script = script
         .canonicalize()
         .with_context(|| format!("workflow not found: {}", script.display()))?;
+
+    if batch {
+        return match embed::run_workflow_script(&script, &script_args) {
+            Ok(()) => Ok(ExitCode::SUCCESS),
+            Err(err) => {
+                render::print_workflow_err(&err);
+                Ok(ExitCode::FAILURE)
+            }
+        };
+    }
 
     let agent_cfg = config::interactive_config(&opts)?;
 
@@ -78,7 +89,7 @@ pub fn run_workflow(
             render::print_workflow_err(&err);
             render::print_failure_recovery(&script);
             if input::confirm("› retry workflow? [y/N] ", true)? {
-                return run_workflow(opts, script, script_args);
+                return run_workflow(opts, script, script_args, false);
             }
             Ok(ExitCode::FAILURE)
         }

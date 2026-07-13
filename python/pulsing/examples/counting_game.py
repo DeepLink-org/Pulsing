@@ -8,6 +8,7 @@ Usage:
     python -m pulsing.examples.counting_game --num-workers 10
 """
 
+import asyncio
 import os
 import time
 
@@ -30,18 +31,22 @@ class Counter:
         pul.mount(self, name=name)  # One line to join Pulsing network
 
     async def yield_number(self):
-        """Yield number: broadcast own number to all nodes"""
+        """Yield number: broadcast own number to all peers (non-blocking)."""
         num = self.peers.index(self.name) + 1
+
+        async def _notify(peer, n, from_who):
+            proxy = await pul.resolve(peer, cls=Counter, timeout=120)
+            await proxy.on_number(n, from_who)
+
         for peer in self.peers:
-            proxy = await pul.resolve(peer, cls=Counter, timeout=30)
-            await proxy.on_number(num, self.name)
+            asyncio.create_task(_notify(peer, num, self.name))
 
     async def on_number(self, num, from_who):
-        """Receive number: log it, relay if previous node finished"""
+        """Receive number: log it, relay if previous node finished."""
         self.log.append({"number": num, "from": from_who})
         idx = self.peers.index(self.name)
         if idx > 0 and from_who == self.peers[idx - 1]:
-            await self.yield_number()
+            asyncio.create_task(self.yield_number())
 
     def get_pid(self):
         return os.getpid()
@@ -64,13 +69,14 @@ def run(num_workers=20):
     pids = ray.get([a.get_pid.remote() for a in actors])
     assert len(set(pids)) == num_workers, "Not enough worker processes"
     print(f"[counting_game] {num_workers} nodes ready ({time.time() - t0:.1f}s)")
+    time.sleep(2)  # gossip: let mounted actor names propagate
 
-    # 2) node_00 yields -> auto relays to node_19
+    # 2) node_00 yields -> auto relays to node_n-1
     print("[counting_game] node_00 starting count ...")
     ray.get(actors[0].yield_number.remote())
 
     # 3) Wait for all nodes to collect complete logs
-    deadline = time.time() + 30
+    deadline = time.time() + 120
     while time.time() < deadline:
         logs = ray.get([a.get_log.remote() for a in actors])
         done = sum(1 for lg in logs if len(lg) == num_workers)

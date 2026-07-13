@@ -17,17 +17,19 @@ fn type_attr_names(
     vm: &rustpython_vm::VirtualMachine,
     type_obj: rustpython_vm::PyObjectRef,
 ) -> Vec<String> {
-    let dict = type_obj.get_attr("__dict__", vm).expect("type __dict__");
-    let dict = dict
-        .downcast_ref::<rustpython_vm::builtins::PyDict>()
-        .expect("dict");
-    dict.into_iter()
-        .filter_map(|(k, _)| {
-            k.downcast_ref::<rustpython_vm::builtins::PyStr>()
-                .map(|s| s.as_wtf8().to_string())
-                .filter(|name| !name.starts_with('_'))
+    type_obj
+        .dir(vm)
+        .map(|list| {
+            list.borrow_vec()
+                .iter()
+                .filter_map(|item| {
+                    item.downcast_ref::<rustpython_vm::builtins::PyStr>()
+                        .map(|s| s.as_wtf8().to_string())
+                        .filter(|name| !name.starts_with('_'))
+                })
+                .collect()
         })
-        .collect()
+        .unwrap_or_default()
 }
 
 #[test]

@@ -22,7 +22,7 @@ from typing import Any
 
 from pulsing._async_bridge import run_sync
 from pulsing._runtime import ensure_sync_runtime
-from pulsing.exceptions import PulsingActorError
+from pulsing.exceptions import PulsingActorError, PulsingError, PulsingRuntimeError
 
 from .process import _StderrProxy, _StdinProxy, _StdoutProxy
 
@@ -43,12 +43,13 @@ def _should_use_pulsing(resources: dict | None) -> bool:
 
 
 def _maybe_raise_timeout_expired(
-    error: PulsingActorError, args: Any, timeout: float | None
+    error: PulsingError, args: Any, timeout: float | None
 ) -> None:
     if timeout is None:
         raise error
 
-    if "timed out after" not in str(error):
+    message = str(error)
+    if "timed out after" not in message and "TimeoutExpired" not in message:
         raise error
 
     raise subprocess.TimeoutExpired(args, timeout) from error
@@ -183,8 +184,9 @@ class Popen:
 
         try:
             return run_sync(_do())
-        except PulsingActorError as error:
+        except (PulsingActorError, PulsingRuntimeError) as error:
             _maybe_raise_timeout_expired(error, self._args, timeout)
+            raise
 
     def send_signal(self, sig: int) -> None:
         if self._native is not None:

@@ -120,6 +120,9 @@ docs/site/
 stress_test_*.json
 queue_benchmark_*.json
 dist/*.whl
+dist/bin/
+dist/pulsing-*.tar.gz
+dist/pulsing-*.zip
 
 # npc workspace local state (per-project; run `npc init` in your app repo)
 .pulsing/

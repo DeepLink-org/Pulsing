@@ -133,14 +133,20 @@ fn encode_for_prompt(raw: &[u8], detail: &str) -> Result<(Vec<u8>, String), Tool
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::path::Path;
 
-    const MIN_PNG: &[u8] = &[
+    // Valid 1x1 RGBA PNG (CRC-checked).
+    const TINY_PNG: &[u8] = &[
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
         0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
         0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
-        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x08, 0xd4, 0xa7, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
         0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
     ];
+
+    fn write_tiny_png(path: &Path) {
+        std::fs::write(path, TINY_PNG).expect("write png");
+    }
 
     fn run(cwd: &Path, args: Value) -> crate::result::ToolResult {
         match view_image_impl(cwd, &args) {
@@ -153,9 +159,9 @@ mod tests {
     fn attaches_png_with_structured_output() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("x.png");
-        std::fs::write(&path, MIN_PNG).unwrap();
+        write_tiny_png(&path);
         let out = run(dir.path(), json!({"path": "x.png", "detail": "high"}));
-        assert!(!out.is_error);
+        assert!(!out.is_error, "view_image failed: {}", out.content);
         let structured = out.structured.expect("structured");
         let items = structured["content_items"].as_array().expect("items");
         let url = items[0]["image_url"].as_str().expect("url");
@@ -166,7 +172,7 @@ mod tests {
     fn rejects_relative_escape_outside_cwd() {
         let dir = tempfile::tempdir().unwrap();
         let outside = dir.path().parent().unwrap().join("escape.png");
-        std::fs::write(&outside, MIN_PNG).unwrap();
+        write_tiny_png(&outside);
         let out = run(dir.path(), json!({"path": "../escape.png"}));
         assert!(out.is_error);
         assert!(out.content.contains("outside working directory"));
@@ -177,7 +183,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         let path = outside.path().join("outside.png");
-        std::fs::write(&path, MIN_PNG).unwrap();
+        write_tiny_png(&path);
         let out = run(dir.path(), json!({"path": path.to_str().expect("utf8")}));
         assert!(out.is_error);
         assert!(out.content.contains("outside working directory"));
@@ -186,7 +192,7 @@ mod tests {
     #[test]
     fn rejects_invalid_detail() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("x.png"), MIN_PNG).unwrap();
+        write_tiny_png(&dir.path().join("x.png"));
         let out = run(dir.path(), json!({"path": "x.png", "detail": "low"}));
         assert!(out.is_error);
         assert!(out.content.contains("view_image.detail only supports"));
