@@ -13,7 +13,7 @@ dev:
     maturin develop
     @echo "==> Building benchmarks..."
     maturin develop --manifest-path crates/pulsing-bench-py/Cargo.toml
-    @echo "Ready! Use: python -m pulsing.cli  |  just build-binary for Path B"
+    @echo "Ready! Use: python -m pulsing.cli  |  just build-release for wheel + binary"
 
 # Build and install pulsing-cli with embedded Python (binary path: embedded)
 dev-binary:
@@ -21,29 +21,30 @@ dev-binary:
 
 # Path A: release wheels for PyPI (extension-module via pyproject.toml)
 build-wheel:
-    maturin build --release
-    maturin build --release --manifest-path crates/pulsing-bench-py/Cargo.toml
+    bash scripts/build-wheel.sh --release
 
 # Path B: ``pulsing`` single binary (RustPython VM; no libpython / no PYO3_PYTHON)
-build-binary release="":
+build-binary release="" package="":
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "==> Path B: pulsing-cli (rustpython_vm)"
-    if [ "{{release}}" = "release" ]; then
-        cargo build --release -p pulsing-cli
-        echo "==> target/release/pulsing"
-    else
-        cargo build -p pulsing-cli
-        echo "==> target/debug/pulsing"
-    fi
+    args=()
+    [ "{{release}}" = "release" ] && args+=(--release)
+    [ "{{package}}" = "package" ] && args+=(--package)
+    bash scripts/build-binary.sh "${args[@]}"
 
-# Both distribution artifacts (separate Cargo invocations — PyO3 modes must not merge)
-build-all:
-    just build-wheel
-    just build-binary release=release
-    @echo "==> Path A: dist/*.whl  |  Path B: target/release/pulsing"
+# Path A + B: wheels + single binary (current platform)
+build-release package="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=(--release)
+    [ "{{package}}" = "package" ] && args+=(--package)
+    bash scripts/build-release.sh "${args[@]}"
 
-# Build release wheels (alias for build-wheel)
+# Both distribution artifacts (alias)
+build-all package="":
+    just build-release package={{package}}
+
+# Build release wheels (alias for wheel-only release)
 build: build-wheel
 
 # =============================================================================
@@ -215,16 +216,31 @@ ci-setup-debian: ensure-uv
 # CI 构建和测试 (统一命令)
 # =============================================================================
 
-# 构建 wheel (通用)
-ci-build manylinux="":
+# 构建 wheel + 单文件二进制 (CI / 发布)
+ci-build manylinux="" package="":
     #!/usr/bin/env bash
+    set -euo pipefail
     export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+    args=(--release)
     if [ "{{manylinux}}" = "true" ]; then
-        maturin build --release --out dist -i python3.10 --compatibility manylinux_2_17
-    else
-        maturin build --release --out dist
+        args+=(--manylinux)
     fi
-    echo "==> Build complete!"
+    if [ "{{package}}" = "package" ]; then
+        args+=(--package)
+    fi
+    bash scripts/build-release.sh "${args[@]}"
+    echo "==> Build complete: dist/*.whl + dist/bin/pulsing-*"
+
+# 仅构建 wheel（兼容旧调用）
+ci-build-wheel manylinux="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+    args=(--release --binary-only)
+    if [ "{{manylinux}}" = "true" ]; then
+        args+=(--manylinux)
+    fi
+    bash scripts/build-release.sh "${args[@]}"
 
 # 测试 wheel (通用)
 ci-test:
@@ -261,7 +277,7 @@ ci-test:
 
 # --- macOS ---
 action-macos:
-    @echo "==> macOS: Setup + Build + Test"
+    @echo "==> macOS: Setup + Build (wheel + binary) + Test"
     just ci-setup-macos
     just ci-build
     just ci-test
@@ -271,14 +287,14 @@ action-linux:
     docker run --rm \
         -v {{justfile_directory()}}:/workspace -w /workspace \
         quay.io/pypa/manylinux2014_x86_64 \
-        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build manylinux=true"
+        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build manylinux=true package=package"
 
 # --- Linux aarch64 (QEMU) ---
 action-linux-aarch64:
     docker run --rm --platform linux/arm64 \
         -v {{justfile_directory()}}:/workspace -w /workspace \
         quay.io/pypa/manylinux2014_aarch64 \
-        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build manylinux=true"
+        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build manylinux=true package=package"
 
 # =============================================================================
 # Maintenance
