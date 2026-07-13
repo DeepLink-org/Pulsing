@@ -1,6 +1,7 @@
 # Agent Workspace GUI — 设计文档
 
-> 目标：类似 **Zed** 的现代化 Agent 工作空间——文件管理、工作流版本、Duo-Agent 会话、Pulsing 多进程/Actor 运行时可视。
+> 目标：类似 **Zed** 的现代化 Agent 工作空间——文件管理、工作流版本、Duo-Agent 会话、Pulsing 多进程/Actor 运行时可视。  
+> **实现栈**：`eframe` / `egui`（`pulsing gui` 桌面窗口）。
 
 ## 1. 设计原则
 
@@ -48,8 +49,8 @@
 
 ```mermaid
 flowchart TB
-    subgraph GUI["pulsing-gui (GPUI)"]
-        Dock[DockArea 布局]
+    subgraph GUI["pulsing-gui (egui)"]
+        Layout[SidePanel / CentralPanel 布局]
         Explorer[ExplorerPanel]
         Chat[ChatPanel]
         Agents[AgentsPanel]
@@ -75,7 +76,7 @@ flowchart TB
         Py[Python Craft / embed]
     end
 
-    Dock --> Explorer & Chat & Agents & Runtime & Revisions & Workflows
+    Layout --> Explorer & Chat & Agents & Runtime & Revisions & Workflows
     Explorer & Chat & Agents --> Bus
     Bus --> Sessions & Files & Rev & Wf & Cluster
     Files --> WS
@@ -121,7 +122,7 @@ pub struct WorkspaceModel {
 
 ### 4.1 Explorer（文件管理）
 
-- **GPUI 组件**：`Tree` + `VirtualList`
+- **egui 组件**：`CollapsingHeader` 文件树 + `ScrollArea`
 - **根节点**：`WorkspaceLayout.root`（隐藏 `.git` 等，`.pulsing` 可折叠子树）
 - **交互**：
   - 单击 → 中央 Tab 打开只读预览（`Read` 工具同源）
@@ -235,7 +236,7 @@ pub struct AgentRuntimeRow {
 
 ## 5. 中央区域：Tab 模型
 
-使用 `gpui_component::dock::DockArea` 或轻量 `TabBar`：
+使用 `egui::SidePanel` / `CentralPanel` 与顶部 Tab 栏：
 
 | Tab 类型 | 内容 |
 |----------|------|
@@ -293,19 +294,17 @@ crates/
       cluster.rs
       sessions.rs
 
-  pulsing-gui/               # 现有：纯视图
+  pulsing-gui/               # 现有：egui 视图
     src/
-      app.rs                 # Dock 根
-      panels/
-        explorer.rs
-        chat.rs
-        agents.rs
-        revisions.rs
-        workflows.rs
-        runtime.rs
-      widgets/
-        composer.rs
-        session_tabs.rs
+      app/
+        mod.rs               # WorkspaceApp：布局 + dispatch
+        left.rs              # Explorer / Revisions / Workflows
+        chat.rs              # 消息流 + Composer
+        right.rs             # Sessions / Cluster
+      model/                 # WorkspaceModel, SessionStore, actions
+      controller/            # agent turn 后台任务
+      settings.rs
+      state.rs
 
   pulsing-cli/src/gui/
     mod.rs                   # 启动 workspace model + gui
@@ -321,9 +320,9 @@ pulsing-cli gui → 初始化 WorkspaceLayout，传 cluster_id
 ## 9. 分阶段交付
 
 ### Phase 0 — 骨架（1–2 周）
-- [ ] `pulsing-workspace-gui`：`WorkspaceModel` + `list_revisions` + 文件 walk
-- [ ] `DockArea` 布局：Explorer | Chat | 占位 Agents
-- [ ] Explorer `Tree` 只读
+- [x] `WorkspaceModel` + `list_revisions` + 文件 walk
+- [x] egui 三栏布局：Left Explorer | Center Chat | Right Sessions
+- [x] Explorer 文件树只读
 
 ### Phase 1 — 版本 + 工作流（1–2 周）
 - [ ] Revisions 面板：timeline、checkpoint、rollback、Dialog 确认
@@ -345,7 +344,7 @@ pulsing-cli gui → 初始化 WorkspaceLayout，传 cluster_id
 
 | 已有 | 新 GUI 用法 |
 |------|-------------|
-| `pulsing-gui/app.rs` | 迁入 `panels/chat.rs`，由 Dock 容纳 |
+| `pulsing-gui/src/app/` | `WorkspaceApp` + `left` / `chat` / `right` 模块 |
 | `session/workspace.rs` | `RevisionsPanel` / `WorkflowsPanel` 直接调用 |
 | `session/commands.rs` `InputAction` | Composer `/` 命令同语义 |
 | `pulsing_workspace::journal` | Revision 全流程 |
@@ -362,6 +361,6 @@ pulsing-cli gui → 初始化 WorkspaceLayout，传 cluster_id
 
 ---
 
-**下一步建议**：先落地 **Phase 0**（`pulsing-workspace-gui` + Explorer Tree + Dock 骨架），在现有 `pulsing gui` 上可渐进替换单栏布局。
+**下一步建议**：继续 **Phase 1**（Revisions 交互、Workflows 运行、diff Tab），在现有 `pulsing gui` egui 布局上渐进增强。
 
-**Dock 与面板细节**见：[agent-workspace-dock-panels.md](./agent-workspace-dock-panels.md)
+**布局与面板细节**见：[agent-workspace-dock-panels.md](./agent-workspace-dock-panels.md)（概念布局；实现为 egui）。

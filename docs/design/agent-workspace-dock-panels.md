@@ -1,13 +1,14 @@
 # Agent Workspace — Dock 骨架与面板梳理
 
 > 配套：[agent-workspace-gui.md](./agent-workspace-gui.md)  
-> 基于 `gpui-component::dock::DockArea`（与 Zed 同源 GPUI 生态）
+> **布局概念**：Zed 式 Left / Center / Right / Bottom 分区。  
+> **当前实现**：`eframe` / `egui`（`SidePanel`、`CentralPanel`、`TopBottomPanel`），不再使用 GPUI / `gpui-component`。
 
 ---
 
-## 1. Dock 四区 anatomy
+## 1. 四区 anatomy（概念 → egui 映射）
 
-`DockArea` 固定五个挂载点：
+原 GPUI `DockArea` 五挂载点，在 egui 中对应：
 
 ```
                     ┌─────────────────────────────────────┐
@@ -25,46 +26,32 @@
 └────────────────────────────────────────────────────────┘
 ```
 
-| 挂载 API | 角色 | 默认 |
-|----------|------|------|
-| `set_left_dock` | 工作区工具（文件、版本、workflow） | 开，260px |
-| `set_center` | 主内容（Chat / 文件 / Diff） | 始终 |
-| `set_right_dock` | 多 Agent 会话 | 开，240px |
-| `set_bottom_dock` | 运行时观测 | 开，28px（可展开） |
+| 区域 | egui API | 默认 |
+|------|----------|------|
+| Left | `egui::SidePanel::left` | 开，220px；内嵌 Files / History / Workflows Tab |
+| Center | `egui::CentralPanel` | Chat + 文件预览 Tab |
+| Right | `egui::SidePanel::right` | 开，220px；Sessions + Cluster |
+| Bottom | `egui::TopBottomPanel::bottom` | 状态条（Ready / counts） |
+| TitleBar | 窗口原生标题 | — |
 
-**`DockItem` 三种组合方式**（布局树节点）：
-
-| 类型 | 用途 |
-|------|------|
-| `DockItem::Panel { view }` | 单面板 |
-| `DockItem::Tabs { items, active_ix }` | 多 Tab（Explorer / Revisions 等） |
-| `DockItem::Split { axis, items, sizes }` | 上下或左右分栏 |
+Left 内 Tab 用 `ui.horizontal` + `selectable_label` 实现，等价于原 `DockItem::Tabs`。
 
 ---
 
-## 2. 默认布局树（`DockItem`）
+## 2. 默认布局（已实现）
 
 ```text
-DockArea
-├── left_dock: Split(Vertical)
-│   ├── Tabs [Explorer | Revisions | Workflows]     size: 55%
-│   └── (预留) Panel: Search 或 Outline               size: 45%  ← Phase 2+
-│
-├── center: Tabs
-│   ├── ChatSession(local)          ← 默认 active
-│   ├── FilePreview(path)           ← 从 Explorer 打开
-│   ├── RevisionDiff(rev_id)        ← 从 Revisions 打开
-│   └── WorkflowLog(run_id)         ← 从 Workflows 打开
-│
-├── right_dock: Panel
-│   └── AgentsPanel（多会话列表 + 详情）
-│
-└── bottom_dock: Tabs
-    ├── RuntimeSummary（默认，单行摘要）
-    ├── Cluster（节点 + named actors）
-    ├── ToolTrace（当前 session 工具流）
-    └── WorkflowOutput（workflow stdout）
+WorkspaceApp (eframe)
+├── SidePanel::left  → app/left.rs   (Explorer | Revisions | Workflows)
+├── CentralPanel     → app/mod.rs    (Chat tab + 文件预览 tab)
+├── SidePanel::right → app/right.rs  (Sessions | Cluster 占位)
+└── TopBottomPanel   → 状态栏        (files / revs / workflows counts)
 ```
+│   └── (预留) Panel: Search 或 Outline               size: 45%  ← Phase 2+
+└── TopBottomPanel   → 状态栏        (files / revs / workflows counts)
+```
+
+Center 内 Chat / 文件预览 Tab 由 `CenterTab` 枚举管理；后续可扩展 Diff、WorkflowLog。
 
 **Mermaid（逻辑关系）**
 
@@ -319,7 +306,7 @@ pub enum WorkspaceAction {
 }
 ```
 
-Panel 发 `WorkspaceAction` → `WorkspaceModel` 更新 → 各 Panel `observe` 刷新。
+Panel 发 `WorkspaceAction` → `WorkspaceApp::dispatch` 更新状态 → 下一帧重绘。
 
 ---
 
@@ -327,52 +314,22 @@ Panel 发 `WorkspaceAction` → `WorkspaceModel` 更新 → 各 Panel `observe` 
 
 ```text
 crates/pulsing-gui/src/
-├── app.rs                 # WorkspaceApp：持有 DockArea + WorkspaceModel
-├── dock/
-│   ├── mod.rs             # build_default_layout() -> DockItem 树
-│   └── layout.rs          # 默认宽度、panel_name 常量
-├── panels/
-│   ├── mod.rs             # Panel trait 统一导出
-│   ├── explorer.rs        # ExplorerPanel
-│   ├── revisions.rs       # RevisionsPanel
-│   ├── workflows.rs       # WorkflowsPanel
-│   ├── agents.rs          # AgentsPanel
-│   ├── runtime.rs         # RuntimePanel（bottom tabs）
-│   └── center/
-│       ├── mod.rs         # CenterTabBar 管理
-│       ├── chat.rs        # ← 现有 app.rs 聊天逻辑迁入
-│       ├── file.rs
-│       ├── diff.rs
-│       └── workflow_log.rs
-├── model/                 # Phase 0 可先放 gui 内，后抽 crate
-│   ├── mod.rs
-│   ├── workspace.rs
-│   ├── sessions.rs
-│   └── actions.rs
-└── state.rs               # ChatState（不变）
+├── app/
+│   ├── mod.rs             # WorkspaceApp：布局 + dispatch
+│   ├── left.rs            # Explorer / Revisions / Workflows
+│   ├── chat.rs            # 消息流 + Composer
+│   └── right.rs           # Sessions / Cluster
+├── model/                 # WorkspaceModel, SessionStore, actions
+├── controller/            # agent turn 后台任务
+├── settings.rs
+└── state.rs               # ChatState
 ```
 
 ---
 
-## 7. `Panel` 实现约定
+## 7. 面板实现约定（egui）
 
-每个侧栏面板实现 `gpui_component::dock::Panel`：
-
-```rust
-impl Panel for ExplorerPanel {
-    fn panel_name(&self) -> &'static str { "explorer" }
-    fn title(&mut self, _, cx) -> impl IntoElement {
-        Label::new("Explorer")
-    }
-    fn tab_name(&self, _) -> Option<SharedString> {
-        Some("Files".into())
-    }
-}
-```
-
-注册到 `DockArea` 时使用 `Entity<ExplorerPanel>`（自动 impl `PanelView`）。
-
-**`panel_name` 必须稳定**（用于布局序列化 / 恢复）。
+各区域为独立 `render(app, ui)` 函数，通过 `WorkspaceAction` 与 `WorkspaceApp::dispatch` 通信，无需 GPUI `Panel` trait。
 
 ---
 
@@ -380,39 +337,40 @@ impl Panel for ExplorerPanel {
 
 | 区域 | 默认尺寸 | 默认开关 |
 |------|----------|----------|
-| Left | 260px | open |
-| Right | 240px | open |
-| Bottom | 28px（Summary）/ 180px（展开） | open |
+| Left | 220px | open |
+| Right | 220px | open |
+| Bottom | 状态条一行 | open |
 | Center | 占满剩余 | — |
 
 Left 内 Tabs 默认 active：**Explorer**  
-Center 默认 active：**ChatTab(local)**  
-Bottom 默认 active：**RuntimeSummary**
+Center 默认 active：**Chat**  
+Right 默认 active：**Sessions**
 
 ---
 
-## 9. 与现有 `pulsing-gui` 的迁移路径
+## 9. 迁移状态（GPUI → egui）
 
-| 现有 | 迁移目标 |
-|------|----------|
-| `app.rs` 整窗 `ChatApp` | `WorkspaceApp` + `DockArea` |
-| 左侧 `New Chat` 列表 | **Agents** 面板（Right）+ Center ChatTab |
-| Composer Mode/Model | 留在 `panels/center/chat.rs` |
-| 无文件树 | **Explorer** 面板（Left） |
-| 无版本 | **Revisions** 面板（Left） |
+| 原 GPUI 计划 | 当前 egui 实现 |
+|--------------|----------------|
+| `WorkspaceShell` + `DockArea` | `WorkspaceApp` + `SidePanel` / `CentralPanel` |
+| `panels/*` 模块 | `app/{left,chat,right}.rs` |
+| Composer Mode/Model | `app/chat.rs` |
+| Explorer 文件树 | `app/left.rs` |
+| Revisions / Workflows | `app/left.rs`（列表占位，待交互） |
 
-**Phase 0 最小骨架**：只实现 `DockArea` + 空 `ExplorerPanel` + 迁入 `ChatPanel` + 占位 `AgentsPanel` + `RuntimeSummary` 一行。
+**Phase 0 已完成**：三栏布局 + Explorer + Chat + Sessions + 状态栏。
 
 ---
 
 ## 10. 面板一览表（速查）
 
-| 面板 | Dock 位 | 类型 | 核心 API |
-|------|---------|------|----------|
-| Explorer | Left | 侧栏 Tab | `WorkspaceLayout`, walkdir |
-| Revisions | Left | 侧栏 Tab | `pulsing_workspace::journal` |
-| Workflows | Left | 侧栏 Tab | `session::workspace::list_workflow_scripts` |
-| Chat | Center | 文档 Tab | `pulsing_forge::AgentEvent` |
-| File / Diff / WfLog | Center | 文档 Tab | fs / journal / subprocess |
-| Agents | Right | 侧栏 Panel | `SessionStore`, craft discovery |
-| Runtime | Bottom | 侧栏 Tab | actor HTTP, AgentEvent |
+| 面板 | 区域 | 模块 | 核心 API |
+|------|------|------|----------|
+| Explorer | Left | `app/left.rs` | `WorkspaceLayout`, walkdir |
+| Revisions | Left | `app/left.rs` | `pulsing_workspace::journal` |
+| Workflows | Left | `app/left.rs` | `session::workspace::list_workflow_scripts` |
+| Chat | Center | `app/chat.rs` | `pulsing_forge::AgentEvent` |
+| File preview | Center | `app/mod.rs` | fs read |
+| Sessions | Right | `app/right.rs` | `SessionStore` |
+| Cluster | Right | `app/right.rs` | 占位（Phase 3） |
+| Status | Bottom | `app/mod.rs` | workspace counts |

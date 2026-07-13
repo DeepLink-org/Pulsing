@@ -32,19 +32,6 @@ impl ChatState {
         Self::default()
     }
 
-    #[allow(dead_code)]
-    pub fn with_welcome() -> Self {
-        Self {
-            messages: vec![ChatMessage {
-                kind: MessageKind::Assistant {
-                    body: "How can I help you today?".into(),
-                    streaming: false,
-                },
-            }],
-            busy: false,
-        }
-    }
-
     pub fn session_title(&self) -> String {
         self.messages
             .iter()

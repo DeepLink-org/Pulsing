@@ -20,8 +20,8 @@ Pulsing ships as one binary with two modes:
   Workspace checkpoints (fault tolerance):
       pulsing history | checkpoint | rollback
 
-  Desktop GUI (GPUI, Zed-style):
-      pulsing gui                 GPU chat window (gpui + gpui-component)
+  Desktop GUI (egui):
+      pulsing gui                 Desktop chat window (egui)
 
 Set ANTHROPIC_API_KEY or OPENAI_API_KEY for live models; otherwise demo LLM is used.";
 

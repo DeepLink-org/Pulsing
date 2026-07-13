@@ -83,7 +83,7 @@ enum Command {
     /// Immersive workflow session (extension mode; stays in CLI on success)
     #[command(visible_alias = "workflow")]
     Run(RunArgs),
-    /// Desktop chat UI (GPUI)
+    /// Desktop chat UI (egui)
     Gui,
     /// Low-level Forge tool REPL (safe mode)
     Forge {

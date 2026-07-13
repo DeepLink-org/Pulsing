@@ -2,38 +2,67 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use gpui::SharedString;
-use gpui_component::tree::TreeItem;
 use pulsing_workspace::WorkspaceLayout;
 
 const DEFAULT_MAX_DEPTH: usize = 8;
 
-pub fn build_file_tree(layout: &WorkspaceLayout, previous: &[TreeItem]) -> Vec<TreeItem> {
+#[derive(Clone, Debug)]
+pub struct FileTreeNode {
+    pub id: String,
+    pub label: String,
+    pub is_dir: bool,
+    pub expanded: bool,
+    pub children: Vec<FileTreeNode>,
+}
+
+impl FileTreeNode {
+    pub fn new_file(id: String, label: String) -> Self {
+        Self {
+            id,
+            label,
+            is_dir: false,
+            expanded: false,
+            children: Vec::new(),
+        }
+    }
+
+    pub fn new_dir(id: String, label: String, expanded: bool, children: Vec<FileTreeNode>) -> Self {
+        Self {
+            id,
+            label,
+            is_dir: true,
+            expanded,
+            children,
+        }
+    }
+}
+
+pub fn build_file_tree(layout: &WorkspaceLayout, previous: &[FileTreeNode]) -> Vec<FileTreeNode> {
     let expanded = collect_expanded_ids(previous);
     build_dir(layout, &layout.root, 0, DEFAULT_MAX_DEPTH, &expanded)
 }
 
-pub fn count_files(items: &[TreeItem]) -> usize {
+pub fn count_files(items: &[FileTreeNode]) -> usize {
     let mut n = 0;
     walk(items, &mut |item| {
-        if !item.is_folder() {
+        if !item.is_dir {
             n += 1;
         }
     });
     n
 }
 
-fn collect_expanded_ids(items: &[TreeItem]) -> HashSet<String> {
+fn collect_expanded_ids(items: &[FileTreeNode]) -> HashSet<String> {
     let mut out = HashSet::new();
     walk(items, &mut |item| {
-        if item.is_folder() && item.is_expanded() {
-            out.insert(item.id.to_string());
+        if item.is_dir && item.expanded {
+            out.insert(item.id.clone());
         }
     });
     out
 }
 
-fn walk(items: &[TreeItem], f: &mut dyn FnMut(&TreeItem)) {
+fn walk(items: &[FileTreeNode], f: &mut dyn FnMut(&FileTreeNode)) {
     for item in items {
         f(item);
         walk(&item.children, f);
@@ -46,7 +75,7 @@ fn build_dir(
     depth: usize,
     max_depth: usize,
     expanded: &HashSet<String>,
-) -> Vec<TreeItem> {
+) -> Vec<FileTreeNode> {
     if depth > max_depth {
         return Vec::new();
     }
@@ -72,18 +101,19 @@ fn build_dir(
         }
 
         let id = rel.to_string_lossy().into_owned();
-        let label: SharedString = entry.file_name().to_string_lossy().into_owned().into();
+        let label = entry.file_name().to_string_lossy().into_owned();
 
         if path.is_dir() {
             let children = build_dir(layout, &path, depth + 1, max_depth, expanded);
             let is_expanded = expanded.contains(&id);
-            dirs.push(
-                TreeItem::new(id, label)
-                    .expanded(is_expanded || depth == 0)
-                    .children(children),
-            );
+            dirs.push(FileTreeNode::new_dir(
+                id,
+                label,
+                is_expanded || depth == 0,
+                children,
+            ));
         } else {
-            files.push(TreeItem::new(id, label));
+            files.push(FileTreeNode::new_file(id, label));
         }
     }
 

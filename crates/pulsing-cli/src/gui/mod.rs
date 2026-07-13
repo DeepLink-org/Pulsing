@@ -1,4 +1,4 @@
-//! Desktop chat GUI — `pulsing gui` (GPUI).
+//! Desktop chat GUI — `pulsing gui` (egui).
 
 use std::process::ExitCode;
 

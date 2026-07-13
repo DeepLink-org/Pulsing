@@ -1,12 +1,8 @@
 mod app;
 mod controller;
-mod dock;
 mod model;
-mod panels;
 mod settings;
-mod shell;
 mod state;
-mod ui;
 
 use pulsing_forge::InteractiveConfig;
 
