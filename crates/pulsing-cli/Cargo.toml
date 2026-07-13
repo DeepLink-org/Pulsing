@@ -9,7 +9,8 @@ repository.workspace = true
 
 # Path B: RustPython VM (no PyO3 / no libpython). Path A remains maturin + extension-module.
 [features]
-default = []
+default = ["gui"]
+gui = ["dep:pulsing-gui"]
 
 [[bin]]
 name = "pulsing"
@@ -19,7 +20,7 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 pulsing-forge = { path = "../pulsing-forge" }
-pulsing-gui = { path = "../pulsing-gui" }
+pulsing-gui = { path = "../pulsing-gui", optional = true }
 pulsing-rpymod = { path = "../pulsing-rpymod" }
 pulsing-workspace = { path = "../pulsing-workspace" }
 serde_json = { workspace = true }

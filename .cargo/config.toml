@@ -1,0 +1,5 @@
+# tree-sitter (via pulsing-forge) needs BSD endian macros when built against
+# glibc 2.17 (manylinux2014). Its build.rs sets _DEFAULT_SOURCE, which glibc
+# 2.17 ignores, leaving le16toh/be16toh undefined at link/load time.
+[env]
+CFLAGS = { value = "-D_GNU_SOURCE", condition = { platform = "linux" } }
