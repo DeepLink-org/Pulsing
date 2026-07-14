@@ -262,7 +262,8 @@ ci-test:
     export PATH="$HOME/.local/bin:$PATH"
     # Install wheel and dependencies using uv (preferred) or pip
     if command -v uv &> /dev/null; then
-        uv pip install --system dist/*.whl pytest pytest-asyncio
+        # Main package only — pulsing-bench must not overwrite pulsing/__init__.py
+        uv pip install --system dist/pulsing-*.whl pytest pytest-asyncio
         # Use same interpreter as above (where wheel was installed); do not use uv run (project venv has no pulsing)
         for py in python3.12 python3.11 python3.10 python3 python; do
             if command -v $py &> /dev/null; then
@@ -274,7 +275,7 @@ ci-test:
         exit 1
     else
         # Fallback to pip if uv not available
-        pip install dist/*.whl pytest pytest-asyncio
+        pip install dist/pulsing-*.whl pytest pytest-asyncio
         for py in python3 python3.12 python3.11 python3.10 python; do
             if command -v $py &> /dev/null; then
                 $py -m pytest tests/python -v

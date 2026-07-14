@@ -245,7 +245,7 @@ jobs:
 
       - name: Install wheel and test dependencies
         run: |
-          pip install dist/*.whl
+          pip install dist/pulsing-*.whl
           pip install pytest pytest-asyncio pytest-cov
 
       - name: Test with pytest
@@ -285,7 +285,7 @@ jobs:
 
       - name: Install wheel and test dependencies
         run: |
-          pip install dist/*.whl
+          pip install dist/pulsing-*.whl
           pip install pytest pytest-asyncio pytest-cov
 
       - name: Test with pytest
@@ -383,7 +383,7 @@ jobs:
 
       - name: Install wheel and test dependencies
         run: |
-          pip install dist/*.whl
+          pip install dist/pulsing-*.whl
           pip install pytest pytest-asyncio pytest-cov
 
       - name: Run tests and collect coverage

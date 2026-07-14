@@ -14,7 +14,8 @@ dependencies = ["pulsing"]  # Requires core pulsing package
 requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
+# Extension-only wheel: install ``pulsing/_bench.*`` next to the main package.
+# Do NOT set python-packages/python-source — a stub pulsing/__init__.py in this
+# crate used to overwrite the real package when CI ran ``pip install dist/*.whl``.
 [tool.maturin]
 module-name = "pulsing._bench"
-python-source = "."
-python-packages = ["pulsing"]
