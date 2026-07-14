@@ -11,6 +11,7 @@ from pathlib import Path
 # Register all examples: module name -> one-line summary
 _EXAMPLES = {
     "counting_game": "Pulsing + Ray distributed counting game",
+    "isolated_spawn_minimal": "Isolated OS-process actor (out-cluster worker + bridge)",
 }
 
 

@@ -39,6 +39,12 @@ class ActorProxy:
         """Get underlying ActorRef."""
         return self._ref
 
+    async def tell(self, method: str, /, *args, **kwargs) -> None:
+        """Oneway call — ``ActorRef.tell``; no response (peer mailbox still serializes)."""
+        is_async = self._async_methods is None or method in self._async_methods
+        msg = _wrap_call(method, args, kwargs, is_async)
+        await self._ref.tell(msg)
+
 
 class _MethodCaller:
     """Method caller. Supports two usage patterns:
@@ -160,14 +166,12 @@ class _AsyncMethodCall:
 
 
 class _DelayedCallProxy:
-    """Proxy returned by ``self.delayed(sec)`` — any method call becomes a delayed message to self.
+    """Delayed tell-to-self — core primitive for mailbox handoff inside ``@remote`` actors.
 
-    Usage inside a @remote class::
+    ``self.delayed(0).process(...)`` enqueues work on this actor's mailbox without
+    blocking the current handler (uses ``ActorRef.tell``, not ask).
 
-        task = self.delayed(5.0).some_method(arg1, arg2)
-        task.cancel()  # cancel if needed
-
-    Returns an ``asyncio.Task`` that fires after the delay.
+    Returns an ``asyncio.Task`` (cancel with ``task.cancel()``).
     """
 
     __slots__ = ("_ref", "_delay_sec")

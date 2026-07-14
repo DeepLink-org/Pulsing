@@ -35,8 +35,9 @@ uv run python -c "import pulsing; print(pulsing.__version__)"
 项目使用 [just](https://github.com/casey/just) 作为任务运行器，所有常用命令都在 `Justfile` 中定义。
 
 ```bash
-just dev          # 编译并安装（开发模式，等同于 maturin develop）
-just test         # 运行全部测试（Rust + Python）
+just dev              # 编译并安装（开发模式，等同于 maturin develop）
+just build-release    # 发布构建：当前平台 wheel + pulsing 单文件二进制
+just test             # 运行全部测试（Rust + Python）
 just test-python  # 仅运行 Python 测试
 just test-rust    # 仅运行 Rust 测试
 just fmt          # 格式化代码（Rust + Python）

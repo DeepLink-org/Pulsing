@@ -20,7 +20,12 @@ Simple API:
 import asyncio
 import os
 
-from pulsing._async_bridge import clear_pulsing_loop, set_pulsing_loop
+from pulsing._async_bridge import (
+    clear_pulsing_loop,
+    set_pulsing_loop,
+    _is_rustpython,
+    _start_shared_loop,
+)
 from pulsing._core import (
     ActorId,
     ActorRef,
@@ -180,6 +185,19 @@ def get_system() -> ActorSystem:
 def is_initialized() -> bool:
     """Check if the global actor system is initialized"""
     return _global_system is not None
+
+
+def _cli_attach_from_native(system: ActorSystem) -> None:
+    """Attach Rust-started ActorSystem (pulsing-cli / RustPython Path B)."""
+    global _global_system
+    if _global_system is not None:
+        return
+    _global_system = system
+    if _is_rustpython():
+        # RustPython threading is unreliable; avoid background loop at attach.
+        return
+    loop = _start_shared_loop()
+    set_pulsing_loop(loop)
 
 
 from . import helpers  # noqa: E402

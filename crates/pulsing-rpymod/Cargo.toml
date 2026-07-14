@@ -1,0 +1,36 @@
+[package]
+name = "pulsing-rpymod"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+description = "RustPython native bindings for Pulsing (Path B single binary)"
+repository.workspace = true
+
+[lib]
+name = "pulsing_rpymod"
+path = "src/lib.rs"
+
+[dev-dependencies]
+rustpython = { version = "0.5", default-features = false, features = [
+    "stdlib",
+    "importlib",
+    "stdio",
+    "host_env",
+] }
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bincode = { workspace = true }
+futures = { workspace = true }
+pulsing-actor = { workspace = true }
+pulsing-bindings-core = { path = "../pulsing-bindings-core" }
+rustpython-derive = "0.5"
+rustpython-vm = { version = "0.5", default-features = false, features = [
+    "compiler",
+    "stdio",
+    "host_env",
+] }
+serde = { workspace = true }
+tokio = { workspace = true }

@@ -55,8 +55,9 @@ class VllmWorker:
         enable_multimodal: bool = False,
         use_vllm_tokenizer: bool = False,
         # macOS Metal/MLX support parameters
-        mlx_device: str
-        | None = None,  # 'gpu' or 'cpu', default read from environment variable
+        mlx_device: (
+            str | None
+        ) = None,  # 'gpu' or 'cpu', default read from environment variable
         metal_memory_fraction: float | None = None,  # 0.0-1.0, default 0.8
         **kwargs,
     ):

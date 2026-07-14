@@ -1,5 +1,26 @@
 [workspace]
-members = ["crates/pulsing-actor", "crates/pulsing-bench", "crates/pulsing-bench-py", "crates/pulsing-py"]
+members = [
+  "crates/pulsing-actor",
+  "crates/pulsing-bench",
+  "crates/pulsing-bench-py",
+  "crates/pulsing-py",
+  "crates/pulsing-forge",
+  "crates/pulsing-bindings-core",
+  "crates/pulsing-rpymod",
+  "crates/pulsing-workspace",
+  "crates/pulsing-cli",
+  "crates/pulsing-gui",
+]
+# `cargo build` without -p skips benches / PyO3-only crates (faster default link graph).
+default-members = [
+  "crates/pulsing-actor",
+  "crates/pulsing-forge",
+  "crates/pulsing-bindings-core",
+  "crates/pulsing-rpymod",
+  "crates/pulsing-workspace",
+  "crates/pulsing-cli",
+  "crates/pulsing-gui",
+]
 resolver = "3"
 
 # Allow coverage_nightly cfg for cargo-llvm-cov
@@ -18,11 +39,23 @@ keywords = ["actor", "distributed", "async", "inference"]
 [workspace.dependencies]
 pulsing-actor = { path = "crates/pulsing-actor" }
 
-# Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal"] }
-tokio-util = { version = "0.7", features = ["codec", "net", "rt"] }
-tokio-stream = { version = "0.1" }
-futures-util = { version = "0.3" }
+# Async runtime (explicit features — avoid compiling unused tokio I/O/process bits in leaf crates)
+tokio = { version = "1", default-features = false, features = [
+  "fs",
+  "io-std",
+  "io-util",
+  "macros",
+  "net",
+  "process",
+  "rt",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+] }
+tokio-util = { version = "0.7", default-features = false, features = ["codec", "net", "rt"] }
+tokio-stream = { version = "0.1", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -44,13 +77,22 @@ thiserror = { version = "2.0" }
 
 # Logging & Tracing
 tracing = { version = "0.1" }
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+  "fmt",
+  "env-filter",
+  "json",
+  "ansi",
+  "std",
+] }
 tracing-opentelemetry = { version = "0.28" }
 opentelemetry = { version = "0.27" }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
-log = "0.4"
-env_logger = "0.11"
+opentelemetry_sdk = { version = "0.27", default-features = false, features = ["rt-tokio", "trace"] }
+opentelemetry-otlp = { version = "0.27", default-features = false, features = [
+  "grpc-tonic",
+  "trace",
+] }
+log = { version = "0.4", default-features = false }
+env_logger = { version = "0.11", default-features = false, features = ["humantime", "auto-color"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4", "fast-rng"] }
@@ -71,6 +113,7 @@ http-body-util = "0.1"
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "rustls-tls",
+  "http2",
 ] }
 reqwest-eventsource = "0.6"
 
@@ -96,6 +139,32 @@ hf-hub = { version = "0.4", features = ["tokio"] }
 vergen-gitcl = "1.0"
 pkcs8 = { version = "0.10", features = ["alloc"] }
 sha2 = "0.10"
-probing-memtable = "0.2.4"
+probing-memtable = "0.2.5"
 ed25519-dalek = { version = "2.0", features = ["pkcs8"] }
 der = "0.7"
+
+# Dev (`just dev`, `cargo check`): compile speed + lean intermediates.
+# debug=1 → line tables only (breakpoints/backtraces without full DWARF).
+[profile.dev]
+debug = 1
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 256
+
+[profile.dev.build-override]
+opt-level = 3
+
+# Release (`just build-binary release=release`, wheels, CI): smaller artifacts.
+# thin LTO beats fat LTO on link time; opt-level "s" ≈ "z" size with faster codegen.
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 16
+panic = "unwind"
+# debuginfo only — full symbol strip can break PyO3 cdylib exports on some linkers.
+# CLI binary is additionally stripped in scripts/build-binary.sh when available.
+strip = "debuginfo"
+
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 256

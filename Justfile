@@ -6,19 +6,60 @@ default: dev
 # =============================================================================
 # Development
 # =============================================================================
+# Profiles (root Cargo.toml):
+#   - default / `just dev` → [profile.dev]  (debug=1, fast link)
+#   - `just build-binary release=release` → [profile.release] (opt-level=s, thin LTO, strip)
+# Set DEBUG=1 is a no-op alias for the default fast path (mirrors probing Makefile).
 
-# Install all packages in development mode
+# Install Python package in development mode (wheel path: extension-module)
+# Uses [profile.dev] — prefer this for day-to-day iteration (faster than --release).
 dev:
-    @echo "Building core..."
+    @echo "==> Path A: maturin develop (extension-module, profile.dev)..."
     maturin develop
-    @echo "Building benchmarks..."
+    @echo "==> Building benchmarks..."
     maturin develop --manifest-path crates/pulsing-bench-py/Cargo.toml
-    @echo "Ready to code!"
+    @echo "Ready! Use: python -m pulsing.cli  |  just build-release for wheel + binary"
 
-# Build release wheels
-build:
-    maturin build --release
-    maturin build --release --manifest-path crates/pulsing-bench-py/Cargo.toml
+# Same as `dev` but install with [profile.release] (smaller .so, slower compile)
+dev-release:
+    @echo "==> Path A: maturin develop --release (profile.release)..."
+    maturin develop --release
+    @echo "==> Building benchmarks (release)..."
+    maturin develop --release --manifest-path crates/pulsing-bench-py/Cargo.toml
+    @echo "Ready! (release profile)"
+
+# Build pulsing-cli debug binary (RustPython path; profile.dev)
+dev-binary:
+    just build-binary
+
+# Path A: release wheels for PyPI (extension-module via pyproject.toml)
+build-wheel:
+    bash scripts/build-wheel.sh --release
+
+# Path B: ``pulsing`` single binary (RustPython VM; no libpython / no PYO3_PYTHON)
+# release=release → smaller binary via [profile.release] (strip + thin LTO + opt-level=s)
+build-binary release="" package="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    [ "{{release}}" = "release" ] && args+=(--release)
+    [ "{{package}}" = "package" ] && args+=(--package)
+    bash scripts/build-binary.sh "${args[@]}"
+
+# Path A + B: wheels + single binary (current platform)
+build-release package="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=(--release)
+    [ "{{package}}" = "package" ] && args+=(--package)
+    bash scripts/build-release.sh "${args[@]}"
+
+# Both distribution artifacts (alias)
+build-all package="":
+    just build-release package={{package}}
+
+# Build release wheels (alias for wheel-only release)
+build: build-wheel
 
 # =============================================================================
 # Testing & QA
@@ -34,19 +75,23 @@ check-quick: check-fmt lint
     @echo ""
     @echo "✅ Format and lint checks passed!"
 
+# Python sources for ruff (docs markdown uses docs/pyproject.toml separately)
+ruff_paths := "python tests examples benchmarks crates/pulsing-bench-py"
+
 # 检查代码格式 (不修改)
 check-fmt:
     @echo "==> Checking Rust format..."
     cargo fmt --all -- --check
     @echo "==> Checking Python format..."
-    ruff format --check .
+    ruff format --check {{ruff_paths}}
 
 # Run all tests
 test: test-rust test-python
 
-# Run Rust tests
+# Run Rust tests (pulsing-py via maturin; pulsing-cli via separate `-p` graph)
 test-rust:
-    cargo test --workspace --exclude pulsing-bench-py --exclude pulsing-py
+    cargo test --workspace --exclude pulsing-bench-py --exclude pulsing-py --exclude pulsing-cli
+    cargo test -p pulsing-cli
 
 # Run Python tests
 test-python:
@@ -63,12 +108,12 @@ test-queue-topic-chaos:
 # Format all code (Rust + Python)
 fmt:
     cargo fmt
-    ruff format .
+    ruff format {{ruff_paths}}
 
 # Lint all code
 lint:
     cargo clippy --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets -- -D warnings
-    ruff check .
+    ruff check {{ruff_paths}}
 
 # =============================================================================
 # Coverage (本地查看覆盖率)
@@ -149,7 +194,7 @@ ensure-rust:
 ci-setup-manylinux: ensure-rust ensure-uv
     #!/usr/bin/env bash
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-    yum install -y gcc gcc-c++ openssl-devel perl-IPC-Cmd
+    yum install -y gcc gcc-c++ openssl-devel perl-IPC-Cmd libffi-devel
     uv python install 3.10
     uv tool install maturin
     uv tool install pytest
@@ -168,7 +213,7 @@ ci-setup-fedora python_version="3.12": ensure-uv
     #!/usr/bin/env bash
     export PATH="$HOME/.local/bin:$PATH"
     # Install build dependencies
-    dnf install -y gcc gcc-c++ openssl-devel
+    dnf install -y gcc gcc-c++ openssl-devel libffi-devel
     # Use uv to install Python (consistent with manylinux setup)
     uv python install {{python_version}}
     uv tool install pytest
@@ -185,16 +230,31 @@ ci-setup-debian: ensure-uv
 # CI 构建和测试 (统一命令)
 # =============================================================================
 
-# 构建 wheel (通用)
-ci-build manylinux="":
+# 构建 wheel + 单文件二进制 (CI / 发布)
+ci-build manylinux="" package="":
     #!/usr/bin/env bash
+    set -euo pipefail
     export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+    args=(--release)
     if [ "{{manylinux}}" = "true" ]; then
-        maturin build --release --out dist -i python3.10 --compatibility manylinux_2_17
-    else
-        maturin build --release --out dist
+        args+=(--manylinux)
     fi
-    echo "==> Build complete!"
+    if [ "{{package}}" = "package" ]; then
+        args+=(--package)
+    fi
+    bash scripts/build-release.sh "${args[@]}"
+    echo "==> Build complete: dist/*.whl + dist/bin/pulsing-*"
+
+# 仅构建 wheel（兼容旧调用）
+ci-build-wheel manylinux="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+    args=(--release --binary-only)
+    if [ "{{manylinux}}" = "true" ]; then
+        args+=(--manylinux)
+    fi
+    bash scripts/build-release.sh "${args[@]}"
 
 # 测试 wheel (通用)
 ci-test:
@@ -202,7 +262,8 @@ ci-test:
     export PATH="$HOME/.local/bin:$PATH"
     # Install wheel and dependencies using uv (preferred) or pip
     if command -v uv &> /dev/null; then
-        uv pip install --system dist/*.whl pytest pytest-asyncio
+        # Main package only — pulsing-bench must not overwrite pulsing/__init__.py
+        uv pip install --system dist/pulsing-*.whl pytest pytest-asyncio
         # Use same interpreter as above (where wheel was installed); do not use uv run (project venv has no pulsing)
         for py in python3.12 python3.11 python3.10 python3 python; do
             if command -v $py &> /dev/null; then
@@ -214,7 +275,7 @@ ci-test:
         exit 1
     else
         # Fallback to pip if uv not available
-        pip install dist/*.whl pytest pytest-asyncio
+        pip install dist/pulsing-*.whl pytest pytest-asyncio
         for py in python3 python3.12 python3.11 python3.10 python; do
             if command -v $py &> /dev/null; then
                 $py -m pytest tests/python -v
@@ -231,7 +292,7 @@ ci-test:
 
 # --- macOS ---
 action-macos:
-    @echo "==> macOS: Setup + Build + Test"
+    @echo "==> macOS: Setup + Build (wheel + binary) + Test"
     just ci-setup-macos
     just ci-build
     just ci-test
@@ -241,14 +302,14 @@ action-linux:
     docker run --rm \
         -v {{justfile_directory()}}:/workspace -w /workspace \
         quay.io/pypa/manylinux2014_x86_64 \
-        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build manylinux=true"
+        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build manylinux=true package=package"
 
 # --- Linux aarch64 (QEMU) ---
 action-linux-aarch64:
     docker run --rm --platform linux/arm64 \
         -v {{justfile_directory()}}:/workspace -w /workspace \
         quay.io/pypa/manylinux2014_aarch64 \
-        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build manylinux=true"
+        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build manylinux=true package=package"
 
 # =============================================================================
 # Maintenance

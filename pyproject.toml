@@ -38,6 +38,12 @@ Issues = "https://github.com/DeepLink-org/Pulsing/issues"
 Changelog = "https://github.com/DeepLink-org/Pulsing/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+forge = []
+tools = []  # deprecated alias for forge
+agent = [
+    "anthropic>=0.40.0",
+    "openai>=1.0.0",
+]
 storage = [
     "pylance",
     "pyarrow>=22.0.0",
@@ -54,12 +60,14 @@ dev = [
 
 [project.scripts]
 pulsing = "pulsing.cli.__main__:main"
+pulsing-agent = "pulsing.cli.agent.main:main"
 
 [tool.maturin]
 module-name = "pulsing._core"
 manifest-path = "crates/pulsing-py/Cargo.toml"
 python-packages = ["pulsing"]
 python-source = "python"
+features = ["extension-module"]
 sdist-include = ["LICENSE", "README.md"]
 
 [build-system]
@@ -70,11 +78,20 @@ build-backend = "maturin"
 minversion = "8.0"
 asyncio_mode = "auto"
 testpaths = ["tests/python"]
+markers = [
+    "forge: Forge test suite",
+    "forge_l0: registry / manifest gates",
+    "forge_l1: callable smoke (all 32 tools)",
+    "forge_l2: wire shape and side-effect checks",
+    "forge_l3: scenario and trace integration",
+    "forge_l4: actor / cluster integration (slow)",
+]
 
 [tool.ruff]
 line-length = 88
 indent-width = 4
 target-version = "py310"
+extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]

@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import subprocess
 
-import pulsing as pul
 from pulsing._async_bridge import run_sync
+from pulsing.core.remote import remote
 
 
-@pul.remote
+@remote
 class ProcessActor:
     """Actor that manages a subprocess.Popen instance.
 

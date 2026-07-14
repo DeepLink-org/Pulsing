@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Path B: ``pulsing`` single binary (RustPython VM — pure Rust, no libpython).
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+# shellcheck source=scripts/lib/platform.sh
+source "$ROOT/scripts/lib/platform.sh"
+
+RELEASE=0
+OUT="dist/bin"
+PACKAGE=0
+NO_GUI=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --release) RELEASE=1; shift ;;
+    --out)
+      OUT="${2:?--out requires a directory}"
+      shift 2
+      ;;
+    --package) PACKAGE=1; shift ;;
+    --no-gui) NO_GUI=1; shift ;;
+    -h | --help)
+      cat <<'EOF'
+Usage: scripts/build-binary.sh [OPTIONS]
+
+Build the pulsing single-binary CLI (pulsing-cli / RustPython).
+
+Options:
+  --release   Release build (default: debug)
+  --out DIR   Directory for the binary (default: dist/bin)
+  --package   Also create dist/pulsing-<platform>.tar.gz (or .zip on Windows)
+  --no-gui    Build without egui desktop GUI (Linux CI / manylinux)
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+TAG="$(platform_tag)"
+mkdir -p "$OUT"
+
+# manylinux / headless Linux: skip egui (no X11 dev headers, smaller binary)
+if [[ "$NO_GUI" -eq 0 ]] && [[ "$(uname -s)" == "Linux" ]] && [[ ! -f /usr/include/X11/Xlib.h ]]; then
+  NO_GUI=1
+fi
+
+CARGO_ARGS=(-p pulsing-cli)
+if [[ "$NO_GUI" -eq 1 ]]; then
+  CARGO_ARGS+=(--no-default-features)
+  echo "==> Building pulsing-cli without desktop GUI"
+fi
+
+if [[ "$RELEASE" -eq 1 ]]; then
+  cargo build --release "${CARGO_ARGS[@]}"
+  SRC="target/release/pulsing"
+else
+  cargo build "${CARGO_ARGS[@]}"
+  SRC="target/debug/pulsing"
+fi
+
+DEST="$OUT/pulsing-${TAG}"
+cp "$SRC" "$DEST"
+chmod +x "$DEST"
+
+# Extra symbol strip on the CLI artifact (profile.release only strips debuginfo for PyO3 safety).
+if [[ "$RELEASE" -eq 1 ]] && command -v strip >/dev/null 2>&1; then
+  strip "$DEST" 2>/dev/null || true
+fi
+
+echo "==> Binary: $DEST ($(du -h "$DEST" | awk '{print $1}'))"
+
+if [[ "$PACKAGE" -eq 1 ]]; then
+  PKG_DIR="$ROOT/dist"
+  mkdir -p "$PKG_DIR"
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN* | Windows*)
+      ARCHIVE="$PKG_DIR/pulsing-${TAG}.zip"
+      (cd "$OUT" && zip -q "$ARCHIVE" "pulsing-${TAG}")
+      ;;
+    *)
+      ARCHIVE="$PKG_DIR/pulsing-${TAG}.tar.gz"
+      tar -czf "$ARCHIVE" -C "$OUT" "pulsing-${TAG}"
+      ;;
+  esac
+  echo "==> Archive: $ARCHIVE"
+fi

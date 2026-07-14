@@ -1,5 +1,9 @@
 ---
+description:
 alwaysApply: true
 ---
 
 代码尽量简洁，不要过度抽象
+接口优于面条代码
+喜欢unix编程艺术
+喜欢rust和haskell的设计理念

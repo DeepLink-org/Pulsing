@@ -45,6 +45,13 @@ def _close_awaitable(awaitable) -> None:
         close()
 
 
+def _is_rustpython() -> bool:
+    import sys
+
+    impl = getattr(sys, "implementation", None)
+    return getattr(impl, "name", "") == "rustpython"
+
+
 def _start_shared_loop() -> asyncio.AbstractEventLoop:
     global _shared_loop, _shared_thread
 
@@ -187,6 +194,13 @@ def run_sync(
     try:
         dispatch_loop = get_loop()
         if dispatch_loop is None:
+            if _is_rustpython():
+                loop = asyncio.new_event_loop()
+                try:
+                    return loop.run_until_complete(awaitable)
+                finally:
+                    _close_awaitable(awaitable)
+                    loop.close()
             dispatch_loop = _start_shared_loop()
 
         if get_running_loop() is dispatch_loop:

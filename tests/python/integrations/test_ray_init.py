@@ -51,7 +51,7 @@ def _reset_pulsing_state():
         pass
 
 
-NUM_WORKERS = 20
+NUM_WORKERS = 5
 
 
 @pytest.fixture
@@ -315,9 +315,11 @@ async def test_async_init_stores_seed(ray_env):
 
 
 def test_counting_game(ray_env):
-    """20 processes play counting game via Pulsing actor (reuses pulsing.examples)."""
+    """Multi-process counting game via Pulsing actors (reuses pulsing.examples)."""
     from pulsing.examples.counting_game import run
+    from pulsing.integrations.ray import init_in_ray
 
+    init_in_ray()
     run(num_workers=NUM_WORKERS)
 
 

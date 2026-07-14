@@ -73,6 +73,34 @@ asyncio.run(main())
 | **分布式 LLM 推理** | `pulsing actor router/vllm` | GPU 集群推理服务 |
 | **集成 AutoGen** | `examples/agent/autogen/` | 一行代码分布式 |
 | **集成 LangGraph** | `examples/agent/langgraph/` | 计算图跨节点执行 |
+| **Agent 工作区 CLI** | `pulsing agent init` | [Pulsing Agent](examples/agent/workspace-demo.md) — 在仓库内运行多 Agent |
+| **Agent 工具与环境** | `examples/python/forge_minimal.py` | [Pulsing Forge](docs/src/forge/index.zh.md) — 沙箱 shell、文件、plan |
+
+## 🔨 Pulsing Forge
+
+**面向 AI Agent 的通用工具与环境运行时** — 在可配置沙箱里执行 shell、改文件、维护计划；可嵌入任意 Agent 框架，也可通过 Pulsing Actor 隔离部署。
+
+```python
+from pulsing.forge import ForgeEnvironment
+
+env = ForgeEnvironment(cwd=".")
+env.runtime().call_tool("shell_command", {"cmd": "pytest -q", "workdir": "."})
+```
+
+文档：[Forge 章节](docs/src/forge/index.zh.md) · 包 README：[python/pulsing/forge/README.md](python/pulsing/forge/README.md)
+
+## 🤖 Pulsing Agent
+
+**工作区级多 Agent SDK + CLI** — 初始化 `.pulsing/` 工作区，在集群上唤醒 Agent，配合 Forge 工具协作。
+
+```bash
+pip install pulsing[agent]
+pulsing agent init
+pulsing agent wake --agents guide
+pulsing agent say guide "运行 pytest"
+```
+
+文档：[工作区示例](examples/agent/workspace-demo.md) · SDK：`from pulsing.agent import Agent, spawn_agent`
 
 ## 🎯 核心能力
 
@@ -136,10 +164,10 @@ async with runtime(addr="0.0.0.0:8002", seeds=["node1:8001"]):
 
 ```bash
 # 启动 Router（OpenAI 兼容 API）
-pulsing actor pulsing.actors.Router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
+pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
 
 # 启动 vLLM Worker（可多个）
-pulsing actor pulsing.actors.VllmWorker --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
+pulsing actor pulsing.serving.VllmWorker --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
 
 # 测试
 curl http://localhost:8080/v1/chat/completions \

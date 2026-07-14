@@ -1,0 +1,12 @@
+Pulsing Forge — Third Party Notices
+===================================
+
+This project includes source code from OpenAI Codex (Apache License 2.0).
+
+Vendored reference tree: vendor/codex-rs/
+Sync script: scripts/sync-codex-forge.sh
+
+Adapted Rust modules in crates/pulsing-forge/src/executor.rs and error.rs
+derive from codex-tools (tool_executor.rs, function_call_error.rs).
+
+See vendor/codex-rs/SYNC_INFO for the last synchronized commit.

@@ -1,0 +1,23 @@
+[package]
+name = "pulsing-gui"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+description = "Pulsing desktop chat GUI (egui)"
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+eframe = { version = "0.31", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "x11",
+] }
+egui = "0.31"
+pulsing-forge = { path = "../pulsing-forge" }
+pulsing-workspace = { path = "../pulsing-workspace" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints.clippy]
+too_many_arguments = "allow"

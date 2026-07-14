@@ -1,0 +1,15 @@
+[package]
+name = "pulsing-bindings-core"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+description = "Shared Rust logic for pulsing-py (Path A) and pulsing-rpymod (Path B)"
+repository.workspace = true
+
+[dependencies]
+pulsing-actor = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
+futures = { workspace = true }
+bincode = { workspace = true }

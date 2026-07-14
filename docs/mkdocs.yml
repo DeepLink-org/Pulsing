@@ -134,6 +134,19 @@ plugins:
             Load Sync: 负载同步
             AS Actor Decorator: AS Actor 装饰器
             Communication Evolution: 集群内通信技术演进
+            Pulsing Forge: Pulsing Forge
+            Getting Started: 快速开始
+            Concepts: 核心概念
+            Abstractions: 抽象模型
+            Tools (32): 工具清单
+            Deployment: Pulsing 部署
+            Pulsing Integration: Pulsing 集成
+            Forge: Forge 设计
+            Engineering: 工程说明
+            Craft Architecture: Craft 一体化
+            Testing: 测试体系
+            Naming: 命名规范
+            Session REPL: Session REPL
   - mkdocstrings:
       handlers:
         python:
@@ -181,6 +194,14 @@ nav:
       - Ping-Pong: examples/ping_pong.md
       - Distributed Counter: examples/distributed_counter.md
       - Subprocess: examples/subprocess.md
+  - Pulsing Forge:
+    - Overview: forge/index.md
+    - Getting Started: forge/getting-started.md
+    - Concepts: forge/concepts.md
+    - Abstractions: forge/abstractions.md
+    - Tools (32): forge/tools.md
+    - Deployment: forge/deployment.md
+    - Pulsing Integration: forge/pulsing-integration.md
   - API Reference:
     - API Overview: api/overview.md
     - Complete Reference: api_reference.md
@@ -202,6 +223,12 @@ nav:
       - AS Actor Decorator: design/as-actor-decorator.md
       - Communication Evolution: design/cluster-communication-evolution.md
       - Out-Cluster Connect: design/out-cluster-connect.md
+    - Forge:
+      - Engineering: design/forge/engineering.md
+      - Craft Architecture: design/forge/craft-architecture.md
+      - Testing: design/forge/testing.md
+      - Naming: design/forge/naming.md
+      - Session REPL: design/forge/session-repl.md
 
 extra:
   generator: false

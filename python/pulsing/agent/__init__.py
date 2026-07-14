@@ -47,6 +47,12 @@ from .llm import llm, reset_llm
 # Utility functions
 from .utils import parse_json, extract_field
 
+# Agent workspace / cluster / spawn (Phase 1–2)
+from .config import AgentConfig, spawn_agent
+from .host import Agent, LlmChat
+from .workspace import find_workspace_root
+from .cluster import list_cluster_agents, resolve_agent
+
 
 def cleanup():
     """
@@ -88,4 +94,12 @@ __all__ = [
     # Utility functions
     "parse_json",
     "extract_field",
+    # Workspace agent SDK
+    "AgentConfig",
+    "Agent",
+    "LlmChat",
+    "spawn_agent",
+    "find_workspace_root",
+    "list_cluster_agents",
+    "resolve_agent",
 ]

@@ -8,6 +8,8 @@ use pyo3::prelude::*;
 mod actor;
 mod connect;
 mod errors;
+mod forge;
+mod llm;
 mod policies;
 mod python_error_converter;
 mod python_executor;
@@ -24,7 +26,7 @@ pub use python_executor::{init_python_executor, python_executor, ExecutorError};
 /// - Streaming: StreamReader, StreamWriter
 /// - Load balancing policies: Random, RoundRobin, PowerOfTwo, ConsistentHash, CacheAware
 #[pymodule]
-fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add error classes
     errors::add_to_module(m)?;
 
@@ -38,6 +40,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     connect::add_to_module(m)?;
 
     tracing_py::add_to_module(m)?;
+
+    forge::add_to_module(m)?;
 
     // Add version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
