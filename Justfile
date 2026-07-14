@@ -6,16 +6,29 @@ default: dev
 # =============================================================================
 # Development
 # =============================================================================
+# Profiles (root Cargo.toml):
+#   - default / `just dev` → [profile.dev]  (debug=1, fast link)
+#   - `just build-binary release=release` → [profile.release] (opt-level=s, thin LTO, strip)
+# Set DEBUG=1 is a no-op alias for the default fast path (mirrors probing Makefile).
 
 # Install Python package in development mode (wheel path: extension-module)
+# Uses [profile.dev] — prefer this for day-to-day iteration (faster than --release).
 dev:
-    @echo "==> Path A: maturin develop (extension-module)..."
+    @echo "==> Path A: maturin develop (extension-module, profile.dev)..."
     maturin develop
     @echo "==> Building benchmarks..."
     maturin develop --manifest-path crates/pulsing-bench-py/Cargo.toml
     @echo "Ready! Use: python -m pulsing.cli  |  just build-release for wheel + binary"
 
-# Build and install pulsing-cli with embedded Python (binary path: embedded)
+# Same as `dev` but install with [profile.release] (smaller .so, slower compile)
+dev-release:
+    @echo "==> Path A: maturin develop --release (profile.release)..."
+    maturin develop --release
+    @echo "==> Building benchmarks (release)..."
+    maturin develop --release --manifest-path crates/pulsing-bench-py/Cargo.toml
+    @echo "Ready! (release profile)"
+
+# Build pulsing-cli debug binary (RustPython path; profile.dev)
 dev-binary:
     just build-binary
 
@@ -24,6 +37,7 @@ build-wheel:
     bash scripts/build-wheel.sh --release
 
 # Path B: ``pulsing`` single binary (RustPython VM; no libpython / no PYO3_PYTHON)
+# release=release → smaller binary via [profile.release] (strip + thin LTO + opt-level=s)
 build-binary release="" package="":
     #!/usr/bin/env bash
     set -euo pipefail

@@ -3852,7 +3852,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tonic",
- "tracing",
 ]
 
 [[package]]
@@ -3881,11 +3880,9 @@ dependencies = [
  "opentelemetry",
  "percent-encoding",
  "rand 0.8.5",
- "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
- "tracing",
 ]
 
 [[package]]
@@ -6896,11 +6893,9 @@ dependencies = [
  "serde",
  "serde_json",
  "sharded-slab",
- "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
- "tracing-log",
  "tracing-serde",
 ]
 
