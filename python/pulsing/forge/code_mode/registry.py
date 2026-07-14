@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import pulsing as pul
+from pulsing.core import ActorProxy, remote, resolve
 
 from pulsing._async_bridge import run_sync
 from pulsing.forge.code_mode.protocol import WaitArgs
@@ -15,7 +15,7 @@ from pulsing.forge.naming import code_cell_registry_name
 from pulsing.forge.result import ToolResult
 
 
-@pul.remote
+@remote
 class CodeCellRegistryActor:
     """Session-scoped code cells with nested tool calls routed to the host agent."""
 
@@ -53,7 +53,7 @@ class CodeCellRegistryActor:
         name: str,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        proxy = await pul.resolve(host_name, timeout=60.0)
+        proxy = await resolve(host_name, timeout=60.0)
         out = await proxy.call_tool(name, dict(args))
         if isinstance(out, ToolResult):
             return out.to_dict()
@@ -64,9 +64,9 @@ class CodeCellRegistryActor:
         return ToolResult(content=str(out), is_error=False).to_dict()
 
 
-async def ensure_code_cell_registry(host_name: str) -> pul.ActorProxy:
+async def ensure_code_cell_registry(host_name: str) -> ActorProxy:
     name = code_cell_registry_name(host_name)
     try:
-        return await pul.resolve(name, cls=CodeCellRegistryActor, timeout=30.0)
+        return await resolve(name, cls=CodeCellRegistryActor, timeout=30.0)
     except Exception:
         return await CodeCellRegistryActor.spawn(host_name, name=name, public=False)

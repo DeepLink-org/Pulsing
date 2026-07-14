@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import pulsing as pul
+from pulsing.core import ActorProxy, remote, resolve
 
 from pulsing.forge.mcp.manager import get_global_mcp_manager
 from pulsing.forge.naming import mcp_hub_name
@@ -14,7 +14,7 @@ from pulsing.forge.naming import mcp_hub_name
 logger = logging.getLogger(__name__)
 
 
-@pul.remote
+@remote
 class McpHubActor:
     """Owns a Forge host runtime for MCP refresh and tool discovery."""
 
@@ -55,9 +55,9 @@ class McpHubActor:
         return out
 
 
-async def ensure_mcp_hub(workspace_id: str, *, cwd: str = ".") -> pul.ActorProxy:
+async def ensure_mcp_hub(workspace_id: str, *, cwd: str = ".") -> ActorProxy:
     name = mcp_hub_name(workspace_id)
     try:
-        return await pul.resolve(name, cls=McpHubActor, timeout=30.0)
+        return await resolve(name, cls=McpHubActor, timeout=30.0)
     except Exception:
         return await McpHubActor.spawn(cwd, name=name, public=True)

@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import pulsing as pul
+from pulsing.core import ActorProxy, remote, resolve
 
 from pulsing.forge.events import ForgeEvent, ForgeEventKind
 from pulsing.forge.naming import forge_event_inbox_name
@@ -23,7 +23,7 @@ _STREAM_KINDS = frozenset(
 )
 
 
-@pul.remote
+@remote
 class ForgeEventInbox:
     """Collects Forge events and forwards side effects to the host agent."""
 
@@ -38,7 +38,7 @@ class ForgeEventInbox:
             return
         kind = str(raw.get("kind") or "")
         try:
-            host = await pul.resolve(self._host_name)
+            host = await resolve(self._host_name)
             if kind in _STREAM_KINDS:
                 await host.as_any().tell("on_forge_stream_event", raw)
             else:
@@ -60,10 +60,10 @@ class ForgeEventInbox:
         return len(self._events)
 
 
-async def ensure_forge_event_inbox(host_name: str) -> pul.ActorProxy:
+async def ensure_forge_event_inbox(host_name: str) -> ActorProxy:
     """Resolve or spawn ``{host}/events``."""
     name = forge_event_inbox_name(host_name)
     try:
-        return await pul.resolve(name, cls=ForgeEventInbox, timeout=30.0)
+        return await resolve(name, cls=ForgeEventInbox, timeout=30.0)
     except Exception:
         return await ForgeEventInbox.spawn(host_name, name=name, public=True)

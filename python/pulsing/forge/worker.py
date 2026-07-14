@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import pulsing as pul
+from pulsing.core import remote
 
 from pulsing.forge.approval_bridge import (
     make_worker_exec_approval_callback,
@@ -43,7 +43,7 @@ def _event_callback_for_sink(
     return _cb
 
 
-@pul.remote
+@remote
 class ToolWorkerActor:
     """Filesystem/shell tools; returns picklable dicts for RPC."""
 
