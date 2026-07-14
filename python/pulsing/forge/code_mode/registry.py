@@ -5,7 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from pulsing.core import ActorProxy, remote, resolve
+from pulsing.core.proxy import ActorProxy
+from pulsing.core.remote import remote, resolve
 
 from pulsing._async_bridge import run_sync
 from pulsing.forge.code_mode.protocol import WaitArgs

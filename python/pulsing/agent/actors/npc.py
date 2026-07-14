@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Workspace agent — single @pul.remote actor."""
+"""Workspace agent — single @remote actor."""
 
 from __future__ import annotations
 
 import asyncio
 from typing import Any, Literal
 
-import pulsing as pul
+from pulsing.core.remote import remote
 
 from pulsing.agent.actors.actor import AgentActor
 from pulsing.agent.actors.activity import get_activity, set_activity
@@ -24,7 +24,7 @@ def format_incoming(sender: str, body: str, *, channel: MessageChannel) -> str:
     return f"[{tag}]\n{body.strip()}"
 
 
-@pul.remote
+@remote
 class Agent(AgentActor):
     """Workspace agent. Spawn via :func:`pulsing.agent.npc.spawn_npc`."""
 

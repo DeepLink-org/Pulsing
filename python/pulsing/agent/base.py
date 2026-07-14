@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, TypeVar
 
-from pulsing.core import remote
+from pulsing.core.remote import remote
 
 T = TypeVar("T")
 

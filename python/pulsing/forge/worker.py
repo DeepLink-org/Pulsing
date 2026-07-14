@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pulsing.core import remote
+from pulsing.core.remote import remote
 
 from pulsing.forge.approval_bridge import (
     make_worker_exec_approval_callback,

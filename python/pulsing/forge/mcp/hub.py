@@ -6,7 +6,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from pulsing.core import ActorProxy, remote, resolve
+from pulsing.core.proxy import ActorProxy
+from pulsing.core.remote import remote, resolve
 
 from pulsing.forge.mcp.manager import get_global_mcp_manager
 from pulsing.forge.naming import mcp_hub_name

@@ -6,7 +6,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from pulsing.core import ActorProxy, remote, resolve
+from pulsing.core.proxy import ActorProxy
+from pulsing.core.remote import remote, resolve
 
 from pulsing.forge.events import ForgeEvent, ForgeEventKind
 from pulsing.forge.naming import forge_event_inbox_name

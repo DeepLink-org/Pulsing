@@ -24,22 +24,58 @@ from typing import Any
 
 __version__ = "0.1.2"
 
-# Import from pulsing.core
+
+def __getattr__(name: str) -> Any:
+    """PEP 562: recover from incomplete package init left by circular imports.
+
+    Must be defined *before* eager imports below so re-entrant ``pul.remote``
+    during those imports can resolve via submodule load.
+    """
+    import importlib
+
+    if name == "transfer_queue":
+        value = importlib.import_module("pulsing.transfer_queue")
+        globals()[name] = value
+        return value
+    # Prefer submodule import — works even while pulsing.core.__init__ is mid-flight.
+    if name in {"remote", "resolve", "Actor", "ActorClass"}:
+        mod = importlib.import_module("pulsing.core.remote")
+        value = getattr(mod, name)
+        globals()[name] = value
+        return value
+    if name in {
+        "init",
+        "shutdown",
+        "get_system",
+        "is_initialized",
+        "mount",
+        "unmount",
+        "ActorRef",
+        "ActorId",
+        "ActorProxy",
+        "SystemConfig",
+    }:
+        mod = importlib.import_module("pulsing.core")
+        value = getattr(mod, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# Bind critical APIs via submodule so circular imports during package init
+# (e.g. agent/forge/subprocess pulling `import pulsing as pul`) still see @remote.
+from pulsing.core.remote import Actor, ActorClass, remote, resolve
+
 from pulsing.core import (
     # Global system functions
     init,
     shutdown,
     get_system,
     is_initialized,
-    # Decorator
-    remote,
-    # Resolve function
-    resolve,
     # Mount (attach existing object to Pulsing network)
     mount,
     unmount,
-    # Types
-    Actor,
+    # Types (Actor / remote / resolve already bound above)
     ActorSystem as _ActorSystem,
     ActorRef,
     ActorId,
@@ -414,9 +450,6 @@ class _GlobalTopicAPI:
 
 queue = _GlobalQueueAPI()
 topic = _GlobalTopicAPI()
-
-# Transfer queue (lazy import submodule)
-from pulsing import transfer_queue
 
 # Export all public APIs
 __all__ = [
