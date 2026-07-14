@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
 
-import pulsing as pul
+from pulsing.core.isolated_bridge import IsolatedSpawnHandle
+from pulsing.core.proxy import ActorProxy
+from pulsing.core.remote import resolve
 
 from pulsing.forge.approval_bridge import (
     make_worker_exec_approval_callback,
@@ -123,8 +125,8 @@ class ForgeIsolatedWorker:
         self._mode = mode
         self._remote_name = remote_name
         self._pump = ForgeEventPump(worker_cfg.event_sink_name)
-        self._spawn: pul.IsolatedSpawnHandle | None = None
-        self._proxy: pul.ActorProxy | None = None
+        self._spawn: IsolatedSpawnHandle | None = None
+        self._proxy: ActorProxy | None = None
         self._supervisor: ForgeWorkerSupervisor | None = None
         self._lock = asyncio.Lock()
 
@@ -147,7 +149,7 @@ class ForgeIsolatedWorker:
         return self._mode
 
     @property
-    def proxy(self) -> pul.ActorProxy | None:
+    def proxy(self) -> ActorProxy | None:
         return self._proxy
 
     def is_dead(self) -> bool:
@@ -168,7 +170,7 @@ class ForgeIsolatedWorker:
                 logger.info(
                     "resolving shared tool worker %s (%s)", self._remote_name, reason
                 )
-                self._proxy = await pul.resolve(
+                self._proxy = await resolve(
                     self._remote_name,
                     cls=ToolWorkerActor,
                     timeout=120.0,
@@ -229,6 +231,8 @@ class ForgeIsolatedWorker:
         return await self._proxy.as_any().call_tool(name, kw, event_sink=sink)
 
     async def _spawn_dedicated_locked(self, *, reason: str) -> None:
+        import pulsing as pul
+
         host = (self._cfg.host_name or "").strip()
         if host:
             logger.info("starting in-process worker supervisor (%s)", reason)
@@ -247,11 +251,11 @@ class ForgeIsolatedWorker:
             public=False,
             restart_policy="never",
         )
-        if not isinstance(h, pul.IsolatedSpawnHandle):
+        if not isinstance(h, IsolatedSpawnHandle):
             raise TypeError("expected IsolatedSpawnHandle from isolated spawn")
         self._spawn = h
         self._supervisor = None
-        self._proxy = pul.ActorProxy(
+        self._proxy = ActorProxy(
             h.ref, ToolWorkerActor._methods, ToolWorkerActor._async_methods
         )
 
@@ -284,6 +288,8 @@ async def spawn_shared_tool_worker(
     dangerously_disable_sandbox: bool = False,
 ) -> Any:
     """Spawn one public ``ToolWorkerActor`` for a workspace (gossip name)."""
+    import pulsing as pul
+
     name = shared_tool_worker_name(workspace_id)
     h = await pul.spawn(
         ToolWorkerActor(
@@ -306,9 +312,9 @@ async def resolve_shared_tool_worker(
     workspace_id: str,
     *,
     timeout: float = 120.0,
-) -> pul.ActorProxy:
+) -> ActorProxy:
     name = shared_tool_worker_name(workspace_id)
-    return await pul.resolve(name, cls=ToolWorkerActor, timeout=timeout)
+    return await resolve(name, cls=ToolWorkerActor, timeout=timeout)
 
 
 @dataclass

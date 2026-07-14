@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Any
 
-import pulsing as pul
+from pulsing.core.remote import resolve
 
 from pulsing._async_bridge import run_sync
 from pulsing.forge.events import ForgeEvent
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 async def tell_forge_event(sink_name: str, event: ForgeEvent | dict[str, Any]) -> None:
     payload = event.to_dict() if isinstance(event, ForgeEvent) else dict(event)
-    proxy = await pul.resolve(sink_name)
+    proxy = await resolve(sink_name)
     await proxy.as_any().tell("on_forge_event", payload)
 
 
@@ -25,7 +25,7 @@ async def ask_exec_approval(sink_name: str, request: dict[str, Any]) -> dict[str
     """Blocking approval RPC: isolated worker → host Agent."""
     if not sink_name:
         return {"decision": "denied"}
-    proxy = await pul.resolve(sink_name)
+    proxy = await resolve(sink_name)
     out = await proxy.as_any().ask("resolve_exec_approval", dict(request))
     return dict(out) if isinstance(out, dict) else {"decision": "denied"}
 
@@ -35,7 +35,7 @@ async def ask_request_permissions(
 ) -> dict[str, Any]:
     if not sink_name:
         raise RuntimeError("request_permissions requires approval sink")
-    proxy = await pul.resolve(sink_name)
+    proxy = await resolve(sink_name)
     out = await proxy.as_any().ask("resolve_request_permissions", dict(args))
     if not isinstance(out, dict):
         raise RuntimeError("invalid request_permissions response")

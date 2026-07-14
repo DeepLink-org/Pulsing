@@ -24,115 +24,26 @@ from typing import Any
 
 __version__ = "0.1.2"
 
-
-def __getattr__(name: str) -> Any:
-    """PEP 562: recover from incomplete package init left by circular imports.
-
-    Must be defined *before* eager imports below so re-entrant ``pul.remote``
-    during those imports can resolve via submodule load.
-    """
-    import importlib
-
-    if name == "transfer_queue":
-        value = importlib.import_module("pulsing.transfer_queue")
-        globals()[name] = value
-        return value
-    # Prefer submodule import — works even while pulsing.core.__init__ is mid-flight.
-    if name in {"remote", "resolve", "Actor", "ActorClass"}:
-        mod = importlib.import_module("pulsing.core.remote")
-        value = getattr(mod, name)
-        globals()[name] = value
-        return value
-    if name in {
-        "init",
-        "shutdown",
-        "get_system",
-        "is_initialized",
-        "mount",
-        "unmount",
-        "ActorRef",
-        "ActorId",
-        "ActorProxy",
-        "SystemConfig",
-    }:
-        mod = importlib.import_module("pulsing.core")
-        value = getattr(mod, name)
-        globals()[name] = value
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# Bind critical APIs via submodule so circular imports during package init
-# (e.g. agent/forge/subprocess pulling `import pulsing as pul`) still see @remote.
+# Submodule first: ``@remote`` must be bound before anything that might
+# re-enter this package during ``pulsing.core`` import.
 from pulsing.core.remote import Actor, ActorClass, remote, resolve
-
 from pulsing.core import (
-    # Global system functions
     init,
     shutdown,
     get_system,
     is_initialized,
-    # Mount (attach existing object to Pulsing network)
     mount,
     unmount,
-    # Types (Actor / remote / resolve already bound above)
     ActorSystem as _ActorSystem,
     ActorRef,
     ActorId,
     ActorProxy,
     SystemConfig,
-    # Service (internal, used by actor_system())
     PythonActorService as _PythonActorService,
     PYTHON_ACTOR_SERVICE_NAME as _PYTHON_ACTOR_SERVICE_NAME,
 )
-
-
-# Ray integration (lazy import — only available in Ray environment)
-def init_inside_ray():
-    """Initialize Pulsing in Ray worker and join cluster (async version).
-
-    Usage::
-
-        await pul.init_inside_ray()
-    """
-    from pulsing.integrations.ray import async_init_in_ray
-
-    return async_init_in_ray()
-
-
-def cleanup_ray():
-    """Clean up Pulsing state in Ray KV store"""
-    from pulsing.integrations.ray import cleanup
-
-    return cleanup()
-
-
-# torchrun / torch.distributed integration (lazy import)
-def init_inside_torchrun():
-    """Initialize Pulsing in current process and join cluster via torch.distributed.
-
-    Rank 0 becomes the seed; others join with seeds=[rank0_addr]. Call after
-    torch.distributed.init_process_group() (e.g. when launched with torchrun).
-
-    Usage::
-
-        import torch.distributed as dist
-        dist.init_process_group(...)
-        system = pul.init_inside_torchrun()
-    """
-    from pulsing.integrations.torchrun import init_in_torchrun
-
-    return init_in_torchrun()
-
-
-# Bootstrap: single API — pulsing.bootstrap(ray=..., torchrun=..., on_ready=..., wait_timeout=...)
-from pulsing.bootstrap import bootstrap, stop as bootstrap_stop  # noqa: E402
-
-bootstrap.stop = bootstrap_stop
-
-# Import exceptions
+from pulsing.bootstrap import bootstrap, stop as bootstrap_stop
 from pulsing.core.isolated_bridge import IsolatedSpawnHandle
-
 from pulsing.exceptions import (
     PulsingError,
     PulsingRuntimeError,
@@ -142,6 +53,30 @@ from pulsing.exceptions import (
     PulsingTimeoutError,
     PulsingUnsupportedError,
 )
+from . import transfer_queue
+
+bootstrap.stop = bootstrap_stop
+
+
+def init_inside_ray():
+    """Initialize Pulsing in Ray worker and join cluster (async version)."""
+    from pulsing.integrations.ray import async_init_in_ray
+
+    return async_init_in_ray()
+
+
+def cleanup_ray():
+    """Clean up Pulsing state in Ray KV store."""
+    from pulsing.integrations.ray import cleanup
+
+    return cleanup()
+
+
+def init_inside_torchrun():
+    """Initialize Pulsing via torch.distributed (call after init_process_group)."""
+    from pulsing.integrations.torchrun import init_in_torchrun
+
+    return init_in_torchrun()
 
 
 class ActorSystem:

@@ -319,7 +319,9 @@ class _WrappedActor(Actor):
 # ActorClass & @remote decorator
 # ============================================================================
 
-from .service import PYTHON_ACTOR_SERVICE_NAME
+# Keep in sync with ``service.PYTHON_ACTOR_SERVICE_NAME`` — do not import
+# ``service`` here (it imports this module; mid-load cycle breaks ``@pul.remote``).
+PYTHON_ACTOR_SERVICE_NAME = "system/python_actor_service"
 
 
 def _reduce_pulsing_remote_user_instance(obj: Any) -> tuple[Any, tuple[str, str, Any]]:

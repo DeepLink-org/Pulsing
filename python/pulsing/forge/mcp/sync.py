@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import pulsing as pul
+from pulsing.core.remote import resolve
 
 from pulsing.forge.discovery.deferred import DeferredForgeTool
 
@@ -19,7 +19,7 @@ async def sync_mcp_tools_to_agent(agent: Any) -> list[str]:
     specs: list[dict[str, Any]] = []
     if hub_name:
         try:
-            hub = await pul.resolve(hub_name, timeout=30.0)
+            hub = await resolve(hub_name, timeout=30.0)
             out = await hub.refresh()
             if isinstance(out, dict):
                 specs = list(out.get("tools") or [])

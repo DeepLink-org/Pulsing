@@ -67,7 +67,12 @@ DEST="$OUT/pulsing-${TAG}"
 cp "$SRC" "$DEST"
 chmod +x "$DEST"
 
-echo "==> Binary: $DEST"
+# Extra symbol strip on the CLI artifact (profile.release only strips debuginfo for PyO3 safety).
+if [[ "$RELEASE" -eq 1 ]] && command -v strip >/dev/null 2>&1; then
+  strip "$DEST" 2>/dev/null || true
+fi
+
+echo "==> Binary: $DEST ($(du -h "$DEST" | awk '{print $1}'))"
 
 if [[ "$PACKAGE" -eq 1 ]]; then
   PKG_DIR="$ROOT/dist"

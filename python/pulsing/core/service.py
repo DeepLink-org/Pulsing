@@ -11,6 +11,7 @@ from pulsing._core import ActorRef, ActorSystem, Message
 from pulsing.exceptions import PulsingRuntimeError
 
 from .remote import (
+    PYTHON_ACTOR_SERVICE_NAME,
     Actor,
     _WrappedActor,
     _actor_class_registry,
@@ -19,8 +20,6 @@ from .remote import (
 )
 
 logger = logging.getLogger(__name__)
-
-PYTHON_ACTOR_SERVICE_NAME = "system/python_actor_service"
 
 
 class PythonActorService(Actor):

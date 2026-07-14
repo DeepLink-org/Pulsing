@@ -7,7 +7,8 @@ import asyncio
 import logging
 from typing import Any
 
-import pulsing as pul
+from pulsing.core.isolated_bridge import IsolatedSpawnHandle
+from pulsing.core.proxy import ActorProxy
 
 from pulsing.forge.config import ToolWorkerConfig
 from pulsing.forge.p2p_transport import ForgeEventPump
@@ -26,12 +27,12 @@ class ForgeWorkerSupervisor:
     def __init__(self, worker_cfg: ToolWorkerConfig) -> None:
         self._cfg = worker_cfg
         self._pump = ForgeEventPump(worker_cfg.event_sink_name)
-        self._spawn: pul.IsolatedSpawnHandle | None = None
-        self._proxy: pul.ActorProxy | None = None
+        self._spawn: IsolatedSpawnHandle | None = None
+        self._proxy: ActorProxy | None = None
         self._lock = asyncio.Lock()
 
     @property
-    def proxy(self) -> pul.ActorProxy | None:
+    def proxy(self) -> ActorProxy | None:
         return self._proxy
 
     async def close(self) -> None:
@@ -92,6 +93,8 @@ class ForgeWorkerSupervisor:
         raise RuntimeError(f"supervised worker failed after retry: {last_exc!r}")
 
     async def _ensure_worker_locked(self, *, reason: str) -> None:
+        import pulsing as pul
+
         if self._spawn is not None and self._spawn.process.returncode is None:
             return
         await self._teardown_locked()
@@ -105,10 +108,10 @@ class ForgeWorkerSupervisor:
             public=False,
             restart_policy="never",
         )
-        if not isinstance(h, pul.IsolatedSpawnHandle):
+        if not isinstance(h, IsolatedSpawnHandle):
             raise TypeError("expected IsolatedSpawnHandle from isolated spawn")
         self._spawn = h
-        self._proxy = pul.ActorProxy(
+        self._proxy = ActorProxy(
             h.ref, ToolWorkerActor._methods, ToolWorkerActor._async_methods
         )
 
