@@ -38,6 +38,8 @@ from pulsing.core import (
     ActorRef,
     ActorId,
     ActorProxy,
+    TensorMessage,
+    tensor_transport_stats,
     SystemConfig,
     PythonActorService as _PythonActorService,
     PYTHON_ACTOR_SERVICE_NAME as _PYTHON_ACTOR_SERVICE_NAME,
@@ -424,6 +426,8 @@ __all__ = [
     "ActorId",
     "ActorProxy",
     "IsolatedSpawnHandle",
+    "TensorMessage",
+    "tensor_transport_stats",
     # Exceptions
     "PulsingError",
     "PulsingRuntimeError",

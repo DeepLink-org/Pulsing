@@ -201,6 +201,7 @@ impl ActorLifecycle {
             Message::Stream {
                 default_msg_type, ..
             } => (default_msg_type, Vec::new()),
+            Message::Tensor(_) => unreachable!("termination messages are always packed singles"),
         };
 
         // Send to all watchers

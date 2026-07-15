@@ -1,7 +1,8 @@
 //! Python bindings for the Pulsing Actor System
 
+use bytes::Bytes;
 use futures::StreamExt;
-use pulsing_actor::actor::{ActorId, ActorPath, NodeId};
+use pulsing_actor::actor::{ActorId, ActorPath, NodeId, TensorMessage};
 use pulsing_actor::prelude::*;
 use pulsing_actor::supervision::{BackoffStrategy, RestartPolicy, SupervisionSpec};
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyValueError};
@@ -9,7 +10,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
+use std::ffi::{c_char, c_int, c_void};
 use std::net::SocketAddr;
+use std::ptr;
+use std::slice;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::mpsc;
@@ -403,7 +407,335 @@ impl PyMessage {
                 payload: None,
                 stream_reader: Some(Arc::new(TokioMutex::new(Some(stream)))),
             },
+            Message::Tensor(tensor) => Self {
+                msg_type: pulsing_actor::actor::TENSOR_MESSAGE_TYPE.to_string(),
+                payload: Some(tensor.encode_wire().unwrap_or_default()),
+                stream_reader: None,
+            },
         }
+    }
+}
+
+/// Holds a Python buffer export for as long as `Bytes` references it.
+///
+/// Safety contract: callers must not mutate or resize the source buffer until
+/// the send completes. PulsingQueue prepares immutable contiguous CPU buffers
+/// before constructing TensorMessage.
+struct PythonBufferOwner {
+    view: Box<RawPyBuffer>,
+}
+
+// Py_buffer entered Python's Stable ABI in Python 3.11, while Pulsing still
+// builds an abi3-py310 extension. CPython 3.10 nevertheless exposes the same
+// public C buffer ABI, so declare the two functions locally instead of
+// disabling abi3 or silently copying through PyBytes.
+#[repr(C)]
+struct RawPyBuffer {
+    buf: *mut c_void,
+    obj: *mut c_void,
+    len: isize,
+    itemsize: isize,
+    readonly: c_int,
+    ndim: c_int,
+    format: *mut c_char,
+    shape: *mut isize,
+    strides: *mut isize,
+    suboffsets: *mut isize,
+    internal: *mut c_void,
+}
+
+impl RawPyBuffer {
+    fn new() -> Self {
+        Self {
+            buf: ptr::null_mut(),
+            obj: ptr::null_mut(),
+            len: 0,
+            itemsize: 0,
+            readonly: 0,
+            ndim: 0,
+            format: ptr::null_mut(),
+            shape: ptr::null_mut(),
+            strides: ptr::null_mut(),
+            suboffsets: ptr::null_mut(),
+            internal: ptr::null_mut(),
+        }
+    }
+}
+
+unsafe extern "C" {
+    fn PyObject_GetBuffer(obj: *mut c_void, view: *mut RawPyBuffer, flags: c_int) -> c_int;
+    fn PyBuffer_Release(view: *mut RawPyBuffer);
+}
+
+const PYBUF_SIMPLE: c_int = 0;
+
+// CPython buffer exports may be moved between the Python executor and Tokio
+// send task. The exporter remains pinned by `view.obj`; callers must obey the
+// documented no-mutation-while-sending contract.
+unsafe impl Send for PythonBufferOwner {}
+
+impl PythonBufferOwner {
+    fn acquire(item: &Bound<'_, pyo3::PyAny>) -> PyResult<Self> {
+        let mut view = Box::new(RawPyBuffer::new());
+        // SAFETY: `view` points to writable Py_buffer storage and `item` is a
+        // live Python object. On success CPython gives view.obj an owned ref.
+        let result = unsafe { PyObject_GetBuffer(item.as_ptr().cast(), &mut *view, PYBUF_SIMPLE) };
+        if result != 0 {
+            return Err(PyErr::fetch(item.py()));
+        }
+        if view.len < 0 || (view.len > 0 && view.buf.is_null()) {
+            // SAFETY: acquisition succeeded, so it must be released exactly once.
+            unsafe { PyBuffer_Release(&mut *view) };
+            return Err(PyValueError::new_err("Invalid Python buffer export"));
+        }
+        Ok(Self { view })
+    }
+
+    fn len(&self) -> usize {
+        self.view.len as usize
+    }
+}
+
+impl AsRef<[u8]> for PythonBufferOwner {
+    fn as_ref(&self) -> &[u8] {
+        let len = self.len();
+        if len == 0 {
+            return &[];
+        }
+        // SAFETY: PyBuffer owns an active CPython buffer export, so its pointer
+        // remains valid until this owner is dropped by Bytes. The constructor
+        // only accepts C-contiguous byte views.
+        unsafe { slice::from_raw_parts(self.view.buf.cast::<u8>(), len) }
+    }
+}
+
+impl Drop for PythonBufferOwner {
+    fn drop(&mut self) {
+        Python::with_gil(|_| {
+            // SAFETY: this owner is constructed only after a successful
+            // PyObject_GetBuffer and owns the one matching release.
+            unsafe { PyBuffer_Release(&mut *self.view) };
+        });
+    }
+}
+
+/// Python owner used behind a ctypes array for received Rust `Bytes`.
+///
+/// PyO3's custom buffer protocol slots are unavailable for abi3-py310. A
+/// ctypes array is therefore used as the stable buffer exporter and retains
+/// this object through a private attribute. No PyBytes payload copy occurs.
+#[pyclass]
+struct PyOwnedTensorBuffer {
+    _data: TensorBufferOwnerData,
+}
+
+enum TensorBufferOwnerData {
+    /// Local mailbox path: retain the original Python export through Bytes.
+    Shared { _bytes: Bytes },
+    /// Remote compatibility path: final independent, writable user buffer.
+    Owned { _bytes: Vec<u8> },
+}
+
+/// Turn an arbitrary contiguous buffer exporter into a one-dimensional byte
+/// memoryview without copying. Unlike the legacy ZeroCopyDescriptor helper,
+/// this deliberately rejects non-contiguous input instead of calling bytes().
+fn normalize_tensor_buffer(
+    py: Python<'_>,
+    item: &Bound<'_, pyo3::PyAny>,
+) -> PyResult<(PyObject, usize)> {
+    let builtins = py.import("builtins")?;
+    let view = builtins
+        .getattr("memoryview")?
+        .call1((item,))
+        .map_err(|_| {
+            PyValueError::new_err(
+                "TensorMessage.buffers items must implement the Python buffer protocol",
+            )
+        })?;
+    let contiguous = view.getattr("c_contiguous")?.extract::<bool>()?;
+    if !contiguous {
+        return Err(PyValueError::new_err(
+            "TensorMessage.buffers items must be C-contiguous; make tensors contiguous in PulsingQueue",
+        ));
+    }
+
+    let format = view.getattr("format")?.extract::<String>()?;
+    let itemsize = view.getattr("itemsize")?.extract::<usize>()?;
+    let ndim = view.getattr("ndim")?.extract::<usize>()?;
+    let byte_view = if format == "B" && itemsize == 1 && ndim == 1 {
+        view
+    } else {
+        view.call_method1("cast", ("B",)).map_err(|_| {
+            PyValueError::new_err("TensorMessage.buffers items must support a contiguous byte view")
+        })?
+    };
+    let buffer = PythonBufferOwner::acquire(&byte_view).map_err(|_| {
+        PyValueError::new_err("TensorMessage.buffers items must expose a contiguous byte buffer")
+    })?;
+    let len = buffer.len();
+    drop(buffer);
+    Ok((byte_view.unbind(), len))
+}
+
+fn python_buffer_to_bytes(item: &PyObject, py: Python<'_>) -> PyResult<Bytes> {
+    let owner = PythonBufferOwner::acquire(item.bind(py))?;
+    Ok(Bytes::from_owner(owner))
+}
+
+/// Create a Python buffer exporter with explicit ownership semantics.
+fn rust_bytes_to_python_buffer(
+    py: Python<'_>,
+    data: Bytes,
+    copy_into_owned_receive_buffer: bool,
+    writable: bool,
+) -> PyResult<PyObject> {
+    if data.is_empty() {
+        let empty = if writable {
+            py.import("builtins")?.getattr("bytearray")?.call0()?
+        } else {
+            PyBytes::new(py, &[]).into_any()
+        };
+        let view = py
+            .import("builtins")?
+            .getattr("memoryview")?
+            .call1((empty,))?;
+        return Ok(view.unbind());
+    }
+
+    let len = data.len();
+    let (address, owner_data) = if copy_into_owned_receive_buffer {
+        // This is the compatibility HTTP/2 receive copy into the final
+        // user-owned allocation. The raw TCP backend will read directly into
+        // this allocation and remove this intermediate copy.
+        let owned = data.to_vec();
+        (
+            owned.as_ptr() as usize,
+            TensorBufferOwnerData::Owned { _bytes: owned },
+        )
+    } else {
+        (
+            data.as_ptr() as usize,
+            TensorBufferOwnerData::Shared { _bytes: data },
+        )
+    };
+    let owner = Py::new(py, PyOwnedTensorBuffer { _data: owner_data })?;
+    let ctypes = py.import("ctypes")?;
+    let array_type = ctypes.getattr("c_ubyte")?.call_method1("__mul__", (len,))?;
+    let array = array_type.call_method1("from_address", (address,))?;
+    array.setattr("_pulsing_owner", owner)?;
+
+    let view = py
+        .import("builtins")?
+        .getattr("memoryview")?
+        .call1((array,))?;
+    let byte_view = view.call_method1("cast", ("B",))?;
+    let byte_view = if writable {
+        byte_view
+    } else {
+        byte_view.call_method0("toreadonly")?
+    };
+    Ok(byte_view.unbind())
+}
+
+/// Opaque metadata plus contiguous CPU buffers optimized for tensor transport.
+#[pyclass(name = "TensorMessage")]
+#[derive(Clone)]
+pub struct PyTensorMessage {
+    metadata: Vec<u8>,
+    buffers: Vec<PyObject>,
+    buffer_lengths: Vec<usize>,
+    version: u32,
+}
+
+impl PyTensorMessage {
+    fn to_rust_message(&self, py: Python<'_>) -> PyResult<Message> {
+        let buffers = self
+            .buffers
+            .iter()
+            .map(|buffer| python_buffer_to_bytes(buffer, py))
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Message::Tensor(TensorMessage::new(
+            self.version,
+            Bytes::copy_from_slice(&self.metadata),
+            buffers,
+        )))
+    }
+
+    fn from_rust_message(py: Python<'_>, message: TensorMessage) -> PyResult<Self> {
+        let copy_into_owned_receive_buffer = message.requires_owned_receive_copy();
+        let writable = copy_into_owned_receive_buffer || message.owns_receive_buffers();
+        let metadata = message.metadata.to_vec();
+        let buffer_lengths = message.buffers.iter().map(Bytes::len).collect();
+        let buffers = message
+            .buffers
+            .into_iter()
+            .map(|buffer| {
+                rust_bytes_to_python_buffer(py, buffer, copy_into_owned_receive_buffer, writable)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            metadata,
+            buffers,
+            buffer_lengths,
+            version: message.version,
+        })
+    }
+}
+
+#[pymethods]
+impl PyTensorMessage {
+    #[new]
+    #[pyo3(signature = (metadata, buffers, version=1))]
+    fn new(
+        py: Python<'_>,
+        metadata: Vec<u8>,
+        buffers: Vec<PyObject>,
+        version: u32,
+    ) -> PyResult<Self> {
+        let normalized = buffers
+            .into_iter()
+            .map(|buffer| normalize_tensor_buffer(py, buffer.bind(py)))
+            .collect::<PyResult<Vec<_>>>()?;
+        let (buffers, buffer_lengths): (Vec<_>, Vec<_>) = normalized.into_iter().unzip();
+        Ok(Self {
+            metadata,
+            buffers,
+            buffer_lengths,
+            version,
+        })
+    }
+
+    #[getter]
+    fn metadata<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, &self.metadata)
+    }
+
+    #[getter]
+    fn buffers(&self, py: Python<'_>) -> Vec<PyObject> {
+        self.buffers
+            .iter()
+            .map(|buffer| buffer.clone_ref(py))
+            .collect()
+    }
+
+    #[getter]
+    fn version(&self) -> u32 {
+        self.version
+    }
+
+    #[getter]
+    fn total_bytes(&self) -> usize {
+        self.buffer_lengths.iter().sum()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TensorMessage(version={}, metadata_bytes={}, buffers={}, total_bytes={})",
+            self.version,
+            self.metadata.len(),
+            self.buffers.len(),
+            self.total_bytes()
+        )
     }
 }
 
@@ -754,6 +1086,11 @@ async fn reassemble_zerocopy_stream(
 /// Small zerocopy payloads → `Message::Single`; large ones → `Message::Stream`
 /// (descriptor-first + chunked data). Non-zerocopy objects → pickle.
 pub(crate) fn encode_python_payload(py: Python<'_>, obj: &PyObject) -> PyResult<Message> {
+    if obj.bind(py).is_instance_of::<PyTensorMessage>() {
+        let tensor = obj.bind(py).extract::<PyRef<'_, PyTensorMessage>>()?;
+        return tensor.to_rust_message(py);
+    }
+
     match zerocopy_mode().as_str() {
         "off" => Ok(Message::single(SEALED_PY_MSG_TYPE, pickle_object(py, obj)?)),
         "force" => {
@@ -833,6 +1170,11 @@ pub(crate) async fn decode_message_to_pyobject(msg: Message) -> PyResult<PyObjec
                 Ok(obj.into_pyobject(py)?.into_any().unbind())
             })
         }
+        Message::Tensor(tensor) => Python::with_gil(|py| {
+            let message = PyTensorMessage::from_rust_message(py, tensor)?;
+            let obj = Py::new(py, message)?;
+            Ok(obj.into_pyobject(py)?.into_any().unbind())
+        }),
         _ => Python::with_gil(|py| {
             Ok(PyMessage::from_rust_message(msg)
                 .into_pyobject(py)?
@@ -2120,6 +2462,21 @@ impl PyActorSystem {
     }
 }
 
+#[pyfunction]
+fn tensor_transport_stats(py: Python<'_>) -> PyResult<Py<PyDict>> {
+    let stats = pulsing_actor::transport::raw_tensor_transport_stats();
+    let result = PyDict::new(py);
+    result.set_item("raw_frames_sent", stats.frames_sent)?;
+    result.set_item("raw_frames_received", stats.frames_received)?;
+    result.set_item("raw_bytes_sent", stats.bytes_sent)?;
+    result.set_item("raw_bytes_received", stats.bytes_received)?;
+    result.set_item("http2_fallback_frames", stats.http2_fallback_frames)?;
+    result.set_item("http2_fallback_bytes", stats.http2_fallback_bytes)?;
+    result.set_item("active_copy_model", stats.active_copy_model)?;
+    result.set_item("raw_connections_accepted", stats.raw_connections_accepted)?;
+    Ok(result.unbind())
+}
+
 pub fn add_to_module(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyNodeId>()?;
     m.add_class::<PyActorId>()?;
@@ -2132,5 +2489,7 @@ pub fn add_to_module(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyStreamWriter>()?;
     m.add_class::<PyStreamMessage>()?;
     m.add_class::<PyZeroCopyDescriptor>()?;
+    m.add_class::<PyTensorMessage>()?;
+    m.add_function(wrap_pyfunction!(tensor_transport_stats, m)?)?;
     Ok(())
 }

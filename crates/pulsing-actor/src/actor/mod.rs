@@ -138,4 +138,7 @@ pub use mailbox::{Envelope, Mailbox, MailboxSender, ResponseChannel, DEFAULT_MAI
 pub use reference::{
     ActorRef, ActorRefInner, ActorResolver, LazyActorRef, RemoteActorRef, RemoteTransport,
 };
-pub use traits::{Actor, ActorId, IntoActor, Message, MessageStream, NodeId, StopReason};
+pub use traits::{
+    max_tensor_buffers, max_tensor_metadata_bytes, max_tensor_wire_bytes, Actor, ActorId,
+    IntoActor, Message, MessageStream, NodeId, StopReason, TensorMessage, TENSOR_MESSAGE_TYPE,
+};

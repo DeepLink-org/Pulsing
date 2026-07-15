@@ -13,6 +13,7 @@
 //! - Circuit breaker for fault tolerance
 
 pub mod http2;
+pub mod tensor;
 
 // HTTP/2 exports
 pub use http2::{
@@ -20,4 +21,7 @@ pub use http2::{
     Http2RemoteTransportBuilder, Http2Server, Http2ServerHandler, Http2Transport, MessageMode,
     PoolConfig, PoolStats, RequestType, RetryConfig, RetryableError, StreamFrame, StreamHandle,
     TransportTarget, FLAG_END, FLAG_ERROR,
+};
+pub use tensor::{
+    raw_tensor_transport_stats, RawTensorTransportStats, TensorCopyModel, TensorTransport,
 };

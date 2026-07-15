@@ -26,6 +26,7 @@ pub use tls::TlsConfig;
 
 use crate::actor::{ActorId, ActorPath, Message, RemoteTransport};
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+use crate::transport::tensor::{TensorCopyModel, TensorTransport};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -99,20 +100,28 @@ impl Http2Transport {
 
     pub async fn tell(&self, addr: SocketAddr, actor_name: &str, msg: Message) -> Result<()> {
         let path = format!("/actors/{}", actor_name);
-        let Message::Single { msg_type, data } = msg else {
-            return Err(RuntimeError::protocol_error("Streaming not supported for tell").into());
-        };
-
-        self.client.tell(addr, &path, &msg_type, data).await
+        match msg {
+            Message::Single { msg_type, data } => {
+                self.client.tell(addr, &path, &msg_type, data).await
+            }
+            Message::Tensor(tensor) => self.client.tell_tensor(addr, &path, tensor).await,
+            Message::Stream { .. } => {
+                Err(RuntimeError::protocol_error("Streaming not supported for tell").into())
+            }
+        }
     }
 
     pub async fn tell_named(&self, addr: SocketAddr, path: &ActorPath, msg: Message) -> Result<()> {
         let url_path = format!("/named/{}", path.as_str());
-        let Message::Single { msg_type, data } = msg else {
-            return Err(RuntimeError::protocol_error("Streaming not supported for tell").into());
-        };
-
-        self.client.tell(addr, &url_path, &msg_type, data).await
+        match msg {
+            Message::Single { msg_type, data } => {
+                self.client.tell(addr, &url_path, &msg_type, data).await
+            }
+            Message::Tensor(tensor) => self.client.tell_tensor(addr, &url_path, tensor).await,
+            Message::Stream { .. } => {
+                Err(RuntimeError::protocol_error("Streaming not supported for tell").into())
+            }
+        }
     }
 
     /// Send a gossip message
@@ -205,6 +214,7 @@ impl RequestType {
 pub enum ResponseType {
     Single,
     Stream,
+    Tensor,
 }
 
 impl ResponseType {
@@ -212,6 +222,7 @@ impl ResponseType {
         match self {
             ResponseType::Single => "single",
             ResponseType::Stream => "stream",
+            ResponseType::Tensor => "tensor",
         }
     }
 
@@ -219,6 +230,7 @@ impl ResponseType {
         match s.to_lowercase().as_str() {
             "single" => Some(ResponseType::Single),
             "stream" => Some(ResponseType::Stream),
+            "tensor" => Some(ResponseType::Tensor),
             _ => None,
         }
     }
@@ -397,12 +409,47 @@ impl RemoteTransport for Http2RemoteTransport {
 
     /// Send a one-way message (unified interface)
     async fn send_oneway(&self, actor_id: &ActorId, msg: Message) -> Result<()> {
-        let Message::Single { msg_type, data } = msg else {
-            return Err(PulsingError::from(RuntimeError::Other(
+        match msg {
+            Message::Single { msg_type, data } => self.send(actor_id, &msg_type, data).await,
+            Message::Tensor(tensor) => {
+                let _ = actor_id;
+                self.client
+                    .tell_tensor(self.remote_addr, &self.path, tensor)
+                    .await
+            }
+            Message::Stream { .. } => Err(PulsingError::from(RuntimeError::Other(
                 "Streaming not supported for fire-and-forget (use ask pattern instead)".into(),
-            )));
-        };
-        self.send(actor_id, &msg_type, data).await
+            ))),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl TensorTransport for Http2RemoteTransport {
+    async fn request_tensor(
+        &self,
+        actor_id: &ActorId,
+        message: crate::actor::TensorMessage,
+    ) -> Result<crate::actor::TensorMessage> {
+        match RemoteTransport::send_message(self, actor_id, Message::Tensor(message)).await? {
+            Message::Tensor(response) => Ok(response),
+            other => Err(PulsingError::from(RuntimeError::Other(format!(
+                "Tensor transport returned unexpected message type: {}",
+                other.msg_type()
+            )))),
+        }
+    }
+
+    async fn send_tensor(
+        &self,
+        actor_id: &ActorId,
+        message: crate::actor::TensorMessage,
+    ) -> Result<()> {
+        RemoteTransport::send_oneway(self, actor_id, Message::Tensor(message)).await
+    }
+
+    fn copy_model(&self) -> TensorCopyModel {
+        self.client.tensor_copy_model()
     }
 }
 

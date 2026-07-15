@@ -166,12 +166,20 @@ impl Http2ServerHandler for StreamingHandler {
                                 ),
                             ));
                         }
+                        Ok(Message::Tensor(_)) => {
+                            return Err(pulsing_actor::error::PulsingError::from(
+                                pulsing_actor::error::RuntimeError::Other(
+                                    "Tensor messages cannot be nested in streams".into(),
+                                ),
+                            ));
+                        }
                         Err(e) => return Err(e),
                     }
                 }
                 let response = format!("{}:collected:{} bytes", path, collected.len()).into_bytes();
                 Ok(Message::single("stream_echo", response))
             }
+            Message::Tensor(message) => Ok(Message::Tensor(message)),
         }
     }
 

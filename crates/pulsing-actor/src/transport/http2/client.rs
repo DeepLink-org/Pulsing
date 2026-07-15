@@ -5,22 +5,30 @@ use super::pool::{ConnectionPool, PoolConfig};
 use super::retry::{RetryConfig, RetryExecutor};
 use super::stream::{BinaryFrameParser, StreamFrame, StreamHandle};
 use super::{headers, MessageMode, RequestType};
-use crate::actor::{Message, MessageStream};
+use crate::actor::{
+    max_tensor_wire_bytes, Message, MessageStream, TensorMessage, TENSOR_MESSAGE_TYPE,
+};
 use crate::error::{PulsingError, Result, RuntimeError};
 use crate::tracing::{
     active_span_traceparent, active_span_tracestate, OpenTelemetrySpanExt, TRACEPARENT_HEADER,
     TRACESTATE_HEADER,
 };
+use crate::transport::tensor::{
+    raw_tensor_transport_requested, read_raw_tensor_frame, record_tensor_http2_fallback,
+    write_raw_tensor_frame, RawTensorKind, TensorCopyModel,
+};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
-use http_body_util::{BodyExt, Full, StreamBody};
+use http_body_util::{BodyExt, Full, Limited, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::{Method, Request};
 use opentelemetry::Context;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
@@ -55,6 +63,7 @@ pub struct Http2Client {
     retry_config: RetryConfig,
     cancel: CancellationToken,
     fault_injector: Option<Arc<dyn FaultInjector>>,
+    tensor_pool: Arc<Mutex<HashMap<SocketAddr, Vec<TcpStream>>>>,
 }
 
 impl Http2Client {
@@ -65,6 +74,7 @@ impl Http2Client {
             retry_config: RetryConfig::default(),
             cancel: CancellationToken::new(),
             fault_injector: None,
+            tensor_pool: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -82,6 +92,7 @@ impl Http2Client {
             retry_config,
             cancel: CancellationToken::new(),
             fault_injector: None,
+            tensor_pool: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -333,6 +344,137 @@ impl Http2Client {
                     .await?;
                 self.parse_response(response).await
             }
+            Message::Tensor(tensor) => {
+                if self.raw_tensor_enabled() {
+                    self.exchange_raw_tensor(addr, path, RawTensorKind::Ask, &tensor)
+                        .await
+                } else {
+                    // TLS or explicit compatibility mode: pack once into the
+                    // existing HTTP/2 request body.
+                    let wire = tensor.encode_wire()?;
+                    record_tensor_http2_fallback(wire.len());
+                    self.send_message(addr, path, TENSOR_MESSAGE_TYPE, wire)
+                        .await
+                }
+            }
+        }
+    }
+
+    pub(crate) fn tensor_copy_model(&self) -> TensorCopyModel {
+        if self.raw_tensor_enabled() {
+            TensorCopyModel::DirectTcp
+        } else {
+            TensorCopyModel::PackedHttp2Compatibility
+        }
+    }
+
+    fn raw_tensor_enabled(&self) -> bool {
+        if !raw_tensor_transport_requested() {
+            return false;
+        }
+        #[cfg(feature = "tls")]
+        if self.config.tls.is_some() {
+            return false;
+        }
+        true
+    }
+
+    async fn take_tensor_connection(&self, addr: SocketAddr) -> Result<TcpStream> {
+        loop {
+            let pooled = self
+                .tensor_pool
+                .lock()
+                .await
+                .get_mut(&addr)
+                .and_then(Vec::pop);
+            let Some(stream) = pooled else {
+                break;
+            };
+            let mut probe = [0u8; 1];
+            match stream.try_read(&mut probe) {
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(stream),
+                // EOF or unexpected unread protocol bytes: discard before a
+                // request starts, then safely establish a fresh connection.
+                Ok(0) | Ok(_) | Err(_) => continue,
+            }
+        }
+
+        let stream = tokio::time::timeout(self.config.connect_timeout, TcpStream::connect(addr))
+            .await
+            .map_err(|_| RuntimeError::connection_failed(addr.to_string(), "Timeout"))?
+            .map_err(|error| {
+                RuntimeError::connection_failed(addr.to_string(), error.to_string())
+            })?;
+        stream
+            .set_nodelay(true)
+            .map_err(|error| RuntimeError::Io(error.to_string()))?;
+        Ok(stream)
+    }
+
+    async fn return_tensor_connection(&self, addr: SocketAddr, stream: TcpStream) {
+        let mut pool = self.tensor_pool.lock().await;
+        let connections = pool.entry(addr).or_default();
+        if connections.len() < self.config.max_connections_per_host {
+            connections.push(stream);
+        }
+    }
+
+    async fn exchange_raw_tensor(
+        &self,
+        addr: SocketAddr,
+        path: &str,
+        kind: RawTensorKind,
+        message: &TensorMessage,
+    ) -> Result<Message> {
+        let mut stream = self.take_tensor_connection(addr).await?;
+        let exchange = async {
+            write_raw_tensor_frame(&mut stream, kind, path, message).await?;
+            read_raw_tensor_frame(&mut stream).await
+        };
+        let frame = tokio::time::timeout(self.config.stream_timeout, exchange)
+            .await
+            .map_err(|_| {
+                PulsingError::from(RuntimeError::request_timeout(
+                    self.config.stream_timeout.as_millis() as u64,
+                ))
+            })??;
+
+        let result = match frame.kind {
+            RawTensorKind::TensorResponse if kind == RawTensorKind::Ask => {
+                Ok(Message::Tensor(frame.message))
+            }
+            RawTensorKind::SingleResponse if kind == RawTensorKind::Ask => {
+                Ok(Message::single(frame.path, frame.message.metadata.to_vec()))
+            }
+            RawTensorKind::Ack if kind == RawTensorKind::Tell => {
+                Ok(Message::single("", Vec::new()))
+            }
+            RawTensorKind::Error => {
+                let error = String::from_utf8_lossy(&frame.message.metadata);
+                Err(PulsingError::from(RuntimeError::Other(error.into_owned())))
+            }
+            other => Err(PulsingError::from(RuntimeError::Other(format!(
+                "Unexpected raw tensor response: {other:?}"
+            )))),
+        };
+        self.return_tensor_connection(addr, stream).await;
+        result
+    }
+
+    pub(crate) async fn tell_tensor(
+        &self,
+        addr: SocketAddr,
+        path: &str,
+        message: TensorMessage,
+    ) -> Result<()> {
+        if self.raw_tensor_enabled() {
+            self.exchange_raw_tensor(addr, path, RawTensorKind::Tell, &message)
+                .await?;
+            Ok(())
+        } else {
+            let wire = message.encode_wire()?;
+            record_tensor_http2_fallback(wire.len());
+            self.tell(addr, path, TENSOR_MESSAGE_TYPE, wire).await
         }
     }
 
@@ -567,6 +709,12 @@ impl Http2Client {
             .get(headers::RESPONSE_TYPE)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("single");
+        let response_msg_type = response
+            .headers()
+            .get(headers::MESSAGE_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
 
         if response_type == "stream" {
             let cancel = CancellationToken::new();
@@ -592,6 +740,18 @@ impl Http2Client {
                 default_msg_type: String::new(),
                 stream: Box::pin(msg_stream),
             })
+        } else if response_type == "tensor" {
+            let body = tokio::time::timeout(
+                self.config.request_timeout,
+                Limited::new(response.into_body(), max_tensor_wire_bytes()).collect(),
+            )
+            .await
+            .map_err(|_| {
+                RuntimeError::request_timeout(self.config.request_timeout.as_millis() as u64)
+            })?
+            .map_err(|e| RuntimeError::Io(e.to_string()))?
+            .to_bytes();
+            Ok(Message::Tensor(TensorMessage::decode_wire(body)?))
         } else {
             let body = tokio::time::timeout(self.config.request_timeout, response.collect())
                 .await
@@ -601,7 +761,7 @@ impl Http2Client {
                 .map_err(|e| RuntimeError::Io(e.to_string()))?
                 .to_bytes();
 
-            Ok(Message::single("", body.to_vec()))
+            Ok(Message::single(response_msg_type, body.to_vec()))
         }
     }
 
@@ -710,6 +870,7 @@ impl Clone for Http2Client {
             retry_config: self.retry_config.clone(),
             cancel: self.cancel.clone(),
             fault_injector: self.fault_injector.clone(),
+            tensor_pool: self.tensor_pool.clone(),
         }
     }
 }

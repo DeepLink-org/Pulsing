@@ -35,6 +35,8 @@ python examples/python/ping_pong.py        # Basic communication
 python examples/python/message_patterns.py # RPC and streaming
 python examples/python/named_actors.py     # Service discovery
 python examples/python/cluster.py          # Multi-node (see --help)
+python examples/python/tensor_message_fast_path.py      # Tensor buffers over raw TCP
+python examples/python/tensor_message_fast_path.py --transport http2  # Compatibility path
 python examples/python/subprocess_example.py            # Native subprocess-compatible API
 USE_POLSING_SUBPROCESS=1 python examples/python/subprocess_example.py --resources  # Pulsing backend
 python examples/python/isolated_actor_spawn.py          # Actor in child OS process; cluster sees parent bridge
@@ -45,6 +47,11 @@ python examples/python/forge_agent_quickstart.py       # ForgeAgent demo (no API
 ./examples/python/workspace_demo.sh                    # workspace init → wake → say (demo LLM)
 python examples/python/workspace_minimal_demo.py       # same, single Python process
 ```
+
+`tensor_message_fast_path.py` 会创建两个 ActorSystem，确保请求真实经过 TCP。示例使用
+标准库 `array` 构造连续 CPU buffer，通过 `TensorMessage` 发送，并在 storage-like actor
+处理完数据后返回小型应用 ACK。完整语义见
+[TensorMessage 快速传输设计](../../docs/src/design/tensor-message-transport.zh.md)。
 
 同步包装器说明：
 

@@ -34,9 +34,11 @@ from pulsing._core import (
     StreamReader,
     StreamWriter,
     SystemConfig,
+    TensorMessage,
     ZeroCopyDescriptor,
     init_distributed_tracing,
     shutdown_distributed_tracing,
+    tensor_transport_stats,
 )
 from .messaging import (
     Message,
@@ -242,6 +244,8 @@ __all__ = [
     "ActorRef",
     "ActorId",
     "ActorProxy",
+    "TensorMessage",
+    "tensor_transport_stats",
     "SystemActorProxy",
     "PulsingError",
     "PulsingRuntimeError",

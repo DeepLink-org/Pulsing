@@ -192,7 +192,7 @@ pub mod test_helper;
 pub use performance_store::{PerformanceSnapshot, PerformanceStore};
 
 pub mod prelude {
-    pub use crate::actor::{Actor, ActorContext, ActorRef, IntoActor, Message};
+    pub use crate::actor::{Actor, ActorContext, ActorRef, IntoActor, Message, TensorMessage};
     pub use crate::supervision::{BackoffStrategy, RestartPolicy, SupervisionSpec};
     pub use crate::system::{
         ActorSystem, ActorSystemCoreExt, ActorSystemOpsExt, ResolveOptions, SpawnOptions,

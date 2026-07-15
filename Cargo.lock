@@ -4494,6 +4494,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
+ "bytes",
  "crossbeam-channel",
  "futures",
  "pulsing-actor",

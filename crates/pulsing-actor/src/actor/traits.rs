@@ -2,6 +2,7 @@
 
 use crate::error::{PulsingError, Result, RuntimeError};
 use async_trait::async_trait;
+use bytes::Bytes;
 use futures::Stream;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json;
@@ -128,6 +129,301 @@ impl Format {
 /// Message stream type (stream of Single messages).
 pub type MessageStream = Pin<Box<dyn Stream<Item = Result<Message>> + Send>>;
 
+/// Stable message type used when a [`TensorMessage`] crosses a remote transport.
+pub const TENSOR_MESSAGE_TYPE: &str = "__pulsing_tensor_message__";
+
+const TENSOR_WIRE_MAGIC: &[u8; 4] = b"PTM1";
+const TENSOR_WIRE_FIXED_HEADER: usize = 4 + 4 + 8 + 4;
+const DEFAULT_MAX_TENSOR_WIRE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+const DEFAULT_MAX_TENSOR_METADATA_BYTES: usize = 64 * 1024 * 1024;
+const DEFAULT_MAX_TENSOR_BUFFERS: usize = 65_536;
+
+fn tensor_env_limit(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(default)
+}
+
+/// Maximum compatibility-wire body accepted before HTTP body aggregation.
+pub fn max_tensor_wire_bytes() -> usize {
+    let platform_default = usize::try_from(DEFAULT_MAX_TENSOR_WIRE_BYTES).unwrap_or(usize::MAX);
+    tensor_env_limit("PULSING_MAX_TENSOR_WIRE_BYTES", platform_default)
+}
+
+pub fn max_tensor_metadata_bytes() -> usize {
+    tensor_env_limit(
+        "PULSING_MAX_TENSOR_METADATA_BYTES",
+        DEFAULT_MAX_TENSOR_METADATA_BYTES,
+    )
+}
+
+pub fn max_tensor_buffers() -> usize {
+    tensor_env_limit("PULSING_MAX_TENSOR_BUFFERS", DEFAULT_MAX_TENSOR_BUFFERS)
+}
+
+/// Transport-neutral tensor payload.
+///
+/// Pulsing intentionally treats `metadata` as opaque bytes. Tensor schemas,
+/// dtypes and shapes belong to the caller (for example PulsingQueue), while
+/// Pulsing only owns routing and buffer transport. `Bytes` lets an in-process
+/// message retain borrowed Python buffer owners without copying the payload.
+#[derive(Clone)]
+pub struct TensorMessage {
+    pub version: u32,
+    pub metadata: Bytes,
+    pub buffers: Vec<Bytes>,
+    origin: TensorBufferOrigin,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TensorBufferOrigin {
+    Borrowed,
+    PackedWire,
+    OwnedReceive,
+}
+
+impl TensorMessage {
+    pub fn new(version: u32, metadata: impl Into<Bytes>, buffers: Vec<Bytes>) -> Self {
+        Self {
+            version,
+            metadata: metadata.into(),
+            buffers,
+            origin: TensorBufferOrigin::Borrowed,
+        }
+    }
+
+    /// Build a message from raw TCP receive allocations. `Vec -> Bytes` moves
+    /// ownership without copying; Python then exposes these as writable final
+    /// buffers retained by the resulting Tensor objects.
+    pub fn from_owned_receive(
+        version: u32,
+        metadata: Vec<u8>,
+        buffers: Vec<Vec<u8>>,
+    ) -> Result<Self> {
+        if metadata.len() > max_tensor_metadata_bytes() {
+            return Err(PulsingError::from(RuntimeError::Serialization(
+                "TensorMessage metadata exceeds configured maximum".into(),
+            )));
+        }
+        if buffers.len() > max_tensor_buffers() {
+            return Err(PulsingError::from(RuntimeError::Serialization(
+                "TensorMessage buffer count exceeds configured maximum".into(),
+            )));
+        }
+        let total = buffers.iter().try_fold(metadata.len(), |total, buffer| {
+            total.checked_add(buffer.len())
+        });
+        // Keep this explicit match for the Rust 1.75 MSRV; Option::is_none_or
+        // is newer than the version declared by the project.
+        let exceeds_limit = match total {
+            Some(total) => total > max_tensor_wire_bytes(),
+            None => true,
+        };
+        if exceeds_limit {
+            return Err(PulsingError::from(RuntimeError::Serialization(
+                "TensorMessage payload exceeds configured maximum".into(),
+            )));
+        }
+        Ok(Self {
+            version,
+            metadata: Bytes::from(metadata),
+            buffers: buffers.into_iter().map(Bytes::from).collect(),
+            origin: TensorBufferOrigin::OwnedReceive,
+        })
+    }
+
+    pub fn requires_owned_receive_copy(&self) -> bool {
+        self.origin == TensorBufferOrigin::PackedWire
+    }
+
+    pub fn owns_receive_buffers(&self) -> bool {
+        self.origin == TensorBufferOrigin::OwnedReceive
+    }
+
+    /// Sum of tensor payload bytes (metadata is deliberately excluded).
+    pub fn total_bytes(&self) -> usize {
+        self.buffers.iter().map(Bytes::len).sum()
+    }
+
+    /// Encode the current HTTP/2 compatibility representation.
+    ///
+    /// This performs one payload packing copy. The dedicated tensor data plane
+    /// can replace this codec later without changing the public Message API.
+    pub fn encode_wire(&self) -> Result<Vec<u8>> {
+        if self.buffers.len() > max_tensor_buffers() {
+            return Err(PulsingError::from(RuntimeError::Serialization(format!(
+                "TensorMessage buffer count {} exceeds configured maximum {}",
+                self.buffers.len(),
+                max_tensor_buffers()
+            ))));
+        }
+        if self.metadata.len() > max_tensor_metadata_bytes() {
+            return Err(PulsingError::from(RuntimeError::Serialization(format!(
+                "TensorMessage metadata size {} exceeds configured maximum {}",
+                self.metadata.len(),
+                max_tensor_metadata_bytes()
+            ))));
+        }
+        let buffer_count = u32::try_from(self.buffers.len()).map_err(|_| {
+            PulsingError::from(RuntimeError::Serialization(
+                "TensorMessage has too many buffers".into(),
+            ))
+        })?;
+        let metadata_len = u64::try_from(self.metadata.len()).map_err(|_| {
+            PulsingError::from(RuntimeError::Serialization(
+                "TensorMessage metadata is too large".into(),
+            ))
+        })?;
+
+        let lengths_bytes = self.buffers.len().checked_mul(8).ok_or_else(|| {
+            PulsingError::from(RuntimeError::Serialization(
+                "TensorMessage header size overflow".into(),
+            ))
+        })?;
+        let total_len = TENSOR_WIRE_FIXED_HEADER
+            .checked_add(lengths_bytes)
+            .and_then(|n| n.checked_add(self.metadata.len()))
+            .and_then(|n| {
+                self.buffers
+                    .iter()
+                    .try_fold(n, |acc, buffer| acc.checked_add(buffer.len()))
+            })
+            .ok_or_else(|| {
+                PulsingError::from(RuntimeError::Serialization(
+                    "TensorMessage payload size overflow".into(),
+                ))
+            })?;
+
+        if total_len > max_tensor_wire_bytes() {
+            return Err(PulsingError::from(RuntimeError::Serialization(format!(
+                "TensorMessage wire size {total_len} exceeds configured maximum {}",
+                max_tensor_wire_bytes()
+            ))));
+        }
+        let mut wire = Vec::with_capacity(total_len);
+        wire.extend_from_slice(TENSOR_WIRE_MAGIC);
+        wire.extend_from_slice(&self.version.to_le_bytes());
+        wire.extend_from_slice(&metadata_len.to_le_bytes());
+        wire.extend_from_slice(&buffer_count.to_le_bytes());
+        for buffer in &self.buffers {
+            let len = u64::try_from(buffer.len()).map_err(|_| {
+                PulsingError::from(RuntimeError::Serialization(
+                    "TensorMessage buffer is too large".into(),
+                ))
+            })?;
+            wire.extend_from_slice(&len.to_le_bytes());
+        }
+        wire.extend_from_slice(&self.metadata);
+        for buffer in &self.buffers {
+            wire.extend_from_slice(buffer);
+        }
+        Ok(wire)
+    }
+
+    /// Decode the compatibility wire format without copying metadata or
+    /// individual tensor buffers. All returned `Bytes` are slices of `wire`.
+    pub fn decode_wire(wire: Bytes) -> Result<Self> {
+        let malformed = |reason: &str| {
+            PulsingError::from(RuntimeError::Serialization(format!(
+                "Malformed TensorMessage: {reason}"
+            )))
+        };
+
+        if wire.len() > max_tensor_wire_bytes() {
+            return Err(malformed("wire size exceeds configured maximum"));
+        }
+        if wire.len() < TENSOR_WIRE_FIXED_HEADER {
+            return Err(malformed("header is truncated"));
+        }
+        if &wire[..4] != TENSOR_WIRE_MAGIC {
+            return Err(malformed("invalid magic"));
+        }
+
+        let version = u32::from_le_bytes(wire[4..8].try_into().expect("fixed-width slice"));
+        let metadata_len_u64 =
+            u64::from_le_bytes(wire[8..16].try_into().expect("fixed-width slice"));
+        let metadata_len = usize::try_from(metadata_len_u64)
+            .map_err(|_| malformed("metadata length exceeds this platform"))?;
+        let buffer_count =
+            u32::from_le_bytes(wire[16..20].try_into().expect("fixed-width slice")) as usize;
+        if buffer_count > max_tensor_buffers() {
+            return Err(malformed("buffer count exceeds configured maximum"));
+        }
+        if metadata_len > max_tensor_metadata_bytes() {
+            return Err(malformed("metadata size exceeds configured maximum"));
+        }
+        let lengths_bytes = buffer_count
+            .checked_mul(8)
+            .ok_or_else(|| malformed("buffer count overflow"))?;
+        let payload_start = TENSOR_WIRE_FIXED_HEADER
+            .checked_add(lengths_bytes)
+            .ok_or_else(|| malformed("header size overflow"))?;
+        if payload_start > wire.len() {
+            return Err(malformed("buffer length table is truncated"));
+        }
+
+        let mut lengths = Vec::with_capacity(buffer_count);
+        let mut total_payload = metadata_len;
+        for index in 0..buffer_count {
+            let offset = TENSOR_WIRE_FIXED_HEADER + index * 8;
+            let len_u64 = u64::from_le_bytes(
+                wire[offset..offset + 8]
+                    .try_into()
+                    .expect("validated length table"),
+            );
+            let len = usize::try_from(len_u64)
+                .map_err(|_| malformed("buffer length exceeds this platform"))?;
+            total_payload = total_payload
+                .checked_add(len)
+                .ok_or_else(|| malformed("payload size overflow"))?;
+            lengths.push(len);
+        }
+
+        let expected_len = payload_start
+            .checked_add(total_payload)
+            .ok_or_else(|| malformed("message size overflow"))?;
+        if expected_len != wire.len() {
+            return Err(malformed(if expected_len > wire.len() {
+                "payload is truncated"
+            } else {
+                "payload has trailing bytes"
+            }));
+        }
+
+        let metadata_end = payload_start + metadata_len;
+        let metadata = wire.slice(payload_start..metadata_end);
+        let mut offset = metadata_end;
+        let buffers = lengths
+            .into_iter()
+            .map(|len| {
+                let end = offset + len;
+                let buffer = wire.slice(offset..end);
+                offset = end;
+                buffer
+            })
+            .collect();
+
+        Ok(Self {
+            version,
+            metadata,
+            buffers,
+            origin: TensorBufferOrigin::PackedWire,
+        })
+    }
+}
+
+impl fmt::Debug for TensorMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TensorMessage")
+            .field("version", &self.version)
+            .field("metadata_len", &self.metadata.len())
+            .field("buffer_count", &self.buffers.len())
+            .field("total_bytes", &self.total_bytes())
+            .finish()
+    }
+}
+
 /// Unified message type for both requests and responses.
 pub enum Message {
     Single {
@@ -138,6 +434,8 @@ pub enum Message {
         default_msg_type: String,
         stream: MessageStream,
     },
+    /// Opaque tensor metadata plus one or more contiguous payload buffers.
+    Tensor(TensorMessage),
 }
 
 impl Message {
@@ -157,12 +455,19 @@ impl Message {
             })
     }
 
+    pub fn tensor(version: u32, metadata: impl Into<Bytes>, buffers: Vec<Bytes>) -> Self {
+        Message::Tensor(TensorMessage::new(version, metadata, buffers))
+    }
+
     pub fn unpack<M: DeserializeOwned>(self) -> Result<M> {
         match self {
             Message::Single { data, .. } => bincode::deserialize(&data)
                 .map_err(|e| PulsingError::from(RuntimeError::Serialization(e.to_string()))),
             Message::Stream { .. } => Err(PulsingError::from(RuntimeError::Other(
                 "Cannot unpack stream message".into(),
+            ))),
+            Message::Tensor(_) => Err(PulsingError::from(RuntimeError::Other(
+                "Cannot unpack tensor message".into(),
             ))),
         }
     }
@@ -173,6 +478,9 @@ impl Message {
             Message::Single { data, .. } => Format::Auto.parse(data),
             Message::Stream { .. } => Err(PulsingError::from(RuntimeError::Other(
                 "Cannot parse stream message".into(),
+            ))),
+            Message::Tensor(_) => Err(PulsingError::from(RuntimeError::Other(
+                "Cannot parse tensor message".into(),
             ))),
         }
     }
@@ -204,6 +512,7 @@ impl Message {
             Message::Stream {
                 default_msg_type, ..
             } => default_msg_type,
+            Message::Tensor(_) => TENSOR_MESSAGE_TYPE,
         }
     }
 
@@ -213,6 +522,10 @@ impl Message {
 
     pub fn is_stream(&self) -> bool {
         matches!(self, Message::Stream { .. })
+    }
+
+    pub fn is_tensor(&self) -> bool {
+        matches!(self, Message::Tensor(_))
     }
 }
 
@@ -231,6 +544,7 @@ impl fmt::Debug for Message {
                 .debug_struct("Message::Stream")
                 .field("default_msg_type", default_msg_type)
                 .finish_non_exhaustive(),
+            Message::Tensor(tensor) => tensor.fmt(f),
         }
     }
 }
@@ -413,6 +727,59 @@ mod tests {
         let request = Message::single("Echo", b"hello");
         assert!(!request.msg_type().is_empty());
         assert_eq!(request.msg_type(), "Echo");
+    }
+
+    #[test]
+    fn test_tensor_message_wire_roundtrip() {
+        let original = TensorMessage::new(
+            7,
+            Bytes::from_static(b"opaque-schema"),
+            vec![
+                Bytes::from_static(b"abc"),
+                Bytes::new(),
+                Bytes::from_static(b"defg"),
+            ],
+        );
+        let wire = Bytes::from(original.encode_wire().unwrap());
+        let wire_start = wire.as_ptr() as usize;
+        let wire_end = wire_start + wire.len();
+
+        let decoded = TensorMessage::decode_wire(wire).unwrap();
+        assert_eq!(decoded.version, 7);
+        assert_eq!(decoded.metadata, Bytes::from_static(b"opaque-schema"));
+        assert_eq!(decoded.buffers.len(), 3);
+        assert_eq!(&decoded.buffers[0][..], b"abc");
+        assert!(decoded.buffers[1].is_empty());
+        assert_eq!(&decoded.buffers[2][..], b"defg");
+        assert_eq!(decoded.total_bytes(), 7);
+
+        // decode_wire returns slices of the received allocation rather than
+        // copying every tensor into a fresh Vec.
+        let first_ptr = decoded.buffers[0].as_ptr() as usize;
+        assert!((wire_start..wire_end).contains(&first_ptr));
+    }
+
+    #[test]
+    fn test_tensor_message_allows_control_only_payload() {
+        let original = TensorMessage::new(1, Bytes::from_static(b"control"), Vec::new());
+        let decoded =
+            TensorMessage::decode_wire(Bytes::from(original.encode_wire().unwrap())).unwrap();
+        assert_eq!(decoded.metadata, Bytes::from_static(b"control"));
+        assert!(decoded.buffers.is_empty());
+        assert_eq!(decoded.total_bytes(), 0);
+    }
+
+    #[test]
+    fn test_tensor_message_rejects_truncated_wire() {
+        let original = TensorMessage::new(
+            1,
+            Bytes::from_static(b"meta"),
+            vec![Bytes::from_static(b"payload")],
+        );
+        let mut wire = original.encode_wire().unwrap();
+        wire.pop();
+        let error = TensorMessage::decode_wire(Bytes::from(wire)).unwrap_err();
+        assert!(error.to_string().contains("payload is truncated"));
     }
 
     #[tokio::test]

@@ -470,6 +470,9 @@ impl Actor for SystemActor {
             Message::Stream { .. } => {
                 return self.json_error_response("Stream messages not supported by SystemActor");
             }
+            Message::Tensor(_) => {
+                return self.json_error_response("Tensor messages not supported by SystemActor");
+            }
         };
 
         let response = match sys_msg {
