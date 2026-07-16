@@ -102,7 +102,8 @@ pub struct TensorMessage {
 ```
 
 The public transport model distinguishes `DirectTcp`,
-`PackedHttp2Compatibility`, and the reserved `SharedMemory` backend. Both the
+`PackedHttp2Compatibility`, and the reserved `SharedMemory` copy model. These
+are Pulsing transport choices, not PulsingQueue storage backends. Both the
 Python and Rust representations treat metadata as opaque.
 
 ## Data paths
@@ -328,8 +329,8 @@ ACK, pooled reconnect, size validation, and the `receive_tensor()` hook.
 ## Future work
 
 The `TensorTransport` abstraction reserves a `SharedMemory` copy model. A
-same-host backend can add shared-memory registration and lease/release semantics
-without changing `TensorMessage` or the PulsingQueue schema. Capability
+same-host transport can add shared-memory registration and lease/release
+semantics without changing `TensorMessage` or the PulsingQueue schema. Capability
 negotiation, checksums, request IDs, and explicit retry policy should be added
 together so fallback and failure semantics remain observable rather than
 silently replaying a non-idempotent storage operation.

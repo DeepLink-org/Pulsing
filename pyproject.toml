@@ -1,6 +1,6 @@
 [project]
 name = "pulsing"
-version = "0.1.2"
+version = "0.1.3"
 description = "Pulsing: Backbone for distributed AI systems. Actor runtime with streaming, zero dependencies, and built-in discovery."
 readme = "README.md"
 authors = [

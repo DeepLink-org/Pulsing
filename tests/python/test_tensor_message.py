@@ -5,6 +5,7 @@ import gc
 import pytest
 import pulsing as pul
 from pulsing.core import Actor, TensorMessage
+from pulsing.core.protocol import _wrap_call
 from pulsing.core.remote import _WrappedActor
 
 
@@ -243,3 +244,21 @@ async def test_wrapped_actor_dispatches_receive_tensor_and_returns_direct_messag
     assert response.metadata == b"request-reply"
     assert bytes(response.buffers[0]) == b"data"
     assert service.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_receive_tensor_is_reserved_from_generic_rpc_dispatch():
+    service = _TensorService()
+    wrapped = _WrappedActor(service)
+
+    response = await wrapped.receive(
+        _wrap_call(
+            "receive_tensor",
+            (TensorMessage(b"pickled", [b"payload"]),),
+            {},
+            False,
+        )
+    )
+
+    assert response == {"__error__": "Invalid method: receive_tensor"}
+    assert service.calls == 0

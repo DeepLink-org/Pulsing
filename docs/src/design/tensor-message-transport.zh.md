@@ -94,7 +94,8 @@ pub struct TensorMessage {
 ```
 
 公开传输模型区分 `DirectTcp`、`PackedHttp2Compatibility` 和预留的
-`SharedMemory` 后端。Python 与 Rust 表示都把 metadata 当作不透明数据。
+`SharedMemory` copy model。它们是 Pulsing 的物理传输选择，不是 PulsingQueue 的存储后端。
+Python 与 Rust 表示都把 metadata 当作不透明数据。
 
 ## 数据路径
 

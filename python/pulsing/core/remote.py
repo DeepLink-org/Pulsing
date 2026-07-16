@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# Native data-plane hooks are invoked only by their dedicated Rust/PyO3
+# message branch.  Exposing the same name through generic dict RPC would let a
+# caller pickle a message-like payload and bypass TensorMessage transport.
+_RESERVED_WIRE_METHODS = frozenset({"receive_tensor"})
+
 # Trace context ContextVars — set by _WrappedActor.receive (from Rust handler
 # attributes), read by PyO3 ask()/tell() to propagate W3C traceparent across
 # actor-to-actor calls within the same asyncio Task.
@@ -122,7 +127,7 @@ def _extract_methods(cls: type) -> tuple[list[str], set[str]]:
     methods = []
     async_methods = set()
     for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
-        if name.startswith("_"):
+        if name.startswith("_") or name in _RESERVED_WIRE_METHODS:
             continue
         methods.append(name)
         if inspect.iscoroutinefunction(method) or inspect.isasyncgenfunction(method):
@@ -222,7 +227,11 @@ class _WrappedActor(Actor):
         if isinstance(msg, dict):
             method, args, kwargs, is_async_call = _unwrap_call(msg)
 
-            if not method or method.startswith("_"):
+            if (
+                not method
+                or method.startswith("_")
+                or method in _RESERVED_WIRE_METHODS
+            ):
                 return _wrap_response(error=f"Invalid method: {method}")
 
             _MISSING = object()

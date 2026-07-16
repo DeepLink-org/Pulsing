@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 # Submodule first: ``@remote`` must be bound before anything that might
 # re-enter this package during ``pulsing.core`` import.
