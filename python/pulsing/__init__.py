@@ -28,6 +28,7 @@ __version__ = "0.1.3"
 # re-enter this package during ``pulsing.core`` import.
 from pulsing.core.remote import Actor, ActorClass, remote, resolve
 from pulsing.core import (
+    _HAS_NATIVE_TENSOR_TRANSPORT,
     init,
     shutdown,
     get_system,
@@ -38,8 +39,6 @@ from pulsing.core import (
     ActorRef,
     ActorId,
     ActorProxy,
-    TensorMessage,
-    tensor_transport_stats,
     SystemConfig,
     PythonActorService as _PythonActorService,
     PYTHON_ACTOR_SERVICE_NAME as _PYTHON_ACTOR_SERVICE_NAME,
@@ -56,6 +55,9 @@ from pulsing.exceptions import (
     PulsingUnsupportedError,
 )
 from . import transfer_queue
+
+if _HAS_NATIVE_TENSOR_TRANSPORT:
+    from pulsing.core import TensorMessage, tensor_transport_stats
 
 bootstrap.stop = bootstrap_stop
 
@@ -426,8 +428,6 @@ __all__ = [
     "ActorId",
     "ActorProxy",
     "IsolatedSpawnHandle",
-    "TensorMessage",
-    "tensor_transport_stats",
     # Exceptions
     "PulsingError",
     "PulsingRuntimeError",
@@ -438,3 +438,6 @@ __all__ = [
     "PulsingTimeoutError",
     "PulsingUnsupportedError",
 ]
+
+if _HAS_NATIVE_TENSOR_TRANSPORT:
+    __all__.extend(["TensorMessage", "tensor_transport_stats"])

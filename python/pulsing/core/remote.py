@@ -6,11 +6,12 @@ import copyreg
 import inspect
 import logging
 import random
+import sys
 import uuid
 from abc import ABC, abstractmethod
 from typing import Any, TypeVar
 
-from pulsing._core import ActorRef, ActorSystem, Message, StreamMessage, TensorMessage
+from pulsing._core import ActorRef, ActorSystem, Message, StreamMessage
 from pulsing.exceptions import PulsingActorError, PulsingRuntimeError
 
 from .protocol import (
@@ -21,6 +22,9 @@ from .protocol import (
     _wrap_response,
 )
 from .proxy import ActorProxy, _DelayedCallProxy
+
+_native_core = sys.modules["pulsing._core"]
+_NATIVE_TENSOR_MESSAGE = getattr(_native_core, "TensorMessage", None)
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +212,9 @@ class _WrappedActor(Actor):
         _current_traceparent.set(getattr(self, "__pulsing_tp__", None))
         _current_tracestate.set(getattr(self, "__pulsing_ts__", None))
 
-        if isinstance(msg, TensorMessage):
+        if _NATIVE_TENSOR_MESSAGE is not None and isinstance(
+            msg, _NATIVE_TENSOR_MESSAGE
+        ):
             receive_tensor = getattr(self._instance, "receive_tensor", None)
             if not callable(receive_tensor):
                 return _wrap_response(

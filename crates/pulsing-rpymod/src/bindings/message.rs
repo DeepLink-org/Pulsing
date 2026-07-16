@@ -218,21 +218,25 @@ impl PyMessage {
         }
     }
 
-    pub(crate) fn from_rust_message(msg: Message) -> Self {
+    pub(crate) fn from_rust_message(msg: Message, vm: &VirtualMachine) -> PyResult<Self> {
         match msg {
-            Message::Single { msg_type, data } => Self {
+            Message::Single { msg_type, data } => Ok(Self {
                 msg_type,
                 payload: Some(data),
                 stream_reader: None,
-            },
+            }),
             Message::Stream {
                 default_msg_type,
                 stream,
-            } => Self {
+            } => Ok(Self {
                 msg_type: default_msg_type,
                 payload: None,
                 stream_reader: Some(Arc::new(TokioMutex::new(Some(stream)))),
-            },
+            }),
+            Message::Tensor(_) => {
+                Err(vm
+                    .new_runtime_error("TensorMessage is not supported by the RustPython binding"))
+            }
         }
     }
 }
