@@ -122,10 +122,7 @@ async def test_remote_actor_tensor_roundtrip_uses_selected_transport(
             assert after["raw_frames_sent"] >= before["raw_frames_sent"] + 2
             assert after["active_copy_model"] == "direct_tcp"
         else:
-            assert (
-                after["http2_fallback_frames"]
-                >= before["http2_fallback_frames"] + 1
-            )
+            assert after["http2_fallback_frames"] >= before["http2_fallback_frames"] + 1
             assert after["active_copy_model"] == "packed_http2_compatibility"
     finally:
         if client is not None:
@@ -214,8 +211,7 @@ async def test_raw_tensor_pool_reconnects_only_before_next_request(monkeypatch):
 
         after = pul.tensor_transport_stats()
         assert (
-            after["raw_connections_accepted"]
-            >= before["raw_connections_accepted"] + 2
+            after["raw_connections_accepted"] >= before["raw_connections_accepted"] + 2
         )
     finally:
         if client is not None:
@@ -229,7 +225,9 @@ class _TensorService:
 
     async def receive_tensor(self, message):
         self.calls += 1
-        return TensorMessage(message.metadata + b"-reply", message.buffers, message.version)
+        return TensorMessage(
+            message.metadata + b"-reply", message.buffers, message.version
+        )
 
 
 @pytest.mark.asyncio

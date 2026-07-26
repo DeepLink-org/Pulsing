@@ -46,8 +46,7 @@ from .messaging import (
 
 _native_core = sys.modules["pulsing._core"]
 _HAS_NATIVE_TENSOR_TRANSPORT = all(
-    hasattr(_native_core, name)
-    for name in ("TensorMessage", "tensor_transport_stats")
+    hasattr(_native_core, name) for name in ("TensorMessage", "tensor_transport_stats")
 )
 if _HAS_NATIVE_TENSOR_TRANSPORT:
     TensorMessage = _native_core.TensorMessage
