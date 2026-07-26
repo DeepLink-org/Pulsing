@@ -64,6 +64,7 @@ pub struct SpawnBuilder<'a> {
     name: Option<ActorPath>,
     name_error: Option<String>,
     options: SpawnOptions,
+    publish_to_cluster: bool,
 }
 
 impl<'a> SpawnBuilder<'a> {
@@ -74,6 +75,7 @@ impl<'a> SpawnBuilder<'a> {
             name: None,
             name_error: None,
             options: SpawnOptions::default(),
+            publish_to_cluster: true,
         }
     }
 
@@ -128,6 +130,12 @@ impl<'a> SpawnBuilder<'a> {
         self
     }
 
+    /// Delay cluster publication until a bootstrap actor acknowledges readiness.
+    pub(crate) fn defer_cluster_publication(mut self) -> Self {
+        self.publish_to_cluster = false;
+        self
+    }
+
     /// Spawn the actor
     ///
     /// Accepts any type that implements `IntoActor`, including:
@@ -175,11 +183,25 @@ impl<'a> SpawnBuilder<'a> {
         match self.name {
             Some(path) => {
                 // Named actor: resolvable by name
-                ActorSystem::spawn_internal(self.system, Some(path), factory, self.options).await
+                ActorSystem::spawn_internal(
+                    self.system,
+                    Some(path),
+                    factory,
+                    self.options,
+                    self.publish_to_cluster,
+                )
+                .await
             }
             None => {
                 // Anonymous actor: not resolvable
-                ActorSystem::spawn_internal(self.system, None, factory, self.options).await
+                ActorSystem::spawn_internal(
+                    self.system,
+                    None,
+                    factory,
+                    self.options,
+                    self.publish_to_cluster,
+                )
+                .await
             }
         }
     }

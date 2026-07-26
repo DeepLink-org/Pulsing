@@ -32,7 +32,8 @@ Pulsing **不解析也不转换** Tensor 的 dtype、shape、stride、字节序�
 当前实现不提供：
 
 - GPU Direct、CUDA IPC 或 GPU 到 GPU 传输；
-- 同节点共享内存传输（传输抽象中已经预留）；
+- 跨进程/跨容器的同节点共享内存传输（节点级控制面已经引入，但 OS mapping
+  backend 与 peer capability handshake 尚未启用）；
 - Tensor schema 编解码、dtype 转换或字节序转换；
 - checksum、压缩、raw TCP 加密或持久化存储语义；
 - raw 协议能力协商、request ID、透明重试或 raw 到 HTTP/2 自动 fallback；
@@ -96,6 +97,27 @@ pub struct TensorMessage {
 公开传输模型区分 `DirectTcp`、`PackedHttp2Compatibility` 和预留的
 `SharedMemory` copy model。它们是 Pulsing 的物理传输选择，不是 PulsingQueue 的存储后端。
 Python 与 Rust 表示都把 metadata 当作不透明数据。
+
+## Shared-memory 控制面（基础实现）
+
+每个 `ActorSystem` 现在持有一个节点级 `ShmManager`，并由 `system/core`
+SystemActor 共同拥有其生命周期。它同时覆盖两种上层风格：
+
+- `offer(bytes, ttl)`：消息式 rendezvous；返回一个只能在 lease 有效期内映射的
+  descriptor。
+- `publish(name, bytes)` + `open(name, ttl)`：serve 式命名 region；`unpublish()`
+  会阻止新的 open，但会等待已有 lease drain。
+
+当前 backend 明确标记为 `in_process`：`map()` 返回 alias 同一份 immutable `Bytes`
+storage 的零拷贝 handle。这先固定了 descriptor、range validation、lease、revoke 和
+drain 语义，不会把“同机”误判为“已经可以安全跨进程共享”。可以向 `system/core`
+发送 `SystemMessage::GetShmStats` 查询控制面状态，或在 Rust 中通过
+`ActorSystem::shm_manager()` 使用它。
+
+传输路由已经从 `Http2Client` 中抽出。它只会在共享内存 backend 被明确声明可用、并且
+locality 满足要求时选择 SHM；目前远端 tensor 仍沿用默认 raw TCP，TLS 或
+`PULSING_TENSOR_TRANSPORT=http2` 仍使用 HTTP/2 兼容路径。因此现有
+`TensorMessage`、`ask/tell` 和 wire protocol 都没有变化。
 
 ## 数据路径
 

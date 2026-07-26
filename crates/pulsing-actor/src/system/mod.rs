@@ -92,7 +92,7 @@ pub use registry::ActorRegistry;
 pub use traits::{ActorSystemCoreExt, ActorSystemOpsExt};
 
 use crate::actor::{
-    ActorId, ActorPath, ActorRef, ActorResolver, ActorSystemRef, Envelope, NodeId, StopReason,
+    ActorId, ActorPath, ActorRef, ActorResolver, ActorSystemRef, Message, NodeId, StopReason,
 };
 use crate::cluster::{GossipBackend, HeadNodeBackend, NamingBackend};
 use crate::error::{PulsingError, Result, RuntimeError};
@@ -100,13 +100,17 @@ use crate::performance_store::{
     PerformanceSnapshot, PerformanceStore, DEFAULT_PERFORMANCE_HISTORY_CAPACITY,
 };
 use crate::policies::{LoadBalancingPolicy, RoundRobinPolicy};
-use crate::system_actor::{BoxedActorFactory, SystemActor, SystemRef, SYSTEM_ACTOR_PATH};
+use crate::system_actor::{
+    BoxedActorFactory, DefaultActorFactory, NodeLifecycle, NodeState, ShmManager, SystemActor,
+    SystemHost, SystemMessage, SystemRef, SystemResponse, SYSTEM_ACTOR_PATH,
+};
 use crate::transport::Http2Transport;
 use dashmap::DashMap;
 use handler::SystemMessageHandler;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
-use tokio::sync::mpsc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -152,9 +156,17 @@ pub struct ActorSystem {
 
     /// Ring buffer of recent `GetMetrics` snapshots (for local analysis / SQL adapters).
     pub(crate) performance_store: Arc<PerformanceStore>,
+
+    /// Node-level shared-memory control plane used by future same-host tensor backends.
+    pub(crate) shm_manager: Arc<ShmManager>,
+
+    /// Authoritative node control-plane lifecycle.
+    pub(crate) node_lifecycle: Arc<NodeLifecycle>,
 }
 
 impl ActorSystem {
+    const BOOTSTRAP_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
+
     /// Create a builder for configuring ActorSystem
     ///
     /// # Example
@@ -168,6 +180,25 @@ impl ActorSystem {
 
     /// Create a new actor system
     pub async fn new(config: SystemConfig) -> Result<Arc<Self>> {
+        Self::new_inner(config, None).await
+    }
+
+    /// Create an actor system with a custom actors-system service factory.
+    ///
+    /// The factory is installed while `system/core` is bootstrapped, before
+    /// the node becomes usable.  This is the supported replacement for trying
+    /// to replace an already-running SystemActor after [`Self::new`].
+    pub async fn new_with_system_actor_factory(
+        config: SystemConfig,
+        factory: BoxedActorFactory,
+    ) -> Result<Arc<Self>> {
+        Self::new_inner(config, Some(factory)).await
+    }
+
+    async fn new_inner(
+        config: SystemConfig,
+        system_actor_factory: Option<BoxedActorFactory>,
+    ) -> Result<Arc<Self>> {
         let cancel_token = CancellationToken::new();
         let node_id = NodeId::generate();
         let registry = Arc::new(ActorRegistry::new());
@@ -181,6 +212,8 @@ impl ActorSystem {
         > = Arc::new(OnceLock::new());
         let performance_store =
             Arc::new(PerformanceStore::new(DEFAULT_PERFORMANCE_HISTORY_CAPACITY));
+        let shm_manager = Arc::new(ShmManager::new());
+        let node_lifecycle = Arc::new(NodeLifecycle::new());
 
         // Create message handler (needs registry and cluster reference)
         let handler = SystemMessageHandler::new(
@@ -234,23 +267,33 @@ impl ActorSystem {
         // Start backend
         backend.start(cancel_token.clone());
 
-        // Join cluster if seed nodes provided (only for gossip mode)
-        if !config.seed_nodes.is_empty() && config.head_addr.is_none() && !config.is_head_node {
-            backend.join(config.seed_nodes).await?;
+        // Join cluster if seed nodes provided (only for gossip mode).
+        let join_result = if !config.seed_nodes.is_empty()
+            && config.head_addr.is_none()
+            && !config.is_head_node
+        {
+            backend.join(config.seed_nodes).await
         } else if config.head_addr.is_some() || config.is_head_node {
-            // For head node mode, join is handled internally
-            backend.join(Vec::new()).await?;
+            // For head node mode, join is handled internally.
+            backend.join(Vec::new()).await
+        } else {
+            Ok(())
+        };
+        if let Err(error) = join_result {
+            Self::cleanup_failed_bootstrap(
+                &node_lifecycle,
+                &shm_manager,
+                &cancel_token,
+                backend.leave(),
+                Self::BOOTSTRAP_CLEANUP_TIMEOUT,
+            )
+            .await;
+            return Err(error);
         }
 
         crate::actor_store::init_actor_memtable();
         crate::metrics_store::init_metrics_memtable();
         crate::members_store::init_members_memtable();
-        crate::members_store::upsert_member(
-            node_id,
-            actual_addr,
-            crate::cluster::NodeStatus::Online,
-            0,
-        );
 
         let system = Arc::new(Self {
             node_id,
@@ -264,72 +307,75 @@ impl ActorSystem {
             node_load: Arc::new(DashMap::new()),
             system_monitor,
             performance_store,
+            shm_manager,
+            node_lifecycle,
         });
 
-        // Start SystemActor
-        system.start_system_actor().await?;
+        // SystemRoot is part of bootstrap, not a runtime replacement.  This
+        // keeps factory/service dependencies fixed before the node is ready.
+        let root_result = if let Some(factory) = system_actor_factory {
+            system.start_system_actor_with_factory(factory).await
+        } else {
+            system.start_system_actor().await
+        };
+        if let Err(error) = root_result {
+            Self::cleanup_failed_bootstrap(
+                &system.node_lifecycle,
+                &system.shm_manager,
+                &system.cancel_token,
+                backend.leave(),
+                Self::BOOTSTRAP_CLEANUP_TIMEOUT,
+            )
+            .await;
+            return Err(error);
+        }
+
+        crate::members_store::upsert_member(
+            node_id,
+            actual_addr,
+            crate::cluster::NodeStatus::Online,
+            0,
+        );
 
         Ok(system)
     }
 
-    /// Start SystemActor (internal, called during system creation)
-    async fn start_system_actor(self: &Arc<Self>) -> Result<()> {
-        // Create senders snapshot for SystemRef
-        let local_actor_senders: Arc<DashMap<String, mpsc::Sender<Envelope>>> =
-            Arc::new(DashMap::new());
-        for entry in self.registry.iter_actors() {
-            // Find name for this actor (reverse lookup from actor_names)
-            if let Some(name_entry) = self
-                .registry
-                .actor_names
-                .iter()
-                .find(|e| *e.value() == *entry.key())
-            {
-                local_actor_senders.insert(name_entry.key().clone(), entry.sender.clone());
+    async fn cleanup_failed_bootstrap<F>(
+        lifecycle: &NodeLifecycle,
+        shm_manager: &ShmManager,
+        cancel_token: &CancellationToken,
+        leave: F,
+        leave_timeout: Duration,
+    ) where
+        F: Future<Output = Result<()>>,
+    {
+        let _ = lifecycle.transition(NodeState::Failed);
+        match tokio::time::timeout(leave_timeout, leave).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "Failed to leave cluster during bootstrap cleanup");
+            }
+            Err(_) => {
+                tracing::warn!(
+                    timeout_ms = leave_timeout.as_millis() as u64,
+                    "Timed out leaving cluster during bootstrap cleanup"
+                );
             }
         }
-
-        // Create named_actor_paths snapshot
-        let named_actor_paths: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
-        for entry in self.registry.iter_named_paths() {
-            named_actor_paths.insert(entry.key().clone(), entry.value().clone());
-        }
-
-        let system_ref = Arc::new(SystemRef {
-            node_id: self.node_id,
-            addr: self.addr,
-            local_actors: local_actor_senders,
-            named_actor_paths,
-        });
-
-        let metrics = Arc::new(crate::system_actor::SystemMetrics::new());
-        let sa_registry = Arc::new(crate::system_actor::ActorRegistry::new());
-        let system_actor = SystemActor::with_default_factory_shared(
-            system_ref,
-            sa_registry.clone(),
-            metrics.clone(),
-            self.performance_store.clone(),
-        )
-        .with_system_registry(self.registry.clone());
-
-        // Spawn as named actor with path "system" (use new_system to bypass namespace check)
-        let system_path = ActorPath::new_system(SYSTEM_ACTOR_PATH)?;
-        self.spawning()
-            .path(system_path)
-            .spawn(system_actor)
-            .await?;
-
-        let _ = self.system_monitor.set((metrics, sa_registry));
-
-        // Note: The local_actors_ref and actor_names_ref are used internally,
-        // SystemRef snapshot may become stale for new actors but that's acceptable
-        // since SystemActor doesn't need real-time actor list
-
-        tracing::debug!(path = SYSTEM_ACTOR_PATH, "SystemActor started");
-        Ok(())
+        cancel_token.cancel();
+        shm_manager.clear();
     }
 
-    /// Start SystemActor with custom factory (for Python extension)
+    /// Start SystemActor (internal, called during system creation)
+    async fn start_system_actor(self: &Arc<Self>) -> Result<()> {
+        self.spawn_system_actor(Box::new(DefaultActorFactory)).await
+    }
+
+    /// Start SystemActor with a custom factory during bootstrap.
+    ///
+    /// `ActorSystem::new` already starts `system/core`; callers that need a
+    /// custom factory must use [`Self::new_with_system_actor_factory`].  This
+    /// method remains public for compatibility with custom bootstrap code.
     pub async fn start_system_actor_with_factory(
         self: &Arc<Self>,
         factory: BoxedActorFactory,
@@ -341,43 +387,76 @@ impl ActorSystem {
             )));
         }
 
-        // Create SystemRef (snapshot of named paths)
-        let named_paths_snapshot: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
-        for entry in self.registry.iter_named_paths() {
-            named_paths_snapshot.insert(entry.key().clone(), entry.value().clone());
-        }
-        let system_ref = Arc::new(SystemRef {
-            node_id: self.node_id,
-            addr: self.addr,
-            local_actors: Arc::new(DashMap::new()), // Will be updated
-            named_actor_paths: named_paths_snapshot,
-        });
+        self.spawn_system_actor(factory).await
+    }
 
+    async fn spawn_system_actor(self: &Arc<Self>, factory: BoxedActorFactory) -> Result<()> {
+        let system_ref = self.system_ref_compat();
         let metrics = Arc::new(crate::system_actor::SystemMetrics::new());
-        let sa_registry = Arc::new(crate::system_actor::ActorRegistry::new());
-        let system_actor = SystemActor::new_shared(
-            system_ref,
-            factory,
-            sa_registry.clone(),
+        let legacy_registry = Arc::new(crate::system_actor::ActorRegistry::new());
+        let host = SystemHost::hosted(
+            &system_ref,
+            Arc::downgrade(self),
             metrics.clone(),
             self.performance_store.clone(),
-        )
-        .with_system_registry(self.registry.clone());
+            self.shm_manager.clone(),
+            self.node_lifecycle.clone(),
+        );
+        let system_actor =
+            SystemActor::new_hosted(factory, legacy_registry.clone(), metrics.clone(), host);
 
-        // Spawn as named actor (use new_system to bypass namespace check)
         let system_path = ActorPath::new_system(SYSTEM_ACTOR_PATH)?;
-        self.spawning()
+        let actor_ref = self
+            .spawning()
             .path(system_path)
+            .defer_cluster_publication()
             .spawn(system_actor)
             .await?;
 
-        let _ = self.system_monitor.set((metrics, sa_registry));
-
-        tracing::debug!(
-            path = SYSTEM_ACTOR_PATH,
-            "SystemActor started with custom factory"
-        );
+        if let Err(error) = self.await_system_actor_ready(&actor_ref).await {
+            let _ = self.node_lifecycle.transition(NodeState::Failed);
+            let _ = self.stop(SYSTEM_ACTOR_PATH).await;
+            return Err(error);
+        }
+        if let Some(cluster) = self.cluster.read().await.as_ref() {
+            let path = ActorPath::new_system(SYSTEM_ACTOR_PATH)?;
+            cluster.register_named_actor(path).await;
+            cluster.register_actor(*actor_ref.id()).await;
+        }
+        let _ = self.system_monitor.set((metrics, legacy_registry));
+        tracing::debug!(path = SYSTEM_ACTOR_PATH, "SystemActor ready");
         Ok(())
+    }
+
+    fn system_ref_compat(&self) -> Arc<SystemRef> {
+        Arc::new(SystemRef::new(self.node_id, self.addr))
+    }
+
+    async fn await_system_actor_ready(&self, actor_ref: &ActorRef) -> Result<()> {
+        let data = serde_json::to_vec(&SystemMessage::Ping)
+            .map_err(|error| PulsingError::from(RuntimeError::Serialization(error.to_string())))?;
+        let request = Message::Single {
+            msg_type: "SystemMessage".to_string(),
+            data,
+        };
+        let response =
+            tokio::time::timeout(std::time::Duration::from_secs(5), actor_ref.send(request))
+                .await
+                .map_err(|_| {
+                    PulsingError::from(RuntimeError::Other(
+                        "SystemActor readiness timed out".to_string(),
+                    ))
+                })??;
+        let response: SystemResponse = response.parse()?;
+        if matches!(response, SystemResponse::Pong { .. })
+            && self.node_lifecycle.state() == NodeState::Ready
+        {
+            Ok(())
+        } else {
+            Err(PulsingError::from(RuntimeError::Other(format!(
+                "SystemActor did not become ready: {response:?}"
+            ))))
+        }
     }
 
     /// Get SystemActor reference
@@ -417,6 +496,14 @@ impl ActorSystem {
     /// In-memory performance history store (same instance as [`SystemActor`] uses).
     pub fn performance_store(&self) -> &Arc<PerformanceStore> {
         &self.performance_store
+    }
+
+    /// Node-scoped shared-memory control plane.
+    ///
+    /// The initial backend is in-process and provides the stable region/lease
+    /// contract required before enabling cross-process mappings.
+    pub fn shm_manager(&self) -> &Arc<ShmManager> {
+        &self.shm_manager
     }
 
     /// Keep [`SystemActor`] `GetMetrics` / list in sync with real spawns (excludes `system/core`).
@@ -510,5 +597,74 @@ impl ActorResolver for ActorSystem {
     async fn resolve_path(&self, path: &ActorPath) -> Result<ActorRef> {
         // Use direct resolution (not lazy) to avoid infinite recursion
         self.resolve_named_direct(path, None).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn failed_bootstrap_cleanup_leaves_then_cancels_and_clears_host_resources() {
+        let lifecycle = NodeLifecycle::new();
+        let shm_manager = ShmManager::new();
+        let descriptor =
+            shm_manager.offer(Bytes::from_static(b"bootstrap"), Duration::from_secs(30));
+        let cancel_token = CancellationToken::new();
+        let leave_called = Arc::new(AtomicBool::new(false));
+        let leave_called_in_future = leave_called.clone();
+        let cancel_observed_by_leave = cancel_token.clone();
+
+        ActorSystem::cleanup_failed_bootstrap(
+            &lifecycle,
+            &shm_manager,
+            &cancel_token,
+            async move {
+                assert!(!cancel_observed_by_leave.is_cancelled());
+                leave_called_in_future.store(true, Ordering::Release);
+                Ok(())
+            },
+            Duration::from_millis(100),
+        )
+        .await;
+
+        assert!(leave_called.load(Ordering::Acquire));
+        assert!(cancel_token.is_cancelled());
+        assert_eq!(lifecycle.state(), NodeState::Failed);
+        assert_eq!(
+            shm_manager.stats(),
+            crate::system_actor::ShmStats::default()
+        );
+        assert!(shm_manager.map(&descriptor).is_err());
+    }
+
+    #[tokio::test]
+    async fn failed_bootstrap_cleanup_continues_when_leave_fails() {
+        let lifecycle = NodeLifecycle::new();
+        let shm_manager = ShmManager::new();
+        shm_manager.offer(Bytes::from_static(b"bootstrap"), Duration::from_secs(30));
+        let cancel_token = CancellationToken::new();
+
+        ActorSystem::cleanup_failed_bootstrap(
+            &lifecycle,
+            &shm_manager,
+            &cancel_token,
+            async {
+                Err(PulsingError::from(RuntimeError::Other(
+                    "injected leave failure".to_string(),
+                )))
+            },
+            Duration::from_millis(100),
+        )
+        .await;
+
+        assert!(cancel_token.is_cancelled());
+        assert_eq!(lifecycle.state(), NodeState::Failed);
+        assert_eq!(
+            shm_manager.stats(),
+            crate::system_actor::ShmStats::default()
+        );
     }
 }

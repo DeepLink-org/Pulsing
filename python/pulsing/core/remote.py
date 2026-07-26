@@ -233,11 +233,7 @@ class _WrappedActor(Actor):
         if isinstance(msg, dict):
             method, args, kwargs, is_async_call = _unwrap_call(msg)
 
-            if (
-                not method
-                or method.startswith("_")
-                or method in _RESERVED_WIRE_METHODS
-            ):
+            if not method or method.startswith("_") or method in _RESERVED_WIRE_METHODS:
                 return _wrap_response(error=f"Invalid method: {method}")
 
             _MISSING = object()

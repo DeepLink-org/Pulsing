@@ -24,4 +24,6 @@ pub use http2::{
 };
 pub use tensor::{
     raw_tensor_transport_stats, RawTensorTransportStats, TensorCopyModel, TensorTransport,
+    TensorTransportCapabilities, TensorTransportLocality, TensorTransportPreference,
+    TensorTransportRoute, TensorTransportRouter,
 };

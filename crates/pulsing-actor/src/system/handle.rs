@@ -4,6 +4,7 @@ use crate::actor::{ActorId, ActorPath, Envelope};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -56,6 +57,9 @@ pub(crate) struct LocalActorHandle {
 
     /// Static metadata provided by the actor
     pub metadata: HashMap<String, String>,
+
+    /// Local monotonic start time used by the authoritative actor catalog.
+    pub started_at: Instant,
 
     /// Named actor path (if this is a named actor)
     pub named_path: Option<ActorPath>,
