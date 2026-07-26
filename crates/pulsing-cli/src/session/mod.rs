@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use pulsing_forge::{run_agent_turn, run_oneshot, AgentConfig, InteractiveConfig};
+use pulsing_forge::{run_oneshot, AgentConfig, InteractiveConfig, LocalForgeClient, SessionId};
 
 use commands::{parse_line, InputAction};
 use mode::SessionMode;
@@ -103,11 +103,13 @@ struct SessionState {
 
 fn run_loop(state: &mut SessionState) -> Result<()> {
     let rt = config::tokio_runtime()?;
+    let forge = LocalForgeClient::default();
+    let forge_session = rt.block_on(forge.create_session(agent_config(&state.agent)))?;
     render::print_session_header(&state.mode, &state.agent);
 
     while let Some(line) = input::read_line(PROMPT)? {
         let action = parse_line(&line);
-        match dispatch(&rt, state, action)? {
+        match dispatch(&rt, &forge, &forge_session, state, action)? {
             LoopControl::Continue => {}
             LoopControl::Break => break,
         }
@@ -122,6 +124,8 @@ enum LoopControl {
 
 fn dispatch(
     rt: &tokio::runtime::Runtime,
+    forge: &LocalForgeClient,
+    forge_session: &SessionId,
     state: &mut SessionState,
     action: InputAction,
 ) -> Result<LoopControl> {
@@ -208,8 +212,7 @@ fn dispatch(
             }
         },
         InputAction::AgentTask { prompt } => {
-            let forge_cfg = agent_config(&state.agent);
-            match rt.block_on(run_agent_turn(&forge_cfg, &prompt)) {
+            match rt.block_on(forge.run_turn(forge_session.clone(), &prompt)) {
                 Ok(reply) => println!("\n{reply}\n"),
                 Err(err) => eprintln!("error: {err:#}\n"),
             }

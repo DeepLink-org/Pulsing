@@ -1,5 +1,9 @@
 # Pulsing Forge 抽象模型
 
+!!! info "当前抽象层"
+
+    本页描述当前工具执行抽象。取代 `ToolSession` 作为产品状态边界的版本化 Session、Event、Evolution 协议见 [Forge 核心架构](../design/forge/core-architecture.zh.md)。
+
 Forge 的设计目标：**给 Agent 一个标准、可沙箱化的「工作环境」**，而不是绑定某一种 LLM 产品或 CLI。
 
 ---

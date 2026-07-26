@@ -22,9 +22,11 @@ use crate::exec_output::{
     OutputBuffer, SHELL_MAX_BYTES, Utf8ChunkDecoder, clamp_yield_ms,
 };
 use crate::handlers::shell_exec::resolve_shell_workdir;
+use crate::process_group;
 use crate::pty_session::PtyExecHandle;
 use crate::result::ToolResult;
 use crate::sandbox::{SandboxPolicy, build_bash_exec};
+use crate::turn::TurnResourceGuard;
 
 pub struct UnifiedExecManager {
     next_id: AtomicI32,
@@ -35,6 +37,7 @@ enum SessionHandle {
     Pipe {
         child: Child,
         stdin: Option<ChildStdin>,
+        process_id: Option<u32>,
     },
     Pty(PtyExecHandle),
 }
@@ -45,12 +48,19 @@ struct ExecSession {
     _reader: Option<JoinHandle<()>>,
     started: Instant,
     tty: bool,
+    owner_turn: Option<crate::protocol::TurnId>,
+    _turn_resource: Option<TurnResourceGuard>,
 }
 
 impl Drop for ExecSession {
     fn drop(&mut self) {
         match &mut self.handle {
-            SessionHandle::Pipe { child, .. } => {
+            SessionHandle::Pipe {
+                child, process_id, ..
+            } => {
+                if let Some(process_id) = process_id {
+                    process_group::kill(*process_id);
+                }
                 if matches!(child.try_wait(), Ok(None)) {
                     let _ = child.start_kill();
                 }
@@ -99,7 +109,7 @@ impl UnifiedExecManager {
     }
 
     pub async fn exec_command(
-        &self,
+        self: &Arc<Self>,
         ctx: &ToolCallContext,
         args: &Value,
     ) -> Result<ToolResult, ToolError> {
@@ -123,6 +133,21 @@ impl UnifiedExecManager {
         let tty = args.get("tty").and_then(|v| v.as_bool()).unwrap_or(true);
 
         let session_id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let turn_resource = ctx.turn.as_ref().map(|turn| {
+            let weak_manager = Arc::downgrade(self);
+            turn.resources()
+                .register(format!("exec:{session_id}"), move || {
+                    let Some(manager) = weak_manager.upgrade() else {
+                        return;
+                    };
+                    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+                        return;
+                    };
+                    runtime.spawn(async move {
+                        manager.stop_session_and_wait(session_id).await;
+                    });
+                })
+        });
         let buffer = Arc::new(Mutex::new(OutputBuffer::new(SHELL_MAX_BYTES)));
         let on_delta = stream_hook(ctx, session_id);
 
@@ -150,7 +175,15 @@ impl UnifiedExecManager {
                 on_delta,
             )
             .await?;
-            (SessionHandle::Pipe { child, stdin }, Some(reader))
+            let process_id = child.id();
+            (
+                SessionHandle::Pipe {
+                    child,
+                    stdin,
+                    process_id,
+                },
+                Some(reader),
+            )
         };
 
         self.sessions.lock().await.insert(
@@ -161,10 +194,23 @@ impl UnifiedExecManager {
                 _reader: reader,
                 started: Instant::now(),
                 tty,
+                owner_turn: ctx.turn.as_ref().map(|turn| turn.turn_id.clone()),
+                _turn_resource: turn_resource,
             },
         );
 
-        tokio::time::sleep(std::time::Duration::from_millis(yield_ms)).await;
+        if let Some(turn) = &ctx.turn {
+            let cancellation = turn.cancellation();
+            tokio::select! {
+                _ = cancellation.cancelled() => {
+                    self.stop_session_and_wait(session_id).await;
+                    return Ok(ToolResult::err("exec session cancelled"));
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_millis(yield_ms)) => {}
+            }
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(yield_ms)).await;
+        }
         self.poll_session(session_id, max_tokens, ctx).await
     }
 
@@ -197,6 +243,13 @@ impl UnifiedExecManager {
             let session = sessions
                 .get_mut(&session_id)
                 .ok_or_else(|| ToolError::respond(format!("unknown session_id {session_id}")))?;
+            if let Some(owner) = &session.owner_turn
+                && ctx.turn.as_ref().map(|turn| &turn.turn_id) != Some(owner)
+            {
+                return Ok(ToolResult::err(format!(
+                    "session {session_id} belongs to another turn"
+                )));
+            }
 
             if chars != "\x03" && session_has_exited(&mut session.handle) {
                 return Ok(ToolResult::err(format!(
@@ -206,7 +259,12 @@ impl UnifiedExecManager {
 
             if chars == "\x03" {
                 match &mut session.handle {
-                    SessionHandle::Pipe { child, .. } => {
+                    SessionHandle::Pipe {
+                        child, process_id, ..
+                    } => {
+                        if let Some(process_id) = process_id {
+                            process_group::kill(*process_id);
+                        }
                         let _ = child.start_kill();
                     }
                     SessionHandle::Pty(pty) => pty.kill()?,
@@ -254,12 +312,23 @@ impl UnifiedExecManager {
     /// Kill all background exec sessions (REPL `/stop` or `/clean`).
     pub async fn stop_all(&self) -> usize {
         let mut sessions = self.sessions.lock().await;
-        let ids: Vec<i32> = sessions.keys().copied().collect();
-        let count = ids.len();
-        for id in ids {
-            let _ = sessions.remove(&id);
+        let removed = sessions
+            .drain()
+            .map(|(_, session)| session)
+            .collect::<Vec<_>>();
+        let count = removed.len();
+        drop(sessions);
+        for session in removed {
+            session.terminate().await;
         }
         count
+    }
+
+    async fn stop_session_and_wait(&self, session_id: i32) {
+        let session = self.sessions.lock().await.remove(&session_id);
+        if let Some(session) = session {
+            session.terminate().await;
+        }
     }
 
     async fn poll_session(
@@ -323,6 +392,34 @@ impl UnifiedExecManager {
     }
 }
 
+impl ExecSession {
+    async fn terminate(mut self) {
+        match &mut self.handle {
+            SessionHandle::Pipe {
+                child, process_id, ..
+            } => {
+                if let Some(process_id) = process_id.take() {
+                    process_group::kill(process_id);
+                }
+                if matches!(child.try_wait(), Ok(None)) {
+                    let _ = child.start_kill();
+                }
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
+            }
+            SessionHandle::Pty(pty) => {
+                let _ = pty.kill();
+                let deadline = Instant::now() + std::time::Duration::from_secs(2);
+                while pty.poll_exit_code().is_none() && Instant::now() < deadline {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            }
+        }
+        if let Some(reader) = self._reader.take() {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), reader).await;
+        }
+    }
+}
+
 fn stream_hook(
     ctx: &ToolCallContext,
     _session_id: i32,
@@ -382,6 +479,8 @@ async fn spawn_pipe_session(
     let plan = build_bash_exec(command, Some(workdir), policy, dangerous, login);
     let mut cmd = Command::new(&plan.argv[0]);
     cmd.args(&plan.argv[1..]);
+    process_group::configure(&mut cmd);
+    cmd.kill_on_drop(true);
     cmd.current_dir(workdir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -575,6 +674,58 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         assert!(output.contains("pty_ok") || structured.get("session_id").is_some());
+    }
+
+    async fn assert_turn_cancel_stops_process_tree(tty: bool) {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("should-not-exist");
+        let exec = Arc::new(UnifiedExecManager::new());
+        let session =
+            Arc::new(LocalToolSession::default().with_approval_policy(ApprovalPolicy::Always));
+        let turn = Arc::new(crate::turn::TurnExecutionContext::new(
+            crate::SessionId::new(),
+            crate::TurnId::new(),
+        ));
+        let ctx = ToolCallContext::new(
+            dir.path(),
+            "off",
+            session,
+            exec.clone(),
+            new_exec_policy(),
+            Arc::new(ApprovalCache::default()),
+            new_tool_catalog(),
+        )
+        .with_turn(turn.clone());
+        let args = serde_json::json!({
+            "cmd": "(sleep 0.3; touch should-not-exist) & wait",
+            "yield_time_ms": 5_000,
+            "tty": tty
+        });
+
+        let cancel = async {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            turn.cancel();
+        };
+        let (result, ()) = tokio::join!(exec.exec_command(&ctx, &args), cancel);
+        assert!(result.unwrap().is_error);
+        assert!(
+            turn.resources()
+                .wait_for_idle(std::time::Duration::from_secs(3))
+                .await
+        );
+        assert!(exec.list_sessions().await.is_empty());
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        assert!(!marker.exists(), "cancelled process tree produced a file");
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_pipe_session_process_tree() {
+        assert_turn_cancel_stops_process_tree(false).await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_pty_session_process_tree() {
+        assert_turn_cancel_stops_process_tree(true).await;
     }
 
     #[tokio::test]

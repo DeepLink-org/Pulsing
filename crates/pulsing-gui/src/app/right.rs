@@ -39,10 +39,7 @@ pub fn render(app: &mut WorkspaceApp, ui: &mut egui::Ui) {
     }
 
     ui.add_space(8.0);
-    if ui
-        .add_enabled(!busy, egui::Button::new("+ New chat"))
-        .clicked()
-    {
+    if ui.button("+ New chat").clicked() {
         app.dispatch_action(WorkspaceAction::NewSession);
     }
 

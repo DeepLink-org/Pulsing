@@ -13,6 +13,10 @@ impl ToolExecutor for RequestPermissionsHandler {
         "request_permissions"
     }
 
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
+    }
+
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, arguments: Value) -> ToolExecutorFuture<'a> {
         Box::pin(async move { request_permissions_impl(ctx, arguments) })
     }

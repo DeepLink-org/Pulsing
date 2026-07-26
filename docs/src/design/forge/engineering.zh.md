@@ -3,6 +3,8 @@
 > **产品文档**（面向用户）：[../../forge/index.md](../../forge/index.md) · [abstractions.md](../../forge/abstractions.md)
 >
 > **API 速查**：[python/pulsing/forge/README.md](https://github.com/DeepLink-org/pulsing/blob/main/python/pulsing/forge/README.md)
+>
+> **范围**：本文描述当前实现。目标产品边界、版本化 Session/Event/Evolution 协议以 [Forge 核心架构](core-architecture.zh.md) 为准。
 
 ---
 

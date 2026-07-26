@@ -12,6 +12,10 @@ impl ToolExecutor for BashHandler {
         "Bash"
     }
 
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
+    }
+
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, arguments: Value) -> ToolExecutorFuture<'a> {
         Box::pin(async move { run_shell(ctx, &arguments).await })
     }

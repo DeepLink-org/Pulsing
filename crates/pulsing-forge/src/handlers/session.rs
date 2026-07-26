@@ -20,6 +20,10 @@ impl ToolExecutor for NewContextHandler {
         "new_context"
     }
 
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
+    }
+
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, _arguments: Value) -> ToolExecutorFuture<'a> {
         Box::pin(async move { new_context_impl(ctx) })
     }
@@ -36,6 +40,10 @@ pub struct GetContextRemainingHandler;
 impl ToolExecutor for GetContextRemainingHandler {
     fn tool_name(&self) -> &str {
         "get_context_remaining"
+    }
+
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
     }
 
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, _arguments: Value) -> ToolExecutorFuture<'a> {
@@ -67,6 +75,10 @@ pub struct RequestUserInputHandler;
 impl ToolExecutor for RequestUserInputHandler {
     fn tool_name(&self) -> &str {
         "request_user_input"
+    }
+
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
     }
 
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, arguments: Value) -> ToolExecutorFuture<'a> {

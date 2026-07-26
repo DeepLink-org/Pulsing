@@ -1,5 +1,9 @@
 # 核心概念
 
+!!! info "范围"
+
+    下述 Host/Forge 分工描述当前工具运行时 API。目标控制面边界以 [Forge 核心架构](../design/forge/core-architecture.zh.md) 为准：Forge 将拥有 Session、Turn、Agent loop、Event 与 Evolution 语义，客户端只负责展示和 Provider/Tool 适配。
+
 ## Host 与 Forge
 
 | 层 | 负责 | 不负责 |

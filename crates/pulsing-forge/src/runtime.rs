@@ -1,14 +1,14 @@
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::approval::{ApprovalCache, new_exec_policy};
 use crate::context::{LocalToolSession, NullToolSession, ToolCallContext, ToolSession};
 use crate::discovery::{ToolCatalog, new_tool_catalog};
-use crate::executor::ToolExecutor;
 use crate::handlers::builtin_handlers;
 use crate::handlers::try_call_mcp_dynamic_tool;
+use crate::registry::{ToolRegistry, ToolRegistryError};
 use crate::result::ToolResult;
+use crate::turn::TurnExecutionContext;
 use crate::unified_exec::UnifiedExecManager;
 
 pub struct ToolRuntimeConfig {
@@ -45,16 +45,14 @@ impl Default for ToolRuntimeConfig {
 }
 
 pub struct ToolRuntime {
-    handlers: HashMap<String, Box<dyn ToolExecutor>>,
+    registry: ToolRegistry,
     context: ToolCallContext,
 }
 
 impl ToolRuntime {
     pub fn new(config: ToolRuntimeConfig) -> Self {
-        let mut handlers = HashMap::new();
-        for h in builtin_handlers() {
-            handlers.insert(h.tool_name().to_string(), h);
-        }
+        let registry = ToolRegistry::from_executors(builtin_handlers())
+            .expect("built-in Forge tools must form a valid registry");
         let context = ToolCallContext::new(
             config.cwd,
             &config.sandbox_policy,
@@ -70,7 +68,7 @@ impl ToolRuntime {
         } else {
             context
         };
-        Self { handlers, context }
+        Self { registry, context }
     }
 
     pub fn with_local_session(cwd: impl AsRef<Path>, sandbox_policy: &str) -> Self {
@@ -87,19 +85,48 @@ impl ToolRuntime {
     }
 
     pub fn tool_names(&self) -> Vec<String> {
-        let mut names: Vec<_> = self.handlers.keys().cloned().collect();
-        names.sort();
-        names
+        self.registry.names()
+    }
+
+    pub fn tool_definitions(
+        &self,
+        names: &[String],
+    ) -> Result<Vec<serde_json::Value>, ToolRegistryError> {
+        self.registry.definitions_for(names)
+    }
+
+    pub fn registry(&self) -> &ToolRegistry {
+        &self.registry
     }
 
     pub async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> ToolResult {
-        if let Some(h) = self.handlers.get(name) {
-            return match h.handle(&self.context, arguments).await {
+        self.call_tool_with_context(&self.context, name, arguments)
+            .await
+    }
+
+    pub async fn call_tool_in_turn(
+        &self,
+        turn: Arc<TurnExecutionContext>,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> ToolResult {
+        let context = self.context.clone().with_turn(turn);
+        self.call_tool_with_context(&context, name, arguments).await
+    }
+
+    async fn call_tool_with_context(
+        &self,
+        context: &ToolCallContext,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> ToolResult {
+        if let Some(h) = self.registry.get(name) {
+            return match h.handle(context, arguments).await {
                 Ok(r) => r,
                 Err(e) => ToolResult::err(e.to_string()),
             };
         }
-        if let Some(result) = try_call_mcp_dynamic_tool(&self.context, name, arguments).await {
+        if let Some(result) = try_call_mcp_dynamic_tool(context, name, arguments).await {
             return match result {
                 Ok(r) => r,
                 Err(e) => ToolResult::err(e.to_string()),

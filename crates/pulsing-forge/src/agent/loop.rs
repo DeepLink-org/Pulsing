@@ -1,23 +1,32 @@
 //! Multi-turn Forge agent loop (LLM + tools).
 
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 use crate::agent::events::{AgentEvent, emit};
-use crate::agent::tools::{DEFAULT_TOOL_NAMES, forge_tool_definitions};
+use crate::agent::tools::DEFAULT_TOOL_NAMES;
+use crate::approval::ApprovalPolicy;
 use crate::context::LocalToolSession;
 use crate::llm::{LlmClient, LlmMessage, LlmStream, StreamRequest};
 use crate::result::ToolResult;
 use crate::runtime::ToolRuntime;
+use crate::turn::TurnExecutionContext;
+use crate::{SessionId, TurnId};
 
 const DEFAULT_SYSTEM: &str = "You are a capable coding agent with filesystem and shell tools.\n\
 Use tools to inspect the workspace before answering.\n\
 When multi-step work is needed, call update_plan first.\n\
 Be concise in final replies.";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub cwd: PathBuf,
     pub provider: String,
@@ -25,9 +34,17 @@ pub struct AgentConfig {
     pub max_tokens: u32,
     pub max_turns: usize,
     pub sandbox: String,
+    pub approval_policy: ApprovalPolicy,
     pub tool_names: Vec<String>,
     pub system_prompt: Option<String>,
 }
+
+#[derive(Debug, Error)]
+#[error("agent turn cancelled")]
+pub struct AgentCancelled;
+
+pub type AgentEventHandler =
+    Arc<dyn Fn(AgentEvent) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync>;
 
 impl Default for AgentConfig {
     fn default() -> Self {
@@ -38,6 +55,7 @@ impl Default for AgentConfig {
             max_tokens: 8192,
             max_turns: 20,
             sandbox: "off".into(),
+            approval_policy: ApprovalPolicy::OnRequest,
             tool_names: DEFAULT_TOOL_NAMES.iter().map(|s| s.to_string()).collect(),
             system_prompt: None,
         }
@@ -94,38 +112,88 @@ pub struct ForgeAgent {
     runtime: ToolRuntime,
     messages: Vec<Value>,
     event_tx: Option<Sender<AgentEvent>>,
+    event_handler: Option<AgentEventHandler>,
 }
 
 impl ForgeAgent {
     pub fn new(config: AgentConfig) -> Self {
-        let client = LlmClient::new(&config.provider, None, None).expect("LLM client");
-        let session = std::sync::Arc::new(LocalToolSession::default());
+        Self::try_new(config).expect("LLM client")
+    }
+
+    pub fn try_new(config: AgentConfig) -> anyhow::Result<Self> {
+        let client = LlmClient::new(
+            &config.provider,
+            None,
+            provider_base_url_from_env(&config.provider),
+        )?;
+        let session = std::sync::Arc::new(
+            LocalToolSession::default().with_approval_policy(config.approval_policy),
+        );
         let runtime = ToolRuntime::new(crate::runtime::ToolRuntimeConfig {
             cwd: config.cwd.clone(),
             sandbox_policy: config.sandbox.clone(),
             session,
             ..Default::default()
         });
-        Self {
+        Ok(Self {
             config,
             client,
             runtime,
             messages: Vec::new(),
             event_tx: None,
-        }
+            event_handler: None,
+        })
+    }
+
+    pub fn set_event_handler(&mut self, handler: Option<AgentEventHandler>) {
+        self.event_handler = handler;
     }
 
     pub async fn run(&mut self, prompt: &str) -> anyhow::Result<String> {
-        self.messages.clear();
+        self.run_cancellable(prompt, CancellationToken::new()).await
+    }
+
+    pub async fn run_cancellable(
+        &mut self,
+        prompt: &str,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<String> {
+        let turn = Arc::new(TurnExecutionContext::with_cancellation(
+            SessionId::new(),
+            TurnId::new(),
+            cancel,
+        ));
+        self.run_in_turn(prompt, turn).await
+    }
+
+    pub async fn run_in_turn(
+        &mut self,
+        prompt: &str,
+        turn: Arc<TurnExecutionContext>,
+    ) -> anyhow::Result<String> {
+        let cancel = turn.cancellation();
+        if cancel.is_cancelled() {
+            self.emit_event(AgentEvent::Cancelled).await;
+            return Err(AgentCancelled.into());
+        }
         self.messages
             .push(json!({ "role": "user", "content": prompt }));
 
-        let tool_names: Vec<&str> = self.config.tool_names.iter().map(String::as_str).collect();
-        let tools = forge_tool_definitions(&tool_names);
+        let tools = self.runtime.tool_definitions(&self.config.tool_names)?;
 
         let mut final_msg: Option<LlmMessage> = None;
         for _ in 0..self.config.max_turns {
-            final_msg = Some(self.stream_one_turn(&tools).await?);
+            let message = {
+                let _model_resource = turn.resources().register_passive("model_request");
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        self.emit_event(AgentEvent::Cancelled).await;
+                        return Err(AgentCancelled.into());
+                    }
+                    result = self.stream_one_turn(&tools) => result?,
+                }
+            };
+            final_msg = Some(message);
             let msg = final_msg.as_ref().expect("final message");
             self.messages
                 .push(json!({ "role": "assistant", "content": msg.content }));
@@ -133,23 +201,33 @@ impl ForgeAgent {
             let tool_uses = extract_tool_uses(&msg.content);
             if tool_uses.is_empty() {
                 let text = text_from_content(&msg.content);
-                emit(&self.event_tx, AgentEvent::Done { text: text.clone() });
+                self.emit_event(AgentEvent::Done { text: text.clone() })
+                    .await;
                 return Ok(text);
             }
 
             let mut blocks = Vec::new();
             for (id, name, input) in tool_uses {
-                emit(&self.event_tx, AgentEvent::ToolStart { name: name.clone() });
-                let result = self.runtime.call_tool(&name, input).await;
+                self.emit_event(AgentEvent::ToolStart { name: name.clone() })
+                    .await;
+                let result = {
+                    let _tool_resource = turn.resources().register_passive(format!("tool:{name}"));
+                    tokio::select! {
+                        _ = cancel.cancelled() => {
+                            self.emit_event(AgentEvent::ToolCancelled { name }).await;
+                            self.emit_event(AgentEvent::Cancelled).await;
+                            return Err(AgentCancelled.into());
+                        }
+                        result = self.runtime.call_tool_in_turn(turn.clone(), &name, input) => result,
+                    }
+                };
                 let summary = result.content.chars().take(200).collect::<String>();
-                emit(
-                    &self.event_tx,
-                    AgentEvent::ToolEnd {
-                        name: name.clone(),
-                        ok: !result.is_error,
-                        summary,
-                    },
-                );
+                self.emit_event(AgentEvent::ToolEnd {
+                    name: name.clone(),
+                    ok: !result.is_error,
+                    summary,
+                })
+                .await;
                 blocks.push(tool_result_block(&id, &result));
                 if !result.is_error {
                     eprintln!("# tool {name} ok");
@@ -165,7 +243,8 @@ impl ForgeAgent {
             .map(|m| text_from_content(&m.content))
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "(max turns reached)".into());
-        emit(&self.event_tx, AgentEvent::Done { text: text.clone() });
+        self.emit_event(AgentEvent::Done { text: text.clone() })
+            .await;
         Ok(text)
     }
 
@@ -183,23 +262,45 @@ impl ForgeAgent {
             tools: tools.to_vec(),
         };
         let stream = self.client.stream_messages(req).await?;
-        emit_stream_text(&stream, &self.event_tx);
+        self.emit_stream_text(&stream).await;
         Ok(stream.final_message())
+    }
+
+    async fn emit_stream_text(&self, stream: &LlmStream) {
+        for chunk in stream.text_chunks() {
+            if self.event_tx.is_some() || self.event_handler.is_some() {
+                self.emit_event(AgentEvent::TextDelta(chunk.to_string()))
+                    .await;
+            } else {
+                print!("{chunk}");
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            }
+        }
+        if self.event_tx.is_none()
+            && self.event_handler.is_none()
+            && !stream.text_chunks().is_empty()
+        {
+            println!();
+        }
+    }
+
+    async fn emit_event(&self, event: AgentEvent) {
+        emit(&self.event_tx, event.clone());
+        if let Some(handler) = &self.event_handler {
+            handler(event).await;
+        }
     }
 }
 
-fn emit_stream_text(stream: &LlmStream, event_tx: &Option<Sender<AgentEvent>>) {
-    for chunk in stream.text_chunks() {
-        if let Some(tx) = event_tx {
-            let _ = tx.send(AgentEvent::TextDelta(chunk.to_string()));
-        } else {
-            print!("{chunk}");
-            let _ = std::io::Write::flush(&mut std::io::stdout());
-        }
-    }
-    if event_tx.is_none() && !stream.text_chunks().is_empty() {
-        println!();
-    }
+fn provider_base_url_from_env(provider: &str) -> Option<String> {
+    let variable = match provider.trim().to_lowercase().as_str() {
+        "openai" => "OPENAI_BASE_URL",
+        "anthropic" => "ANTHROPIC_BASE_URL",
+        _ => return None,
+    };
+    std::env::var(variable)
+        .ok()
+        .filter(|value| !value.is_empty())
 }
 
 fn text_from_content(content: &[Value]) -> String {
@@ -263,5 +364,44 @@ mod tests {
             .await
             .unwrap();
         assert!(!out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn forge_agent_preserves_messages_across_user_turns() {
+        let cfg = AgentConfig {
+            provider: "demo".into(),
+            model: "demo".into(),
+            ..Default::default()
+        };
+        let mut agent = ForgeAgent::new(cfg);
+        agent.run("remember alpha").await.unwrap();
+        let after_first = agent.messages.len();
+        agent.run("remember beta").await.unwrap();
+        assert!(agent.messages.len() > after_first);
+        assert_eq!(
+            agent
+                .messages
+                .last()
+                .and_then(|message| message.get("role")),
+            Some(&Value::String("assistant".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_cancelled_turn_never_starts() {
+        let cfg = AgentConfig {
+            provider: "demo".into(),
+            model: "demo".into(),
+            ..Default::default()
+        };
+        let mut agent = ForgeAgent::new(cfg);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let err = agent
+            .run_cancellable("must not run", cancel)
+            .await
+            .unwrap_err();
+        assert!(err.downcast_ref::<AgentCancelled>().is_some());
+        assert!(agent.messages.is_empty());
     }
 }

@@ -89,6 +89,17 @@ def test_marketplace_discover_and_install(codex_home: Path) -> None:
     ).is_file()
 
 
+def test_plugin_store_sorts_mixed_numeric_and_text_versions(
+    codex_home: Path,
+) -> None:
+    plugin_id = PluginId(plugin_name="demo", marketplace_name="local-dev")
+    base = PluginStore().plugin_base_root(plugin_id)
+    for version in ["1.0.9", "1.0.dev", "1.0.10"]:
+        (base / version).mkdir(parents=True)
+
+    assert PluginStore().active_plugin_version(plugin_id) == "1.0.dev"
+
+
 def test_request_plugin_install_codex_wire(codex_home: Path) -> None:
     plugin_id = _scaffold_marketplace(codex_home)
     session = LocalToolSession(

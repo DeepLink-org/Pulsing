@@ -14,6 +14,10 @@ impl ToolExecutor for WriteHandler {
         "Write"
     }
 
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
+    }
+
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, arguments: Value) -> ToolExecutorFuture<'a> {
         let cwd = ctx.cwd.clone();
         Box::pin(async move { write_impl(&cwd, &arguments) })
