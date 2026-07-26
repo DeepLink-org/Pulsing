@@ -663,6 +663,7 @@ mod tests {
             cancel_token: tokio_util::sync::CancellationToken::new(),
             stats: Arc::new(ActorStats::default()),
             metadata: HashMap::new(),
+            started_at: std::time::Instant::now(),
             named_path: None,
             actor_id,
         };
@@ -693,6 +694,7 @@ mod tests {
             cancel_token: tokio_util::sync::CancellationToken::new(),
             stats: Arc::new(ActorStats::default()),
             metadata: HashMap::new(),
+            started_at: std::time::Instant::now(),
             named_path: None,
             actor_id,
         };

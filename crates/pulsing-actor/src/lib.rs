@@ -198,6 +198,7 @@ pub mod prelude {
         ActorSystem, ActorSystemCoreExt, ActorSystemOpsExt, ResolveOptions, SpawnOptions,
         SystemConfig,
     };
+    pub use crate::system_actor::{ShmBackend, ShmManager, ShmRegionDescriptor, ShmStats};
     pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};
 }

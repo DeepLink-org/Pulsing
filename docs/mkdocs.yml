@@ -132,6 +132,7 @@ plugins:
             Actor Addressing: Actor 寻址
             HTTP2 Transport: HTTP2 传输
             TensorMessage Transport: TensorMessage 快速传输
+            System Actors: System Actor 机制
             Load Sync: 负载同步
             AS Actor Decorator: AS Actor 装饰器
             Communication Evolution: 集群内通信技术演进
@@ -223,6 +224,7 @@ nav:
     - Implementation:
       - AS Actor Decorator: design/as-actor-decorator.md
       - TensorMessage Transport: design/tensor-message-transport.md
+      - System Actors: design/system-actors.md
       - Communication Evolution: design/cluster-communication-evolution.md
       - Out-Cluster Connect: design/out-cluster-connect.md
     - Forge:

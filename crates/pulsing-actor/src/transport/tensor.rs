@@ -316,11 +316,8 @@ where
 
 pub(crate) fn raw_tensor_transport_requested() -> bool {
     !matches!(
-        std::env::var("PULSING_TENSOR_TRANSPORT")
-            .unwrap_or_else(|_| "auto".to_string())
-            .to_ascii_lowercase()
-            .as_str(),
-        "http2" | "legacy" | "off"
+        TensorTransportPreference::from_environment(),
+        TensorTransportPreference::Http2Compatibility
     )
 }
 
@@ -487,6 +484,104 @@ pub enum TensorCopyModel {
     SharedMemory,
 }
 
+/// Caller intent for selecting a tensor data plane.
+///
+/// `SharedMemory` is never silently treated as a raw socket request: if no
+/// compatible shared-memory backend is available, the router picks a safe
+/// existing fallback instead.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TensorTransportPreference {
+    Auto,
+    DirectTcp,
+    Http2Compatibility,
+    SharedMemory,
+}
+
+impl TensorTransportPreference {
+    pub fn from_environment() -> Self {
+        match std::env::var("PULSING_TENSOR_TRANSPORT")
+            .unwrap_or_else(|_| "auto".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "http2" | "legacy" | "off" => Self::Http2Compatibility,
+            "shm" | "shared_memory" | "shared-memory" => Self::SharedMemory,
+            "tcp" | "raw" | "direct_tcp" | "direct-tcp" => Self::DirectTcp,
+            _ => Self::Auto,
+        }
+    }
+}
+
+/// How closely the sender and receiver are placed.  Same host is not enough
+/// for SHM: it still needs a negotiated mapping backend and compatible access
+/// rights.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TensorTransportLocality {
+    SameProcess,
+    SameHost,
+    Remote,
+}
+
+/// Capabilities known at a concrete send site.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TensorTransportCapabilities {
+    pub direct_tcp: bool,
+    pub shared_memory: bool,
+}
+
+/// Result of selecting a tensor data plane.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TensorTransportRoute {
+    InProcessSharedMemory,
+    DirectTcp,
+    Http2Compatibility,
+}
+
+impl TensorTransportRoute {
+    pub fn copy_model(self) -> TensorCopyModel {
+        match self {
+            Self::InProcessSharedMemory => TensorCopyModel::SharedMemory,
+            Self::DirectTcp => TensorCopyModel::DirectTcp,
+            Self::Http2Compatibility => TensorCopyModel::PackedHttp2Compatibility,
+        }
+    }
+}
+
+/// Transport policy separated from individual HTTP/2 and future SHM backends.
+///
+/// The rule intentionally selects SHM only for a same-process, explicitly
+/// available backend.  A later same-host backend can extend this decision once
+/// it has a peer capability handshake and OS mapping implementation.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TensorTransportRouter;
+
+impl TensorTransportRouter {
+    pub fn select(
+        preference: TensorTransportPreference,
+        locality: TensorTransportLocality,
+        capabilities: TensorTransportCapabilities,
+    ) -> TensorTransportRoute {
+        let shm_available =
+            locality == TensorTransportLocality::SameProcess && capabilities.shared_memory;
+        match preference {
+            TensorTransportPreference::Http2Compatibility => {
+                TensorTransportRoute::Http2Compatibility
+            }
+            TensorTransportPreference::SharedMemory if shm_available => {
+                TensorTransportRoute::InProcessSharedMemory
+            }
+            TensorTransportPreference::SharedMemory
+            | TensorTransportPreference::DirectTcp
+            | TensorTransportPreference::Auto
+                if capabilities.direct_tcp =>
+            {
+                TensorTransportRoute::DirectTcp
+            }
+            _ => TensorTransportRoute::Http2Compatibility,
+        }
+    }
+}
+
 /// Backend boundary for opaque metadata plus contiguous tensor buffers.
 #[async_trait::async_trait]
 pub trait TensorTransport: Send + Sync {
@@ -499,4 +594,45 @@ pub trait TensorTransport: Send + Sync {
     async fn send_tensor(&self, actor_id: &ActorId, message: TensorMessage) -> Result<()>;
 
     fn copy_model(&self) -> TensorCopyModel;
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+
+    #[test]
+    fn shared_memory_requires_same_process_capability() {
+        let route = TensorTransportRouter::select(
+            TensorTransportPreference::SharedMemory,
+            TensorTransportLocality::SameHost,
+            TensorTransportCapabilities {
+                direct_tcp: true,
+                shared_memory: true,
+            },
+        );
+        assert_eq!(route, TensorTransportRoute::DirectTcp);
+
+        let route = TensorTransportRouter::select(
+            TensorTransportPreference::SharedMemory,
+            TensorTransportLocality::SameProcess,
+            TensorTransportCapabilities {
+                direct_tcp: true,
+                shared_memory: true,
+            },
+        );
+        assert_eq!(route, TensorTransportRoute::InProcessSharedMemory);
+    }
+
+    #[test]
+    fn existing_compatibility_mode_remains_authoritative() {
+        let route = TensorTransportRouter::select(
+            TensorTransportPreference::Http2Compatibility,
+            TensorTransportLocality::Remote,
+            TensorTransportCapabilities {
+                direct_tcp: true,
+                shared_memory: false,
+            },
+        );
+        assert_eq!(route, TensorTransportRoute::Http2Compatibility);
+    }
 }

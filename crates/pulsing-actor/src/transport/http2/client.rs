@@ -15,7 +15,9 @@ use crate::tracing::{
 };
 use crate::transport::tensor::{
     raw_tensor_transport_requested, read_raw_tensor_frame, record_tensor_http2_fallback,
-    write_raw_tensor_frame, RawTensorKind, TensorCopyModel,
+    write_raw_tensor_frame, RawTensorKind, TensorCopyModel, TensorTransportCapabilities,
+    TensorTransportLocality, TensorTransportPreference, TensorTransportRoute,
+    TensorTransportRouter,
 };
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
@@ -361,22 +363,30 @@ impl Http2Client {
     }
 
     pub(crate) fn tensor_copy_model(&self) -> TensorCopyModel {
-        if self.raw_tensor_enabled() {
-            TensorCopyModel::DirectTcp
-        } else {
-            TensorCopyModel::PackedHttp2Compatibility
-        }
+        self.tensor_route().copy_model()
     }
 
     fn raw_tensor_enabled(&self) -> bool {
-        if !raw_tensor_transport_requested() {
-            return false;
-        }
+        self.tensor_route() == TensorTransportRoute::DirectTcp
+    }
+
+    fn tensor_route(&self) -> TensorTransportRoute {
+        let mut direct_tcp = raw_tensor_transport_requested();
         #[cfg(feature = "tls")]
         if self.config.tls.is_some() {
-            return false;
+            direct_tcp = false;
         }
-        true
+        TensorTransportRouter::select(
+            TensorTransportPreference::from_environment(),
+            TensorTransportLocality::Remote,
+            TensorTransportCapabilities {
+                direct_tcp,
+                // Cross-process SHM has not been enabled.  The node-level
+                // manager exists, but a peer capability handshake and OS
+                // mapper are required before this can become true.
+                shared_memory: false,
+            },
+        )
     }
 
     async fn take_tensor_connection(&self, addr: SocketAddr) -> Result<TcpStream> {

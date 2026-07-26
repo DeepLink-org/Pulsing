@@ -95,6 +95,7 @@ impl ActorSystem {
     pub async fn shutdown(&self) -> Result<()> {
         tracing::info!("Shutting down actor system");
 
+        self.node_lifecycle.begin_draining()?;
         self.cancel_token.cancel();
 
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -138,13 +139,25 @@ impl ActorSystem {
 
         self.registry.clear_lifecycle().await;
 
+        // System services perform their normal drain in `SystemActor::on_stop`,
+        // but ActorSystem is the final owner of host resources. Revoke every
+        // descriptor even if SystemActor was absent, failed, or timed out.
+        self.shm_manager.clear();
+
         {
             let cluster_guard = self.cluster.read().await;
             if let Some(cluster) = cluster_guard.as_ref() {
-                cluster.leave().await?;
+                if let Err(error) = cluster.leave().await {
+                    let _ = self
+                        .node_lifecycle
+                        .transition(crate::system_actor::NodeState::Failed);
+                    return Err(error);
+                }
             }
         }
 
+        self.node_lifecycle
+            .transition(crate::system_actor::NodeState::Stopped)?;
         tracing::info!("Actor system shutdown complete");
         Ok(())
     }
@@ -214,5 +227,41 @@ impl ActorSystem {
             .await;
 
         self.notify_monitor_actor_stopped(actor_name, actor_id, &reason_copy);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::system::SystemConfig;
+    use crate::system_actor::{ShmStats, SYSTEM_ACTOR_PATH};
+    use bytes::Bytes;
+
+    #[tokio::test]
+    async fn shutdown_clears_host_shm_when_system_actor_cannot_stop() {
+        let system = ActorSystem::new(SystemConfig::standalone()).await.unwrap();
+        let descriptor = system
+            .shm_manager()
+            .offer(Bytes::from_static(b"host-owned"), Duration::from_secs(30));
+        assert_eq!(
+            &system.shm_manager().map(&descriptor).unwrap()[..],
+            b"host-owned"
+        );
+
+        let (_, local_id) = system
+            .registry
+            .remove_by_name(SYSTEM_ACTOR_PATH)
+            .expect("system actor must be registered");
+        let (_, handle) = system
+            .registry
+            .remove_handle(&local_id)
+            .expect("system actor handle must be registered");
+        handle.join_handle.abort();
+        let _ = handle.join_handle.await;
+
+        system.shutdown().await.unwrap();
+
+        assert_eq!(system.shm_manager().stats(), ShmStats::default());
+        assert!(system.shm_manager().map(&descriptor).is_err());
     }
 }

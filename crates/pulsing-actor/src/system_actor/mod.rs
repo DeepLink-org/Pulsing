@@ -18,21 +18,29 @@
 //! let remote_sys = system.resolve_named(&ActorPath::new("system/core")?, Some(&node_id)).await?;
 //! ```
 
+mod builtin;
 mod factory;
+mod host;
+mod lifecycle;
 mod messages;
+mod service;
+mod shm;
 
 pub use factory::{ActorFactory, BoxedActorFactory, DefaultActorFactory};
+pub(crate) use host::SystemHost;
+pub(crate) use lifecycle::{NodeLifecycle, NodeState};
 pub use messages::{ActorInfo, ActorStatusInfo, SystemMessage, SystemResponse};
+pub use shm::{ShmBackend, ShmManager, ShmRegionDescriptor, ShmStats};
 
 use crate::actor::{Actor, ActorContext, ActorId, Message};
 use crate::error::{PulsingError, Result, RuntimeError};
 use crate::metrics::SystemMetrics as PrometheusSystemMetrics;
-use crate::performance_store::{PerformanceSnapshot, PerformanceStore};
+use crate::performance_store::PerformanceStore;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 use tokio::sync::mpsc;
 
 /// Named path for SystemActor (system/core satisfies namespace/name format requirement)
@@ -175,34 +183,54 @@ pub struct SystemRef {
     pub node_id: crate::actor::NodeId,
     /// Local address
     pub addr: std::net::SocketAddr,
-    /// Local actor senders
+    /// Legacy spawn-time projection. System services use host capabilities and
+    /// the authoritative ActorSystem registry instead.
+    #[deprecated(
+        since = "0.1.3",
+        note = "use ActorSystem actor APIs; ActorSystem bootstrap no longer populates this snapshot"
+    )]
     pub local_actors: Arc<DashMap<String, mpsc::Sender<crate::actor::Envelope>>>,
-    /// Named actor path mappings
+    /// Legacy spawn-time projection. System services use host capabilities and
+    /// the authoritative ActorSystem registry instead.
+    #[deprecated(
+        since = "0.1.3",
+        note = "use ActorSystem resolution APIs; ActorSystem bootstrap no longer populates this snapshot"
+    )]
     pub named_actor_paths: Arc<DashMap<String, String>>,
+}
+
+impl SystemRef {
+    /// Construct the compatibility reference required by manually hosted
+    /// SystemActors. Actor and path snapshots are intentionally left empty.
+    #[allow(deprecated)]
+    pub fn new(node_id: crate::actor::NodeId, addr: std::net::SocketAddr) -> Self {
+        Self {
+            node_id,
+            addr,
+            local_actors: Arc::new(DashMap::new()),
+            named_actor_paths: Arc::new(DashMap::new()),
+        }
+    }
 }
 
 /// SystemActor - Built-in system actor for each ActorSystem
 pub struct SystemActor {
-    /// Actor registry
+    /// Compatibility projection retained for public Rust/Python APIs.
     registry: Arc<ActorRegistry>,
 
-    /// Actor factory
-    factory: BoxedActorFactory,
-
-    /// System metrics
+    /// Compatibility counters shared with ActorSystem monitoring.
     metrics: Arc<SystemMetrics>,
 
-    /// System reference
-    system_ref: Arc<SystemRef>,
+    /// Bootstrap extension factory retained so compatibility builders can
+    /// rebuild registrations before the actor starts.
+    factory: Arc<dyn ActorFactory>,
 
-    /// Start time
-    start_time: Instant,
+    /// Narrow view of ActorSystem-owned resources. This is the only source used
+    /// by built-in service handlers.
+    host: host::SystemHost,
 
-    /// Ring buffer of recent `GetMetrics` samples
-    performance_store: Arc<PerformanceStore>,
-
-    /// System-level registry with per-actor stats (for accurate messages_total)
-    system_registry: Option<Arc<crate::system::registry::ActorRegistry>>,
+    /// Governed service registry owned by this SystemRoot.
+    services: Arc<service::SystemServiceRegistry>,
 }
 
 impl SystemActor {
@@ -234,15 +262,13 @@ impl SystemActor {
         metrics: Arc<SystemMetrics>,
         performance_store: Arc<PerformanceStore>,
     ) -> Self {
-        Self {
-            registry,
-            factory: Box::new(DefaultActorFactory),
-            metrics,
+        Self::new_shared(
             system_ref,
-            start_time: Instant::now(),
+            Box::new(DefaultActorFactory),
+            registry,
+            metrics,
             performance_store,
-            system_registry: None,
-        }
+        )
     }
 
     /// Shared registry + metrics with a custom factory.
@@ -253,24 +279,84 @@ impl SystemActor {
         metrics: Arc<SystemMetrics>,
         performance_store: Arc<PerformanceStore>,
     ) -> Self {
+        let host = host::SystemHost::standalone(
+            &system_ref,
+            registry.clone(),
+            metrics.clone(),
+            performance_store,
+        );
+        Self::from_host(factory, registry, metrics, host)
+    }
+
+    pub(crate) fn new_hosted(
+        factory: BoxedActorFactory,
+        registry: Arc<ActorRegistry>,
+        metrics: Arc<SystemMetrics>,
+        host: SystemHost,
+    ) -> Self {
+        Self::from_host(factory, registry, metrics, host)
+    }
+
+    fn from_host(
+        factory: BoxedActorFactory,
+        registry: Arc<ActorRegistry>,
+        metrics: Arc<SystemMetrics>,
+        host: host::SystemHost,
+    ) -> Self {
+        let factory: Arc<dyn ActorFactory> = Arc::from(factory);
+        let services = Self::build_services(&host, factory.clone());
         Self {
             registry,
-            factory,
             metrics,
-            system_ref,
-            start_time: Instant::now(),
-            performance_store,
-            system_registry: None,
+            factory,
+            host,
+            services,
         }
     }
 
-    /// Attach the system-level registry for accurate global message counting.
+    fn build_services(
+        host: &host::SystemHost,
+        factory: Arc<dyn ActorFactory>,
+    ) -> Arc<service::SystemServiceRegistry> {
+        let services = Arc::new(service::SystemServiceRegistry::new());
+        for registration in builtin::registrations(host, factory) {
+            services
+                .register(registration)
+                .expect("built-in system service manifests must be valid and unique");
+        }
+        services
+    }
+
+    fn rebuild_services(&mut self) {
+        self.services = Self::build_services(&self.host, self.factory.clone());
+    }
+
+    /// Attach an authoritative host registry for read-only actor control.
+    ///
+    /// ActorSystem bootstrap uses [`Self::new_hosted`] so stop operations also
+    /// receive the full lifecycle capability. This builder remains for source
+    /// compatibility with manually constructed SystemActors.
     pub fn with_system_registry(
         mut self,
         reg: Arc<crate::system::registry::ActorRegistry>,
     ) -> Self {
-        self.system_registry = Some(reg);
+        self.host = self
+            .host
+            .with_actor_control(Arc::new(host::RegistryActorControl::new(reg)));
+        self.rebuild_services();
         self
+    }
+
+    /// Use the ActorSystem-owned shared-memory control plane.
+    pub fn with_shm_manager(mut self, manager: Arc<ShmManager>) -> Self {
+        self.host = self.host.with_shm_manager(manager);
+        self.rebuild_services();
+        self
+    }
+
+    /// Shared-memory control plane associated with this system actor.
+    pub fn shm_manager(&self) -> &Arc<ShmManager> {
+        self.host.shm_manager()
     }
 
     /// Get registry (for Python bindings)
@@ -281,95 +367,6 @@ impl SystemActor {
     /// Get metrics
     pub fn metrics(&self) -> &Arc<SystemMetrics> {
         &self.metrics
-    }
-
-    /// Handle ListActors request
-    fn handle_list_actors(&self) -> SystemResponse {
-        SystemResponse::ActorList {
-            actors: self.registry.list_all(),
-        }
-    }
-
-    /// Handle GetActor request
-    fn handle_get_actor(&self, name: &str) -> SystemResponse {
-        match self.registry.get_info(name) {
-            Some(info) => SystemResponse::ActorInfo(info),
-            None => SystemResponse::Error {
-                message: format!("Actor not found: {}", name),
-            },
-        }
-    }
-
-    /// Handle GetMetrics request
-    fn handle_get_metrics(&self) -> SystemResponse {
-        let actors_count = self.registry.count();
-        let messages_total = self.total_messages();
-        let actors_created = self.metrics.actors_created();
-        let actors_stopped = self.metrics.actors_stopped();
-        let uptime_secs = self.start_time.elapsed().as_secs();
-
-        let ts_unix_micros = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_micros() as u64)
-            .unwrap_or(0);
-        let node_id_str = self.system_ref.node_id.to_string();
-
-        self.performance_store.record(PerformanceSnapshot {
-            ts_unix_micros,
-            node_id: node_id_str.clone(),
-            actors_count: actors_count as u64,
-            messages_total,
-            actors_created,
-            actors_stopped,
-            uptime_secs,
-        });
-
-        crate::metrics_store::write_metrics_snapshot(
-            ts_unix_micros,
-            &node_id_str,
-            actors_count as u64,
-            messages_total,
-            actors_created,
-            actors_stopped,
-            uptime_secs,
-        );
-
-        SystemResponse::Metrics {
-            actors_count,
-            messages_total,
-            actors_created,
-            actors_stopped,
-            uptime_secs,
-        }
-    }
-
-    /// Handle GetNodeInfo request
-    fn handle_get_node_info(&self) -> SystemResponse {
-        SystemResponse::NodeInfo {
-            node_id: self.system_ref.node_id.0,
-            addr: self.system_ref.addr.to_string(),
-            uptime_secs: self.start_time.elapsed().as_secs(),
-        }
-    }
-
-    /// Handle HealthCheck request
-    fn handle_health_check(&self) -> SystemResponse {
-        SystemResponse::Health {
-            status: "healthy".to_string(),
-            actors_count: self.registry.count(),
-            uptime_secs: self.start_time.elapsed().as_secs(),
-        }
-    }
-
-    /// Handle Ping request
-    fn handle_ping(&self) -> SystemResponse {
-        SystemResponse::Pong {
-            node_id: self.system_ref.node_id.0,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64,
-        }
     }
 
     /// Register a created actor (called externally)
@@ -387,28 +384,7 @@ impl SystemActor {
 
     /// Get Prometheus-compatible system metrics
     pub fn get_prometheus_metrics(&self) -> PrometheusSystemMetrics {
-        PrometheusSystemMetrics {
-            node_id: self.system_ref.node_id.0,
-            actors_count: self.registry.count(),
-            messages_total: self.total_messages(),
-            actors_created: self.metrics.actors_created(),
-            actors_stopped: self.metrics.actors_stopped(),
-            cluster_members: HashMap::new(), // Will be filled by caller with cluster info
-        }
-    }
-
-    /// Sum message counts from all actors in the system-level registry,
-    /// falling back to `SystemMetrics::messages_total` (system-actor only) if unavailable.
-    fn total_messages(&self) -> u64 {
-        if let Some(reg) = &self.system_registry {
-            let mut total = 0u64;
-            for entry in reg.iter_actors() {
-                total += entry.value().stats.message_count.load(Ordering::Relaxed);
-            }
-            total
-        } else {
-            self.metrics.messages_total()
-        }
+        builtin::prometheus_metrics(&self.host)
     }
 
     /// Generate JSON error response
@@ -432,10 +408,28 @@ impl Actor for SystemActor {
         meta.insert("type".to_string(), "SystemActor".to_string());
         meta.insert("builtin".to_string(), "true".to_string());
         meta.insert("path".to_string(), SYSTEM_ACTOR_PATH.to_string());
+        meta.insert("control_plane".to_string(), "system-root".to_string());
+        // Actor metadata is captured at spawn time, so advertise immutable
+        // service identities here. Runtime readiness belongs to runtime@1.
+        let service_ids = self
+            .services
+            .statuses()
+            .into_iter()
+            .map(|(manifest, _)| format!("{}@{}", manifest.id.namespace, manifest.id.major))
+            .collect::<Vec<_>>()
+            .join(",");
+        meta.insert("services".to_string(), service_ids);
         meta
     }
 
     async fn on_start(&mut self, ctx: &mut ActorContext) -> Result<()> {
+        let lifecycle = self.host.lifecycle();
+        lifecycle.transition(NodeState::Starting)?;
+        if let Err(error) = self.services.start_all().await {
+            let _ = lifecycle.transition(NodeState::Failed);
+            return Err(error);
+        }
+        lifecycle.transition(NodeState::Ready)?;
         tracing::info!(
             actor_id = ?ctx.id(),
             path = SYSTEM_ACTOR_PATH,
@@ -445,6 +439,12 @@ impl Actor for SystemActor {
     }
 
     async fn on_stop(&mut self, ctx: &mut ActorContext) -> Result<()> {
+        let lifecycle = self.host.lifecycle();
+        lifecycle.begin_draining()?;
+        if let Err(error) = self.services.stop_all().await {
+            let _ = lifecycle.transition(NodeState::Failed);
+            return Err(error);
+        }
         tracing::info!(
             actor_id = ?ctx.id(),
             path = SYSTEM_ACTOR_PATH,
@@ -475,41 +475,18 @@ impl Actor for SystemActor {
             }
         };
 
-        let response = match sys_msg {
-            SystemMessage::ListActors => self.handle_list_actors(),
-
-            SystemMessage::GetActor { name } => self.handle_get_actor(&name),
-
-            SystemMessage::GetMetrics => self.handle_get_metrics(),
-
-            SystemMessage::GetNodeInfo => self.handle_get_node_info(),
-
-            SystemMessage::HealthCheck => self.handle_health_check(),
-
-            SystemMessage::Ping => self.handle_ping(),
-
-            // Actor creation handled by Python layer (via extension)
-            SystemMessage::CreateActor { .. } => SystemResponse::Error {
-                message: "CreateActor not supported in pure Rust mode. Use Python extension."
-                    .to_string(),
+        let response = match self
+            .services
+            .dispatch(
+                service::SystemCommand::from_legacy(sys_msg),
+                self.host.node_state(),
+            )
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => SystemResponse::Error {
+                message: error.to_string(),
             },
-
-            SystemMessage::StopActor { name } => {
-                // Mark as stopped (actual stop handled by ActorSystem)
-                if self.registry.contains(&name) {
-                    self.unregister_actor(&name);
-                    SystemResponse::Ok
-                } else {
-                    SystemResponse::Error {
-                        message: format!("Actor not found: {}", name),
-                    }
-                }
-            }
-
-            SystemMessage::Extension { handler, payload } => {
-                // Call factory's extension handler
-                self.factory.handle_extension(&handler, payload).await
-            }
         };
 
         // Use JSON serialization for response (for Python compatibility)

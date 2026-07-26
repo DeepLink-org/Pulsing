@@ -63,6 +63,9 @@ pub enum SystemMessage {
     /// Get node info
     GetNodeInfo,
 
+    /// Get node-level shared-memory control-plane statistics.
+    GetShmStats,
+
     /// Health check
     HealthCheck,
 
@@ -145,6 +148,17 @@ pub enum SystemResponse {
         uptime_secs: u64,
     },
 
+    /// Shared-memory control-plane status.  `in_process` means that region
+    /// lifetime semantics are available but cross-process mapping is not yet
+    /// advertised by this node.
+    ShmStats {
+        backend: String,
+        regions: usize,
+        published_regions: usize,
+        active_leases: usize,
+        bytes: usize,
+    },
+
     /// Health status
     Health {
         /// Status
@@ -171,6 +185,7 @@ pub struct ActorInfo {
     /// Actor name (also used as path for resolution)
     pub name: String,
     /// Actor ID (full UUID)
+    #[serde(with = "u128_as_string")]
     pub actor_id: u128,
     /// Actor type
     pub actor_type: String,

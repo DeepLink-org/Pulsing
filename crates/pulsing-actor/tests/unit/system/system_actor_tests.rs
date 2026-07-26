@@ -5,7 +5,8 @@
 use pulsing_actor::actor::ActorId;
 use pulsing_actor::prelude::*;
 use pulsing_actor::system_actor::{
-    ActorInfo, ActorRegistry, SystemMessage, SystemMetrics, SystemResponse, SYSTEM_ACTOR_PATH,
+    ActorFactory, ActorInfo, ActorRegistry, SystemMessage, SystemMetrics, SystemResponse,
+    SYSTEM_ACTOR_PATH,
 };
 use std::time::Duration;
 
@@ -29,6 +30,42 @@ fn create_system_message(msg: &SystemMessage) -> Message {
     Message::Single {
         msg_type: "SystemMessage".to_string(),
         data: json,
+    }
+}
+
+struct BootstrapFactory;
+
+#[async_trait]
+impl ActorFactory for BootstrapFactory {
+    fn supports(&self, _actor_type: &str) -> bool {
+        false
+    }
+
+    fn supported_types(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    async fn handle_extension(&self, handler: &str, _payload: serde_json::Value) -> SystemResponse {
+        if handler == "bootstrap_test" {
+            SystemResponse::Ok
+        } else {
+            SystemResponse::Error {
+                message: "unknown test extension".to_string(),
+            }
+        }
+    }
+}
+
+struct ManagedActor;
+
+#[async_trait]
+impl Actor for ManagedActor {
+    async fn receive(
+        &mut self,
+        message: Message,
+        _ctx: &mut ActorContext,
+    ) -> pulsing_actor::error::Result<Message> {
+        Ok(message)
     }
 }
 
@@ -63,6 +100,16 @@ fn test_system_message_list_actors_serialization() {
 
     let parsed: SystemMessage = serde_json::from_str(&json).unwrap();
     assert!(matches!(parsed, SystemMessage::ListActors));
+}
+
+#[test]
+fn test_system_message_get_shm_stats_serialization() {
+    let msg = SystemMessage::GetShmStats;
+    let json = serde_json::to_string(&msg).unwrap();
+    assert!(json.contains("GetShmStats"));
+
+    let parsed: SystemMessage = serde_json::from_str(&json).unwrap();
+    assert!(matches!(parsed, SystemMessage::GetShmStats));
 }
 
 #[test]
@@ -198,6 +245,30 @@ async fn test_system_actor_auto_start() {
 }
 
 #[tokio::test]
+async fn test_system_actor_factory_is_installed_during_bootstrap() {
+    let system = ActorSystem::new_with_system_actor_factory(
+        SystemConfig::standalone(),
+        Box::new(BootstrapFactory),
+    )
+    .await
+    .unwrap();
+    let sys_ref = system.system().await.unwrap();
+    let response = sys_ref
+        .send(create_system_message(&SystemMessage::Extension {
+            handler: "bootstrap_test".to_string(),
+            payload: serde_json::Value::Null,
+        }))
+        .await
+        .unwrap();
+    assert!(matches!(
+        parse_system_response(response),
+        SystemResponse::Ok
+    ));
+
+    system.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn test_system_actor_ping() {
     let system = create_test_system().await;
     let sys_ref = system.system().await.unwrap();
@@ -259,6 +330,36 @@ async fn test_system_actor_get_node_info() {
             assert!(!addr.is_empty());
         }
         _ => panic!("Expected NodeInfo response"),
+    }
+
+    system.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_system_actor_get_shm_stats() {
+    let system = create_test_system().await;
+    let sys_ref = system.system().await.unwrap();
+
+    let response = sys_ref
+        .send(create_system_message(&SystemMessage::GetShmStats))
+        .await
+        .unwrap();
+    let parsed = parse_system_response(response);
+    match parsed {
+        SystemResponse::ShmStats {
+            backend,
+            regions,
+            published_regions,
+            active_leases,
+            bytes,
+        } => {
+            assert_eq!(backend, "in_process");
+            assert_eq!(regions, 0);
+            assert_eq!(published_regions, 0);
+            assert_eq!(active_leases, 0);
+            assert_eq!(bytes, 0);
+        }
+        _ => panic!("Expected ShmStats response"),
     }
 
     system.shutdown().await.unwrap();
@@ -330,6 +431,57 @@ async fn test_system_actor_list_actors() {
     }
 
     system.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_system_actor_reads_and_stops_authoritative_actor() {
+    let system = create_test_system().await;
+    system
+        .spawn_named("actors/managed", ManagedActor)
+        .await
+        .unwrap();
+    let sys_ref = system.system().await.unwrap();
+
+    let response = sys_ref
+        .send(create_system_message(&SystemMessage::GetActor {
+            name: "actors/managed".to_string(),
+        }))
+        .await
+        .unwrap();
+    assert!(matches!(
+        parse_system_response(response),
+        SystemResponse::ActorInfo(_)
+    ));
+
+    let response = sys_ref
+        .send(create_system_message(&SystemMessage::StopActor {
+            name: "actors/managed".to_string(),
+        }))
+        .await
+        .unwrap();
+    assert!(matches!(
+        parse_system_response(response),
+        SystemResponse::Ok
+    ));
+    assert!(system.local_actor_ref_by_name("actors/managed").is_none());
+
+    system.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_shutdown_clears_shm_control_plane() {
+    let system = create_test_system().await;
+    system
+        .shm_manager()
+        .publish("models/current", bytes::Bytes::from_static(b"weights"))
+        .unwrap();
+    assert_eq!(system.shm_manager().stats().regions, 1);
+
+    system.shutdown().await.unwrap();
+    assert_eq!(
+        system.shm_manager().stats(),
+        pulsing_actor::system_actor::ShmStats::default()
+    );
 }
 
 #[tokio::test]

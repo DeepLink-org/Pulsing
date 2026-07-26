@@ -28,6 +28,7 @@ impl ActorSystem {
         path: Option<ActorPath>,
         factory: F,
         options: SpawnOptions,
+        publish_to_cluster: bool,
     ) -> Result<ActorRef>
     where
         F: FnMut() -> Result<A> + Send + 'static,
@@ -65,6 +66,7 @@ impl ActorSystem {
             cancel_token: actor_cancel,
             stats: stats.clone(),
             metadata: metadata.clone(),
+            started_at: std::time::Instant::now(),
             named_path: path.clone(),
             actor_id,
         };
@@ -90,17 +92,19 @@ impl ActorSystem {
                 .register_named_path(name.clone(), name.clone());
 
             // Register with cluster if available
-            if let Some(ref path) = path {
-                if let Some(cluster) = self.cluster.read().await.as_ref() {
-                    if metadata.is_empty() {
-                        cluster.register_named_actor(path.clone()).await;
-                    } else {
-                        cluster
-                            .register_named_actor_full(path.clone(), actor_id, metadata.clone())
-                            .await;
+            if publish_to_cluster {
+                if let Some(ref path) = path {
+                    if let Some(cluster) = self.cluster.read().await.as_ref() {
+                        if metadata.is_empty() {
+                            cluster.register_named_actor(path.clone()).await;
+                        } else {
+                            cluster
+                                .register_named_actor_full(path.clone(), actor_id, metadata.clone())
+                                .await;
+                        }
+                        // So refer(actor_id) / lookup_actor can resolve this actor on any node
+                        cluster.register_actor(actor_id).await;
                     }
-                    // So refer(actor_id) / lookup_actor can resolve this actor on any node
-                    cluster.register_actor(actor_id).await;
                 }
             }
         } else {
