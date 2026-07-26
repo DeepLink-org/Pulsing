@@ -1,6 +1,6 @@
 [project]
 name = "pulsing-bench"
-version = "0.1.2"
+version = "0.1.3"
 description = "Pulsing Benchmark - LLM Inference Benchmark Tool"
 readme = "../../README.md"
 authors = [

@@ -188,6 +188,54 @@ from pulsing.langgraph import with_pulsing
 distributed_app = with_pulsing(app, seeds=["gpu-server:8001"])
 ```
 
+### 5. TensorDict 快速传输
+
+`TensorMessage` 用一段不透明 metadata 和多段连续 CPU buffer 传输 TensorDict。PulsingQueue
+负责把 CUDA Tensor 搬到 CPU，并在交给 Pulsing 前保证每个 Tensor 连续；Pulsing 不解析
+Tensor 的 dtype、shape 或 stride，这些信息由 PulsingQueue 编码到 metadata。
+
+```python
+from array import array
+
+import pulsing as pul
+
+cpu_buffer = array("f", range(6))
+message = pul.TensorMessage(
+    metadata=b"...",              # dtype / shape / TensorDict 结构
+    buffers=[memoryview(cpu_buffer).cast("B")],  # 必须连续
+    version=1,
+)
+
+# @remote Actor 收到 TensorMessage 时调用该专用入口。
+@pul.remote
+class Storage:
+    async def receive_tensor(self, message: pul.TensorMessage):
+        return message
+```
+
+明文远程连接默认使用同一监听端口上的 raw TCP 数据面：长连接池复用连接，发送端用
+`write_vectored` 直接提交 header、metadata 和各原始 buffer，接收端把每个 payload
+直接读入最终由 Python Tensor 持有的分配。按应用 payload 的 CPU copy 口径，主路径只有
+`应用 buffer -> TCP kernel buffer` 和 `TCP kernel buffer -> 最终接收 buffer` 两次，
+不会先拼成一个大包，也不会在接收后再复制一次。远程调用的 `ask`/`tell` 完成前，发送方
+不得修改或 resize 源 buffer；完成后远端已经持有独立接收分配。若目标 actor 位于同一进程，
+双方共享原 storage，接收方仍持有引用期间原地修改会彼此可见；需要快照语义时由调用方先
+`clone()`。返回的接收 buffer 生命周期由 `TensorMessage`/下游 Tensor 引用管理。
+
+TLS 连接，或设置 `PULSING_TENSOR_TRANSPORT=http2` 时，使用兼容 HTTP/2 路径。该路径会
+打包和聚合 payload，copy 次数高于 raw TCP。可通过 `pulsing.tensor_transport_stats()`
+检查 `active_copy_model`、raw frame/byte 计数和 HTTP/2 fallback 计数。接收边界可用以下
+环境变量限制，超限会在分配大 payload 前拒绝：
+
+- `PULSING_MAX_TENSOR_WIRE_BYTES`：单帧总大小，默认 64 GiB
+- `PULSING_MAX_TENSOR_METADATA_BYTES`：metadata 大小，默认 64 MiB
+- `PULSING_MAX_TENSOR_BUFFERS`：buffer 数量，默认 65536
+
+同节点共享内存后端已在 `TensorTransport` 抽象中预留，当前尚未实现。
+
+完整内容见 [TensorMessage 快速传输设计](docs/src/design/tensor-message-transport.zh.md)
+和 [可运行的 TCP 示例](examples/python/tensor_message_fast_path.py)。
+
 ## 📚 示例导航
 
 ```
@@ -203,6 +251,7 @@ examples/
 ├── python/                  # ⭐⭐ 基础示例
 │   ├── ping_pong.py         #    Actor 基础
 │   ├── cluster.py           #    集群通信
+│   ├── tensor_message_fast_path.py # Tensor 传输
 │   └── ...
 └── rust/                    # Rust 示例
 ```

@@ -146,7 +146,7 @@ pub async fn decode_message_to_pyobject(
             Ok(desc.into_ref(&vm.ctx).into())
         }
         other => {
-            let py_msg = PyMessage::from_rust_message(other);
+            let py_msg = PyMessage::from_rust_message(other, vm)?;
             Ok(py_msg.into_ref(&vm.ctx).into())
         }
     }

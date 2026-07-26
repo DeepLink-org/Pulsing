@@ -19,6 +19,7 @@ Simple API:
 
 import asyncio
 import os
+import sys
 
 from pulsing._async_bridge import (
     clear_pulsing_loop,
@@ -42,6 +43,15 @@ from .messaging import (
     Message,
     StreamMessage,
 )  # internal: used by service.py / integrations
+
+_native_core = sys.modules["pulsing._core"]
+_HAS_NATIVE_TENSOR_TRANSPORT = all(
+    hasattr(_native_core, name)
+    for name in ("TensorMessage", "tensor_transport_stats")
+)
+if _HAS_NATIVE_TENSOR_TRANSPORT:
+    TensorMessage = _native_core.TensorMessage
+    tensor_transport_stats = _native_core.tensor_transport_stats
 
 # =============================================================================
 # Global system for simple API
@@ -247,3 +257,6 @@ __all__ = [
     "PulsingRuntimeError",
     "PulsingActorError",
 ]
+
+if _HAS_NATIVE_TENSOR_TRANSPORT:
+    __all__.extend(["TensorMessage", "tensor_transport_stats"])

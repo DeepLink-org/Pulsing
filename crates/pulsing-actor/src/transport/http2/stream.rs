@@ -73,6 +73,7 @@ impl StreamFrame {
                 Self::data(frame_msg_type, data)
             }
             Message::Stream { .. } => Self::error("Nested streams are not supported"),
+            Message::Tensor(_) => Self::error("Tensor messages cannot be nested in streams"),
         }
     }
 

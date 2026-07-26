@@ -6,6 +6,7 @@ import copyreg
 import inspect
 import logging
 import random
+import sys
 import uuid
 from abc import ABC, abstractmethod
 from typing import Any, TypeVar
@@ -22,9 +23,17 @@ from .protocol import (
 )
 from .proxy import ActorProxy, _DelayedCallProxy
 
+_native_core = sys.modules["pulsing._core"]
+_NATIVE_TENSOR_MESSAGE = getattr(_native_core, "TensorMessage", None)
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# Native data-plane hooks are invoked only by their dedicated Rust/PyO3
+# message branch.  Exposing the same name through generic dict RPC would let a
+# caller pickle a message-like payload and bypass TensorMessage transport.
+_RESERVED_WIRE_METHODS = frozenset({"receive_tensor"})
 
 # Trace context ContextVars — set by _WrappedActor.receive (from Rust handler
 # attributes), read by PyO3 ask()/tell() to propagate W3C traceparent across
@@ -122,7 +131,7 @@ def _extract_methods(cls: type) -> tuple[list[str], set[str]]:
     methods = []
     async_methods = set()
     for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
-        if name.startswith("_"):
+        if name.startswith("_") or name in _RESERVED_WIRE_METHODS:
             continue
         methods.append(name)
         if inspect.iscoroutinefunction(method) or inspect.isasyncgenfunction(method):
@@ -203,10 +212,32 @@ class _WrappedActor(Actor):
         _current_traceparent.set(getattr(self, "__pulsing_tp__", None))
         _current_tracestate.set(getattr(self, "__pulsing_ts__", None))
 
+        if _NATIVE_TENSOR_MESSAGE is not None and isinstance(
+            msg, _NATIVE_TENSOR_MESSAGE
+        ):
+            receive_tensor = getattr(self._instance, "receive_tensor", None)
+            if not callable(receive_tensor):
+                return _wrap_response(
+                    error=(
+                        f"{type(self._instance).__name__} does not implement "
+                        "receive_tensor(message)"
+                    )
+                )
+            result = receive_tensor(msg)
+            if inspect.isawaitable(result):
+                result = await result
+            # TensorMessage must stay outside the normal method-response pickle
+            # envelope so Rust can retain or transport its buffers directly.
+            return result
+
         if isinstance(msg, dict):
             method, args, kwargs, is_async_call = _unwrap_call(msg)
 
-            if not method or method.startswith("_"):
+            if (
+                not method
+                or method.startswith("_")
+                or method in _RESERVED_WIRE_METHODS
+            ):
                 return _wrap_response(error=f"Invalid method: {method}")
 
             _MISSING = object()

@@ -188,6 +188,35 @@ from pulsing.langgraph import with_pulsing
 distributed_app = with_pulsing(app, seeds=["gpu-server:8001"])
 ```
 
+### 5. Fast TensorDict Transport
+
+`TensorMessage` carries opaque metadata and ordered, contiguous CPU buffers
+without putting tensor payloads in the normal pickle envelope. The caller (for
+example PulsingQueue) moves CUDA tensors to CPU, makes them contiguous, and
+encodes dtype, shape, byte order, and TensorDict structure in metadata. Pulsing
+only transports those bytes and buffers.
+
+```python
+from array import array
+
+import pulsing as pul
+
+cpu_buffer = array("f", range(6))
+message = pul.TensorMessage(
+    metadata=b"...",  # dtype, shape, byte order, and TensorDict structure
+    buffers=[memoryview(cpu_buffer).cast("B")],
+    version=1,
+)
+```
+
+Clear-text remote connections use a pooled raw TCP path by default. It sends
+the header, metadata, and original buffers with vectored I/O and reads every
+payload directly into its final receive allocation. TLS and
+`PULSING_TENSOR_TRANSPORT=http2` use the packed HTTP/2 compatibility path.
+
+See the [complete transport design](docs/src/design/tensor-message-transport.md)
+and the [runnable TCP example](examples/python/tensor_message_fast_path.py).
+
 ## 📚 Example Guide
 
 ```
@@ -203,6 +232,7 @@ examples/
 ├── python/                  # ⭐⭐ Basic examples
 │   ├── ping_pong.py         #    Actor basics
 │   ├── cluster.py           #    Cluster communication
+│   ├── tensor_message_fast_path.py # Tensor transport
 │   └── ...
 └── rust/                    # Rust examples
 ```

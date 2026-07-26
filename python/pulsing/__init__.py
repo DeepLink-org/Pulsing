@@ -22,12 +22,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 # Submodule first: ``@remote`` must be bound before anything that might
 # re-enter this package during ``pulsing.core`` import.
 from pulsing.core.remote import Actor, ActorClass, remote, resolve
 from pulsing.core import (
+    _HAS_NATIVE_TENSOR_TRANSPORT,
     init,
     shutdown,
     get_system,
@@ -54,6 +55,9 @@ from pulsing.exceptions import (
     PulsingUnsupportedError,
 )
 from . import transfer_queue
+
+if _HAS_NATIVE_TENSOR_TRANSPORT:
+    from pulsing.core import TensorMessage, tensor_transport_stats
 
 bootstrap.stop = bootstrap_stop
 
@@ -434,3 +438,6 @@ __all__ = [
     "PulsingTimeoutError",
     "PulsingUnsupportedError",
 ]
+
+if _HAS_NATIVE_TENSOR_TRANSPORT:
+    __all__.extend(["TensorMessage", "tensor_transport_stats"])

@@ -3,12 +3,16 @@
 use super::config::Http2Config;
 use super::stream::{BinaryFrameParser, StreamFrame};
 use super::{headers, MessageMode, RequestType};
-use crate::actor::Message;
+use crate::actor::{max_tensor_wire_bytes, Message, TensorMessage, TENSOR_MESSAGE_TYPE};
 use crate::error::{PulsingError, Result, RuntimeError};
 use crate::tracing::{OpenTelemetrySpanExt, TraceContext, TRACEPARENT_HEADER, TRACESTATE_HEADER};
+use crate::transport::tensor::{
+    raw_tensor_transport_requested, read_raw_tensor_frame, record_raw_tensor_connection,
+    write_raw_tensor_frame, RawTensorKind, RAW_TENSOR_MAGIC,
+};
 use bytes::Bytes;
 use futures::StreamExt;
-use http_body_util::{BodyExt, Full, StreamBody};
+use http_body_util::{BodyExt, Full, Limited, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::server::conn::http2;
 use hyper::service::service_fn;
@@ -35,6 +39,9 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
             Message::Stream { .. } => Err(PulsingError::from(RuntimeError::Other(
                 "Streaming requests not supported by this handler".into(),
             ))),
+            Message::Tensor(_) => Err(PulsingError::from(RuntimeError::Other(
+                "Tensor requests not supported by this handler".into(),
+            ))),
         }
     }
 
@@ -53,6 +60,20 @@ pub trait Http2ServerHandler: Send + Sync + 'static {
 
     /// Handle tell (fire-and-forget) message.
     async fn handle_tell(&self, path: &str, msg_type: &str, payload: Vec<u8>) -> Result<()>;
+
+    /// Unified tell handler. Implementations which route arbitrary actor
+    /// messages should override this to preserve TensorMessage buffers.
+    async fn handle_tell_full(&self, path: &str, msg: Message) -> Result<()> {
+        match msg {
+            Message::Single { msg_type, data } => self.handle_tell(path, &msg_type, data).await,
+            Message::Stream { .. } => Err(PulsingError::from(RuntimeError::Other(
+                "Streaming requests not supported for tell".into(),
+            ))),
+            Message::Tensor(_) => Err(PulsingError::from(RuntimeError::Other(
+                "Tensor requests not supported for tell by this handler".into(),
+            ))),
+        }
+    }
 
     /// Handle gossip message.
     async fn handle_gossip(
@@ -211,9 +232,152 @@ impl Http2Server {
             return Self::serve_h2_generic(io, peer_addr, handler, config, cancel).await;
         }
 
+        if raw_tensor_transport_requested()
+            && Self::is_raw_tensor_connection(&stream, config.connect_timeout).await?
+        {
+            return Self::serve_raw_tensor(stream, peer_addr, handler, cancel).await;
+        }
+
         // Plain TCP mode (h2c) - HTTP/2 only (prior knowledge)
         let io = TokioIo::new(stream);
         Self::serve_h2(io, peer_addr, handler, config, cancel).await
+    }
+
+    async fn is_raw_tensor_connection(
+        stream: &tokio::net::TcpStream,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<bool> {
+        let mut prefix = [0u8; 4];
+        let peek = async {
+            loop {
+                let count = stream.peek(&mut prefix).await?;
+                if count == 0 {
+                    return Ok::<bool, std::io::Error>(false);
+                }
+                if count >= prefix.len() {
+                    return Ok(&prefix == RAW_TENSOR_MAGIC);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        };
+        tokio::time::timeout(timeout, peek)
+            .await
+            .map_err(|_| anyhow::anyhow!("Connection preface timeout"))?
+            .map_err(Into::into)
+    }
+
+    async fn serve_raw_tensor(
+        mut stream: tokio::net::TcpStream,
+        peer_addr: SocketAddr,
+        handler: Arc<dyn Http2ServerHandler>,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<()> {
+        stream.set_nodelay(true)?;
+        record_raw_tensor_connection();
+        tracing::debug!(peer = %peer_addr, "Raw tensor connection established");
+        let max_requests = std::env::var("PULSING_TENSOR_MAX_REQUESTS_PER_CONNECTION")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(usize::MAX)
+            .max(1);
+        let mut requests = 0usize;
+
+        loop {
+            let frame = tokio::select! {
+                frame = read_raw_tensor_frame(&mut stream) => frame,
+                _ = cancel.cancelled() => return Ok(()),
+            }
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+
+            let version = frame.message.version;
+            match frame.kind {
+                RawTensorKind::Ask => {
+                    match handler
+                        .handle_message_full(&frame.path, Message::Tensor(frame.message))
+                        .await
+                    {
+                        Ok(Message::Tensor(response)) => {
+                            write_raw_tensor_frame(
+                                &mut stream,
+                                RawTensorKind::TensorResponse,
+                                "",
+                                &response,
+                            )
+                            .await
+                            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                        }
+                        Ok(Message::Single { msg_type, data }) => {
+                            let response =
+                                TensorMessage::new(version, Bytes::from(data), Vec::new());
+                            write_raw_tensor_frame(
+                                &mut stream,
+                                RawTensorKind::SingleResponse,
+                                &msg_type,
+                                &response,
+                            )
+                            .await
+                            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                        }
+                        Ok(Message::Stream { .. }) => {
+                            Self::write_raw_tensor_error(
+                                &mut stream,
+                                version,
+                                "Tensor request returned a streaming response",
+                            )
+                            .await?;
+                        }
+                        Err(error) => {
+                            Self::write_raw_tensor_error(&mut stream, version, &error.to_string())
+                                .await?;
+                        }
+                    }
+                }
+                RawTensorKind::Tell => {
+                    match handler
+                        .handle_tell_full(&frame.path, Message::Tensor(frame.message))
+                        .await
+                    {
+                        Ok(()) => {
+                            let ack = TensorMessage::new(version, Bytes::new(), Vec::new());
+                            write_raw_tensor_frame(&mut stream, RawTensorKind::Ack, "", &ack)
+                                .await
+                                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                        }
+                        Err(error) => {
+                            Self::write_raw_tensor_error(&mut stream, version, &error.to_string())
+                                .await?;
+                        }
+                    }
+                }
+                unexpected => {
+                    Self::write_raw_tensor_error(
+                        &mut stream,
+                        version,
+                        &format!("Unexpected request frame: {unexpected:?}"),
+                    )
+                    .await?;
+                }
+            }
+            requests += 1;
+            if requests >= max_requests {
+                return Ok(());
+            }
+        }
+    }
+
+    async fn write_raw_tensor_error(
+        stream: &mut tokio::net::TcpStream,
+        version: u32,
+        error: &str,
+    ) -> anyhow::Result<()> {
+        let message = TensorMessage::new(
+            version,
+            Bytes::copy_from_slice(error.as_bytes()),
+            Vec::new(),
+        );
+        write_raw_tensor_frame(stream, RawTensorKind::Error, "", &message)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
     }
 
     /// Serve HTTP/2 only (prior knowledge mode)
@@ -449,33 +613,51 @@ impl Http2Server {
 
         match mode {
             MessageMode::Tell => {
-                // Tell doesn't support streaming requests
-                let body_bytes = match req.collect().await {
-                    Ok(collected) => collected.to_bytes().to_vec(),
+                let is_tensor = msg_type == TENSOR_MESSAGE_TYPE;
+                let body = match Self::collect_actor_body(req.into_body(), is_tensor).await {
+                    Ok(body) => body,
                     Err(e) => {
                         return Ok(error_response(
                             StatusCode::BAD_REQUEST,
-                            format!("Failed to read body: {}", e).into_bytes(),
+                            format!("Failed to read body: {e}").into_bytes(),
                         ));
                     }
                 };
-                Self::handle_tell_request(&handler, &path, &msg_type, body_bytes).await
+                let msg = match Self::decode_single_or_tensor(&msg_type, body) {
+                    Ok(msg) => msg,
+                    Err(e) => {
+                        return Ok(error_response(
+                            StatusCode::BAD_REQUEST,
+                            e.to_string().into_bytes(),
+                        ));
+                    }
+                };
+                Self::handle_tell_request_full(&handler, &path, msg).await
             }
             // Ask and Stream mode - check for streaming request
             MessageMode::Ask | MessageMode::Stream => {
                 match request_type {
                     RequestType::Single => {
-                        // Single request - read body as bytes
-                        let body_bytes = match req.collect().await {
-                            Ok(collected) => collected.to_bytes().to_vec(),
+                        let is_tensor = msg_type == TENSOR_MESSAGE_TYPE;
+                        let body =
+                            match Self::collect_actor_body(req.into_body(), is_tensor).await {
+                                Ok(body) => body,
                             Err(e) => {
                                 return Ok(error_response(
                                     StatusCode::BAD_REQUEST,
-                                    format!("Failed to read body: {}", e).into_bytes(),
+                                        format!("Failed to read body: {e}").into_bytes(),
+                                ));
+                            }
+                            };
+                        let msg = match Self::decode_single_or_tensor(&msg_type, body) {
+                            Ok(msg) => msg,
+                            Err(e) => {
+                                return Ok(error_response(
+                                    StatusCode::BAD_REQUEST,
+                                    e.to_string().into_bytes(),
                                 ));
                             }
                         };
-                        let msg = Message::single(&msg_type, body_bytes);
                         Self::handle_message_request_full(&handler, &path, msg).await
                     }
                     RequestType::Stream => {
@@ -489,6 +671,32 @@ impl Http2Server {
         }
         .instrument(span)
         .await
+    }
+
+    fn decode_single_or_tensor(msg_type: &str, body: Bytes) -> Result<Message> {
+        if msg_type == TENSOR_MESSAGE_TYPE {
+            TensorMessage::decode_wire(body).map(Message::Tensor)
+        } else {
+            Ok(Message::single(msg_type, body.to_vec()))
+        }
+    }
+
+    async fn collect_actor_body(
+        body: Incoming,
+        is_tensor: bool,
+    ) -> std::result::Result<Bytes, String> {
+        if is_tensor {
+            Limited::new(body, max_tensor_wire_bytes())
+                .collect()
+                .await
+                .map(|collected| collected.to_bytes())
+                .map_err(|error| error.to_string())
+        } else {
+            body.collect()
+                .await
+                .map(|collected| collected.to_bytes())
+                .map_err(|error| error.to_string())
+        }
     }
 
     /// Parse a streaming request body (binary frames) into Message::Stream
@@ -572,12 +780,17 @@ impl Http2Server {
         msg: Message,
     ) -> std::result::Result<Response<BoxBody>, Infallible> {
         match handler.handle_message_full(path, msg).await {
-            Ok(Message::Single { data, .. }) => {
-                // Single response - return directly with response type header
+            Ok(Message::Single { msg_type, data }) => {
+                // Preserve the message type so the client can select the
+                // matching decoder (for example Python pickle for a small
+                // application-level tensor ACK).
                 Ok(octet_response_with_headers(
                     StatusCode::OK,
                     full_body(data),
-                    &[(headers::RESPONSE_TYPE, "single")],
+                    &[
+                        (headers::RESPONSE_TYPE, "single"),
+                        (headers::MESSAGE_TYPE, &msg_type),
+                    ],
                 ))
             }
             Ok(Message::Stream {
@@ -616,6 +829,17 @@ impl Http2Server {
                     &[(headers::RESPONSE_TYPE, "stream")],
                 ))
             }
+            Ok(Message::Tensor(tensor)) => match tensor.encode_wire() {
+                Ok(wire) => Ok(octet_response_with_headers(
+                    StatusCode::OK,
+                    full_body(wire),
+                    &[(headers::RESPONSE_TYPE, "tensor")],
+                )),
+                Err(e) => Ok(error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    e.to_string().into_bytes(),
+                )),
+            },
             Err(e) => Ok(error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 e.to_string().into_bytes(),
@@ -623,13 +847,12 @@ impl Http2Server {
         }
     }
 
-    async fn handle_tell_request(
+    async fn handle_tell_request_full(
         handler: &Arc<dyn Http2ServerHandler>,
         path: &str,
-        msg_type: &str,
-        payload: Vec<u8>,
+        msg: Message,
     ) -> std::result::Result<Response<BoxBody>, Infallible> {
-        match handler.handle_tell(path, msg_type, payload).await {
+        match handler.handle_tell_full(path, msg).await {
             Ok(()) => Ok(empty_response(StatusCode::ACCEPTED)),
             Err(e) => Ok(error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,

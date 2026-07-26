@@ -161,6 +161,10 @@ impl Http2ServerHandler for SystemMessageHandler {
         self.dispatch_tell(path, msg).await
     }
 
+    async fn handle_tell_full(&self, path: &str, msg: Message) -> Result<()> {
+        self.dispatch_tell(path, msg).await
+    }
+
     async fn handle_gossip(
         &self,
         payload: Vec<u8>,
