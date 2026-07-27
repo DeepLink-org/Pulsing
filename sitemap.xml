@@ -1,0 +1,871 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/api_reference/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/api_reference/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/api_reference/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/faq/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/faq/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/faq/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/overview/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/overview/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/overview/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/agent/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/agent/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/agent/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/agent/autogen/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/agent/autogen/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/agent/autogen/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/agent/langgraph/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/agent/langgraph/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/agent/langgraph/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/agent/native/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/agent/native/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/agent/native/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/api/overview/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/api/overview/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/api/overview/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/api/python/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/api/python/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/api/python/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/api/rust/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/api/rust/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/api/rust/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/actor-addressing/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/actor-addressing/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/actor-addressing/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/actor-system/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/actor-system/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/actor-system/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/architecture/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/architecture/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/architecture/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/as-actor-decorator/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/as-actor-decorator/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/as-actor-decorator/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/behavior/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/behavior/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/behavior/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/cluster-communication-evolution/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/cluster-communication-evolution/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/cluster-communication-evolution/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/cluster-networking/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/cluster-networking/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/cluster-networking/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/http2-transport/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/http2-transport/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/http2-transport/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/load_sync/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/load_sync/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/load_sync/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/node-discovery/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/node-discovery/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/node-discovery/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/npc-workspace-world-persistence/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/npc-workspace-world-persistence/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/npc-workspace-world-persistence/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/out-cluster-connect/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/out-cluster-connect/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/out-cluster-connect/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/pulsing-cli/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/pulsing-cli/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/pulsing-cli/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/system-actors/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/system-actors/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/system-actors/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/tensor-message-transport/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/tensor-message-transport/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/tensor-message-transport/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/transfer_queue_interface_comparison/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/transfer_queue_interface_comparison/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/transfer_queue_interface_comparison/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/forge/core-architecture/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/core-architecture/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/core-architecture/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/forge/craft-architecture/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/craft-architecture/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/craft-architecture/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/forge/engineering/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/engineering/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/engineering/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/forge/naming/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/naming/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/naming/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/forge/session-repl/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/session-repl/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/session-repl/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/design/forge/testing/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/testing/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/testing/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/examples/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/examples/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/examples/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/examples/distributed_counter/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/examples/distributed_counter/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/examples/distributed_counter/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/examples/llm_inference/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/examples/llm_inference/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/examples/llm_inference/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/examples/ping_pong/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/examples/ping_pong/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/examples/ping_pong/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/examples/subprocess/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/examples/subprocess/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/examples/subprocess/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/forge/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/forge/abstractions/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/abstractions/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/abstractions/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/forge/concepts/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/concepts/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/concepts/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/forge/deployment/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/deployment/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/deployment/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/forge/getting-started/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/getting-started/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/getting-started/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/forge/pulsing-integration/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/pulsing-integration/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/pulsing-integration/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/forge/tools/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/tools/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/tools/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/actors/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/actors/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/actors/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/communication_patterns/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/communication_patterns/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/communication_patterns/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/connect/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/connect/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/connect/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/operations/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/operations/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/operations/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/queue/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/queue/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/queue/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/reliability/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/reliability/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/reliability/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/remote_actors/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/remote_actors/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/remote_actors/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/security/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/security/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/security/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/semantics/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/semantics/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/semantics/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/guide/style/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/style/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/style/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/quickstart/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/quickstart/agent/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/agent/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/agent/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/quickstart/cluster_networking/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/cluster_networking/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/cluster_networking/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/quickstart/llm_inference/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/llm_inference/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/llm_inference/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/quickstart/migrate_from_ray/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/migrate_from_ray/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/migrate_from_ray/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/quickstart/patterns/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/patterns/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/patterns/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/api_reference/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/api_reference/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/api_reference/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/faq/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/faq/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/faq/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/overview/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/overview/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/overview/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/agent/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/agent/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/agent/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/agent/autogen/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/agent/autogen/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/agent/autogen/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/agent/langgraph/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/agent/langgraph/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/agent/langgraph/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/agent/native/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/agent/native/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/agent/native/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/api/overview/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/api/overview/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/api/overview/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/api/python/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/api/python/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/api/python/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/api/rust/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/api/rust/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/api/rust/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/actor-addressing/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/actor-addressing/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/actor-addressing/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/actor-system/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/actor-system/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/actor-system/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/architecture/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/architecture/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/architecture/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/as-actor-decorator/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/as-actor-decorator/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/as-actor-decorator/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/behavior/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/behavior/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/behavior/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/cluster-communication-evolution/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/cluster-communication-evolution/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/cluster-communication-evolution/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/cluster-networking/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/cluster-networking/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/cluster-networking/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/http2-transport/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/http2-transport/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/http2-transport/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/load_sync/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/load_sync/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/load_sync/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/node-discovery/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/node-discovery/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/node-discovery/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/npc-workspace-world-persistence/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/npc-workspace-world-persistence/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/npc-workspace-world-persistence/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/out-cluster-connect/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/out-cluster-connect/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/out-cluster-connect/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/pulsing-cli/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/pulsing-cli/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/pulsing-cli/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/system-actors/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/system-actors/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/system-actors/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/tensor-message-transport/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/tensor-message-transport/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/tensor-message-transport/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/transfer_queue_interface_comparison/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/transfer_queue_interface_comparison/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/transfer_queue_interface_comparison/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/forge/core-architecture/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/core-architecture/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/core-architecture/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/forge/craft-architecture/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/craft-architecture/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/craft-architecture/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/forge/engineering/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/engineering/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/engineering/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/forge/naming/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/naming/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/naming/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/forge/session-repl/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/session-repl/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/session-repl/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/design/forge/testing/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/design/forge/testing/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/design/forge/testing/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/examples/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/examples/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/examples/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/examples/distributed_counter/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/examples/distributed_counter/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/examples/distributed_counter/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/examples/llm_inference/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/examples/llm_inference/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/examples/llm_inference/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/examples/ping_pong/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/examples/ping_pong/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/examples/ping_pong/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/examples/subprocess/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/examples/subprocess/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/examples/subprocess/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/forge/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/forge/abstractions/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/abstractions/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/abstractions/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/forge/concepts/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/concepts/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/concepts/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/forge/deployment/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/deployment/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/deployment/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/forge/getting-started/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/getting-started/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/getting-started/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/forge/pulsing-integration/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/pulsing-integration/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/pulsing-integration/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/forge/tools/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/forge/tools/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/forge/tools/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/actors/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/actors/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/actors/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/communication_patterns/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/communication_patterns/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/communication_patterns/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/connect/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/connect/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/connect/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/operations/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/operations/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/operations/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/queue/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/queue/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/queue/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/reliability/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/reliability/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/reliability/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/remote_actors/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/remote_actors/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/remote_actors/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/security/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/security/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/security/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/semantics/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/semantics/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/semantics/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/guide/style/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/guide/style/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/guide/style/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/quickstart/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/quickstart/agent/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/agent/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/agent/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/quickstart/cluster_networking/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/cluster_networking/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/cluster_networking/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/quickstart/llm_inference/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/llm_inference/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/llm_inference/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/quickstart/migrate_from_ray/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/migrate_from_ray/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/migrate_from_ray/"/>
+    </url>
+    <url>
+        <loc>https://github.com/DeepLink-org/pulsing/zh/quickstart/patterns/</loc>
+        <lastmod>2026-07-27</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://github.com/DeepLink-org/pulsing/zh/quickstart/patterns/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://github.com/DeepLink-org/pulsing/quickstart/patterns/"/>
+    </url>
+</urlset>
