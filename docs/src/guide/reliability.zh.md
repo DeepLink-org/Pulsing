@@ -18,6 +18,29 @@ result = await asyncio.wait_for(ref.ask({"op": "compute"}), timeout=10.0)
 
 对 proxy 方法调用：`await asyncio.wait_for(proxy.compute(), timeout=10.0)`。
 
+### HTTP/2 传输超时
+
+远程 Actor 通信和 `PulsingConnect` 使用以下进程环境变量：
+
+| 环境变量 | 默认值 | 作用范围 |
+| --- | ---: | --- |
+| `PULSING_HTTP2_CONNECT_TIMEOUT_MS` | `5000` | 建立 TCP 连接 |
+| `PULSING_HTTP2_REQUEST_TIMEOUT_MS` | `30000` | 非流式请求/响应阶段 |
+| `PULSING_HTTP2_STREAM_TIMEOUT_MS` | `300000` | 收到响应头后的流式响应总生命周期 |
+
+变量值必须是正整数毫秒。非法值或零值会导致配置失败，不会静默回退到默认值。环境变量在
+ActorSystem 或 Connect 创建时读取一次；修改后需要重新创建客户端或重启进程。
+
+```bash
+export PULSING_HTTP2_CONNECT_TIMEOUT_MS=10000
+export PULSING_HTTP2_REQUEST_TIMEOUT_MS=60000
+export PULSING_HTTP2_STREAM_TIMEOUT_MS=900000
+```
+
+显式传入的 Rust `Http2Config` 优先于环境变量。这些配置不限制本地 `ActorRef.ask()`，也不
+构成服务端 Actor handler 的执行截止时间，因此端到端超时仍建议在应用层使用
+`asyncio.wait_for()`。
+
 ## 重试（放在业务层）
 
 Pulsing 不会替你“隐式重试”。一旦你做重试，就要默认可能出现重复处理。
@@ -133,6 +156,9 @@ async def process_with_retry(actor, data, max_retries=3):
 ## 流式响应的韧性
 
 对流式响应要默认可能“部分输出后中断”。建议每个 chunk 自包含：
+
+HTTP/2 流式超时是总生命周期硬截止时间：即使连接完全静默，到期也会唤醒并返回请求超时
+错误；它不是逐 chunk 的空闲超时。
 
 - 每个 chunk 带 `seq` / offset / id
 - 客户端可恢复或去重

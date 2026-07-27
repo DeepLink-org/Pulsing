@@ -84,12 +84,29 @@ impl SystemConfig {
         Self::default()
     }
 
+    /// Create a standalone config using HTTP/2 timeout environment variables.
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            http2_config: Http2Config::from_env()?,
+            ..Self::default()
+        })
+    }
+
     /// Create config with specific address
     pub fn with_addr(addr: SocketAddr) -> Self {
         Self {
             addr,
             ..Default::default()
         }
+    }
+
+    /// Create a config with a specific address and HTTP/2 timeout environment variables.
+    pub fn with_addr_from_env(addr: SocketAddr) -> Result<Self> {
+        Ok(Self {
+            addr,
+            http2_config: Http2Config::from_env()?,
+            ..Self::default()
+        })
     }
 
     /// Add seed nodes for cluster joining
@@ -273,13 +290,22 @@ impl ActorSystemBuilder {
         self
     }
 
+    /// Set an explicit HTTP/2 configuration.
+    ///
+    /// Explicit configuration takes precedence over timeout environment variables.
+    pub fn http2_config(mut self, config: Http2Config) -> Self {
+        self.http2_config = Some(config);
+        self
+    }
+
     /// Enable TLS with passphrase
     #[cfg(feature = "tls")]
     pub fn tls(mut self, passphrase: &str) -> Result<Self> {
-        let http2_config = self
-            .http2_config
-            .take()
-            .unwrap_or_default()
+        let base_config = match self.http2_config.take() {
+            Some(config) => config,
+            None => Http2Config::from_env()?,
+        };
+        let http2_config = base_config
             .with_tls(passphrase)
             .map_err(|e| PulsingError::from(RuntimeError::Other(e.to_string())))?;
         self.http2_config = Some(http2_config);
@@ -326,11 +352,16 @@ impl ActorSystemBuilder {
 
         let head_addr = Self::parse_optional_addr("head node address", self.head_addr)?;
 
+        let http2_config = match self.http2_config {
+            Some(config) => config,
+            None => Http2Config::from_env()?,
+        };
+
         let config = SystemConfig {
             addr,
             seed_nodes,
             gossip_config: self.gossip_config.unwrap_or_default(),
-            http2_config: self.http2_config.unwrap_or_default(),
+            http2_config,
             default_mailbox_capacity: self.mailbox_capacity.unwrap_or(DEFAULT_MAILBOX_SIZE),
             is_head_node: self.is_head_node,
             head_addr,

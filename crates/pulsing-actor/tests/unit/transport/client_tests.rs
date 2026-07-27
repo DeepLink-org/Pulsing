@@ -1,13 +1,55 @@
 //! HTTP/2 Client tests
 
 use crate::common::fixtures::{StreamingHandler, TestCounters, TestHandler};
+use futures::StreamExt;
 use pulsing_actor::actor::{ActorId, Message};
+use pulsing_actor::error::{PulsingError, RuntimeError};
 use pulsing_actor::transport::{
-    Http2Client, Http2Config, Http2RemoteTransport, Http2Server, TransportTarget,
+    Http2Client, Http2Config, Http2RemoteTransport, Http2Server, Http2ServerHandler,
+    TransportTarget,
 };
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+
+struct SilentStreamHandler;
+
+#[async_trait::async_trait]
+impl Http2ServerHandler for SilentStreamHandler {
+    async fn handle_message_full(
+        &self,
+        _path: &str,
+        _msg: Message,
+    ) -> pulsing_actor::error::Result<Message> {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        tokio::spawn(async move {
+            futures::future::pending::<()>().await;
+            drop(tx);
+        });
+        Ok(Message::from_channel("chunk", rx))
+    }
+
+    async fn handle_tell(
+        &self,
+        _path: &str,
+        _msg_type: &str,
+        _payload: Vec<u8>,
+    ) -> pulsing_actor::error::Result<()> {
+        Ok(())
+    }
+
+    async fn handle_gossip(
+        &self,
+        _payload: Vec<u8>,
+        _peer_addr: std::net::SocketAddr,
+    ) -> pulsing_actor::error::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 
 #[tokio::test]
 async fn test_http2_client_creation() {
@@ -486,6 +528,50 @@ async fn test_http2_streaming_request() {
     assert!(response_str.contains("collected:"));
 
     assert_eq!(counters.ask_count.load(Ordering::SeqCst), 1);
+
+    cancel.cancel();
+}
+
+#[tokio::test]
+async fn test_http2_silent_stream_returns_timeout_error() {
+    let cancel = CancellationToken::new();
+    let server = Http2Server::new(
+        "127.0.0.1:0".parse().unwrap(),
+        Arc::new(SilentStreamHandler),
+        Http2Config::default(),
+        cancel.clone(),
+    )
+    .await
+    .unwrap();
+
+    let client = Http2Client::new(
+        Http2Config::default()
+            .request_timeout(tokio::time::Duration::from_secs(1))
+            .stream_timeout(tokio::time::Duration::from_millis(50)),
+    );
+    let response = client
+        .send_message(
+            server.local_addr(),
+            "/actors/silent_stream",
+            "Request",
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+    let Message::Stream { mut stream, .. } = response else {
+        panic!("Expected streaming response");
+    };
+    let result = tokio::time::timeout(tokio::time::Duration::from_secs(1), stream.next())
+        .await
+        .expect("stream timeout did not wake the consumer")
+        .expect("stream ended without a timeout error");
+    let error = result.expect_err("stream unexpectedly produced a frame");
+
+    assert!(matches!(
+        error,
+        PulsingError::Runtime(RuntimeError::RequestTimeout { timeout_ms: 50 })
+    ));
 
     cancel.cancel();
 }

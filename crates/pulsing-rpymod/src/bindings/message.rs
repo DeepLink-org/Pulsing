@@ -424,10 +424,11 @@ pub struct PySystemConfig {
 #[pyclass]
 impl PySystemConfig {
     #[pystaticmethod]
-    fn standalone() -> Self {
-        Self {
-            inner: SystemConfig::standalone(),
-        }
+    fn standalone(vm: &VirtualMachine) -> PyResult<Self> {
+        Ok(Self {
+            inner: SystemConfig::from_env()
+                .map_err(|error| vm.new_value_error(error.to_string()))?,
+        })
     }
 
     #[pystaticmethod]
@@ -437,7 +438,8 @@ impl PySystemConfig {
             .parse()
             .map_err(|e: std::net::AddrParseError| vm.new_value_error(e.to_string()))?;
         Ok(Self {
-            inner: SystemConfig::with_addr(socket_addr),
+            inner: SystemConfig::with_addr_from_env(socket_addr)
+                .map_err(|error| vm.new_value_error(error.to_string()))?,
         })
     }
 

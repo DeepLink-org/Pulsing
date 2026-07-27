@@ -55,13 +55,32 @@ impl PulsingConnect {
 
     /// Connect with multiple gateway addresses for failover.
     pub async fn connect_multi(gateway_addrs: Vec<SocketAddr>) -> Result<Arc<Self>> {
+        let config = Http2Config::from_env()?;
+        Self::connect_multi_with_config(gateway_addrs, config).await
+    }
+
+    /// Connect to a single gateway with an explicit HTTP/2 configuration.
+    pub async fn connect_with_config(
+        gateway_addr: SocketAddr,
+        config: Http2Config,
+    ) -> Result<Arc<Self>> {
+        Self::connect_multi_with_config(vec![gateway_addr], config).await
+    }
+
+    /// Connect to multiple gateways with an explicit HTTP/2 configuration.
+    ///
+    /// The explicit configuration takes precedence over timeout environment variables.
+    pub async fn connect_multi_with_config(
+        gateway_addrs: Vec<SocketAddr>,
+        config: Http2Config,
+    ) -> Result<Arc<Self>> {
         if gateway_addrs.is_empty() {
             return Err(PulsingError::from(RuntimeError::Other(
                 "At least one gateway address is required".into(),
             )));
         }
 
-        let http_client = Arc::new(Http2Client::new(Http2Config::default()));
+        let http_client = Arc::new(Http2Client::new(config));
         http_client.start_background_tasks();
 
         let active = gateway_addrs[0];

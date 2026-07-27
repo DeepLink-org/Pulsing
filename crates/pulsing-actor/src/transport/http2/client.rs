@@ -20,12 +20,12 @@ use crate::transport::tensor::{
     TensorTransportRouter,
 };
 use bytes::Bytes;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt};
 use http_body_util::{BodyExt, Full, Limited, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::{Method, Request};
 use opentelemetry::Context;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -56,6 +56,13 @@ pub enum FaultInjectOperation {
 pub trait FaultInjector: Send + Sync {
     /// If returns Some(error), the client will return this error without sending the request.
     fn inject(&self, ctx: &FaultInjectContext) -> Option<PulsingError>;
+}
+
+fn stream_error_to_pulsing(error: anyhow::Error) -> PulsingError {
+    match error.downcast::<PulsingError>() {
+        Ok(error) => error,
+        Err(error) => PulsingError::from(RuntimeError::Other(error.to_string())),
+    }
 }
 
 /// HTTP/2 client with connection pooling, retry, and timeout support.
@@ -299,7 +306,7 @@ impl Http2Client {
                     Ok(None) => None,
                     Err(e) => Some(Err(e)),
                 },
-                Err(e) => Some(Err(PulsingError::from(RuntimeError::Other(e.to_string())))),
+                Err(e) => Some(Err(stream_error_to_pulsing(e))),
             }
         });
 
@@ -742,7 +749,7 @@ impl Http2Client {
                         Ok(None) => None,
                         Err(e) => Some(Err(e)),
                     },
-                    Err(e) => Some(Err(PulsingError::from(RuntimeError::Other(e.to_string())))),
+                    Err(e) => Some(Err(stream_error_to_pulsing(e))),
                 }
             });
 
@@ -781,36 +788,80 @@ impl Http2Client {
         cancel: CancellationToken,
         timeout: Duration,
     ) -> impl Stream<Item = anyhow::Result<StreamFrame>> {
-        let parser = Arc::new(Mutex::new(BinaryFrameParser::new()));
-        let start = std::time::Instant::now();
+        struct BodyFrameState {
+            body: http_body_util::BodyStream<Incoming>,
+            parser: BinaryFrameParser,
+            pending: VecDeque<anyhow::Result<StreamFrame>>,
+            cancel: CancellationToken,
+            deadline: tokio::time::Instant,
+            timeout_ms: u64,
+            finished: bool,
+        }
 
-        http_body_util::BodyStream::new(body)
-            .take_while(move |_| {
-                let cancelled = cancel.is_cancelled();
-                let timed_out = start.elapsed() > timeout;
-                async move { !cancelled && !timed_out }
-            })
-            .map(move |result| {
-                let parser = parser.clone();
-                async move {
-                    let frame = result.map_err(|e| anyhow::anyhow!("Body read: {}", e))?;
-                    let data = frame
-                        .into_data()
-                        .map_err(|_| anyhow::anyhow!("Not data frame"))?;
+        let state = BodyFrameState {
+            body: http_body_util::BodyStream::new(body),
+            parser: BinaryFrameParser::new(),
+            pending: VecDeque::new(),
+            cancel,
+            deadline: tokio::time::Instant::now() + timeout,
+            timeout_ms: timeout.as_millis() as u64,
+            finished: false,
+        };
 
-                    let mut parser = parser.lock().await;
-                    parser.push(&data);
-
-                    let frames = parser
-                        .parse_all()
-                        .into_iter()
-                        .map(|r| r.map_err(|e| anyhow::anyhow!("{}", e)))
-                        .collect::<Vec<_>>();
-                    Ok::<_, anyhow::Error>(futures::stream::iter(frames))
+        futures::stream::unfold(state, |mut state| async move {
+            loop {
+                if state.finished {
+                    return None;
                 }
-            })
-            .buffer_unordered(1)
-            .try_flatten()
+
+                if let Some(frame) = state.pending.pop_front() {
+                    return Some((frame, state));
+                }
+
+                tokio::select! {
+                    _ = state.cancel.cancelled() => {
+                        return None;
+                    }
+                    _ = tokio::time::sleep_until(state.deadline) => {
+                        state.finished = true;
+                        let error = PulsingError::from(RuntimeError::request_timeout(
+                            state.timeout_ms,
+                        ));
+                        return Some((Err(anyhow::Error::new(error)), state));
+                    }
+                    next = state.body.next() => {
+                        let result = next?;
+
+                        let frame = match result {
+                            Ok(frame) => frame,
+                            Err(error) => {
+                                state.finished = true;
+                                return Some((
+                                    Err(anyhow::anyhow!("Body read: {}", error)),
+                                    state,
+                                ));
+                            }
+                        };
+                        let data = match frame.into_data() {
+                            Ok(data) => data,
+                            Err(_) => {
+                                state.finished = true;
+                                return Some((Err(anyhow::anyhow!("Not data frame")), state));
+                            }
+                        };
+
+                        state.parser.push(&data);
+                        state.pending.extend(
+                            state
+                                .parser
+                                .parse_all()
+                                .into_iter()
+                                .map(|result| result.map_err(anyhow::Error::new)),
+                        );
+                    }
+                }
+            }
+        })
     }
 
     /// Send a request to the given address
@@ -902,6 +953,18 @@ impl Http2ClientBuilder {
             retry_config: None,
             fault_injector: None,
         }
+    }
+
+    /// Create a builder using HTTP/2 timeout environment variables.
+    ///
+    /// Subsequent builder calls take precedence over environment values.
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            http2_config: Http2Config::from_env()?,
+            pool_config: None,
+            retry_config: None,
+            fault_injector: None,
+        })
     }
 
     /// Set fault injector for testing / chaos engineering.

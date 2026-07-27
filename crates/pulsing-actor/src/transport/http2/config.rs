@@ -2,10 +2,14 @@
 
 use std::time::Duration;
 
+use crate::error::{PulsingError, Result, RuntimeError};
+
 #[cfg(feature = "tls")]
 use super::tls::TlsConfig;
-#[cfg(feature = "tls")]
-use crate::error::Result;
+
+pub const HTTP2_CONNECT_TIMEOUT_ENV: &str = "PULSING_HTTP2_CONNECT_TIMEOUT_MS";
+pub const HTTP2_REQUEST_TIMEOUT_ENV: &str = "PULSING_HTTP2_REQUEST_TIMEOUT_MS";
+pub const HTTP2_STREAM_TIMEOUT_ENV: &str = "PULSING_HTTP2_STREAM_TIMEOUT_MS";
 
 /// HTTP/2 transport configuration.
 #[derive(Debug, Clone)]
@@ -61,6 +65,60 @@ impl Default for Http2Config {
 impl Http2Config {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Build the default HTTP/2 configuration with process environment overrides.
+    ///
+    /// Timeout values are positive integer milliseconds:
+    /// - `PULSING_HTTP2_CONNECT_TIMEOUT_MS`
+    /// - `PULSING_HTTP2_REQUEST_TIMEOUT_MS`
+    /// - `PULSING_HTTP2_STREAM_TIMEOUT_MS`
+    ///
+    /// Environment variables are read once when this function is called.
+    pub fn from_env() -> Result<Self> {
+        Self::from_env_reader(|name| match std::env::var(name) {
+            Ok(value) => Ok(Some(value)),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => Err("value is not valid Unicode".to_string()),
+        })
+    }
+
+    fn from_env_reader<F>(mut read: F) -> Result<Self>
+    where
+        F: FnMut(&str) -> std::result::Result<Option<String>, String>,
+    {
+        let defaults = Self::default();
+        let (connect_timeout, connect_from_env) = read_timeout_env(
+            &mut read,
+            HTTP2_CONNECT_TIMEOUT_ENV,
+            defaults.connect_timeout,
+        )?;
+        let (request_timeout, request_from_env) = read_timeout_env(
+            &mut read,
+            HTTP2_REQUEST_TIMEOUT_ENV,
+            defaults.request_timeout,
+        )?;
+        let (stream_timeout, stream_from_env) =
+            read_timeout_env(&mut read, HTTP2_STREAM_TIMEOUT_ENV, defaults.stream_timeout)?;
+
+        let config = Self {
+            connect_timeout,
+            request_timeout,
+            stream_timeout,
+            ..defaults
+        };
+
+        tracing::debug!(
+            connect_timeout_ms = config.connect_timeout.as_millis() as u64,
+            connect_timeout_source = if connect_from_env { "env" } else { "default" },
+            request_timeout_ms = config.request_timeout.as_millis() as u64,
+            request_timeout_source = if request_from_env { "env" } else { "default" },
+            stream_timeout_ms = config.stream_timeout.as_millis() as u64,
+            stream_timeout_source = if stream_from_env { "env" } else { "default" },
+            "Resolved HTTP/2 timeout configuration"
+        );
+
+        Ok(config)
     }
 
     pub fn low_latency() -> Self {
@@ -221,9 +279,49 @@ impl Http2Config {
     }
 }
 
+fn read_timeout_env<F>(read: &mut F, name: &str, default: Duration) -> Result<(Duration, bool)>
+where
+    F: FnMut(&str) -> std::result::Result<Option<String>, String>,
+{
+    let value = read(name).map_err(|reason| {
+        PulsingError::from(RuntimeError::invalid_config_value(
+            name,
+            "<non-unicode>",
+            reason,
+        ))
+    })?;
+
+    match value {
+        Some(value) => parse_timeout_ms(name, &value).map(|duration| (duration, true)),
+        None => Ok((default, false)),
+    }
+}
+
+fn parse_timeout_ms(name: &str, value: &str) -> Result<Duration> {
+    let trimmed = value.trim();
+    let timeout_ms = trimmed.parse::<u64>().map_err(|_| {
+        PulsingError::from(RuntimeError::invalid_config_value(
+            name,
+            value,
+            "expected a positive integer number of milliseconds",
+        ))
+    })?;
+
+    if timeout_ms == 0 {
+        return Err(PulsingError::from(RuntimeError::invalid_config_value(
+            name,
+            value,
+            "timeout must be greater than zero",
+        )));
+    }
+
+    Ok(Duration::from_millis(timeout_ms))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_default_config() {
@@ -277,5 +375,66 @@ mod tests {
         let retry_config = http2_config.to_retry_config();
         assert_eq!(retry_config.max_retries, 5);
         assert_eq!(retry_config.initial_delay, Duration::from_millis(200));
+    }
+
+    #[test]
+    fn test_from_env_reader_uses_defaults_when_unset() {
+        let config = Http2Config::from_env_reader(|_| Ok(None)).unwrap();
+
+        assert_eq!(config.connect_timeout, Duration::from_secs(5));
+        assert_eq!(config.request_timeout, Duration::from_secs(30));
+        assert_eq!(config.stream_timeout, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn test_from_env_reader_applies_timeout_overrides() {
+        let values = HashMap::from([
+            (HTTP2_CONNECT_TIMEOUT_ENV, "1250".to_string()),
+            (HTTP2_REQUEST_TIMEOUT_ENV, "45000".to_string()),
+            (HTTP2_STREAM_TIMEOUT_ENV, "900000".to_string()),
+        ]);
+
+        let config = Http2Config::from_env_reader(|name| Ok(values.get(name).cloned())).unwrap();
+
+        assert_eq!(config.connect_timeout, Duration::from_millis(1250));
+        assert_eq!(config.request_timeout, Duration::from_secs(45));
+        assert_eq!(config.stream_timeout, Duration::from_secs(900));
+    }
+
+    #[test]
+    fn test_from_env_reader_rejects_invalid_timeout() {
+        let error = Http2Config::from_env_reader(|name| {
+            Ok((name == HTTP2_REQUEST_TIMEOUT_ENV).then(|| "thirty".to_string()))
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains(HTTP2_REQUEST_TIMEOUT_ENV));
+        assert!(error.to_string().contains("thirty"));
+    }
+
+    #[test]
+    fn test_from_env_reader_rejects_zero_timeout() {
+        let error = Http2Config::from_env_reader(|name| {
+            Ok((name == HTTP2_STREAM_TIMEOUT_ENV).then(|| "0".to_string()))
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains(HTTP2_STREAM_TIMEOUT_ENV));
+        assert!(error.to_string().contains("greater than zero"));
+    }
+
+    #[test]
+    fn test_from_env_reader_rejects_non_unicode_timeout() {
+        let error = Http2Config::from_env_reader(|name| {
+            if name == HTTP2_CONNECT_TIMEOUT_ENV {
+                Err("value is not valid Unicode".to_string())
+            } else {
+                Ok(None)
+            }
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains(HTTP2_CONNECT_TIMEOUT_ENV));
+        assert!(error.to_string().contains("not valid Unicode"));
     }
 }

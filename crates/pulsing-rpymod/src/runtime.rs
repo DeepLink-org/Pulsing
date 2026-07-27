@@ -60,7 +60,10 @@ fn runtime() -> Result<&'static CliRuntime> {
                 .expect("failed to build tokio runtime");
             let handle = runtime.handle().clone();
             let system = runtime
-                .block_on(async { ActorSystem::new(SystemConfig::standalone()).await })
+                .block_on(async {
+                    let config = SystemConfig::from_env()?;
+                    ActorSystem::new(config).await
+                })
                 .expect("ActorSystem::new failed");
             let _ = tx.send((Arc::clone(&system), handle.clone()));
             runtime.block_on(async {
