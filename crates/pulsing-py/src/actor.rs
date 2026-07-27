@@ -1513,17 +1513,17 @@ pub struct PySystemConfig {
 #[pymethods]
 impl PySystemConfig {
     #[staticmethod]
-    fn standalone() -> Self {
-        Self {
-            inner: SystemConfig::standalone(),
-        }
+    fn standalone() -> PyResult<Self> {
+        Ok(Self {
+            inner: SystemConfig::from_env().map_err(to_pyerr)?,
+        })
     }
 
     #[staticmethod]
     fn with_addr(addr: String) -> PyResult<Self> {
         let socket_addr: SocketAddr = addr.parse().map_err(to_py_value_err)?;
         Ok(Self {
-            inner: SystemConfig::with_addr(socket_addr),
+            inner: SystemConfig::with_addr_from_env(socket_addr).map_err(to_pyerr)?,
         })
     }
 
