@@ -5,6 +5,10 @@
 > **Snapshot**: 2026-05 · **32 tools callable out of the box** (Hybrid + MCP runtime)
 > **Import**: `pip install pulsing` → `from pulsing.forge import ForgeEnvironment`
 
+!!! info "Current API and target architecture"
+
+    This chapter documents the **current tool/environment runtime**. The accepted target expands Forge into the persistent, self-evolving Agent Runtime and makes GUI, CLI, and Python SDK clients of one protocol. See [Forge Core Architecture](../design/forge/core-architecture.md). Target-state text is not a claim that those capabilities are implemented.
+
 ---
 
 ## One sentence
@@ -75,7 +79,7 @@ See [Getting Started](getting-started.md) · [Abstractions](abstractions.md) · 
 
 **Design deep dives** (Architecture & Design → Forge):
 
-- [Engineering](../design/forge/engineering.md) · [Craft architecture](../design/forge/craft-architecture.md)
+- [Core Architecture](../design/forge/core-architecture.md) · [Engineering](../design/forge/engineering.md) · [Craft architecture](../design/forge/craft-architecture.md)
 
 **Package README**: [python/pulsing/forge/README.md](https://github.com/DeepLink-org/pulsing/blob/main/python/pulsing/forge/README.md)
 

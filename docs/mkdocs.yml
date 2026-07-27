@@ -137,6 +137,7 @@ plugins:
             AS Actor Decorator: AS Actor 装饰器
             Communication Evolution: 集群内通信技术演进
             Pulsing Forge: Pulsing Forge
+            Core Architecture: 核心架构
             Getting Started: 快速开始
             Concepts: 核心概念
             Abstractions: 抽象模型
@@ -228,6 +229,7 @@ nav:
       - Communication Evolution: design/cluster-communication-evolution.md
       - Out-Cluster Connect: design/out-cluster-connect.md
     - Forge:
+      - Core Architecture: design/forge/core-architecture.md
       - Engineering: design/forge/engineering.md
       - Craft Architecture: design/forge/craft-architecture.md
       - Testing: design/forge/testing.md

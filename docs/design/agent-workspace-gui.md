@@ -1,5 +1,7 @@
 # Agent Workspace GUI — 设计文档
 
+> **状态更新（2026-07-26）**：GUI 的目标边界以 [`Forge 核心架构`](../src/design/forge/core-architecture.zh.md) 为准。GUI 是 `ForgeClient`，只发送命令并投影事件；Session、Turn、取消、工作区 revision 和演化状态都由 Forge 拥有。本文其余内容保留为布局与迁移参考，凡涉及 GUI 自有 worker、事件 receiver 或执行状态的设计均被该边界取代。
+>
 > 目标：类似 **Zed** 的现代化 Agent 工作空间——文件管理、工作流版本、Duo-Agent 会话、Pulsing 多进程/Actor 运行时可视。  
 > **实现栈**：`eframe` / `egui`（`pulsing gui` 桌面窗口）。
 
@@ -9,7 +11,8 @@
 |------|------|
 | **Zed 式布局** | 左侧 Explorer + 中央编辑/对话 + 底部/右侧 Dock（终端、工作流、运行时） |
 | **单一工作区根** | 以 `WorkspaceLayout`（`.pulsing/`）为真相源，GUI 不另建配置 |
-| **事件驱动 UI** | Forge `AgentEvent`、Craft `ForgeEvent`、集群观测 HTTP 统一进 `WorkspaceBus` |
+| **事件驱动 UI** | 通过 `ForgeClient.subscribe(session_id, after_seq)` 投影版本化 Forge Event |
+| **执行状态外置** | GUI 不拥有 worker、取消 token 或 busy 真相；状态来自 Forge Session 投影 |
 | **Safe / Extension 分层** | Safe 模式纯 Rust；Extension 模式通过 embed Python 接 Craft 多 Agent |
 | **渐进交付** | Phase 0→3，每阶段可独立 `pulsing gui` 可用 |
 

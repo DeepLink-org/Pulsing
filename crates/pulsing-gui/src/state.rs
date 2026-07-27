@@ -114,6 +114,13 @@ impl ChatState {
                     },
                 });
             }
+            AgentEvent::ToolCancelled { name } => {
+                self.apply(AgentEvent::ToolEnd {
+                    name,
+                    ok: false,
+                    summary: "cancelled".into(),
+                });
+            }
             AgentEvent::Done { text } => {
                 self.finish_streaming_assistant();
                 if let Some(ChatMessage {
@@ -134,12 +141,11 @@ impl ChatState {
                 });
                 self.busy = false;
             }
+            AgentEvent::Cancelled => {
+                self.finish_streaming_assistant();
+                self.busy = false;
+            }
         }
-    }
-
-    pub fn stop(&mut self) {
-        self.finish_streaming_assistant();
-        self.busy = false;
     }
 
     fn finish_streaming_assistant(&mut self) {
@@ -149,5 +155,32 @@ impl ChatState {
         {
             *streaming = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancellation_is_terminal_for_the_chat_projection() {
+        let mut chat = ChatState {
+            messages: vec![ChatMessage {
+                kind: MessageKind::Assistant {
+                    body: "partial".into(),
+                    streaming: true,
+                },
+            }],
+            busy: true,
+        };
+        chat.apply(AgentEvent::Cancelled);
+        assert!(!chat.busy);
+        assert!(matches!(
+            chat.messages[0].kind,
+            MessageKind::Assistant {
+                streaming: false,
+                ..
+            }
+        ));
     }
 }

@@ -13,7 +13,11 @@ pub enum AgentEvent {
         ok: bool,
         summary: String,
     },
+    ToolCancelled {
+        name: String,
+    },
     Error(String),
+    Cancelled,
     Done {
         text: String,
     },

@@ -3,7 +3,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::execpolicy::Decision;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalPolicy {
     /// Prompt on execpolicy Prompt / sandbox escalation (default).
     #[default]

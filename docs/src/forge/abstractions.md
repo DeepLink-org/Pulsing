@@ -1,5 +1,9 @@
 # Abstractions
 
+!!! info "Current abstraction layer"
+
+    This page describes the current tool-execution abstraction. The versioned Session, Event, and Evolution protocols that supersede `ToolSession` as the product-state boundary are specified in [Forge Core Architecture](../design/forge/core-architecture.md).
+
 Forge provides a **standard, sandboxed workspace** for agents — independent of any single LLM product or CLI.
 
 ---

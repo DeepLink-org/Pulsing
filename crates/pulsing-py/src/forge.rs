@@ -14,6 +14,7 @@ use pulsing_forge::mcp::{new_shared_mcp_runtime, refresh_mcp_runtime, SharedMcpR
 use pulsing_forge::result::ToolResult;
 use pulsing_forge::runtime::{ToolRuntime, ToolRuntimeConfig};
 use pulsing_forge::unified_exec::UnifiedExecManager;
+use pulsing_forge::{AgentConfig, ForgeEventKind, LocalForgeClient, SessionId, TurnId};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
@@ -301,6 +302,196 @@ pub struct PyForgeRuntime {
     mcp_slot: Option<SharedMcpRuntime>,
 }
 
+/// Python client for the canonical Rust Forge session control plane.
+#[pyclass(name = "ForgeClient")]
+pub struct PyForgeClient {
+    client: LocalForgeClient,
+    runtime: tokio::runtime::Runtime,
+}
+
+#[pymethods]
+impl PyForgeClient {
+    #[new]
+    fn new() -> PyResult<Self> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        Ok(Self {
+            client: LocalForgeClient::default(),
+            runtime,
+        })
+    }
+
+    #[pyo3(signature = (
+        cwd=".",
+        provider="demo",
+        model="demo",
+        max_tokens=8192,
+        max_turns=20,
+        sandbox="off",
+        tool_names=None,
+        system_prompt=None,
+        auto_approve=true
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn create_session(
+        &self,
+        py: Python<'_>,
+        cwd: &str,
+        provider: &str,
+        model: &str,
+        max_tokens: u32,
+        max_turns: usize,
+        sandbox: &str,
+        tool_names: Option<Vec<String>>,
+        system_prompt: Option<String>,
+        auto_approve: bool,
+    ) -> PyResult<String> {
+        let config = AgentConfig {
+            cwd: cwd.into(),
+            provider: provider.into(),
+            model: model.into(),
+            max_tokens,
+            max_turns,
+            sandbox: sandbox.into(),
+            approval_policy: if auto_approve {
+                ApprovalPolicy::Always
+            } else {
+                ApprovalPolicy::OnRequest
+            },
+            tool_names: tool_names.unwrap_or_else(|| {
+                pulsing_forge::DEFAULT_TOOL_NAMES
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect()
+            }),
+            system_prompt,
+        };
+        let client = self.client.clone();
+        py.allow_threads(|| {
+            self.runtime
+                .block_on(client.create_session(config))
+                .map(|id| id.to_string())
+                .map_err(forge_protocol_error)
+        })
+    }
+
+    fn start_turn(&self, py: Python<'_>, session_id: &str, input: &str) -> PyResult<PyObject> {
+        let client = self.client.clone();
+        let session_id = SessionId::from_string(session_id);
+        let input = input.to_string();
+        let receipt = py.allow_threads(|| {
+            self.runtime
+                .block_on(client.start_turn(session_id, input))
+                .map_err(forge_protocol_error)
+        })?;
+        Python::with_gil(|py| {
+            json_to_py(
+                py,
+                &serde_json::json!({
+                    "command_id": receipt.command_id.as_str(),
+                    "session_id": receipt.session_id.as_str(),
+                    "turn_id": receipt.turn_id.as_ref().map(|id| id.as_str()),
+                    "accepted_seq": receipt.accepted_seq,
+                }),
+            )
+            .map(Into::into)
+        })
+    }
+
+    fn wait_turn(
+        &self,
+        py: Python<'_>,
+        session_id: &str,
+        turn_id: &str,
+        after_seq: u64,
+    ) -> PyResult<PyObject> {
+        let client = self.client.clone();
+        let session_id = SessionId::from_string(session_id);
+        let turn_id = TurnId::from_string(turn_id);
+        let value = py.allow_threads(|| {
+            self.runtime
+                .block_on(async move {
+                    let mut subscription = client.subscribe(&session_id, after_seq).await?;
+                    let mut events = Vec::new();
+                    let terminal = loop {
+                        let event = subscription.recv().await?;
+                        if event.turn_id.as_ref() != Some(&turn_id) {
+                            continue;
+                        }
+                        let terminal = match &event.kind {
+                            ForgeEventKind::TurnCompleted { text } => Some(serde_json::json!({
+                                "status": "completed",
+                                "text": text,
+                            })),
+                            ForgeEventKind::TurnFailed { message } => Some(serde_json::json!({
+                                "status": "failed",
+                                "message": message,
+                            })),
+                            ForgeEventKind::TurnCancelled => Some(serde_json::json!({
+                                "status": "cancelled",
+                            })),
+                            _ => None,
+                        };
+                        events.push(serde_json::to_value(&event).map_err(|err| {
+                            pulsing_forge::ForgeProtocolError::Internal(err.to_string())
+                        })?);
+                        if let Some(terminal) = terminal {
+                            break terminal;
+                        }
+                    };
+                    Ok::<_, pulsing_forge::ForgeProtocolError>(serde_json::json!({
+                        "terminal": terminal,
+                        "events": events,
+                    }))
+                })
+                .map_err(forge_protocol_error)
+        })?;
+        Python::with_gil(|py| json_to_py(py, &value).map(Into::into))
+    }
+
+    fn cancel_turn(&self, py: Python<'_>, session_id: &str, turn_id: &str) -> PyResult<PyObject> {
+        let client = self.client.clone();
+        let session_id = SessionId::from_string(session_id);
+        let turn_id = TurnId::from_string(turn_id);
+        let receipt = py.allow_threads(|| {
+            self.runtime
+                .block_on(client.cancel_turn(session_id, turn_id))
+                .map_err(forge_protocol_error)
+        })?;
+        Python::with_gil(|py| {
+            json_to_py(
+                py,
+                &serde_json::json!({
+                    "command_id": receipt.command_id.as_str(),
+                    "session_id": receipt.session_id.as_str(),
+                    "turn_id": receipt.turn_id.as_ref().map(|id| id.as_str()),
+                    "accepted_seq": receipt.accepted_seq,
+                }),
+            )
+            .map(Into::into)
+        })
+    }
+
+    fn snapshot(&self, py: Python<'_>, session_id: &str) -> PyResult<PyObject> {
+        let client = self.client.clone();
+        let session_id = SessionId::from_string(session_id);
+        let snapshot = py.allow_threads(|| {
+            self.runtime
+                .block_on(client.snapshot(&session_id))
+                .map_err(forge_protocol_error)
+        })?;
+        let value = serde_json::to_value(snapshot)
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        Python::with_gil(|py| json_to_py(py, &value).map(Into::into))
+    }
+}
+
+fn forge_protocol_error(err: pulsing_forge::ForgeProtocolError) -> PyErr {
+    PyRuntimeError::new_err(err.to_string())
+}
+
 #[pymethods]
 impl PyForgeRuntime {
     #[new]
@@ -533,6 +724,7 @@ fn tool_result_to_py(py: Python<'_>, r: &ToolResult) -> PyResult<PyObject> {
 
 pub fn add_to_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyForgeRuntime>()?;
+    m.add_class::<PyForgeClient>()?;
     crate::llm::add_to_module(m)?;
     Ok(())
 }

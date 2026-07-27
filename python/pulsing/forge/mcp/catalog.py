@@ -12,7 +12,7 @@ from pulsing.forge.discovery.codex_manifest import (
     find_plugin_manifest_path,
     load_codex_manifest,
 )
-from pulsing.forge.discovery.codex_paths import codex_home, plugins_cache_root
+from pulsing.forge.discovery.codex_paths import codex_home
 from pulsing.forge.discovery.plugin_store import PluginStore
 
 
@@ -87,7 +87,9 @@ def load_plugin_mcp_servers() -> list[McpServerEntry]:
     entries: list[McpServerEntry] = []
     store = PluginStore()
     for pid in store.list_installed_plugin_ids():
-        root = plugins_cache_root() / pid.marketplace / pid.name / pid.version
+        root = store.active_plugin_root(pid)
+        if root is None:
+            continue
         manifest_path = find_plugin_manifest_path(root)
         if manifest_path is None:
             continue
@@ -101,7 +103,7 @@ def load_plugin_mcp_servers() -> list[McpServerEntry]:
         mcp_path = (root / mcp_ref).resolve()
         if not mcp_path.is_file():
             continue
-        plugin_id = f"{manifest.name}@{pid.marketplace}"
+        plugin_id = pid.id
         for name, cfg in parse_plugin_mcp_file(root, mcp_path).items():
             entries.append(
                 McpServerEntry(

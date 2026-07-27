@@ -11,6 +11,10 @@ impl ToolExecutor for ShellCommandHandler {
         "shell_command"
     }
 
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
+    }
+
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, arguments: Value) -> ToolExecutorFuture<'a> {
         Box::pin(async move { run_shell(ctx, &arguments).await })
     }
@@ -23,6 +27,10 @@ impl ToolExecutor for ExecCommandHandler {
         "exec_command"
     }
 
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
+    }
+
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, arguments: Value) -> ToolExecutorFuture<'a> {
         Box::pin(async move { ctx.exec.exec_command(ctx, &arguments).await })
     }
@@ -33,6 +41,10 @@ pub struct WriteStdinHandler;
 impl ToolExecutor for WriteStdinHandler {
     fn tool_name(&self) -> &str {
         "write_stdin"
+    }
+
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
     }
 
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, arguments: Value) -> ToolExecutorFuture<'a> {

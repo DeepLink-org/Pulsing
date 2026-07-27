@@ -1,28 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""ForgeAgent — minimal coding-agent loop with Forge tools and CLI feedback."""
+"""Python client projection for the canonical Rust Forge Agent."""
 
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pulsing.forge.host.llm import LLMClient, LLMMessage
-from pulsing.forge.environment import ForgeEnvironment
+from pulsing.forge.client import ForgeClient
 from pulsing.forge.host.cli_events import CliEventSink
-from pulsing.forge.hybrid_runtime import HybridForgeRuntime
 from pulsing.forge.result import ToolResult
-from pulsing.forge.rust_runtime import rust_forge_available
-from pulsing.forge.runtime import LocalToolRuntime
-from pulsing.forge.session import LocalToolSession
-from pulsing.forge.tool_calls import (
-    anthropic_tool_result_block,
-    anthropic_tool_results_message,
-    extract_tool_calls_anthropic,
-    forge_tool_definitions,
-)
 
 DEFAULT_TOOL_NAMES: tuple[str, ...] = (
     "update_plan",
@@ -40,23 +28,9 @@ Be concise in final replies.\
 """
 
 
-def _text_from_content(content: list[Any]) -> str:
-    parts: list[str] = []
-    for block in content or []:
-        if isinstance(block, dict) and block.get("type") == "text":
-            parts.append(str(block.get("text") or ""))
-    return "".join(parts)
-
-
 @dataclass
 class ForgeAgent:
-    """Thin Host: LLM loop + Forge tools + default CLI event output.
-
-    Example::
-
-        agent = ForgeAgent(cwd=".", provider="demo")
-        text = await agent.run("List README files in this project")
-    """
+    """Client facade; Rust owns the Session, Agent loop, tools, and cancellation."""
 
     cwd: Path | str = "."
     provider: str = "demo"
@@ -70,153 +44,153 @@ class ForgeAgent:
     sandbox_policy: str = "off"
     auto_approve: bool = True
     events: CliEventSink = field(default_factory=CliEventSink)
+    _client: ForgeClient | None = field(default=None, init=False, repr=False)
+    _session_id: str | None = field(default=None, init=False, repr=False)
+    _active_turn_id: str | None = field(default=None, init=False, repr=False)
     _messages: list[dict[str, Any]] = field(
         default_factory=list, init=False, repr=False
     )
-    _runtime: HybridForgeRuntime | LocalToolRuntime | None = field(
-        default=None, init=False, repr=False
-    )
-    _client: LLMClient | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.cwd = Path(self.cwd).resolve()
-        if self.provider == "openai" and not self.api_key:
-            self.api_key = os.environ.get("OPENAI_API_KEY")
-            self.base_url = self.base_url or os.environ.get("OPENAI_BASE_URL")
-        elif self.provider == "anthropic" and not self.api_key:
-            self.api_key = os.environ.get("ANTHROPIC_API_KEY")
-            self.base_url = self.base_url or os.environ.get("ANTHROPIC_BASE_URL")
-
-    def _ensure_runtime(self) -> HybridForgeRuntime | LocalToolRuntime:
-        if self._runtime is not None:
-            return self._runtime
-        session = LocalToolSession(token_budget=128_000)
-        if rust_forge_available():
-            self._runtime = HybridForgeRuntime.create(
-                cwd=str(self.cwd),
-                sandbox_policy=self.sandbox_policy,
-                session=session,
-                auto_approve=self.auto_approve,
-                event_callback=self.events.on_forge_event,
-                start_mcp=False,
+        if self.api_key is not None or self.base_url is not None:
+            raise ValueError(
+                "canonical ForgeAgent provider credentials are Rust process "
+                "configuration; use OPENAI_API_KEY/OPENAI_BASE_URL or "
+                "ANTHROPIC_API_KEY/ANTHROPIC_BASE_URL"
             )
-        else:
-            self._runtime = ForgeEnvironment(
-                cwd=str(self.cwd),
-                sandbox_policy=self.sandbox_policy,
-                session=session,
-                auto_approve=self.auto_approve,
-            ).runtime()
-        return self._runtime
 
-    def _ensure_client(self) -> LLMClient:
+    def _ensure_client(self) -> ForgeClient:
         if self._client is None:
-            self._client = LLMClient(
-                provider=self.provider,
-                api_key=self.api_key,
-                base_url=self.base_url,
-            )
+            self._client = ForgeClient()
         return self._client
+
+    def _ensure_session(self) -> str:
+        if self._session_id is None:
+            self._session_id = self._ensure_client().create_session(
+                cwd=str(self.cwd),
+                provider=self.provider,
+                model=self.model,
+                max_tokens=self.max_tokens,
+                max_turns=self.max_turns,
+                sandbox=self.sandbox_policy,
+                auto_approve=self.auto_approve,
+                tool_names=self.tool_names,
+                system_prompt=self.system_prompt,
+            )
+        return self._session_id
 
     @property
     def messages(self) -> list[dict[str, Any]]:
+        """Client-side conversation projection; never used to drive execution."""
         return list(self._messages)
 
     @property
-    def session(self) -> LocalToolSession:
-        rt = self._ensure_runtime()
-        return rt.python_runtime.session  # type: ignore[return-value]
-
-    def close(self) -> None:
-        if self._runtime is not None:
-            self._runtime.close()
-            self._runtime = None
+    def session(self) -> dict[str, Any]:
+        """Read-only Rust Session snapshot."""
+        return self._ensure_client().snapshot(self._ensure_session())
 
     async def run(self, prompt: str) -> str:
-        """Run a multi-turn agent session until the model stops calling tools."""
-        self._messages = []
+        session_id = self._ensure_session()
         self._messages.append({"role": "user", "content": prompt})
-        tools = forge_tool_definitions(list(self.tool_names))
-        rt = self._ensure_runtime()
-        final: LLMMessage | None = None
-
-        for _ in range(self.max_turns):
-            final = await self._stream_one_llm(self._messages, tools)
-            self._messages.append({"role": "assistant", "content": list(final.content)})
-            self.events.on_assistant_end()
-
-            calls = extract_tool_calls_anthropic(final.content)
-            if not calls:
-                return _text_from_content(final.content)
-
-            result_blocks = []
-            for call in calls:
-                result = await self._call_tool(rt, call.name, call.arguments)
-                result_blocks.append(anthropic_tool_result_block(call.id, result))
-
-            self._messages.append(anthropic_tool_results_message(result_blocks))
-
-            if self.session.plan:
-                self.events.on_plan_updated(
-                    [item.to_dict() for item in self.session.plan]
-                )
-
-        text = _text_from_content(final.content) if final else ""
-        return text or "(max turns reached)"
-
-    async def _call_tool(
-        self,
-        rt: HybridForgeRuntime | LocalToolRuntime,
-        name: str,
-        arguments: dict[str, Any],
-    ) -> ToolResult:
-        self.events.on_tool_begin(name, arguments)
-        result = await rt.acall_tool(name, arguments)
-        self.events.on_tool_end(name, result)
-        return result
-
-    async def _stream_one_llm(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-    ) -> LLMMessage:
-        client = self._ensure_client()
-        q: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-
-        def _producer() -> None:
-            try:
-                stream = client.stream_messages(
-                    model=self.model,
-                    max_tokens=self.max_tokens,
-                    system=self.system_prompt,
-                    messages=messages,
-                    tools=tools,
-                )
-                with stream as s:
-                    for text in s.text_stream:
-                        loop.call_soon_threadsafe(q.put_nowait, ("chunk", text))
-                    loop.call_soon_threadsafe(
-                        q.put_nowait, ("done", s.get_final_message())
-                    )
-            except Exception as exc:
-                loop.call_soon_threadsafe(q.put_nowait, ("error", exc))
-
-        producer = asyncio.create_task(asyncio.to_thread(_producer))
-        final: LLMMessage | None = None
+        receipt = await asyncio.to_thread(
+            self._ensure_client().start_turn,
+            session_id,
+            prompt,
+        )
+        turn_id = str(receipt["turn_id"])
+        self._active_turn_id = turn_id
         try:
-            while True:
-                kind, payload = await q.get()
-                if kind == "chunk":
-                    self.events.on_assistant_delta(str(payload))
-                elif kind == "done":
-                    final = payload
-                    break
-                elif kind == "error":
-                    self.events.on_error(str(payload))
-                    raise payload
+            outcome = await asyncio.to_thread(
+                self._ensure_client().wait_turn,
+                session_id,
+                turn_id,
+                int(receipt["accepted_seq"]),
+            )
         finally:
-            await producer
+            self._active_turn_id = None
 
-        assert final is not None
-        return final
+        self._project_events(list(outcome.get("events") or []))
+        terminal = dict(outcome.get("terminal") or {})
+        status = terminal.get("status")
+        if status == "completed":
+            return str(terminal.get("text") or "")
+        if status == "cancelled":
+            raise asyncio.CancelledError("Forge turn cancelled")
+        message = str(terminal.get("message") or "Forge turn failed")
+        raise RuntimeError(message)
+
+    async def cancel(self) -> bool:
+        if self._session_id is None or self._active_turn_id is None:
+            return False
+        await asyncio.to_thread(
+            self._ensure_client().cancel_turn,
+            self._session_id,
+            self._active_turn_id,
+        )
+        return True
+
+    def close(self) -> None:
+        if (
+            self._client is not None
+            and self._session_id is not None
+            and self._active_turn_id is not None
+        ):
+            try:
+                self._client.cancel_turn(self._session_id, self._active_turn_id)
+            except RuntimeError:
+                pass
+        self._active_turn_id = None
+        self._session_id = None
+        self._client = None
+
+    def _project_events(self, events: list[dict[str, Any]]) -> None:
+        for event in events:
+            kind = str(event.get("kind") or "")
+            payload = dict(event.get("payload") or {})
+            if kind == "turn_output_delta":
+                self.events.on_assistant_delta(str(payload.get("delta") or ""))
+            elif kind == "tool_started":
+                name = str(payload.get("name") or "tool")
+                self.events.on_tool_begin(name, {})
+                self._messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "name": name}],
+                    }
+                )
+            elif kind == "tool_completed":
+                name = str(payload.get("name") or "tool")
+                result = ToolResult(
+                    content=str(payload.get("summary") or ""),
+                    is_error=not bool(payload.get("ok")),
+                )
+                self.events.on_tool_end(name, result)
+                self._messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "name": name,
+                                "content": result.content,
+                                "is_error": result.is_error,
+                            }
+                        ],
+                    }
+                )
+            elif kind == "tool_cancelled":
+                name = str(payload.get("name") or "tool")
+                self.events.on_tool_end(
+                    name,
+                    ToolResult(content="cancelled", is_error=True),
+                )
+            elif kind == "turn_completed":
+                text = str(payload.get("text") or "")
+                self._messages.append({"role": "assistant", "content": text})
+                self.events.on_assistant_end()
+            elif kind == "turn_failed":
+                self.events.on_error(str(payload.get("message") or "Forge turn failed"))
+
+
+__all__ = ["DEFAULT_TOOL_NAMES", "ForgeAgent"]

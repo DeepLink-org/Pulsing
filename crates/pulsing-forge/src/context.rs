@@ -103,6 +103,7 @@ pub trait ToolSession: Send + Sync {
 }
 
 /// Per-invocation context passed to every handler.
+#[derive(Clone)]
 pub struct ToolCallContext {
     pub cwd: PathBuf,
     pub sandbox_policy: SandboxPolicy,
@@ -113,6 +114,7 @@ pub struct ToolCallContext {
     pub approval_cache: Arc<ApprovalCache>,
     pub tool_catalog: Arc<Mutex<ToolCatalog>>,
     pub mcp_runtime: Option<crate::mcp::SharedMcpRuntime>,
+    pub turn: Option<Arc<crate::turn::TurnExecutionContext>>,
 }
 
 impl ToolCallContext {
@@ -135,6 +137,7 @@ impl ToolCallContext {
             approval_cache,
             tool_catalog,
             mcp_runtime: None,
+            turn: None,
         }
     }
 
@@ -145,6 +148,11 @@ impl ToolCallContext {
 
     pub fn with_dangerous_sandbox(mut self, disable: bool) -> Self {
         self.dangerously_disable_sandbox = disable;
+        self
+    }
+
+    pub fn with_turn(mut self, turn: Arc<crate::turn::TurnExecutionContext>) -> Self {
+        self.turn = Some(turn);
         self
     }
 }

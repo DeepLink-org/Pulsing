@@ -4,6 +4,10 @@
 > **版本快照**：2026-05 · **32 工具开箱 callable**（Hybrid + MCP runtime）
 > **代码入口**：`pip install pulsing` → `from pulsing.forge import ForgeEnvironment`
 
+!!! info "当前 API 与目标架构"
+
+    本章描述的是**当前工具与环境运行时**。已接受的目标架构将 Forge 扩展为持久、自进化的 Agent Runtime，并让 GUI、CLI、Python SDK 成为同一协议的客户端。见 [Forge 核心架构](../design/forge/core-architecture.zh.md)。目标设计不代表对应能力已经实现。
+
 ---
 
 ## 一句话

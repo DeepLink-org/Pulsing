@@ -1,6 +1,7 @@
 # Forge × Craft Architecture
 
 > **User docs**: [Forge deployment](../../forge/deployment.md) · [Pulsing integration](../../forge/pulsing-integration.md)
+> **Status**: Legacy/reference-host integration. The target architecture is [Forge Core Architecture](core-architecture.md), where Forge owns Session and Agent-loop semantics and clients own presentation.
 
 Review-grade architecture for how Craft (reference Host) consumes Forge on Pulsing Actors.
 

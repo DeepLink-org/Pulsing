@@ -6,6 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::error::ToolError;
+use crate::registry::ToolSpec;
 use crate::result::ToolResult;
 
 pub type ToolExecutorFuture<'a> =
@@ -27,6 +28,10 @@ impl ToolExposure {
 
 pub trait ToolExecutor: Send + Sync {
     fn tool_name(&self) -> &str;
+
+    /// Provider-neutral model schema. Keeping this on the executable contract
+    /// prevents the agent loop from drifting into a second tool catalog.
+    fn spec(&self) -> ToolSpec;
 
     fn exposure(&self) -> ToolExposure {
         ToolExposure::Direct

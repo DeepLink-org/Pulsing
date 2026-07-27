@@ -1,5 +1,9 @@
 # Core Concepts
 
+!!! info "Scope"
+
+    The Host/Forge split below describes the current tool-runtime API. The target control-plane boundary is defined by [Forge Core Architecture](../design/forge/core-architecture.md): Forge will own Session, Turn, Agent-loop, Event, and Evolution semantics, while clients own presentation and provider/tool adapters.
+
 ## Host vs Forge
 
 | Layer | Owns | Does not own |

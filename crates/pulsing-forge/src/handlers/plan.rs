@@ -17,6 +17,10 @@ impl ToolExecutor for UpdatePlanHandler {
         "update_plan"
     }
 
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
+    }
+
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, arguments: Value) -> ToolExecutorFuture<'a> {
         Box::pin(async move { update_plan_impl(ctx, arguments) })
     }

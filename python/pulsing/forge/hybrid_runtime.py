@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Hybrid Forge runtime — Rust handlers first, Python fallback for Host-only tools."""
+"""Legacy hybrid tool adapter.
+
+This type no longer owns the default Agent loop or Session. Keep its use
+explicit while Python-only tools migrate behind Rust-registered workers.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +23,7 @@ _RUST_SESSION_SYNC = frozenset({"update_plan", "new_context"})
 
 
 class HybridForgeRuntime:
-    """Default Forge runtime when ``pulsing._core`` is available.
+    """Explicit compatibility adapter for mixed Rust/Python tool execution.
 
     Rust executes isolated + most Host tools; Python handles tools without Rust
     handlers (``exec``, ``wait``, Extension×8) so all 32 Forge tools are callable.

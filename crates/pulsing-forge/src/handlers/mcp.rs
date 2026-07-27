@@ -10,7 +10,8 @@ use crate::executor::{ToolExecutor, ToolExecutorFuture, ToolExposure};
 use crate::mcp::{
     LEGACY_MCP_TOOL_NAME_PREFIX, McpRuntime, enforce_resource_size_limit, validate_mcp_resource_uri,
 };
-use crate::mcp::{McpClientError, ToolInfo};
+use crate::mcp::{McpClientError, ToolInfo, tool_input_schema_json};
+use crate::registry::ToolSpec;
 use crate::result::ToolResult;
 
 fn optional_server_name(arguments: &Value) -> Result<Option<String>, ToolError> {
@@ -52,6 +53,10 @@ macro_rules! mcp_handler {
                 $tool
             }
 
+            fn spec(&self) -> crate::registry::ToolSpec {
+                super::builtin_spec(self.tool_name())
+            }
+
             fn supports_parallel(&self) -> bool {
                 true
             }
@@ -87,6 +92,8 @@ mcp_handler!(ReadMcpResourceHandler, "read_mcp_resource");
 pub struct McpDynamicToolHandler {
     pub model_name: String,
     pub supports_parallel: bool,
+    description: String,
+    input_schema: Value,
 }
 
 impl McpDynamicToolHandler {
@@ -94,6 +101,8 @@ impl McpDynamicToolHandler {
         Self {
             model_name: model_name.into(),
             supports_parallel: false,
+            description: "Call a dynamically registered MCP tool.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
         }
     }
 
@@ -101,6 +110,13 @@ impl McpDynamicToolHandler {
         Self {
             model_name: info.model_tool_name(prefix_mcp_tool_names),
             supports_parallel: info.supports_parallel_tool_calls,
+            description: info
+                .tool
+                .description
+                .as_deref()
+                .unwrap_or("Call a dynamically registered MCP tool.")
+                .to_string(),
+            input_schema: tool_input_schema_json(&info.tool),
         }
     }
 }
@@ -112,6 +128,14 @@ impl ToolExecutor for McpDynamicToolHandler {
 
     fn exposure(&self) -> ToolExposure {
         ToolExposure::Deferred
+    }
+
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::function(
+            self.model_name.clone(),
+            self.description.clone(),
+            self.input_schema.clone(),
+        )
     }
 
     fn supports_parallel(&self) -> bool {

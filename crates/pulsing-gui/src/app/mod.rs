@@ -3,15 +3,15 @@ mod left;
 mod right;
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use pulsing_forge::{AgentEvent, InteractiveConfig};
+use pulsing_forge::InteractiveConfig;
 
-use crate::controller::start_agent_turn;
+use crate::controller::ForgeController;
 use crate::model::{
-    build_file_tree, count_files, FileTreeNode, SessionStore, WorkspaceAction, WorkspaceModel,
+    build_file_tree, count_files, FileTreeNode, SessionId, SessionStore, WorkspaceAction,
+    WorkspaceModel,
 };
 use crate::settings::{build_agent_config, ChatMode};
 use crate::state::{ChatMessage, MessageKind};
@@ -50,17 +50,19 @@ pub struct WorkspaceApp {
     last_file_click: Option<(String, Instant)>,
 
     input_text: String,
-    event_rx: Option<mpsc::Receiver<AgentEvent>>,
+    forge: ForgeController,
     toast: Option<(String, Instant)>,
 }
 
 impl WorkspaceApp {
     fn new(agent: InteractiveConfig) -> Self {
         let workspace = WorkspaceModel::new(agent.cwd.clone());
+        let sessions =
+            SessionStore::new(agent.provider.clone(), agent.model.clone(), ChatMode::Agent);
         let mut app = Self {
             agent,
             workspace,
-            sessions: SessionStore::new(),
+            sessions,
             chat_mode: ChatMode::Agent,
             left_tab: LeftTab::Explorer,
             center_tab: CenterTab::Chat,
@@ -68,7 +70,7 @@ impl WorkspaceApp {
             open_files: Vec::new(),
             last_file_click: None,
             input_text: String::new(),
-            event_rx: None,
+            forge: ForgeController::start(),
             toast: None,
         };
         app.rebuild_tree();
@@ -88,6 +90,10 @@ impl WorkspaceApp {
             WorkspaceAction::NewSession => self.new_session(),
             WorkspaceAction::FocusSession(id) => {
                 self.sessions.focus(id);
+                let (provider, model, mode) = self.sessions.active_settings();
+                self.agent.provider = provider.to_string();
+                self.agent.model = model.to_string();
+                self.chat_mode = mode;
                 self.center_tab = CenterTab::Chat;
                 self.toast = Some((
                     format!("Session: {}", self.sessions.session_title(id)),
@@ -107,10 +113,11 @@ impl WorkspaceApp {
     }
 
     fn new_session(&mut self) {
-        if self.sessions.active_chat().busy {
-            return;
-        }
-        self.sessions.new_session();
+        self.sessions.new_session(
+            self.agent.provider.clone(),
+            self.agent.model.clone(),
+            self.chat_mode,
+        );
         self.center_tab = CenterTab::Chat;
         self.toast = Some(("New chat started".into(), Instant::now()));
         self.sync_runtime();
@@ -153,20 +160,19 @@ impl WorkspaceApp {
     }
 
     fn poll_agent_events(&mut self) {
-        let mut events = Vec::new();
-        if let Some(rx) = self.event_rx.as_ref() {
-            while let Ok(event) = rx.try_recv() {
-                events.push(event);
+        let mut changed = false;
+        while let Some(event) = self.forge.try_recv() {
+            let session_id = SessionId(event.gui_session_id);
+            if let Some(chat) = self.sessions.chat_mut(session_id) {
+                chat.apply(event.event);
+                changed = true;
+            } else if event.gui_session_id == 0 {
+                self.toast = Some(("Forge controller failed".into(), Instant::now()));
             }
         }
-        if events.is_empty() {
-            return;
+        if changed {
+            self.sync_runtime();
         }
-        let chat = self.sessions.active_chat_mut();
-        for event in events {
-            chat.apply(event);
-        }
-        self.sync_runtime();
     }
 
     fn try_send(&mut self) {
@@ -189,7 +195,9 @@ impl WorkspaceApp {
         chat.busy = true;
         self.sync_runtime();
 
-        let handle = start_agent_turn(
+        let session_id = self.sessions.active_id();
+        self.forge.start_turn(
+            session_id.0,
             build_agent_config(
                 &self.agent.cwd,
                 &self.agent.provider,
@@ -198,31 +206,63 @@ impl WorkspaceApp {
             ),
             text,
         );
-        self.event_rx = Some(handle.rx);
     }
 
     fn stop_generation(&mut self) {
         if !self.sessions.active_chat().busy {
             return;
         }
-        self.event_rx = None;
-        self.sessions.active_chat_mut().stop();
-        self.sync_runtime();
+        let session_id = self.sessions.active_id();
+        self.forge.cancel_turn(session_id.0);
+        self.toast = Some(("Cancellation requested".into(), Instant::now()));
     }
 
     fn set_model(&mut self, provider: &str, model: &str) {
         if self.sessions.active_chat().busy {
             return;
         }
+        if !self.sessions.active_chat().messages.is_empty() {
+            self.agent.provider = provider.into();
+            self.agent.model = model.into();
+            self.sessions.new_session(
+                self.agent.provider.clone(),
+                self.agent.model.clone(),
+                self.chat_mode,
+            );
+            self.toast = Some(("Model change started a new chat".into(), Instant::now()));
+            self.sync_runtime();
+            return;
+        }
         self.agent.provider = provider.into();
         self.agent.model = model.into();
+        self.sessions.set_active_settings(
+            self.agent.provider.clone(),
+            self.agent.model.clone(),
+            self.chat_mode,
+        );
     }
 
     fn set_chat_mode(&mut self, mode: ChatMode) {
         if self.sessions.active_chat().busy {
             return;
         }
+        if !self.sessions.active_chat().messages.is_empty() {
+            self.chat_mode = mode;
+            self.sessions.new_session(
+                self.agent.provider.clone(),
+                self.agent.model.clone(),
+                self.chat_mode,
+            );
+            self.toast = Some(("Mode change started a new chat".into(), Instant::now()));
+            self.sync_runtime();
+            return;
+        }
         self.chat_mode = mode;
+        self.sessions.set_active_settings(
+            self.agent.provider.clone(),
+            self.agent.model.clone(),
+            self.chat_mode,
+        );
     }
 
     fn on_file_click(&mut self, id: &str, is_dir: bool) {
@@ -261,7 +301,7 @@ pub fn run(agent: InteractiveConfig) -> anyhow::Result<()> {
 impl eframe::App for WorkspaceApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_agent_events();
-        if self.event_rx.is_some() {
+        if self.sessions.any_busy() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
 

@@ -1,8 +1,9 @@
 # Forge × Craft 一体化架构设计
 
-> **状态**：Review 草案（2026-05）
+> **状态**：历史实现 / 参考 Host 集成（2026-05）
 > **读者**：架构 review、贡献者、Craft / Forge 集成开发
 > **关联**：[engineering.md](./engineering.md) · [../../forge/index.md](../../forge/index.md) · [do../../forge/abstractions.md](../../forge/abstractions.md)
+> **目标架构**：[Forge 核心架构](core-architecture.zh.md)。其中 Forge 拥有 Session、Agent loop 与 Evolution 语义，Craft/Agent 不再作为独立状态所有者。
 
 ---
 

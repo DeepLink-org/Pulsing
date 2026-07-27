@@ -3,15 +3,16 @@
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{ChildKiller, CommandBuilder, PtySize, native_pty_system};
 
 use crate::error::ToolError;
 use crate::exec_output::{
     ExecOutputDelta, ExecStream, OutputBuffer, RUNNING_EXIT_SENTINEL, Utf8ChunkDecoder,
 };
+use crate::process_group;
 use crate::sandbox::BashExecPlan;
 
 enum PtyCommand {
@@ -22,6 +23,8 @@ enum PtyCommand {
 /// Handle to a background PTY session thread.
 pub struct PtyExecHandle {
     cmd_tx: mpsc::Sender<PtyCommand>,
+    killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
+    process_id: Option<u32>,
     pub exit_code: Arc<AtomicI32>,
     _thread: JoinHandle<()>,
 }
@@ -29,7 +32,7 @@ pub struct PtyExecHandle {
 impl Drop for PtyExecHandle {
     fn drop(&mut self) {
         if self.poll_exit_code().is_none() {
-            let _ = self.cmd_tx.send(PtyCommand::Kill);
+            let _ = self.kill();
         }
     }
 }
@@ -42,9 +45,18 @@ impl PtyExecHandle {
     }
 
     pub fn kill(&self) -> Result<(), ToolError> {
-        self.cmd_tx
-            .send(PtyCommand::Kill)
-            .map_err(|e| ToolError::respond(format!("pty kill channel closed: {e}")))
+        if let Some(process_id) = self.process_id {
+            process_group::kill(process_id);
+        }
+        self.killer
+            .lock()
+            .map_err(|_| ToolError::respond("pty killer lock poisoned"))?
+            .kill()
+            .map_err(|e| ToolError::respond(format!("pty kill failed: {e}")))?;
+        // Keep the command for implementations where killing does not
+        // immediately wake the PTY reader loop.
+        let _ = self.cmd_tx.send(PtyCommand::Kill);
+        Ok(())
     }
 
     pub fn poll_exit_code(&self) -> Option<i32> {
@@ -66,6 +78,7 @@ pub fn spawn_pty_exec(
 ) -> Result<PtyExecHandle, ToolError> {
     let cmd_tx_out;
     let (cmd_tx, cmd_rx) = mpsc::channel();
+    let (killer_tx, killer_rx) = mpsc::sync_channel(1);
     cmd_tx_out = cmd_tx;
     let exit_code = Arc::new(AtomicI32::new(RUNNING_EXIT_SENTINEL));
     let exit_out = exit_code.clone();
@@ -74,7 +87,9 @@ pub fn spawn_pty_exec(
     let wd = workdir.to_path_buf();
 
     let thread = thread::spawn(move || {
-        if let Err(e) = run_pty_thread(&plan, &wd, cmd_rx, buffer, session_id, on_delta, exit_out) {
+        if let Err(e) = run_pty_thread(
+            &plan, &wd, cmd_rx, killer_tx, buffer, session_id, on_delta, exit_out,
+        ) {
             tracing::warn!("pty session ended with error: {e}");
         }
         // Setup can fail before the wait loop ever runs (e.g. openpty/spawn
@@ -85,9 +100,14 @@ pub fn spawn_pty_exec(
             exit_guard.store(-1, Ordering::SeqCst);
         }
     });
+    let (killer, process_id) = killer_rx
+        .recv()
+        .map_err(|_| ToolError::respond("pty process failed before exposing its kill handle"))?;
 
     Ok(PtyExecHandle {
         cmd_tx: cmd_tx_out,
+        killer: Arc::new(Mutex::new(killer)),
+        process_id,
         exit_code,
         _thread: thread,
     })
@@ -97,6 +117,7 @@ fn run_pty_thread(
     plan: &BashExecPlan,
     workdir: &Path,
     cmd_rx: mpsc::Receiver<PtyCommand>,
+    killer_tx: mpsc::SyncSender<(Box<dyn ChildKiller + Send + Sync>, Option<u32>)>,
     buffer: Arc<tokio::sync::Mutex<OutputBuffer>>,
     session_id: i32,
     on_delta: Option<Arc<dyn Fn(ExecOutputDelta) + Send + Sync>>,
@@ -138,6 +159,9 @@ fn run_pty_thread(
         .slave
         .spawn_command(cmd_builder)
         .map_err(|e| report_err(format!("pty spawn failed: {e}")))?;
+    killer_tx
+        .send((child.clone_killer(), child.process_id()))
+        .map_err(|_| report_err("pty owner dropped during startup".into()))?;
 
     let mut reader = pair
         .master

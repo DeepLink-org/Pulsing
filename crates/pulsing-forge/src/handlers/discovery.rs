@@ -93,6 +93,10 @@ impl ToolExecutor for ToolSearchHandler {
         "tool_search"
     }
 
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
+    }
+
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, arguments: Value) -> ToolExecutorFuture<'a> {
         Box::pin(async move { tool_search_impl(ctx, arguments) })
     }
@@ -243,6 +247,10 @@ impl ToolExecutor for ListAvailablePluginsHandler {
         "list_available_plugins_to_install"
     }
 
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
+    }
+
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, _arguments: Value) -> ToolExecutorFuture<'a> {
         Box::pin(async move { list_plugins_impl(ctx) })
     }
@@ -267,6 +275,10 @@ pub struct RequestPluginInstallHandler;
 impl ToolExecutor for RequestPluginInstallHandler {
     fn tool_name(&self) -> &str {
         "request_plugin_install"
+    }
+
+    fn spec(&self) -> crate::registry::ToolSpec {
+        super::builtin_spec(self.tool_name())
     }
 
     fn handle<'a>(&'a self, ctx: &'a ToolCallContext, arguments: Value) -> ToolExecutorFuture<'a> {

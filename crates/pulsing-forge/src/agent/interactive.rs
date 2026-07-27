@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::r#loop::{AgentConfig, default_model_for_provider, default_provider, run_agent_turn};
+use super::r#loop::{AgentConfig, default_model_for_provider, default_provider};
+use crate::session::LocalForgeClient;
 
 #[derive(Clone, PartialEq)]
 pub struct InteractiveConfig {
@@ -41,6 +42,8 @@ pub async fn run_interactive(cfg: InteractiveConfig) -> Result<()> {
     if agent_cfg.provider == "demo" {
         eprintln!("(demo LLM — set ANTHROPIC_API_KEY or OPENAI_API_KEY for live models)");
     }
+    let client = LocalForgeClient::default();
+    let session_id = client.create_session(agent_cfg).await?;
 
     loop {
         print!("› ");
@@ -57,7 +60,7 @@ pub async fn run_interactive(cfg: InteractiveConfig) -> Result<()> {
         if prompt == "exit" || prompt == "quit" {
             break;
         }
-        match run_agent_turn(&agent_cfg, prompt).await {
+        match client.run_turn(session_id.clone(), prompt).await {
             Ok(reply) => {
                 println!("\n{reply}\n");
             }
@@ -76,5 +79,7 @@ pub async fn run_oneshot(cfg: InteractiveConfig, prompt: &str) -> Result<String>
         model: cfg.model,
         ..AgentConfig::default()
     };
-    run_agent_turn(&agent_cfg, prompt).await
+    let client = LocalForgeClient::default();
+    let session_id = client.create_session(agent_cfg).await?;
+    Ok(client.run_turn(session_id, prompt).await?)
 }

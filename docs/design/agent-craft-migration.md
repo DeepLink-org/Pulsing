@@ -1,5 +1,7 @@
 # pulsing.craft → pulsing.agent 官方迁移计划
 
+> **状态更新（2026-07-26）**：本文保留为已执行迁移的历史与兼容性清单，不再定义最终产品边界。最终边界以 [`Forge 核心架构`](../src/design/forge/core-architecture.zh.md) 为准：Rust Forge 拥有 Session、Agent loop、Event 与 Evolution 控制面；`pulsing.agent` 收敛为兼容 API、App Protocol 或参考应用，而不是另一套执行引擎。
+>
 > **目标**：将 `pulsing.craft` 重构为 `pulsing.agent`（统一 Agent SDK），`pulsing.forge` 吸收 Host 集成层，`pulsing.cli` 吸收工作区 CLI；Craft 品牌与 `pcraft` 命令进入弃用期。
 >
 > **给实现 AI 的指令**：严格按本计划分阶段执行。每阶段独立可验收；未列出的细节参考 [`craft-agent-refactor.md`](./craft-agent-refactor.md)、[`craft-npc-refactor.md`](./craft-npc-refactor.md)、[`docs/src/design/forge/craft-architecture.zh.md`](../src/design/forge/craft-architecture.zh.md)。不修改 `crates/pulsing-actor/` 核心语义，Rust Forge 改动限于 Host 集成所需接口。

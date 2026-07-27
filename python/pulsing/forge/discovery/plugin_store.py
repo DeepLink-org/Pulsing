@@ -120,8 +120,18 @@ def _validate_version_segment(version: str) -> None:
         raise ValueError("invalid plugin version characters")
 
 
-def _version_sort_key(version: str) -> tuple:
-    return tuple(int(x) if x.isdigit() else x for x in re.split(r"[.\-+]", version))
+def _version_sort_key(version: str) -> tuple[tuple[int, int | str], ...]:
+    """Return a deterministic key whose components are always comparable.
+
+    Plugin caches can contain both numeric versions and labels. Returning raw
+    ``int`` and ``str`` components makes Python 3 raise when two versions first
+    differ by component type (for example ``1.0.0`` and ``1.0.dev``).
+    """
+
+    return tuple(
+        (0, int(component)) if component.isdigit() else (1, component.casefold())
+        for component in re.split(r"[.\-+]", version)
+    )
 
 
 def load_plugin_state() -> dict:

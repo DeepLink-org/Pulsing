@@ -18,9 +18,10 @@ from pulsing.forge.backend import (
 )
 from pulsing.forge.config import ToolWorkerConfig
 from pulsing.forge.context import ToolCallContext
+from pulsing.forge.client import ForgeClient, RUST_FORGE_CLIENT_AVAILABLE
 from pulsing.forge.environment import ForgeEnvironment
 from pulsing.forge.events import ForgeEvent, ForgeEventKind
-from pulsing.forge.host import CliEventSink, ForgeAgent
+from pulsing.forge.host import CliEventSink, ForgeAgent, LegacyPythonForgeAgent
 from pulsing.forge.hybrid_runtime import HybridForgeRuntime
 from pulsing.forge.integrated import (
     FORGE_HOST_TOOL_NAMES,
@@ -58,6 +59,7 @@ from pulsing.forge.worker import ToolWorkerActor
 __all__ = [
     "CliEventSink",
     "ForgeAgent",
+    "ForgeClient",
     "ForgeBackend",
     "ForgeBackendMode",
     "ForgeEnvironment",
@@ -71,11 +73,13 @@ __all__ = [
     "FORGE_ISOLATED_TOOL_NAMES",
     "FORGE_TOOL_NAMES",
     "HybridForgeRuntime",
+    "LegacyPythonForgeAgent",
     "LocalToolRuntime",
     "LocalToolSession",
     "NullToolSession",
     "OpenAIToolCallAccumulator",
     "P2PToolSession",
+    "RUST_FORGE_CLIENT_AVAILABLE",
     "ParsedToolCall",
     "PlanItem",
     "StepStatus",
