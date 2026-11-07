@@ -29,14 +29,14 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-manylinux && \
-              just ci-build manylinux=true package=package
+              just ci-build true package
             "
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-x86-64
-          path: dist
+          path: dist/*.whl
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -63,14 +63,14 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-manylinux && \
-              just ci-build manylinux=true package=package
+              just ci-build true package
             "
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-aarch64
-          path: dist
+          path: dist/*.whl
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -115,7 +115,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-macos
-          path: dist
+          path: dist/*.whl
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -156,7 +156,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-windows
-          path: dist
+          path: dist/*.whl
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -190,7 +190,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-sdist
-          path: dist
+          path: dist/*.tar.gz
 
   # ============================================
   # Publish to PyPI

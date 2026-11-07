@@ -179,7 +179,7 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-manylinux && \
-              just ci-build manylinux=true package=package
+              just ci-build true package
             "
 
       - name: Upload wheels
@@ -213,7 +213,7 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-manylinux && \
-              just ci-build manylinux=true package=package
+              just ci-build true package
             "
 
       - name: Upload wheels
@@ -334,7 +334,7 @@ jobs:
               apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates && \
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-debian && \
-              just ci-test python_version=${{ matrix.python-version }}
+              just ci-test ${{ matrix.python-version }}
             "
 
   # ============================================
@@ -365,7 +365,7 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-fedora ${{ matrix.python-version }} && \
-              just ci-test python_version=${{ matrix.python-version }}
+              just ci-test ${{ matrix.python-version }}
             "
 
   # ============================================

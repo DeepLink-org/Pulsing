@@ -8,7 +8,7 @@ default: dev
 # =============================================================================
 # Profiles (root Cargo.toml):
 #   - default / `just dev` → [profile.dev]  (debug=1, fast link)
-#   - `just build-binary release=release` → [profile.release] (opt-level=s, thin LTO, strip)
+#   - `just build-binary release` → [profile.release] (opt-level=s, thin LTO, strip)
 # Set DEBUG=1 is a no-op alias for the default fast path (mirrors probing Makefile).
 
 # Install Python package in development mode (wheel path: extension-module)
@@ -52,7 +52,7 @@ build-release package="":
 
 # Both distribution artifacts (alias)
 build-all package="":
-    just build-release package={{package}}
+    just build-release "{{package}}"
 
 # Build release wheels (alias for wheel-only release)
 build: build-wheel
@@ -246,7 +246,7 @@ ci-build-wheel manylinux="":
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-    args=(--release --binary-only)
+    args=(--release --wheel-only)
     if [ "{{manylinux}}" = "true" ]; then
         args+=(--manylinux)
     fi
@@ -275,14 +275,14 @@ action-linux:
     docker run --rm \
         -v {{justfile_directory()}}:/workspace -w /workspace \
         quay.io/pypa/manylinux2014_x86_64 \
-        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build manylinux=true package=package"
+        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build true package"
 
 # --- Linux aarch64 (QEMU) ---
 action-linux-aarch64:
     docker run --rm --platform linux/arm64 \
         -v {{justfile_directory()}}:/workspace -w /workspace \
         quay.io/pypa/manylinux2014_aarch64 \
-        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build manylinux=true package=package"
+        bash -c "curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && just ci-setup-manylinux && just ci-build true package"
 
 # =============================================================================
 # Maintenance
