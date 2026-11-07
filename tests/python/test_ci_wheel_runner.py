@@ -32,7 +32,9 @@ def test_ci_propagates_each_exit_code(
     (venv / "bin").mkdir(parents=True)
     python = venv / "bin/python"
     python.write_text(
-        '#!/bin/sh\nprintf "%s\\n" "pytest $*" >> "$TEST_LOG"\nexit "$PYTEST_CODE"\n'
+        '#!/bin/sh\nprintf "%s\\n" "pytest $*" >> "$TEST_LOG"\n'
+        'printf "%s\\n" "env $VIRTUAL_ENV" "path $PATH" >> "$TEST_LOG"\n'
+        'exit "$PYTEST_CODE"\n'
     )
     python.chmod(0o755)
     env = os.environ | {
@@ -58,3 +60,5 @@ def test_ci_propagates_each_exit_code(
         assert "pytest -m" not in calls
     else:
         assert "pytest -m pytest tests/python -v" in calls
+        assert f"env {venv}" in calls
+        assert f"path {venv}/bin:" in calls
