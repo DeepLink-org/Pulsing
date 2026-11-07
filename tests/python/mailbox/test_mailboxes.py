@@ -220,3 +220,10 @@ async def test_client_identity_and_role_validation(actors):
     message = await router.send("worker", "Task", "body", "key")
     with pytest.raises(Exception, match="another sender"):
         await actors["reviewer"].status("worker", message["id"])
+
+
+async def test_reply_to_maximum_unicode_subject(actors):
+    task = await actors["router"].send("worker", "界" * 85, "body", "unicode")
+    reply = await actors["worker"].reply(task["id"], "result", "unicode-reply")
+    assert reply["subject"].startswith("Re: ")
+    assert len(reply["subject"].encode("utf-8")) <= 256

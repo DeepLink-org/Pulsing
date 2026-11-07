@@ -86,9 +86,12 @@ class MailboxClient:
 
     async def reply(self, message_id: str, body: str, idempotency_key: str) -> dict:
         original = await self.read(message_id)
+        subject = f"Re: {original['subject']}".encode("utf-8")[:256].decode(
+            "utf-8", errors="ignore"
+        )
         return await self.send(
             original["sender"],
-            f"Re: {original['subject']}"[:128],
+            subject,
             body,
             idempotency_key,
             original["thread_id"],

@@ -162,3 +162,27 @@ async def test_mcp_router_worker_review_and_host_restart(tmp_path):
         assert (await tool(router, "mail_read", message_id=reply["id"]))[
             "body"
         ] == "Reviewed and ready"
+
+
+async def test_host_rejects_second_owner_of_state_directory(tmp_path):
+    async with host(tmp_path):
+        second = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "pulsing.mailbox",
+            "serve",
+            "--addr",
+            "127.0.0.1:0",
+            "--state-dir",
+            str(tmp_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(second.communicate(), timeout=15)
+            assert second.returncode != 0
+            assert b"BlockingIOError" in stderr
+        finally:
+            if second.returncode is None:
+                second.kill()
+                await second.wait()
