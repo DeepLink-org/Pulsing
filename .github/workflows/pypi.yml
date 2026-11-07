@@ -47,23 +47,15 @@ jobs:
             dist/pulsing-*.tar.gz
 
   # ============================================
-  # Build Linux aarch64 wheels (使用 QEMU 仿真原生构建)
+  # Build Linux aarch64 wheels (native ARM64 runner)
   # ============================================
   linux-aarch64:
     name: Build Linux aarch64 wheels
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build wheel + binary in QEMU
+      - name: Build wheel + binary on ARM64
         run: |
           docker run --rm --platform linux/arm64 \
             -v ${{ github.workspace }}:/workspace -w /workspace \
