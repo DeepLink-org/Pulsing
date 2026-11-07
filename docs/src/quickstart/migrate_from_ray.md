@@ -151,4 +151,3 @@ result = await worker.process("hello")
 
 - [Guide: Actors](../guide/actors.md) — understand the Actor model
 - [Guide: Remote Actors](../guide/remote_actors.md) — cluster setup
-- [Tutorial: LLM Inference](llm_inference.md) — build an inference service

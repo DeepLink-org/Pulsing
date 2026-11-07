@@ -24,13 +24,12 @@ Pulsing 原生支持主流 Agent 框架，让您的应用轻松从单进程扩�
 
 ```python
 import pulsing as pul
-from pulsing.agent import agent, llm, list_agents
+from pulsing.agent import agent, list_agents
 
 @agent(role="研究员", goal="深入分析")
 class Researcher:
     async def analyze(self, topic: str) -> str:
-        client = await llm()
-        return await client.ainvoke(f"分析: {topic}")
+        return f"收到主题: {topic}"
 
 await pul.init()
 try:

@@ -1,58 +1,18 @@
-//! Workflow script resolution — session UX lives in [`crate::session`].
+//! Workspace workflow path resolution.
 
 use std::path::PathBuf;
-use std::process::ExitCode;
 
 use anyhow::Result;
+use pulsing_workspace::{require_workspace_root, WorkspaceLayout};
 
-use crate::codex::CodexOptions;
-use crate::session::workspace;
-
-pub struct WorkflowSession {
-    pub script: PathBuf,
-    pub script_args: Vec<String>,
-    pub codex: CodexOptions,
-    pub batch: bool,
-}
-
-pub fn run_session(session: WorkflowSession) -> Result<ExitCode> {
-    crate::session::run_workflow(
-        session.codex,
-        session.script,
-        session.script_args,
-        session.batch,
-    )
-}
-
-/// Resolve workflow script: explicit path, or default under `.pulsing/workflows/`.
 pub fn resolve_script(explicit: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(path) = explicit {
-        return Ok(path);
-    }
-    workspace::resolve_workflow_script(None)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pulsing_workspace::{init_workspace, InitOptions, Template};
-    use tempfile::tempdir;
-
-    #[test]
-    fn resolve_default_example() {
-        let dir = tempdir().unwrap();
-        init_workspace(
-            dir.path(),
-            InitOptions {
-                template: Template::Minimal,
-                name: None,
-                force: false,
-                guide: None,
-            },
-        )
-        .unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-        let path = resolve_script(None).unwrap();
-        assert!(path.ends_with("example.py"));
+    match explicit {
+        Some(path) => Ok(path),
+        None => {
+            let root = require_workspace_root(None)?;
+            Ok(WorkspaceLayout::new(root)
+                .workflows_dir()
+                .join("example.py"))
+        }
     }
 }

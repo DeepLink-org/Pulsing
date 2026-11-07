@@ -130,14 +130,6 @@ asyncio.run(main())
 
 <div class="grid cards" markdown>
 
--   :material-robot:{ .lg .middle } **LLM 推理服务**
-
-    ---
-
-    构建支持流式输出和 OpenAI 兼容 API 的可扩展推理后端。
-
-    [:octicons-arrow-right-24: ~10 分钟](llm_inference.zh.md)
-
 -   :material-account-group:{ .lg .middle } **分布式 Agent**
 
     ---

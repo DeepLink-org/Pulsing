@@ -9,7 +9,6 @@ source "$ROOT/scripts/lib/platform.sh"
 RELEASE=0
 OUT="dist/bin"
 PACKAGE=0
-NO_GUI=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -19,7 +18,6 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --package) PACKAGE=1; shift ;;
-    --no-gui) NO_GUI=1; shift ;;
     -h | --help)
       cat <<'EOF'
 Usage: scripts/build-binary.sh [OPTIONS]
@@ -30,7 +28,6 @@ Options:
   --release   Release build (default: debug)
   --out DIR   Directory for the binary (default: dist/bin)
   --package   Also create dist/pulsing-<platform>.tar.gz (or .zip on Windows)
-  --no-gui    Build without egui desktop GUI (Linux CI / manylinux)
 EOF
       exit 0
       ;;
@@ -44,16 +41,7 @@ done
 TAG="$(platform_tag)"
 mkdir -p "$OUT"
 
-# manylinux / headless Linux: skip egui (no X11 dev headers, smaller binary)
-if [[ "$NO_GUI" -eq 0 ]] && [[ "$(uname -s)" == "Linux" ]] && [[ ! -f /usr/include/X11/Xlib.h ]]; then
-  NO_GUI=1
-fi
-
-CARGO_ARGS=(-p pulsing-cli)
-if [[ "$NO_GUI" -eq 1 ]]; then
-  CARGO_ARGS+=(--no-default-features)
-  echo "==> Building pulsing-cli without desktop GUI"
-fi
+CARGO_ARGS=(--locked -p pulsing-cli)
 
 if [[ "$RELEASE" -eq 1 ]]; then
   cargo build --release "${CARGO_ARGS[@]}"

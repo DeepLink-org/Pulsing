@@ -43,13 +43,10 @@ impl ConsistentHashPolicy {
         let mut h = (seed as u64) ^ ((key.len() as u64).wrapping_mul(M));
 
         // Process 8-byte chunks
-        let chunks = key.chunks_exact(8);
-        let remainder = chunks.remainder();
+        let (chunks, remainder) = key.as_chunks::<8>();
 
         for chunk in chunks {
-            let mut k = u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ]);
+            let mut k = u64::from_le_bytes(*chunk);
 
             k = k.wrapping_mul(M);
             k ^= k >> R;
@@ -483,20 +480,6 @@ impl LoadBalancingPolicy for ConsistentHashPolicy {
 
     fn as_any(&self) -> &dyn Any {
         self
-    }
-
-    fn select_worker_pair_with_headers(
-        &self,
-        prefill_workers: &[Arc<dyn Worker>],
-        decode_workers: &[Arc<dyn Worker>],
-        request_text: Option<&str>,
-        headers: Option<&RequestHeaders>,
-    ) -> Option<(usize, usize)> {
-        // For PD mode, use consistent hashing for both prefill and decode
-        let prefill_idx =
-            self.select_worker_with_headers(prefill_workers, request_text, headers)?;
-        let decode_idx = self.select_worker_with_headers(decode_workers, request_text, headers)?;
-        Some((prefill_idx, decode_idx))
     }
 }
 

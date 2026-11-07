@@ -1,63 +1,27 @@
 # pulsing-cli
 
-Single-binary CLI for Pulsing (**Path B**).
-
-## Layout
-
-All **interactive UX** lives in this crate (`src/session/`). Downstream crates stay headless:
-
-| Crate | Responsibility |
-|-------|----------------|
-| **pulsing-cli** | clap routing, immersive session, slash commands, plain render (future TUI/GUI) |
-| **pulsing-forge** | agent loop, tools, LLM, sandbox |
-| **pulsing-workspace** | init, journal, checkpoint, rollback |
-| **pulsing-rpymod** | RustPython bindings for extension-mode workflows |
-
-```
-pulsing-cli/src/
-  main.rs          # clap only → dispatch
-  session/         # ★ interaction kernel
-    mod.rs         # unified REPL loop
-    commands.rs    # /help, /rollback, …
-    mode.rs        # safe | workflow
-    input.rs       # stdin (→ reedline later)
-    render.rs      # plain text (→ ratatui / egui later)
-    config.rs      # provider, workspace LLM config
-    workspace.rs   # history, checkpoint, workflow list
-  codex.rs         # thin entry → session::run_safe
-  workflow.rs      # thin entry → session::run_workflow
-  embed/           # RustPython extension mode
-  workspace.rs     # pulsing init/history/… subcommands
-```
-
-## Modes
-
-| Mode | Commands | Python |
-|------|----------|--------|
-| **Safe** (default) | `pulsing`, `pulsing "task"`, `pulsing agent` | None |
-| **Extension** | `pulsing run`, `pulsing workflow` | RustPython + embedded sources |
-
-Immersive session: `/help`, `/exit`, agent tasks, workflow rerun — all via `session/`.
-
-## Build
+RustPython-based actor CLI and workspace tools.
 
 ```bash
-just build-binary release=release
-# target/release/pulsing  (~40MB release)
+just build-binary
+pulsing init --template minimal
+pulsing run                  # execute .pulsing/workflows/example.py once
+pulsing run my_workflow.py
+pulsing history
+pulsing checkpoint -m "working state"
+pulsing rollback
+pulsing actor my_app.Counter --addr 127.0.0.1:8000
+pulsing inspect actors --endpoint 127.0.0.1:8000
 ```
 
-## Usage
+Workspace commands run in Rust. Workflow scripts and actor/inspect commands use
+the embedded RustPython VM and the Python sources. Set `PULSING_REPO_ROOT` when
+running outside the checkout.
 
-```bash
-pulsing init -g "Python CLI with pytest"
-pulsing                    # session (safe)
-pulsing run                # workflow → session
-pulsing /help              # inside session
-```
+There is no default agent session, tool REPL, LLM provider configuration, or GUI.
+Running without a subcommand prints help.
 
-## Environment
-
-| Variable | Purpose |
-|----------|---------|
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Live LLM providers |
-| `PULSING_REPO_ROOT` | Repo root for extension-mode `sys.path` |
+Build with the checked-in `Cargo.lock` (`cargo build --locked -p pulsing-cli`).
+RustPython 0.5 needs the pinned libc and the shared malachite-bigint 0.9 dependency
+used by its VM and pymath; unconstrained re-resolution can select incompatible
+upstream versions.

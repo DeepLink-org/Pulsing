@@ -344,4 +344,3 @@ await pul.shutdown()
 - [Remote Actors](remote_actors.md) — cluster communication
 - [Reliability](reliability.md) — idempotency, retries, timeouts
 - [Operations](operations.md) — CLI tools for inspection
-- [LLM Inference](../examples/llm_inference.md) — production inference setup

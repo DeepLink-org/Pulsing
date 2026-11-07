@@ -4,8 +4,8 @@
 //! that can be used with the router actor.
 
 use pulsing_actor::policies::{
-    CacheAwareConfig, CacheAwarePolicy, ConsistentHashPolicy, LoadBalancingPolicy,
-    PowerOfTwoPolicy, RandomPolicy, RoundRobinPolicy, Worker,
+    ConsistentHashPolicy, LoadBalancingPolicy, PowerOfTwoPolicy, RandomPolicy, RoundRobinPolicy,
+    Worker,
 };
 use pyo3::prelude::*;
 use std::collections::HashMap;
@@ -21,7 +21,6 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct PyWorkerInfo {
     url: String,
-    model_id: String,
     healthy: Arc<AtomicBool>,
     load: Arc<AtomicUsize>,
     processed: Arc<AtomicU64>,
@@ -30,11 +29,9 @@ pub struct PyWorkerInfo {
 #[pymethods]
 impl PyWorkerInfo {
     #[new]
-    #[pyo3(signature = (url, model_id="default".to_string()))]
-    fn new(url: String, model_id: String) -> Self {
+    fn new(url: String) -> Self {
         Self {
             url,
-            model_id,
             healthy: Arc::new(AtomicBool::new(true)),
             load: Arc::new(AtomicUsize::new(0)),
             processed: Arc::new(AtomicU64::new(0)),
@@ -44,11 +41,6 @@ impl PyWorkerInfo {
     #[getter]
     fn url(&self) -> &str {
         &self.url
-    }
-
-    #[getter]
-    fn model_id(&self) -> &str {
-        &self.model_id
     }
 
     #[getter]
@@ -85,9 +77,8 @@ impl PyWorkerInfo {
 
     fn __repr__(&self) -> String {
         format!(
-            "WorkerInfo(url='{}', model='{}', healthy={}, load={})",
+            "WorkerInfo(url='{}', healthy={}, load={})",
             self.url,
-            self.model_id,
             self.is_healthy(),
             self.load()
         )
@@ -131,10 +122,6 @@ impl Worker for PyWorkerWrapper {
 
     fn processed(&self) -> u64 {
         self.inner.processed.load(Ordering::Relaxed)
-    }
-
-    fn model_id(&self) -> &str {
-        &self.inner.model_id
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -310,136 +297,6 @@ impl PyConsistentHashPolicy {
     }
 }
 
-/// Cache-aware load balancing policy configuration
-#[pyclass(name = "CacheAwareConfig")]
-#[derive(Clone)]
-pub struct PyCacheAwareConfig {
-    /// Minimum prefix match ratio (0.0 to 1.0)
-    #[pyo3(get, set)]
-    pub cache_threshold: f32,
-    /// Absolute difference threshold for load imbalance
-    #[pyo3(get, set)]
-    pub balance_abs_threshold: usize,
-    /// Relative ratio threshold for load imbalance
-    #[pyo3(get, set)]
-    pub balance_rel_threshold: f32,
-    /// Interval between eviction cycles (0 to disable)
-    #[pyo3(get, set)]
-    pub eviction_interval_secs: u64,
-    /// Maximum tree size per tenant
-    #[pyo3(get, set)]
-    pub max_tree_size: usize,
-}
-
-#[pymethods]
-impl PyCacheAwareConfig {
-    #[new]
-    #[pyo3(signature = (
-        cache_threshold=0.5,
-        balance_abs_threshold=32,
-        balance_rel_threshold=1.0001,
-        eviction_interval_secs=60,
-        max_tree_size=100000
-    ))]
-    fn new(
-        cache_threshold: f32,
-        balance_abs_threshold: usize,
-        balance_rel_threshold: f32,
-        eviction_interval_secs: u64,
-        max_tree_size: usize,
-    ) -> Self {
-        Self {
-            cache_threshold,
-            balance_abs_threshold,
-            balance_rel_threshold,
-            eviction_interval_secs,
-            max_tree_size,
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "CacheAwareConfig(cache_threshold={}, balance_abs={}, balance_rel={}, eviction_secs={}, max_tree={})",
-            self.cache_threshold,
-            self.balance_abs_threshold,
-            self.balance_rel_threshold,
-            self.eviction_interval_secs,
-            self.max_tree_size
-        )
-    }
-}
-
-impl From<PyCacheAwareConfig> for CacheAwareConfig {
-    fn from(py_config: PyCacheAwareConfig) -> Self {
-        CacheAwareConfig {
-            cache_threshold: py_config.cache_threshold,
-            balance_abs_threshold: py_config.balance_abs_threshold,
-            balance_rel_threshold: py_config.balance_rel_threshold,
-            eviction_interval_secs: py_config.eviction_interval_secs,
-            max_tree_size: py_config.max_tree_size,
-        }
-    }
-}
-
-/// Cache-aware load balancing policy
-#[pyclass(name = "CacheAwarePolicy")]
-pub struct PyCacheAwarePolicy {
-    inner: CacheAwarePolicy,
-}
-
-#[pymethods]
-impl PyCacheAwarePolicy {
-    #[new]
-    #[pyo3(signature = (config=None))]
-    fn new(config: Option<PyCacheAwareConfig>) -> Self {
-        let inner = match config {
-            Some(cfg) => CacheAwarePolicy::with_config(cfg.into()),
-            None => CacheAwarePolicy::new(),
-        };
-        Self { inner }
-    }
-
-    /// Initialize workers in the tree
-    fn init_workers(&self, workers: Vec<PyWorkerInfo>) {
-        let rust_workers = py_workers_to_rust(&workers);
-        self.inner.init_workers(&rust_workers);
-    }
-
-    /// Add a worker
-    fn add_worker(&self, url: &str, model_id: &str) {
-        self.inner.add_worker_by_url(url, model_id);
-    }
-
-    /// Remove a worker
-    fn remove_worker(&self, url: &str) {
-        self.inner.remove_worker_by_url(url);
-    }
-
-    #[pyo3(signature = (workers, request_text=None))]
-    fn select_worker(
-        &self,
-        workers: Vec<PyWorkerInfo>,
-        request_text: Option<&str>,
-    ) -> Option<usize> {
-        let rust_workers = py_workers_to_rust(&workers);
-        self.inner.select_worker(&rust_workers, request_text)
-    }
-
-    /// Manually trigger cache eviction
-    fn evict_cache(&self, max_size: usize) {
-        self.inner.evict_cache(max_size);
-    }
-
-    #[getter]
-    fn name(&self) -> &'static str {
-        self.inner.name()
-    }
-
-    fn __repr__(&self) -> String {
-        "CacheAwarePolicy()".to_string()
-    }
-}
-
 // ============================================================================
 // Module Registration
 // ============================================================================
@@ -453,8 +310,6 @@ pub fn add_to_module(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<PyRoundRobinPolicy>()?;
     m.add_class::<PyPowerOfTwoPolicy>()?;
     m.add_class::<PyConsistentHashPolicy>()?;
-    m.add_class::<PyCacheAwareConfig>()?;
-    m.add_class::<PyCacheAwarePolicy>()?;
 
     Ok(())
 }

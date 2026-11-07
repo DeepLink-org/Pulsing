@@ -265,7 +265,6 @@ cd examples/agent/langgraph && ./run_distributed.sh
 - [Ping-Pong](ping_pong.zh.md) - 基本 Actor 通信
 - [分布式计数器](distributed_counter.zh.md) - 跨节点共享状态
 - [子进程](subprocess.zh.md) - 兼容 `subprocess` 的命令执行
-- [LLM 推理](llm_inference.zh.md) - 构建推理服务
 - [AutoGen 集成](../agent/autogen.zh.md) - 分布式 AutoGen Agent
 - [LangGraph 集成](../agent/langgraph.zh.md) - 分布式 LangGraph 工作流
 

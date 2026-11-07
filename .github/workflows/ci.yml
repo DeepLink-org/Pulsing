@@ -10,6 +10,10 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ============================================
   # 代码规范检查（快速反馈）
@@ -32,7 +36,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Rust clippy
-        run: cargo clippy --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --exclude pulsing-py --all-targets -- -D warnings
 
       - name: Python lint (ruff)
         run: ruff check python/
@@ -61,10 +65,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
+        run: cargo build --locked --workspace --exclude pulsing-py --all-targets
 
       - name: Test
-        run: cargo test --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
+        run: cargo test --locked --workspace --exclude pulsing-py --all-targets
 
   # ============================================
   # Rust 覆盖率收集
@@ -91,7 +95,7 @@ jobs:
           export CARGO_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR
           export CARGO_INCREMENTAL=1
           cargo llvm-cov clean --workspace
-          cargo test --workspace --exclude pulsing-py --exclude pulsing-bench-py
+          cargo test --locked --workspace --exclude pulsing-py
           cargo llvm-cov --no-run --lcov --output-path coverage.lcov
 
       - name: Upload coverage report
@@ -176,23 +180,15 @@ jobs:
             dist/pulsing-*.tar.gz
 
   # ============================================
-  # 构建 Linux aarch64 Wheel（使用 QEMU 仿真原生构建）
+  # 构建 Linux aarch64 Wheel（原生 ARM64 runner）
   # ============================================
   build-linux-aarch64:
     name: Build (Linux aarch64 wheel + binary)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build wheel + binary in QEMU
+      - name: Build wheel + binary on ARM64
         run: |
           docker run --rm --platform linux/arm64 \
             -v ${{ github.workspace }}:/workspace -w /workspace \
@@ -292,12 +288,12 @@ jobs:
         run: pytest tests/python -v
 
   # ============================================
-  # Ubuntu aarch64 Python 测试（使用 QEMU 仿真）
+  # Ubuntu aarch64 Python 测试（原生 ARM64 runner）
   # ============================================
   test-ubuntu-aarch64:
     name: Test Ubuntu aarch64 (Python ${{ matrix.python-version }})
     needs: build-linux-aarch64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
@@ -306,18 +302,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: Download wheel
         uses: actions/download-artifact@v4
         with:
           name: wheels-linux-aarch64
           path: dist/
 
-      - name: Test on Ubuntu aarch64 (QEMU)
+      - name: Test on Ubuntu aarch64
         run: |
           docker run --rm --platform linux/arm64 \
             -v ${{ github.workspace }}:/workspace -w /workspace \

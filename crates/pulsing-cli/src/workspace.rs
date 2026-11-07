@@ -1,4 +1,4 @@
-//! Workspace subcommands for the pulsing binary.
+//! Workspace bootstrap and journal commands.
 
 use std::path::PathBuf;
 
@@ -11,43 +11,25 @@ use pulsing_workspace::{
 
 #[derive(Subcommand)]
 pub enum WorkspaceCommand {
-    /// Bootstrap a Pulsing workspace (``.pulsing/`` + hooks + journal)
+    /// Bootstrap a workspace with hooks and journal history.
     Init {
-        /// Target directory (default: current directory)
-        #[arg(value_name = "DIR")]
         dir: Option<PathBuf>,
-        /// Workspace template: minimal or agent
-        #[arg(long, default_value = "agent")]
+        #[arg(long, default_value = "minimal")]
         template: String,
-        /// Display name stored in cluster.json
         #[arg(long)]
         name: Option<String>,
-        /// Re-initialize even if workspace exists
         #[arg(long)]
         force: bool,
-        /// Natural-language goal — LLM customizes workspace after scaffold
-        #[arg(short = 'g', long = "guide")]
-        guide_flag: Option<String>,
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        guide_words: Vec<String>,
-        #[arg(long)]
-        provider: Option<String>,
-        #[arg(long)]
-        model: Option<String>,
     },
-    /// List workspace checkpoints
+    /// List workspace checkpoints.
     History,
-    /// Save a new checkpoint of tracked files
+    /// Save a workspace snapshot.
     Checkpoint {
-        /// Checkpoint message
         #[arg(short, long)]
         message: Option<String>,
     },
-    /// Restore files from a checkpoint (default: HEAD)
-    Rollback {
-        /// Revision id (e.g. 0003); default is latest checkpoint
-        revision: Option<String>,
-    },
+    /// Restore a workspace checkpoint.
+    Rollback { revision: Option<String> },
 }
 
 pub fn run(cmd: WorkspaceCommand) -> Result<()> {
@@ -57,73 +39,48 @@ pub fn run(cmd: WorkspaceCommand) -> Result<()> {
             template,
             name,
             force,
-            guide_flag,
-            guide_words,
-            provider,
-            model,
         } => {
-            let root = dir.unwrap_or_else(|| std::env::current_dir().expect("cwd"));
-            let template = Template::parse(&template)?;
-            let guide = merge_guide(guide_flag, guide_words);
+            let root = match dir {
+                Some(dir) => dir,
+                None => std::env::current_dir()?,
+            };
             let result = init_workspace(
                 &root,
                 InitOptions {
-                    template,
+                    template: Template::parse(&template)?,
                     name,
                     force,
-                    guide: guide.clone(),
+                    guide: None,
                 },
             )?;
-            if result.created {
-                println!(
-                    "initialized {}  (cluster_id={})",
-                    result.root.display(),
-                    result.cluster_id
-                );
-                if let Some(ref text) = guide {
-                    run_init_guide_step(&result.root, text, provider.as_deref(), model.as_deref())?;
-                }
-                println!("  pulsing              # safe-mode agent (interactive)");
-                println!("  pulsing \"your task\"  # safe-mode one-shot");
-                println!("  pulsing run          # immersive workflow session");
-                println!("  pulsing history      # list checkpoints");
-                println!("  pulsing checkpoint   # save workspace snapshot");
+            let status = if result.created {
+                "initialized"
             } else {
-                println!("already initialized: {}", result.root.display());
-                if let Some(text) = guide.filter(|_| force) {
-                    run_init_guide_step(
-                        &result.root,
-                        &text,
-                        provider.as_deref(),
-                        model.as_deref(),
-                    )?;
-                }
-            }
+                "already initialized"
+            };
+            println!(
+                "{status}: {} (cluster_id={})",
+                result.root.display(),
+                result.cluster_id
+            );
         }
         WorkspaceCommand::History => {
-            let root = require_workspace_root(None)?;
-            let layout = WorkspaceLayout::new(root);
+            let layout = WorkspaceLayout::new(require_workspace_root(None)?);
             let head = pulsing_workspace::current_head(&layout)?;
-            let revs = list_revisions(&layout)?;
-            if revs.is_empty() {
-                println!("no checkpoints yet — run `pulsing checkpoint`");
-                return Ok(());
-            }
-            for r in revs {
-                let mark = if head.as_deref() == Some(r.id.as_str()) {
+            for rev in list_revisions(&layout)? {
+                let mark = if head.as_deref() == Some(rev.id.as_str()) {
                     "*"
                 } else {
                     " "
                 };
                 println!(
                     "{mark} {}  {}  {} files  {}",
-                    r.id, r.created_at, r.file_count, r.message
+                    rev.id, rev.created_at, rev.file_count, rev.message
                 );
             }
         }
         WorkspaceCommand::Checkpoint { message } => {
-            let root = require_workspace_root(None)?;
-            let layout = WorkspaceLayout::new(root);
+            let layout = WorkspaceLayout::new(require_workspace_root(None)?);
             let manifest = checkpoint(
                 &layout,
                 CheckpointOptions {
@@ -132,15 +89,14 @@ pub fn run(cmd: WorkspaceCommand) -> Result<()> {
                 },
             )?;
             println!(
-                "checkpoint {}  ({} files) — {}",
+                "checkpoint {} ({} files) — {}",
                 manifest.id,
                 manifest.files.len(),
                 manifest.message
             );
         }
         WorkspaceCommand::Rollback { revision } => {
-            let root = require_workspace_root(None)?;
-            let layout = WorkspaceLayout::new(root);
+            let layout = WorkspaceLayout::new(require_workspace_root(None)?);
             let manifest = rollback(
                 &layout,
                 RollbackOptions {
@@ -151,50 +107,4 @@ pub fn run(cmd: WorkspaceCommand) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn merge_guide(flag: Option<String>, words: Vec<String>) -> Option<String> {
-    if let Some(g) = flag.filter(|s| !s.trim().is_empty()) {
-        return Some(g);
-    }
-    if words.is_empty() {
-        None
-    } else {
-        Some(words.join(" "))
-    }
-}
-
-fn run_init_guide_step(
-    root: &std::path::Path,
-    guide: &str,
-    provider: Option<&str>,
-    model: Option<&str>,
-) -> Result<()> {
-    eprintln!("\n# LLM-guided bootstrap…");
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let summary = rt.block_on(pulsing_forge::run_init_guide(
-        root.to_path_buf(),
-        guide,
-        provider,
-        model,
-    ))?;
-    println!("\n{summary}\n");
-    let layout = WorkspaceLayout::new(root);
-    let _ = checkpoint(
-        &layout,
-        CheckpointOptions {
-            message: Some("init guide".into()),
-            author: Some("pulsing".into()),
-        },
-    );
-    Ok(())
-}
-
-pub fn run_or_exit(cmd: WorkspaceCommand) {
-    if let Err(err) = run(cmd) {
-        eprintln!("error: {err:#}");
-        std::process::exit(1);
-    }
 }

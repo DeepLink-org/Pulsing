@@ -16,16 +16,12 @@ default: dev
 dev:
     @echo "==> Path A: maturin develop (extension-module, profile.dev)..."
     maturin develop
-    @echo "==> Building benchmarks..."
-    maturin develop --manifest-path crates/pulsing-bench-py/Cargo.toml
     @echo "Ready! Use: python -m pulsing.cli  |  just build-release for wheel + binary"
 
 # Same as `dev` but install with [profile.release] (smaller .so, slower compile)
 dev-release:
     @echo "==> Path A: maturin develop --release (profile.release)..."
     maturin develop --release
-    @echo "==> Building benchmarks (release)..."
-    maturin develop --release --manifest-path crates/pulsing-bench-py/Cargo.toml
     @echo "Ready! (release profile)"
 
 # Build pulsing-cli debug binary (RustPython path; profile.dev)
@@ -76,7 +72,7 @@ check-quick: check-fmt lint
     @echo "✅ Format and lint checks passed!"
 
 # Python sources for ruff (docs markdown uses docs/pyproject.toml separately)
-ruff_paths := "python tests examples benchmarks crates/pulsing-bench-py"
+ruff_paths := "python tests examples"
 
 # 检查代码格式 (不修改)
 check-fmt:
@@ -90,7 +86,7 @@ test: test-rust test-python
 
 # Run Rust tests (pulsing-py via maturin; pulsing-cli via separate `-p` graph)
 test-rust:
-    cargo test --workspace --exclude pulsing-bench-py --exclude pulsing-py --exclude pulsing-cli
+    cargo test --workspace --exclude pulsing-py --exclude pulsing-cli
     cargo test -p pulsing-cli
 
 # Run Python tests
@@ -112,7 +108,7 @@ fmt:
 
 # Lint all code
 lint:
-    cargo clippy --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets -- -D warnings
+    cargo clippy --workspace --exclude pulsing-py --all-targets -- -D warnings
     ruff check {{ruff_paths}}
 
 # =============================================================================
@@ -131,17 +127,17 @@ cov: cov-rust cov-python
 # Rust coverage with HTML report
 cov-rust:
     @echo "Running Rust tests with coverage..."
-    cargo llvm-cov --workspace --exclude pulsing-py --exclude pulsing-bench-py --html
+    cargo llvm-cov --workspace --exclude pulsing-py --html
     @echo "Report: target/llvm-cov/html/index.html"
 
 # Rust coverage summary (terminal only, no HTML)
 cov-rust-summary:
-    cargo llvm-cov --workspace --exclude pulsing-py --exclude pulsing-bench-py
+    cargo llvm-cov --workspace --exclude pulsing-py
 
 # Rust coverage with nightly (支持 #[coverage(off)] 标记，但可能不稳定)
 cov-rust-nightly:
     @echo "Running Rust tests with coverage (nightly)..."
-    cargo +nightly llvm-cov --workspace --exclude pulsing-py --exclude pulsing-bench-py --html
+    cargo +nightly llvm-cov --workspace --exclude pulsing-py --html
     @echo "Report: target/llvm-cov/html/index.html"
 
 # Python coverage with HTML report
@@ -262,7 +258,7 @@ ci-test:
     export PATH="$HOME/.local/bin:$PATH"
     # Install wheel and dependencies using uv (preferred) or pip
     if command -v uv &> /dev/null; then
-        # Main package only — pulsing-bench must not overwrite pulsing/__init__.py
+        # Install the actor runtime wheel.
         uv pip install --system dist/pulsing-*.whl pytest pytest-asyncio
         # Use same interpreter as above (where wheel was installed); do not use uv run (project venv has no pulsing)
         for py in python3.12 python3.11 python3.10 python3 python; do

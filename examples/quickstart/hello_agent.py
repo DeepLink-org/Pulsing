@@ -60,12 +60,8 @@ async def main():
     print("✅ Done! You've created your first Multi-Agent application")
     print("=" * 50)
     print("\nNext steps:")
-    print(
-        "  - Try MBTI discussion: python examples/agent/pulsing/mbti_discussion.py --mock"
-    )
-    print(
-        "  - Try parallel ideas:   python examples/agent/pulsing/parallel_ideas_async.py --mock"
-    )
+    print("  - Try message patterns: python examples/python/message_patterns.py")
+    print("  - Try named actors: python examples/python/named_actors.py")
 
 
 if __name__ == "__main__":

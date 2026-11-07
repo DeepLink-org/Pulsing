@@ -130,14 +130,6 @@ asyncio.run(main())
 
 <div class="grid cards" markdown>
 
--   :material-robot:{ .lg .middle } **LLM Inference Service**
-
-    ---
-
-    Build a scalable inference backend with streaming and OpenAI-compatible API.
-
-    [:octicons-arrow-right-24: ~10 minutes](llm_inference.md)
-
 -   :material-account-group:{ .lg .middle } **Distributed Agents**
 
     ---

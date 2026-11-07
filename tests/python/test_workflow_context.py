@@ -12,7 +12,7 @@ from pulsing.workflow import WorkflowContext, run
 
 
 def test_init_scaffolds_workflows(tmp_path: Path) -> None:
-    init_workspace(tmp_path, template="minimal", seed_npcs=False)
+    init_workspace(tmp_path, template="minimal")
     workflows = tmp_path / ".pulsing" / "workflows"
     assert (workflows / "README.md").is_file()
     assert (workflows / "example.py").is_file()
@@ -22,7 +22,7 @@ def test_init_scaffolds_workflows(tmp_path: Path) -> None:
 
 
 def test_workflow_context_checkpoint(tmp_path: Path) -> None:
-    init_workspace(tmp_path, template="minimal", seed_npcs=False)
+    init_workspace(tmp_path, template="minimal")
     (tmp_path / "note.txt").write_text("v1", encoding="utf-8")
 
     ctx = WorkflowContext(root=tmp_path)
@@ -36,7 +36,7 @@ def test_workflow_context_checkpoint(tmp_path: Path) -> None:
 
 
 def test_workflow_run_sync(tmp_path: Path) -> None:
-    init_workspace(tmp_path, template="minimal", seed_npcs=False)
+    init_workspace(tmp_path, template="minimal")
     seen: list[str] = []
 
     def main(ctx: WorkflowContext) -> None:
@@ -47,7 +47,7 @@ def test_workflow_run_sync(tmp_path: Path) -> None:
 
 
 def test_workflow_run_async(tmp_path: Path) -> None:
-    init_workspace(tmp_path, template="minimal", seed_npcs=False)
+    init_workspace(tmp_path, template="minimal")
     seen: list[str] = []
 
     async def main(ctx: WorkflowContext) -> None:

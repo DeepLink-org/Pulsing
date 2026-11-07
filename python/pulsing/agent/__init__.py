@@ -1,105 +1,26 @@
-"""
-Pulsing Agent Toolbox
+"""Actor lifecycle and metadata helpers.
 
-Lightweight multi-agent development tools, fully compatible with pulsing.core.
-
-Core APIs:
-- runtime(): Actor system lifecycle management
-- agent(): @remote with metadata (for visualization)
-- llm(): LLM client
-- parse_json(): JSON parsing
-
-Example:
-    from pulsing.core import remote, resolve
-    from pulsing.agent import agent, runtime, llm, get_agent_meta
-
-    # @remote: Basic Actor
-    @remote
-    class Worker:
-        async def work(self): ...
-
-    # @agent: Actor with metadata (for visualization/debugging)
-    @agent(role="Researcher", goal="Deep analysis")
-    class Researcher:
-        async def analyze(self, topic: str) -> str:
-            client = await llm()
-            return await client.ainvoke(f"Analyze: {topic}")
-
-    async def main():
-        async with runtime():
-            r = await Researcher.spawn(name="researcher")
-            result = await r.analyze("AI")
-
-            # Get metadata
-            meta = get_agent_meta("researcher")
-            print(meta.role)  # "Researcher"
+LLM clients and the Forge-backed coding-agent SDK are no longer bundled.
 """
 
-# Runtime
+from .base import AgentMeta, agent, clear_agent_registry, get_agent_meta, list_agents
 from .runtime import runtime
-
-# Agent decorator (@remote with metadata)
-from .base import agent, AgentMeta, get_agent_meta, list_agents, clear_agent_registry
-
-# LLM
-from .llm import llm, reset_llm
-
-# Utility functions
-from .utils import parse_json, extract_field
-
-# Agent workspace / cluster / spawn (Phase 1–2)
-from .config import AgentConfig, spawn_agent
-from .host import Agent, LlmChat
-from .workspace import find_workspace_root
-from .cluster import list_cluster_agents, resolve_agent
+from .utils import extract_field, parse_json
 
 
 def cleanup():
-    """
-    Clean up all agent-related global state.
-
-    Includes:
-    - Agent metadata registry
-    - LLM singleton
-
-    Recommended to call when repeatedly creating/destroying runtime to avoid memory leaks.
-
-    Example:
-        from pulsing.agent import runtime, cleanup
-
-        try:
-            async with runtime():
-                agent = await MyAgent.spawn(name="agent")
-                await agent.work()
-        finally:
-            cleanup()  # Clean up all global state
-    """
+    """Clear actor metadata between runtime sessions."""
     clear_agent_registry()
-    reset_llm()
 
 
 __all__ = [
-    # Runtime
     "runtime",
     "cleanup",
-    # Agent
     "agent",
     "AgentMeta",
     "get_agent_meta",
     "list_agents",
     "clear_agent_registry",
-    # LLM
-    "llm",
-    "reset_llm",
-    # Utility functions
     "parse_json",
     "extract_field",
-    # Workspace agent SDK
-    "AgentConfig",
-    "Agent",
-    "LlmChat",
-    "spawn_agent",
-    "find_workspace_root",
-    "list_cluster_agents",
-    "resolve_agent",
 ]

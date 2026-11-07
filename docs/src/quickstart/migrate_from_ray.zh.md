@@ -151,4 +151,3 @@ result = await worker.process("hello")
 
 - [指南：Actor](../guide/actors.zh.md) — 理解 Actor 模型
 - [指南：远程 Actor](../guide/remote_actors.zh.md) — 集群设置
-- [教程：LLM 推理](llm_inference.zh.md) — 构建推理服务

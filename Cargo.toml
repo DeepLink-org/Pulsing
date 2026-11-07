@@ -1,25 +1,19 @@
 [workspace]
 members = [
   "crates/pulsing-actor",
-  "crates/pulsing-bench",
-  "crates/pulsing-bench-py",
   "crates/pulsing-py",
-  "crates/pulsing-forge",
   "crates/pulsing-bindings-core",
   "crates/pulsing-rpymod",
   "crates/pulsing-workspace",
   "crates/pulsing-cli",
-  "crates/pulsing-gui",
 ]
-# `cargo build` without -p skips benches / PyO3-only crates (faster default link graph).
+# `cargo build` without -p skips the PyO3 extension.
 default-members = [
   "crates/pulsing-actor",
-  "crates/pulsing-forge",
   "crates/pulsing-bindings-core",
   "crates/pulsing-rpymod",
   "crates/pulsing-workspace",
   "crates/pulsing-cli",
-  "crates/pulsing-gui",
 ]
 resolver = "3"
 
@@ -34,7 +28,7 @@ description = "Pulsing - Distributed Actor Framework"
 authors = ["Reiase <reiase@gmail.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/DeepLink-org/Pulsing"
-keywords = ["actor", "distributed", "async", "inference"]
+keywords = ["actor", "distributed", "async"]
 
 [workspace.dependencies]
 pulsing-actor = { path = "crates/pulsing-actor" }
@@ -55,12 +49,10 @@ tokio = { version = "1", default-features = false, features = [
 ] }
 tokio-util = { version = "0.7", default-features = false, features = ["codec", "net", "rt"] }
 tokio-stream = { version = "0.1", default-features = false }
-futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
-serde_with = "3.9"
 bytes = { version = "1" }
 bincode = "1.3"
 
@@ -91,19 +83,10 @@ opentelemetry-otlp = { version = "0.27", default-features = false, features = [
   "grpc-tonic",
   "trace",
 ] }
-log = { version = "0.4", default-features = false }
-env_logger = { version = "0.11", default-features = false, features = ["humantime", "auto-color"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4", "fast-rng"] }
 rand = { version = "0.9" }
-rand_distr = "0.5"
-chrono = "0.4"
-colored = "2.1"
-humantime = "2.1"
-indicatif = "0.17"
-rayon = "1.10"
-sysinfo = "0.33"
 
 # HTTP
 # axum = { version = "0.8", features = ["macros"] }
@@ -115,7 +98,6 @@ reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls",
   "http2",
 ] }
-reqwest-eventsource = "0.6"
 
 # TLS
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
@@ -125,23 +107,11 @@ aws-lc-rs = { version = "1.8" }
 rustls-pemfile = { version = "2" }
 time = { version = "0.3" }
 
-# CLI (removed clap - now using Python hyperparameter)
-strum_macros = "0.27"
-
 # Testing
 tokio-test = "0.4"
-mockito = "1.5"
-tabled = "=0.14"
 
 # Other
-tokenizers = { version = "0.21", features = ["http"] }
-hf-hub = { version = "0.4", features = ["tokio"] }
-vergen-gitcl = "1.0"
-pkcs8 = { version = "0.10", features = ["alloc"] }
-sha2 = "0.10"
 probing-memtable = "0.2.5"
-ed25519-dalek = { version = "2.0", features = ["pkcs8"] }
-der = "0.7"
 
 # Dev (`just dev`, `cargo check`): compile speed + lean intermediates.
 # debug=1 → line tables only (breakpoints/backtraces without full DWARF).

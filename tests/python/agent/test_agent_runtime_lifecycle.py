@@ -2,7 +2,7 @@
 
 Focus areas:
 1. Runtime context manager repeatedly entering/exiting
-2. Global state cleanup (agent registry, llm, actor system)
+2. Global state cleanup (agent registry, actor system)
 3. Resource leaks (actor, network connections)
 4. Concurrent scenarios
 """
@@ -20,8 +20,6 @@ from pulsing.agent import (
     clear_agent_registry,
     get_agent_meta,
     list_agents,
-    llm,
-    reset_llm,
     runtime,
 )
 
@@ -120,37 +118,6 @@ class TestRuntimeLifecycle:
             # Recommended: cleanup after each exit
             clear_agent_registry()
             assert len(list_agents()) == 0
-
-    @pytest.mark.asyncio
-    async def test_llm_singleton_cleanup(self):
-        """Test if LLM singleton needs cleanup"""
-        # Skip if OPENAI_API_KEY is not configured
-        pytest.importorskip("langchain_openai")
-
-        import os
-
-        if not os.getenv("OPENAI_API_KEY"):
-            pytest.skip("OPENAI_API_KEY required")
-
-        # First round
-        async with runtime():
-            client1 = await llm()
-            assert client1 is not None
-
-        # Second round - LLM singleton will be retained
-        async with runtime():
-            client2 = await llm()
-            # In singleton mode, it's the same instance
-            assert client2 is client1
-
-        # Manual cleanup
-        reset_llm()
-
-        # Third round - create new instance
-        async with runtime():
-            client3 = await llm()
-            # After cleanup, new instance will be created
-            assert client3 is not client1
 
     @pytest.mark.asyncio
     async def test_multiple_actors_cleanup(self):
@@ -329,7 +296,6 @@ class TestRuntimeLifecycle:
             finally:
                 # Ensure cleanup
                 clear_agent_registry()
-                reset_llm()
 
         # Multiple calls
         for i in range(5):
@@ -372,9 +338,6 @@ class TestRuntimeEdgeCases:
         clear_agent_registry()
         clear_agent_registry()
         clear_agent_registry()
-
-        reset_llm()
-        reset_llm()
 
         assert len(list_agents()) == 0
 

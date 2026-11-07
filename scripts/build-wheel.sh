@@ -43,15 +43,13 @@ if [[ "$MANYLINUX" -eq 1 ]]; then
 fi
 
 if [[ "$RELEASE" -eq 1 ]]; then
-  MATURIN_ARGS=(build --release --out "$OUT")
+  MATURIN_ARGS=(build --locked --release --out "$OUT")
   if [[ "$MANYLINUX" -eq 1 ]]; then
     MATURIN_ARGS+=(--compatibility manylinux_2_17 -i python3.10)
   fi
   maturin "${MATURIN_ARGS[@]}"
-  maturin build --release --out "$OUT" --manifest-path crates/pulsing-bench-py/Cargo.toml
 else
-  maturin develop
-  maturin develop --manifest-path crates/pulsing-bench-py/Cargo.toml
+  maturin develop --locked
 fi
 
 echo "==> Wheel path: ${OUT}/*.whl (extension-module)"

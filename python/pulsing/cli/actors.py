@@ -15,7 +15,7 @@ def start_generic_actor(
     """Start a generic Actor class by full module path
 
     Args:
-        actor_type: Full class path, e.g., 'pulsing.serving.worker.TransformersWorker'
+        actor_type: Full class path, e.g., 'my_app.Counter'
         addr: Actor System bind address
         seeds: List of seed node addresses
         name: Actor name
