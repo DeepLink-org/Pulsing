@@ -19,6 +19,7 @@ python examples/quickstart/hello_agent.py
 | `python/tensor_message_fast_path.py` | 连续 CPU buffer 传输 |
 | `python/subprocess_example.py` | 子进程兼容 API |
 | `python/isolated_actor_spawn.py` | 隔离子进程 actor |
+| `python/mailbox_collaboration.py` | Router/worker/subagent/reviewer 的 actor 邮箱协作 |
 | `agent/pulsing/runtime_lifecycle_example.py` | 生命周期管理 |
 | `agent/autogen/` | 可选 AutoGen 集成 |
 | `agent/langgraph/` | 可选 LangGraph 集成 |

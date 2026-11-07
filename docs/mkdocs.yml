@@ -197,6 +197,7 @@ nav:
       - HTTP2 Transport: design/http2-transport.md
       - Actor Addressing: design/actor-addressing.md
     - Implementation:
+      - Agent Mailboxes: design/agent-mailboxes.md
       - AS Actor Decorator: design/as-actor-decorator.md
       - TensorMessage Transport: design/tensor-message-transport.md
       - System Actors: design/system-actors.md

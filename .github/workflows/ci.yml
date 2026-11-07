@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,6 +14,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mailbox-prototype:
+    name: Actor mailbox MCP prototype
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          python-version: '3.12'
+          install-python-deps: 'true'
+      - uses: Swatinem/rust-cache@v2
+      - name: Install optional MCP SDK
+        run: pip install 'mcp>=1.20,<2'
+      - name: Build actor SDK
+        run: maturin develop --locked
+      - name: Test real actors and MCP stdio sessions
+        run: pytest tests/python/mailbox -q
+
   # ============================================
   # 代码规范检查（快速反馈）
   # ============================================
@@ -162,7 +179,7 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-manylinux && \
-              just ci-build manylinux=true package=package
+              just ci-build true package
             "
 
       - name: Upload wheels
@@ -196,7 +213,7 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-manylinux && \
-              just ci-build manylinux=true package=package
+              just ci-build true package
             "
 
       - name: Upload wheels
@@ -317,7 +334,7 @@ jobs:
               apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates && \
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-debian && \
-              just ci-test
+              just ci-test ${{ matrix.python-version }}
             "
 
   # ============================================
@@ -348,7 +365,7 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-fedora ${{ matrix.python-version }} && \
-              just ci-test
+              just ci-test ${{ matrix.python-version }}
             "
 
   # ============================================

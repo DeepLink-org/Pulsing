@@ -1,12 +1,13 @@
 """Pulsing CLI - Main entry point"""
 
-import hyperparameter as hp
+import argparse
+import json
+import sys
 
 from pulsing.cli.actor_argv import rewrite_actor_argv
 from pulsing.cli.help_text import print_top_level_help
 
 
-@hp.param("actor")
 def actor(
     actor_type: str,  # Positional argument: full class path (e.g., 'my_app.Counter')
     addr: str | None = None,
@@ -71,8 +72,6 @@ def actor(
         seed_list = [s.strip() for s in seeds.split(",") if s.strip()]
 
     # extra_kwargs may be str when passed via -D actor.extra_kwargs='{...}'
-    import json
-
     kwargs = extra_kwargs or {}
     if isinstance(kwargs, str):
         kwargs = json.loads(kwargs) if kwargs.strip() else {}
@@ -86,7 +85,6 @@ def actor(
     )
 
 
-@hp.param("inspect")
 def inspect(
     subcommand: str,  # Positional argument: cluster, actors, metrics, watch
     seeds: str | None = None,
@@ -187,7 +185,6 @@ def inspect(
         print("Supported subcommands: cluster, actors, metrics, watch")
 
 
-@hp.param("examples")
 def examples(name: str | None = None):
     """
     List or view Pulsing built-in examples.
@@ -236,37 +233,92 @@ def examples(name: str | None = None):
     print(f"Quick run:\n  python -m pulsing.examples.{name}")
 
 
-def main():
-    import argparse
-    import sys
+def _boolean(value: str) -> bool:
+    if value.lower() in ("true", "1", "yes", "on"):
+        return True
+    if value.lower() in ("false", "0", "no", "off"):
+        return False
+    raise argparse.ArgumentTypeError("expected true or false")
 
-    workspace_cmds = {"init", "history", "checkpoint", "rollback"}
-    if len(sys.argv) >= 2 and sys.argv[1] in workspace_cmds:
-        parser = argparse.ArgumentParser(prog="pulsing")
-        sub = parser.add_subparsers(dest="command", required=True)
-        from pulsing.cli.workspace_cmd import register_workspace_commands
 
-        register_workspace_commands(sub)
-        args = parser.parse_args(sys.argv[1:])
-        args.func(args)
-        return
+def _bool_option(parser, name: str, default: bool = False):
+    flags = [f"--{name}"]
+    if "_" in name:
+        flags.append(f"--{name.replace('_', '-')}")
+    parser.add_argument(*flags, nargs="?", const=True, type=_boolean, default=default)
 
-    if len(sys.argv) == 1 or (
-        len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help", "help")
-    ):
+
+def main(argv: list[str] | None = None):
+    arguments = sys.argv[1:] if argv is None else argv
+    if not arguments or arguments in (["-h"], ["--help"], ["help"]):
         print_top_level_help()
         return
 
-    if (
-        len(sys.argv) >= 3
-        and sys.argv[1] == "examples"
-        and not sys.argv[2].startswith("-")
-    ):
-        sys.argv = [sys.argv[0], "examples", "--name", sys.argv[2]] + sys.argv[3:]
+    parser = argparse.ArgumentParser(prog="pulsing")
+    sub = parser.add_subparsers(dest="command", required=True)
+    from pulsing.cli.workspace_cmd import register_workspace_commands
 
-    sys.argv = rewrite_actor_argv(sys.argv)
+    register_workspace_commands(sub)
+    actors = sub.add_parser("actor", help="Start an actor service")
+    actors.add_argument("actor_type")
+    actors.add_argument("--addr")
+    actors.add_argument("--seeds")
+    actors.add_argument("--name", default="worker")
+    actors.add_argument("--extra_kwargs", "--extra-kwargs", default="{}")
+    actors.add_argument("-D", dest="overrides", action="append", default=[])
+    actors.set_defaults(func=actor)
 
-    hp.launch()
+    observer = sub.add_parser("inspect", help="Observe a cluster via HTTP")
+    observer.add_argument(
+        "subcommand", choices=("cluster", "actors", "metrics", "watch")
+    )
+    observer.add_argument("--seeds")
+    observer.add_argument("--endpoint")
+    observer.add_argument("--timeout", type=float, default=10.0)
+    observer.add_argument("--top", type=int)
+    observer.add_argument("--filter")
+    observer.add_argument("--interval", type=float, default=1.0)
+    observer.add_argument(
+        "--kind", choices=("all", "cluster", "actors", "metrics"), default="all"
+    )
+    observer.add_argument("--max_rounds", "--max-rounds", type=int)
+    for flag in ("best_effort", "all_actors", "json", "detailed"):
+        _bool_option(observer, flag)
+    _bool_option(observer, "raw", default=True)
+    observer.set_defaults(func=inspect)
+
+    example = sub.add_parser("examples", help="Browse built-in examples")
+    example.add_argument("name", nargs="?")
+    example.add_argument("--name", dest="option_name")
+    example.set_defaults(func=examples)
+
+    args = parser.parse_args(rewrite_actor_argv(["pulsing", *arguments])[1:])
+    if args.command in ("init", "history", "checkpoint", "rollback"):
+        args.func(args)
+        return
+    options = vars(args).copy()
+    func = options.pop("func")
+    command = options.pop("command")
+    if command == "actor":
+        overrides = options.pop("overrides")
+        try:
+            kwargs = json.loads(options["extra_kwargs"])
+            if not isinstance(kwargs, dict):
+                raise ValueError("actor kwargs must be a JSON object")
+            for override in overrides:
+                prefix = "actor.extra_kwargs="
+                if not override.startswith(prefix):
+                    raise ValueError("only -D actor.extra_kwargs=JSON is supported")
+                extra = json.loads(override[len(prefix) :])
+                if not isinstance(extra, dict):
+                    raise ValueError("actor kwargs must be a JSON object")
+                kwargs.update(extra)
+            options["extra_kwargs"] = kwargs
+        except (ValueError, TypeError) as exc:
+            parser.error(str(exc))
+    elif command == "examples":
+        options["name"] = options.pop("option_name") or options["name"]
+    func(**options)
 
 
 if __name__ == "__main__":

@@ -57,6 +57,23 @@ Inference servers, LLM clients, Forge tools and coding agents, the desktop GUI,
 and benchmark modules are no longer bundled. Applications can implement their
 own services on top of the actor API.
 
+## Agent mailbox prototype
+
+An optional coordination layer gives each router, worker, reviewer, or subagent
+its own durable actor mailbox. External agents use MCP tools and an installable
+skill to send mail and track unread, read, processing, completed, and failed
+states. No LLM runtime or coding tools are bundled.
+
+```bash
+pip install 'pulsing[mailbox]'
+python -m pulsing.mailbox serve --state-dir .pulsing/agent-mail
+# In the agent's stdio MCP configuration:
+python -m pulsing.mailbox mcp --identity router --seed 127.0.0.1:8100
+```
+
+This is a trusted-local-cluster prototype, not a public email service.
+See the [design and setup guide](docs/src/design/agent-mailboxes.md).
+
 ## CLI
 
 ```bash
