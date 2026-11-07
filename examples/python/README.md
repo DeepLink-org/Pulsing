@@ -40,12 +40,6 @@ python examples/python/tensor_message_fast_path.py --transport http2  # Compatib
 python examples/python/subprocess_example.py            # Native subprocess-compatible API
 USE_POLSING_SUBPROCESS=1 python examples/python/subprocess_example.py --resources  # Pulsing backend
 python examples/python/isolated_actor_spawn.py          # Actor in child OS process; cluster sees parent bridge
-python examples/python/forge_minimal.py                 # Pulsing Forge (pulsing.forge) local + actor worker
-python examples/python/forge_custom_agent.py            # Embed Forge in your own agent framework
-python examples/python/forge_custom_agent.py --isolated # Same, tools in ToolWorkerActor subprocess
-python examples/python/forge_agent_quickstart.py       # ForgeAgent demo (no API key)
-./examples/python/workspace_demo.sh                    # workspace init → wake → say (demo LLM)
-python examples/python/workspace_minimal_demo.py       # same, single Python process
 ```
 
 `tensor_message_fast_path.py` 会创建两个 ActorSystem，确保请求真实经过 TCP。示例使用

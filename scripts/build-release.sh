@@ -70,7 +70,6 @@ if [[ "$BINARY" -eq 1 ]]; then
   BIN_ARGS=()
   [[ "$RELEASE" -eq 1 ]] && BIN_ARGS+=(--release)
   [[ "$PACKAGE_BIN" -eq 1 ]] && BIN_ARGS+=(--package)
-  [[ "$MANYLINUX" -eq 1 ]] && BIN_ARGS+=(--no-gui)
   "$ROOT/scripts/build-binary.sh" "${BIN_ARGS[@]}"
 fi
 

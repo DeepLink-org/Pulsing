@@ -2,7 +2,7 @@
 //!
 //! A service is a governed node capability, not a resource owner. The host owns
 //! resources, the component owns lifecycle hooks, and the handler owns request
-//! semantics. Keeping those roles separate allows future Forge and agent
+//! semantics. Keeping those roles separate allows application
 //! extensions without turning SystemRoot into a service locator.
 
 use super::lifecycle::NodeState;

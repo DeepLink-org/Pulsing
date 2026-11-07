@@ -51,14 +51,6 @@ Actor 运行时。流式优先。零依赖。内置发现。
 
 <div class="grid cards" markdown>
 
--   :material-robot:{ .lg .middle } **LLM 推理服务**
-
-    ---
-
-    可扩展的推理后端，支持流式 token 生成。开箱即用的 OpenAI 兼容 API。
-
-    [:octicons-arrow-right-24: LLM 推理](quickstart/llm_inference.zh.md)
-
 -   :material-account-group:{ .lg .middle } **分布式 Agent**
 
     ---

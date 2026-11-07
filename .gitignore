@@ -127,7 +127,7 @@ dist/pulsing-*.zip
 # npc workspace local state (per-project; run `npc init` in your app repo)
 .pulsing/
 
-# Vendored Codex reference tree (refresh: scripts/sync-codex-forge.sh)
+# Local vendor trees
 vendor/
 .cursor/
 .claude/

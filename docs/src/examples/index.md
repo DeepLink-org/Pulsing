@@ -302,7 +302,6 @@ cd examples/agent/langgraph && ./run_distributed.sh
 - [Ping-Pong](ping_pong.md) - Basic actor communication
 - [Distributed Counter](distributed_counter.md) - Shared state across nodes
 - [Subprocess](subprocess.md) - Subprocess-compatible command execution
-- [LLM Inference](llm_inference.md) - Building inference services
 - [AutoGen Integration](../agent/autogen.md) - Distributed AutoGen agents
 - [LangGraph Integration](../agent/langgraph.md) - Distributed LangGraph workflows
 

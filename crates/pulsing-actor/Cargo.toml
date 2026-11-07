@@ -105,9 +105,5 @@ name = "http2_pool_expand"
 path = "../../examples/rust/http2_pool_expand.rs"
 
 
-[[bench]]
-name = "tracing_overhead"
-harness = false
-
 [lints]
 workspace = true

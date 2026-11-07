@@ -484,20 +484,6 @@ impl LoadBalancingPolicy for ConsistentHashPolicy {
     fn as_any(&self) -> &dyn Any {
         self
     }
-
-    fn select_worker_pair_with_headers(
-        &self,
-        prefill_workers: &[Arc<dyn Worker>],
-        decode_workers: &[Arc<dyn Worker>],
-        request_text: Option<&str>,
-        headers: Option<&RequestHeaders>,
-    ) -> Option<(usize, usize)> {
-        // For PD mode, use consistent hashing for both prefill and decode
-        let prefill_idx =
-            self.select_worker_with_headers(prefill_workers, request_text, headers)?;
-        let decode_idx = self.select_worker_with_headers(decode_workers, request_text, headers)?;
-        Some((prefill_idx, decode_idx))
-    }
 }
 
 impl Default for ConsistentHashPolicy {

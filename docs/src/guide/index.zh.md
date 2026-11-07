@@ -55,6 +55,5 @@
 | 选择通信范式 | [通信范式](communication_patterns.zh.md) |
 | 可靠性模式 | [可靠性](reliability.zh.md) |
 | 保护集群安全 | [安全](security.zh.md) |
-| 运行 LLM 推理 | [LLM 推理](../quickstart/llm_inference.zh.md) |
 | API 详情 | [API 概述](../api/overview.zh.md) |
 | 完整 API 契约 | [完整参考](../api_reference.zh.md) |

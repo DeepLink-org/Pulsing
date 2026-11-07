@@ -24,13 +24,12 @@ For building multi-agent applications from scratch, use Pulsing's native `@agent
 
 ```python
 import pulsing as pul
-from pulsing.agent import agent, llm, list_agents
+from pulsing.agent import agent, list_agents
 
 @agent(role="Researcher", goal="Deep analysis")
 class Researcher:
     async def analyze(self, topic: str) -> str:
-        client = await llm()
-        return await client.ainvoke(f"Analyze: {topic}")
+        return f"Received topic: {topic}"
 
 await pul.init()
 try:

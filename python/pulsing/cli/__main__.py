@@ -8,7 +8,7 @@ from pulsing.cli.help_text import print_top_level_help
 
 @hp.param("actor")
 def actor(
-    actor_type: str,  # Positional argument: full class path (e.g., 'pulsing.serving.worker.TransformersWorker')
+    actor_type: str,  # Positional argument: full class path (e.g., 'my_app.Counter')
     addr: str | None = None,
     seeds: str | None = None,
     name: str = "worker",  # Actor name (default: "worker")
@@ -23,9 +23,7 @@ def actor(
 
     Actor type must be a full class path:
     - Format: 'module.path.ClassName'
-    - Example: 'pulsing.serving.Router'
-    - Example: 'pulsing.serving.TransformersWorker'
-    - Example: 'pulsing.serving.VllmWorker'
+    - Example: 'my_app.Counter'
     - Example: 'my_module.my_actor.MyCustomActor'
 
     Parameter separation (avoids name collision):
@@ -35,7 +33,7 @@ def actor(
     Note: To list actors, use 'pulsing inspect actors' instead.
 
     Args:
-        actor_type: Full class path (positional), e.g. pulsing.serving.Router
+        actor_type: Full class path (positional), e.g. my_app.Counter
         addr: Bind address (e.g. 0.0.0.0:8000)
         seeds: Comma-separated seed nodes (e.g. 192.168.1.1:8000,192.168.1.2:8000)
         name: Actor name (default: worker). Use different names for multiple workers.
@@ -43,17 +41,11 @@ def actor(
 
     Examples:
         # Actor-level before \"--\", constructor args after (no collision)
-        pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --name my-llm -- --model_name my-llm --http_port 8080
-
-        # Start a Transformers worker
-        pulsing actor pulsing.serving.TransformersWorker --addr 0.0.0.0:8000 -- --model_name gpt2 --device cpu
-
-        # Start a Router (constructor args after --)
-        pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --name my-llm -- --http_host 0.0.0.0 --http_port 8080 --model_name my-llm --worker_name worker
+        pulsing actor my_app.Counter --addr 0.0.0.0:8000 --name counter -- --initial 10
 
         # Multiple workers
-        pulsing actor pulsing.serving.TransformersWorker --name worker-1 --seeds 127.0.0.1:8000 -- --model_name gpt2
-        pulsing actor pulsing.serving.TransformersWorker --name worker-2 --seeds 127.0.0.1:8000 -- --model_name gpt2
+        pulsing actor my_app.Counter --name counter-1 --seeds 127.0.0.1:8000
+        pulsing actor my_app.Counter --name counter-2 --seeds 127.0.0.1:8000
     """
     from .actors import start_generic_actor
 
@@ -68,9 +60,9 @@ def actor(
     # Check if actor_type is a valid class path (must contain dots)
     if "." not in actor_type:
         raise ValueError(
-            f"Error: Actor type must be a full class path (e.g., 'pulsing.serving.worker.TransformersWorker').\n"
+            f"Error: Actor type must be a full class path (e.g., 'my_app.Counter').\n"
             f"Received: '{actor_type}'\n"
-            f"Example: pulsing actor pulsing.serving.worker.TransformersWorker --model_name gpt2"
+            f"Example: pulsing actor my_app.Counter --name counter"
         )
 
     # Parse seeds
@@ -195,79 +187,6 @@ def inspect(
         print("Supported subcommands: cluster, actors, metrics, watch")
 
 
-@hp.param("bench")
-def bench(
-    model: str,  # Positional argument
-    url: str = "http://localhost:8000",
-    api_key: str = "",
-    tokenizer: str | None = None,
-    hf_token: str | None = None,
-    max_vus: int = 128,
-    duration: str = "120s",
-    warmup: str = "30s",
-    benchmark_kind: str = "throughput",
-    num_rates: int = 10,
-    rates: list | None = None,
-    num_workers: int = 4,
-):
-    """
-    Run inference benchmarks.
-
-    This command runs the pulsing benchmark tool to test LLM inference endpoints.
-    It uses an Actor-based architecture for real-time metrics and high performance.
-
-    Args:
-        model: The name of the model to benchmark (positional, required)
-        url: Backend URL (default: "http://localhost:8000")
-        api_key: API key for authentication (default: "")
-        tokenizer: HuggingFace tokenizer name for accurate token counting (default: same as model)
-        hf_token: HuggingFace token for private models (default: from HF_TOKEN env)
-        max_vus: Maximum number of virtual users / concurrent requests (default: 128)
-        duration: Duration of each benchmark phase (default: "120s")
-        warmup: Warmup duration (default: "30s")
-        benchmark_kind: Kind of benchmark (default: "throughput")
-            - throughput: Max throughput test with constant VUs
-            - sweep: Auto-discover max rate then sweep rates
-            - csweep: Concurrency sweep (vary VUs)
-            - rate: Test specific rates
-        num_rates: Number of rate steps for sweep (default: 10)
-        rates: Specific rates for rate benchmark (comma-separated)
-        num_workers: Number of worker actors (default: 4)
-
-    Examples:
-        # Basic throughput test (uses model name for tokenizer)
-        pulsing bench gpt2 --url http://localhost:8080
-
-        # Use different tokenizer
-        pulsing bench gpt-4 --tokenizer gpt2 --url http://api.openai.com
-
-        # Concurrency sweep test
-        pulsing bench gpt2 --benchmark_kind csweep --max_vus 64
-
-        # Rate test with specific rates
-        pulsing bench gpt2 --benchmark_kind rate --rates 1,5,10,20
-
-        # Long duration test with more workers
-        pulsing bench gpt2 --duration 300s --num_workers 8
-    """
-    from .bench import run_benchmark
-
-    run_benchmark(
-        model_name=model,
-        url=url,
-        api_key=api_key,
-        tokenizer_name=tokenizer,
-        hf_token=hf_token,
-        max_vus=max_vus,
-        duration=duration,
-        warmup=warmup,
-        benchmark_kind=benchmark_kind,
-        num_rates=num_rates,
-        rates=rates,
-        num_workers=num_workers,
-    )
-
-
 @hp.param("examples")
 def examples(name: str | None = None):
     """
@@ -330,18 +249,6 @@ def main():
         register_workspace_commands(sub)
         args = parser.parse_args(sys.argv[1:])
         args.func(args)
-        return
-
-    if len(sys.argv) >= 2 and sys.argv[1] == "agent":
-        from pulsing.cli.agent.main import main as main_agent
-
-        main_agent(sys.argv[2:], prog="pulsing agent")
-        return
-
-    if len(sys.argv) >= 2 and sys.argv[1] == "forge":
-        from pulsing.forge.cli import main_pulsing_forge
-
-        main_pulsing_forge(sys.argv[2:])
         return
 
     if len(sys.argv) == 1 or (

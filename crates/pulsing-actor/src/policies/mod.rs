@@ -10,7 +10,6 @@
 //! - [`RoundRobinPolicy`]: Sequential selection cycling through healthy workers
 //! - [`PowerOfTwoPolicy`]: Power-of-two choices for better load distribution
 //! - [`ConsistentHashPolicy`]: Session/user affinity using consistent hashing
-//! - [`CacheAwarePolicy`]: Cache-aware routing with radix tree prefix matching
 //!
 //! # Example
 //!
@@ -24,19 +23,15 @@
 //! }
 //! ```
 
-mod cache_aware;
 mod consistent_hash;
 mod power_of_two;
 mod random;
 mod round_robin;
-mod tree;
 
-pub use cache_aware::{CacheAwareConfig, CacheAwarePolicy};
 pub use consistent_hash::ConsistentHashPolicy;
 pub use power_of_two::PowerOfTwoPolicy;
 pub use random::RandomPolicy;
 pub use round_robin::RoundRobinPolicy;
-pub use tree::Tree;
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -73,11 +68,6 @@ pub trait Worker: Send + Sync + std::fmt::Debug {
 
     /// Get the total number of processed requests
     fn processed(&self) -> u64;
-
-    /// Get the model ID this worker serves (for multi-model support)
-    fn model_id(&self) -> &str {
-        "default"
-    }
 
     /// Check if the circuit breaker allows execution
     fn circuit_breaker_allows(&self) -> bool {
@@ -147,31 +137,6 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
     /// Callback when a request completes
     fn on_request_complete(&self, _worker_url: &str, _success: bool) {}
 
-    /// Select a pair of workers for prefill-decode disaggregated serving
-    fn select_worker_pair(
-        &self,
-        prefill_workers: &[Arc<dyn Worker>],
-        decode_workers: &[Arc<dyn Worker>],
-        request_text: Option<&str>,
-    ) -> Option<(usize, usize)> {
-        self.select_worker_pair_with_headers(prefill_workers, decode_workers, request_text, None)
-    }
-
-    /// Select a pair of workers with headers for PD mode
-    fn select_worker_pair_with_headers(
-        &self,
-        prefill_workers: &[Arc<dyn Worker>],
-        decode_workers: &[Arc<dyn Worker>],
-        request_text: Option<&str>,
-        headers: Option<&RequestHeaders>,
-    ) -> Option<(usize, usize)> {
-        // Default implementation: select independently
-        let prefill_idx =
-            self.select_worker_with_headers(prefill_workers, request_text, headers)?;
-        let decode_idx = self.select_worker_with_headers(decode_workers, request_text, headers)?;
-        Some((prefill_idx, decode_idx))
-    }
-
     /// Get self as Any for downcasting
     fn as_any(&self) -> &dyn Any;
 }
@@ -190,7 +155,6 @@ pub fn get_healthy_worker_indices(workers: &[Arc<dyn Worker>]) -> Vec<usize> {
 #[derive(Debug)]
 pub struct BasicWorker {
     url: String,
-    model_id: String,
     healthy: std::sync::atomic::AtomicBool,
     load: std::sync::atomic::AtomicUsize,
     processed: std::sync::atomic::AtomicU64,
@@ -201,18 +165,6 @@ impl BasicWorker {
     pub fn new(url: String) -> Self {
         Self {
             url,
-            model_id: "default".to_string(),
-            healthy: std::sync::atomic::AtomicBool::new(true),
-            load: std::sync::atomic::AtomicUsize::new(0),
-            processed: std::sync::atomic::AtomicU64::new(0),
-        }
-    }
-
-    /// Create a new worker with a model ID
-    pub fn with_model(url: String, model_id: String) -> Self {
-        Self {
-            url,
-            model_id,
             healthy: std::sync::atomic::AtomicBool::new(true),
             load: std::sync::atomic::AtomicUsize::new(0),
             processed: std::sync::atomic::AtomicU64::new(0),
@@ -253,10 +205,6 @@ impl Worker for BasicWorker {
 
     fn processed(&self) -> u64 {
         self.processed.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn model_id(&self) -> &str {
-        &self.model_id
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -318,20 +266,6 @@ mod tests {
     fn test_basic_worker_url() {
         let worker = BasicWorker::new("http://localhost:9000".to_string());
         assert_eq!(worker.url(), "http://localhost:9000");
-    }
-
-    #[test]
-    fn test_basic_worker_with_model() {
-        let worker =
-            BasicWorker::with_model("http://localhost:8000".to_string(), "llama-7b".to_string());
-        assert_eq!(worker.url(), "http://localhost:8000");
-        assert_eq!(worker.model_id(), "llama-7b");
-    }
-
-    #[test]
-    fn test_basic_worker_default_model() {
-        let worker = BasicWorker::new("http://localhost:8000".to_string());
-        assert_eq!(worker.model_id(), "default");
     }
 
     #[test]

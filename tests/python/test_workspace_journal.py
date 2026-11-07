@@ -19,7 +19,7 @@ def test_init_checkpoint_rollback_roundtrip(
     monkeypatch.chdir(tmp_path)
     (tmp_path / "hello.txt").write_text("v1", encoding="utf-8")
 
-    result = init_workspace(template="minimal", seed_npcs=False)
+    result = init_workspace(template="minimal")
     assert result.created
     assert (tmp_path / ".pulsing" / "cluster.json").is_file()
     assert (tmp_path / ".pulsing" / "workspace.json").is_file()
@@ -39,7 +39,7 @@ def test_init_checkpoint_rollback_roundtrip(
 
 
 def test_init_idempotent(tmp_path: Path) -> None:
-    first = init_workspace(tmp_path, template="minimal", seed_npcs=False)
-    second = init_workspace(tmp_path, template="minimal", seed_npcs=False)
+    first = init_workspace(tmp_path, template="minimal")
+    second = init_workspace(tmp_path, template="minimal")
     assert first.created
     assert not second.created

@@ -13,7 +13,7 @@ from pulsing.workspace.hooks import run_on_init
 from pulsing.workspace.journal import checkpoint
 from pulsing.workspace.layout import WorkspaceLayout, workspace_cluster_id
 
-Template = Literal["minimal", "agent"]
+Template = Literal["minimal"]
 
 _ON_INIT_STUB = '''"""Pulsing workspace hook — called after `pulsing init`."""
 
@@ -60,12 +60,12 @@ _WORKFLOWS_README = """# Pulsing workflows
 Code-as-workflow: plain Python, no graph DSL.
 
 ```bash
-pulsing run                  # immersive session (default: example.py)
+pulsing run                  # run example.py once
 pulsing run my_workflow.py   # explicit script
 ```
 
-After success you stay in the CLI (`›` prompt). Type `exit` to return to the shell.
-On failure you return to the shell — then `pulsing rollback` or safe-mode fix.
+Each workflow runs once and returns to the shell.
+Use `pulsing rollback` to restore a checkpoint.
 """
 
 _WORKFLOW_EXAMPLE = '''"""Example workflow — extension mode.
@@ -100,36 +100,6 @@ def _minimal_cluster(cluster_id: str, name: str) -> dict:
     return {
         "cluster_id": cluster_id,
         "name": name,
-        "provider": "anthropic",
-        "model": None,
-        "auto_approve": False,
-        "sandbox": "off",
-        "default_agents": [],
-        "shared_tool_worker": False,
-        "puzzles": {},
-    }
-
-
-def _agent_cluster(cluster_id: str, name: str) -> dict:
-    return {
-        "cluster_id": cluster_id,
-        "name": name,
-        "provider": "anthropic",
-        "model": None,
-        "auto_approve": False,
-        "sandbox": "off",
-        "default_agents": ["guide"],
-        "shared_tool_worker": False,
-        "puzzles": {
-            "unit-tests": {
-                "title": "Unit test suite",
-                "kind": "test",
-                "path": "tests",
-                "blurb": "Run pytest; keep green.",
-                "status": "open",
-                "assign_to": "",
-            },
-        },
     }
 
 
@@ -164,15 +134,13 @@ def _write_workflows_scaffold(layout: WorkspaceLayout) -> None:
 def init_workspace(
     root: Path | None = None,
     *,
-    template: Template = "agent",
+    template: Template = "minimal",
     name: str | None = None,
     force: bool = False,
-    seed_npcs: bool = True,
-    guide: str | None = None,
-    provider: str | None = None,
-    model: str | None = None,
 ) -> InitResult:
     """Create ``.pulsing/`` layout, hooks, and an initial checkpoint."""
+    if template != "minimal":
+        raise ValueError(f"unknown template {template!r} (expected minimal)")
     root = (root or Path.cwd()).resolve()
     layout = WorkspaceLayout(root)
     cluster_id = workspace_cluster_id(root)
@@ -196,16 +164,12 @@ def init_workspace(
         "cluster_id": cluster_id,
         "created_at": now,
     }
-    if guide:
-        manifest["init_guide"] = guide
     layout.workspace_file.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 
-    cluster = _agent_cluster(cluster_id, display_name)
-    if template == "minimal":
-        cluster = _minimal_cluster(cluster_id, display_name)
+    cluster = _minimal_cluster(cluster_id, display_name)
     layout.cluster_file.write_text(
         json.dumps(cluster, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -215,38 +179,13 @@ def init_workspace(
     _write_scripts_readme(layout)
     _write_workflows_scaffold(layout)
 
-    if seed_npcs and template == "agent":
-        from pulsing.agent.npc.loader import seed_npc_defs
-
-        seed_npc_defs(root)
-
     checkpoint(layout, message="workspace init", author="pulsing")
     run_on_init(
         {
             "root": str(root),
             "cluster_id": cluster_id,
             "template": template,
-            "guide": guide or "",
         },
     )
 
-    if guide:
-        _run_init_guide_step(root, guide, layout, provider=provider, model=model)
-
     return InitResult(root=root, created=True, cluster_id=cluster_id)
-
-
-def _run_init_guide_step(
-    root: Path,
-    guide: str,
-    layout: WorkspaceLayout,
-    *,
-    provider: str | None,
-    model: str | None,
-) -> None:
-    from pulsing.workspace.init_guide import run_init_guide_sync
-
-    print("\n# LLM-guided bootstrap…", flush=True)
-    summary = run_init_guide_sync(root, guide, provider=provider, model=model)
-    print(f"\n{summary}\n")
-    checkpoint(layout, message="init guide", author="pulsing")

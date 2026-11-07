@@ -34,3 +34,9 @@ rustpython-vm = { version = "0.5", default-features = false, features = [
 ] }
 serde = { workspace = true }
 tokio = { workspace = true }
+
+# RustPython 0.5 assumes POSIX_SPAWN_SETSID is c_int. Newer libc releases
+# changed it to c_short; upstream fixed the conversion after 0.5
+# (RustPython/RustPython#8343). Keep this constraint until the next release.
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.183"

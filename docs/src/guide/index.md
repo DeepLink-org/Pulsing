@@ -55,6 +55,5 @@ This guide covers **how to build** with Pulsing. For design rationale, see [Arch
 | Choose communication pattern | [Communication Patterns](communication_patterns.md) |
 | Reliability patterns | [Reliability](reliability.md) |
 | Secure your cluster | [Security](security.md) |
-| Run LLM inference | [LLM Inference](../quickstart/llm_inference.md) |
 | API details | [API Overview](../api/overview.md) |
 | Full API contract | [Complete Reference](../api_reference.md) |

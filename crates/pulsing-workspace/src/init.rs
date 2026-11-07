@@ -10,22 +10,19 @@ use crate::layout::{cluster_id_for, WorkspaceLayout, WorkspaceManifest};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Template {
     Minimal,
-    Agent,
 }
 
 impl Template {
     pub fn parse(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "minimal" => Ok(Self::Minimal),
-            "agent" => Ok(Self::Agent),
-            _ => bail!("unknown template {s:?} (expected minimal or agent)"),
+            _ => bail!("unknown template {s:?} (expected minimal)"),
         }
     }
 
     fn as_str(self) -> &'static str {
         match self {
             Self::Minimal => "minimal",
-            Self::Agent => "agent",
         }
     }
 }
@@ -35,7 +32,7 @@ pub struct InitOptions {
     pub template: Template,
     pub name: Option<String>,
     pub force: bool,
-    /// Natural-language goal; stored in workspace.json and used for LLM-guided bootstrap.
+    /// Optional descriptive note retained in the workspace manifest.
     pub guide: Option<String>,
 }
 
@@ -88,7 +85,6 @@ pub fn init_workspace(root: &Path, opts: InitOptions) -> Result<InitResult> {
 
     let cluster = match opts.template {
         Template::Minimal => minimal_cluster_json(&cluster_id, &name),
-        Template::Agent => agent_cluster_json(&cluster_id, &name),
     };
     fs::write(
         layout.cluster_file(),
@@ -129,36 +125,6 @@ fn minimal_cluster_json(cluster_id: &str, name: &str) -> serde_json::Value {
     json!({
         "cluster_id": cluster_id,
         "name": name,
-        "provider": "anthropic",
-        "model": null,
-        "auto_approve": false,
-        "sandbox": "off",
-        "default_agents": [],
-        "shared_tool_worker": false,
-        "puzzles": {}
-    })
-}
-
-fn agent_cluster_json(cluster_id: &str, name: &str) -> serde_json::Value {
-    json!({
-        "cluster_id": cluster_id,
-        "name": name,
-        "provider": "anthropic",
-        "model": null,
-        "auto_approve": false,
-        "sandbox": "off",
-        "default_agents": ["guide"],
-        "shared_tool_worker": false,
-        "puzzles": {
-            "unit-tests": {
-                "title": "Unit test suite",
-                "kind": "test",
-                "path": "tests",
-                "blurb": "Run pytest; keep green.",
-                "status": "open",
-                "assign_to": ""
-            }
-        }
     })
 }
 
@@ -225,11 +191,11 @@ fn write_scripts_readme(layout: &WorkspaceLayout) -> Result<()> {
 const WORKFLOWS_README: &str = "# Pulsing workflows\n\n\
 Code-as-workflow: plain Python, no graph DSL.\n\n\
 ```bash\n\
-pulsing run                  # immersive session (default: example.py)\n\
+pulsing run                  # run example.py once\n\
 pulsing run my_workflow.py   # explicit script\n\
 ```\n\n\
-After success you stay in the CLI (`›` prompt). Type `exit` to return to the shell.\n\
-On failure you return to the shell — then `pulsing rollback` or safe-mode fix.\n";
+Each workflow runs once and returns to the shell.\n\
+Use `pulsing rollback` to restore a checkpoint.\n";
 
 const WORKFLOW_EXAMPLE: &str = r#"""Example workflow — extension mode.
 

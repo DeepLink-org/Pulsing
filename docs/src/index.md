@@ -51,14 +51,6 @@ A distributed actor runtime built in Rust, designed for Python. Connect AI agent
 
 <div class="grid cards" markdown>
 
--   :material-robot:{ .lg .middle } **LLM Inference Services**
-
-    ---
-
-    Scalable inference backends with streaming token generation. OpenAI-compatible API out of the box.
-
-    [:octicons-arrow-right-24: LLM Inference](quickstart/llm_inference.md)
-
 -   :material-account-group:{ .lg .middle } **Distributed Agents**
 
     ---

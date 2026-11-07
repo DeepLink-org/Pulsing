@@ -15,14 +15,7 @@ Workspace:
 Runtime:
   actor       Start an Actor service (cluster member)
   inspect     Observe cluster via HTTP (non-member)
-  bench       LLM inference benchmark
   examples    List or show built-in examples
-
-Agent (workspace):
-  agent       Workspace wake, spawn, task, watch, demo
-
-Forge (tools):
-  forge       Session REPL and tool debugging (`pulsing forge repl`)
 
 Run `pulsing <command> --help` for command-specific help.
 """

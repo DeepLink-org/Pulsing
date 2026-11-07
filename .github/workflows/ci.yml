@@ -32,7 +32,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Rust clippy
-        run: cargo clippy --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --exclude pulsing-py --all-targets -- -D warnings
 
       - name: Python lint (ruff)
         run: ruff check python/
@@ -61,10 +61,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
+        run: cargo build --locked --workspace --exclude pulsing-py --all-targets
 
       - name: Test
-        run: cargo test --workspace --exclude pulsing-py --exclude pulsing-bench-py --all-targets
+        run: cargo test --locked --workspace --exclude pulsing-py --all-targets
 
   # ============================================
   # Rust 覆盖率收集
@@ -91,7 +91,7 @@ jobs:
           export CARGO_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR
           export CARGO_INCREMENTAL=1
           cargo llvm-cov clean --workspace
-          cargo test --workspace --exclude pulsing-py --exclude pulsing-bench-py
+          cargo test --locked --workspace --exclude pulsing-py
           cargo llvm-cov --no-run --lcov --output-path coverage.lcov
 
       - name: Upload coverage report

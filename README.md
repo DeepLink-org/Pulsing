@@ -1,299 +1,106 @@
 # Pulsing
 
-[![CI](https://github.com/DeepLink-org/pulsing/actions/workflows/ci.yml/badge.svg)](https://github.com/DeepLink-org/pulsing/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org/)
+[中文文档](README.zh.md)
 
-**[中文文档](README.zh.md)**
+A distributed actor runtime built in Rust, designed for Python.
+Pulsing provides location-transparent actor calls, streaming messages, and
+built-in cluster discovery without Redis or etcd.
 
-**Backbone for distributed AI systems.**
-
-**Actor runtime. Streaming-first. Zero dependencies. Built-in discovery.**
-
-Pulsing is a distributed actor runtime built in Rust, designed for Python. Connect AI agents and services across machines — no Redis, no etcd, no YAML. Just `pip install pulsing`.
-
-🚀 **Zero Dependencies** — Pure Rust + Tokio, no NATS/etcd/Redis
-
-⚡ **Streaming-first** — Native support for streaming responses, built for LLM token generation
-
-🌐 **Built-in Discovery** — SWIM/Gossip protocol for automatic cluster management
-
-🔀 **Same API Everywhere** — Same `await actor.method()` for local and remote Actors
-
-## 🚀 Get Started in 5 Minutes
-
-### Installation
+## Install
 
 ```bash
 pip install pulsing
 ```
 
-### Your First Multi-Agent Application
+## First actor
 
 ```python
 import asyncio
 import pulsing as pul
-from pulsing.agent import runtime
+
 
 @pul.remote
-class Greeter:
-    def __init__(self, display_name: str):
-        self.display_name = display_name
+class Counter:
+    def __init__(self, value=0):
+        self.value = value
 
-    def greet(self, message: str) -> str:
-        return f"[{self.display_name}] Received: {message}"
+    def inc(self):
+        self.value += 1
+        return self.value
 
-    async def chat_with(self, peer_name: str, message: str) -> str:
-        # Use Greeter.resolve() to get a typed proxy
-        peer = await Greeter.resolve(peer_name)
-        return await peer.greet(f"From {self.display_name}: {message}")
 
 async def main():
-    async with runtime():
-        # Create two agents
-        alice = await Greeter.spawn(display_name="Alice", name="alice")
-        bob = await Greeter.spawn(display_name="Bob", name="bob")
+    await pul.init()
+    try:
+        counter = await Counter.spawn(value=0, name="counter")
+        print(await counter.inc())  # 1
+    finally:
+        await pul.shutdown()
 
-        # Agent communication
-        reply = await alice.chat_with("bob", "Hello!")
-        print(reply)  # [Bob] Received: From Alice: Hello!
 
 asyncio.run(main())
 ```
 
-**That's it!** `@pul.remote` turns a regular class into a distributed Actor, and `Greeter.resolve()` enables agents to discover and communicate with each other.
+For a cluster, initialize each node with `addr` and join using `seeds`.
+Resolve named actors with `await Counter.resolve("counter")`.
 
-## 💡 I want to...
+## Scope
 
-| Scenario | Example | Description |
-|----------|---------|-------------|
-| **Quick start** | `examples/quickstart/` | Get started in 10 lines |
-| **Multi-Agent collaboration** | `examples/agent/pulsing/` | AI debate, brainstorming, role-playing |
-| **Distributed LLM inference** | `pulsing actor router/vllm` | GPU cluster inference service |
-| **Integrate AutoGen** | `examples/agent/autogen/` | One line to go distributed |
-| **Integrate LangGraph** | `examples/agent/langgraph/` | Execute graphs across nodes |
-| **Agent workspace CLI** | `pulsing agent init` | [Pulsing Agent](examples/agent/workspace-demo.md) — multi-agent in your repo |
-| **Agent tools & environment** | `examples/python/forge_minimal.py` | [Pulsing Forge](docs/src/forge/index.md) — sandboxed shell, files, plan |
+- Actor mailboxes, lifecycle, supervision, and named actor discovery.
+- Local and remote request/reply, one-way calls, and streaming responses.
+- HTTP/2 transport, TLS, and opaque tensor-buffer transport.
+- Python `@remote`, subprocess integration, queues, and pub/sub.
+- CLI actor startup and cluster inspection.
+- Workspace scaffolding, checkpoints, rollback, and Python workflows.
 
-## 🔨 Pulsing Forge
+Inference servers, LLM clients, Forge tools and coding agents, the desktop GUI,
+and benchmark modules are no longer bundled. Applications can implement their
+own services on top of the actor API.
 
-**A general-purpose tool and environment runtime for AI agents** — run shell commands, edit files, and manage plans inside a configurable sandbox. Embed in any agent framework, or deploy isolated workers via Pulsing Actors.
-
-```python
-from pulsing.forge import ForgeEnvironment
-
-env = ForgeEnvironment(cwd=".")
-env.runtime().call_tool("shell_command", {"cmd": "pytest -q", "workdir": "."})
-```
-
-Docs: [Forge chapter](docs/src/forge/index.md) · Package README: [python/pulsing/forge/README.md](python/pulsing/forge/README.md)
-
-## 🤖 Pulsing Agent
-
-**Workspace-scoped multi-agent SDK + CLI** — init a `.pulsing/` workspace, wake agents on the cluster, and collaborate with Forge tools.
+## CLI
 
 ```bash
-pip install pulsing[agent]
-pulsing agent init
-pulsing agent wake --agents guide
-pulsing agent say guide "run pytest"
+pulsing actor my_app.Counter --addr 0.0.0.0:8000 --name counter
+pulsing inspect actors --endpoint 127.0.0.1:8000
+pulsing init --template minimal
+pulsing checkpoint -m "working state"
+pulsing history
+pulsing rollback
 ```
 
-Docs: [workspace demo](examples/agent/workspace-demo.md) · SDK: `from pulsing.agent import Agent, spawn_agent`
+The Rust CLI also supports `pulsing run [script.py]` (alias `workflow`).
+Workflows execute once and return to the shell, without an LLM session.
 
-## 🎯 Core Capabilities
+## Development
 
-### 1. Multi-Agent Collaboration
-
-Multiple AI Agents working in parallel and communicating:
-
-```python
-from pulsing.agent import agent, runtime, llm
-
-@agent(role="Researcher", goal="Deep analysis")
-class Researcher:
-    async def analyze(self, topic: str) -> str:
-        client = await llm()
-        return await client.ainvoke(f"Analyze: {topic}")
-
-@agent(role="Reviewer", goal="Evaluate proposals")
-class Reviewer:
-    async def review(self, proposal: str) -> str:
-        client = await llm()
-        return await client.ainvoke(f"Review: {proposal}")
-
-async with runtime():
-    researcher = await Researcher.spawn(name="researcher")
-    reviewer = await Reviewer.spawn(name="reviewer")
-
-    # Parallel work and collaboration
-    analysis = await researcher.analyze("AI trends")
-    feedback = await reviewer.review(analysis)
-```
+Requires Python 3.10+ and a current stable Rust toolchain. The RustPython CLI
+requires Rust 1.93 or newer.
 
 ```bash
-# Run MBTI personality discussion example
-python examples/agent/pulsing/mbti_discussion.py --mock --group-size 6
-
-# Run parallel idea generation example
-python examples/agent/pulsing/parallel_ideas_async.py --mock --n-ideas 5
-```
-
-### 2. One Line to Distributed
-
-Develop locally, scale seamlessly to clusters:
-
-```python
-# Standalone mode (development)
-async with runtime():
-    agent = await MyAgent.spawn(name="agent")
-
-# Distributed mode (production) — just add address
-async with runtime(addr="0.0.0.0:8001"):
-    agent = await MyAgent.spawn(name="agent")
-
-# Other nodes auto-discover
-async with runtime(addr="0.0.0.0:8002", seeds=["node1:8001"]):
-    agent = await resolve("agent")  # Cross-node transparent call
-```
-
-### 3. LLM Inference Service
-
-Out-of-the-box GPU cluster inference:
-
-```bash
-# Start Router (OpenAI-compatible API)
-pulsing actor pulsing.serving.Router --addr 0.0.0.0:8000 --http_port 8080 --model_name my-llm
-
-# Start vLLM Worker (can have multiple)
-pulsing actor pulsing.serving.VllmWorker --model Qwen/Qwen2.5-0.5B --addr 0.0.0.0:8002 --seeds 127.0.0.1:8000
-
-# Test
-curl http://localhost:8080/v1/chat/completions \
-  -d '{"model": "my-llm", "messages": [{"role": "user", "content": "Hello"}]}'
-```
-
-### 4. Agent Framework Integration
-
-Have existing AutoGen/LangGraph code? One-line migration:
-
-```python
-# AutoGen: Replace runtime
-from pulsing.autogen import PulsingRuntime
-runtime = PulsingRuntime(addr="0.0.0.0:8000")
-
-# LangGraph: Wrap the graph
-from pulsing.langgraph import with_pulsing
-distributed_app = with_pulsing(app, seeds=["gpu-server:8001"])
-```
-
-### 5. Fast TensorDict Transport
-
-`TensorMessage` carries opaque metadata and ordered, contiguous CPU buffers
-without putting tensor payloads in the normal pickle envelope. The caller (for
-example PulsingQueue) moves CUDA tensors to CPU, makes them contiguous, and
-encodes dtype, shape, byte order, and TensorDict structure in metadata. Pulsing
-only transports those bytes and buffers.
-
-```python
-from array import array
-
-import pulsing as pul
-
-cpu_buffer = array("f", range(6))
-message = pul.TensorMessage(
-    metadata=b"...",  # dtype, shape, byte order, and TensorDict structure
-    buffers=[memoryview(cpu_buffer).cast("B")],
-    version=1,
-)
-```
-
-Clear-text remote connections use a pooled raw TCP path by default. It sends
-the header, metadata, and original buffers with vectored I/O and reads every
-payload directly into its final receive allocation. TLS and
-`PULSING_TENSOR_TRANSPORT=http2` use the packed HTTP/2 compatibility path.
-
-See the [complete transport design](docs/src/design/tensor-message-transport.md)
-and the [runnable TCP example](examples/python/tensor_message_fast_path.py).
-
-## 📚 Example Guide
-
-```
-examples/
-├── quickstart/              # ⭐ 5-minute quickstart
-│   └── hello_agent.py       #    First Agent
-├── agent/
-│   ├── pulsing/             # ⭐⭐ Multi-Agent apps
-│   │   ├── mbti_discussion.py      # MBTI personality discussion
-│   │   └── parallel_ideas_async.py # Parallel idea generation
-│   ├── autogen/             # AutoGen integration
-│   └── langgraph/           # LangGraph integration
-├── python/                  # ⭐⭐ Basic examples
-│   ├── ping_pong.py         #    Actor basics
-│   ├── cluster.py           #    Cluster communication
-│   ├── tensor_message_fast_path.py # Tensor transport
-│   └── ...
-└── rust/                    # Rust examples
-```
-
-## 🔧 Technical Features
-
-- **Zero external dependencies**: Pure Rust + Tokio, no NATS/etcd/Redis needed
-- **Gossip protocol**: Built-in SWIM protocol for node discovery and failure detection
-- **Location transparency**: Same API for local and remote Actors
-- **Streaming messages**: Native support for streaming requests/responses (LLM-ready)
-- **Type safety**: Rust Behavior API provides compile-time message type checking
-
-## 📦 Project Structure
-
-```
-Pulsing/
-├── crates/                   # Rust core
-│   ├── pulsing-actor/        #   Actor System
-│   └── pulsing-py/           #   Python bindings
-├── python/pulsing/           # Python package
-│   ├── actor/                #   Actor API
-│   ├── agent/                #   Agent toolkit
-│   ├── autogen/              #   AutoGen integration
-│   └── langgraph/            #   LangGraph integration
-├── examples/                 # Example code
-└── docs/                     # Documentation
-```
-
-## 🛠️ Development
-
-### Prerequisites
-
-- [Rust](https://rustup.rs/) ≥ 1.75
-- Python ≥ 3.10
-- [uv](https://docs.astral.sh/uv/) (recommended package manager)
-- [just](https://github.com/casey/just) (task runner: `cargo install just` or `brew install just`)
-
-### Quick Setup
-
-```bash
-# 1. Install Python dependencies
 uv sync --extra dev
-
-# 2. Compile Rust core and install (run again after any Rust changes)
 uv run maturin develop
+just test
+just fmt
+just lint
 ```
 
-### Common Commands
+`just build-wheel` builds the Python wheel; `just build-binary` builds the
+RustPython CLI. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 
-```bash
-just dev          # Compile and install in development mode
-just test         # Run all tests (Rust + Python)
-just test-python  # Python tests only
-just fmt          # Format code (Rust + Python)
-just lint         # Lint check
-just check        # Full pre-commit check (format + lint + test)
-just cov          # Generate coverage report
-```
+## Project layout
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for a detailed guide on the development workflow.
+| Path | Purpose |
+|------|---------|
+| `crates/pulsing-actor/` | Actor runtime, discovery, transport |
+| `crates/pulsing-py/` | CPython/PyO3 bindings |
+| `crates/pulsing-rpymod/` | RustPython bindings |
+| `crates/pulsing-bindings-core/` | Shared binding data types |
+| `crates/pulsing-cli/` | Rust CLI |
+| `crates/pulsing-workspace/` | Workspace scaffolding and journal |
+| `python/pulsing/` | Python SDK and integrations |
+| `examples/` | Actor and transport examples |
+| `docs/` | Documentation |
 
-## 📄 License
+## License
 
 Apache-2.0

@@ -188,7 +188,7 @@ async def main(topic: str, rounds: int):
     print("✅ Chat ended!")
     print("=" * 60)
     print("\n💡 Tip: Modify AI_PERSONAS to customize AI personalities")
-    print("💡 Tip: Set OPENAI_API_KEY to connect to real LLM")
+    print("💡 Tip: Responses use local templates; no model or API key is required")
 
 
 if __name__ == "__main__":

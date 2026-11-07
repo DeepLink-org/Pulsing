@@ -344,4 +344,3 @@ await pul.shutdown()
 - [远程 Actor](remote_actors.zh.md) — 集群通信
 - [可靠性](reliability.zh.md) — 幂等、重试、超时
 - [运维操作](operations.zh.md) — CLI 检查工具
-- [LLM 推理](../examples/llm_inference.zh.md) — 生产推理部署

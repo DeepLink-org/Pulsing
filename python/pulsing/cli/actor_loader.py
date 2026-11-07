@@ -10,7 +10,7 @@ def load_actor_class(class_path: str) -> Union[type[Actor], Any]:
     """Load Actor 或 @remote 类
 
     Args:
-        class_path: 完整类路径，如 'pulsing.serving.worker.TransformersWorker'
+        class_path: 完整类路径，如 'my_app.Counter'
 
     Returns:
         Actor 子类或带 .spawn 的 @remote 类
@@ -22,7 +22,7 @@ def load_actor_class(class_path: str) -> Union[type[Actor], Any]:
     if "." not in class_path:
         raise ValueError(
             f"Invalid class path '{class_path}'. Expected format: 'module.path.ClassName'\n"
-            f"Example: pulsing.serving.worker.TransformersWorker"
+            f"Example: my_app.Counter"
         )
 
     parts = class_path.rsplit(".", 1)
