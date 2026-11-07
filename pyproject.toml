@@ -38,6 +38,9 @@ Issues = "https://github.com/DeepLink-org/Pulsing/issues"
 Changelog = "https://github.com/DeepLink-org/Pulsing/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+mailbox = [
+    "mcp>=1.20,<2",
+]
 storage = [
     "pylance",
     "pyarrow>=22.0.0",

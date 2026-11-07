@@ -4,13 +4,30 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
+  mailbox-prototype:
+    name: Actor mailbox MCP prototype
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          python-version: '3.12'
+          install-python-deps: 'true'
+      - uses: Swatinem/rust-cache@v2
+      - name: Install optional MCP SDK
+        run: pip install 'mcp>=1.20,<2'
+      - name: Build actor SDK
+        run: maturin develop --locked
+      - name: Test real actors and MCP stdio sessions
+        run: pytest tests/python/mailbox -q
+
   # ============================================
   # 代码规范检查（快速反馈）
   # ============================================
