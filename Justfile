@@ -253,34 +253,11 @@ ci-build-wheel manylinux="":
     bash scripts/build-release.sh "${args[@]}"
 
 # 测试 wheel (通用)
-ci-test:
+ci-test python_version="":
     #!/usr/bin/env bash
+    set -euo pipefail
     export PATH="$HOME/.local/bin:$PATH"
-    # Install wheel and dependencies using uv (preferred) or pip
-    if command -v uv &> /dev/null; then
-        # Install the actor runtime wheel.
-        uv pip install --system dist/pulsing-*.whl pytest pytest-asyncio
-        # Use same interpreter as above (where wheel was installed); do not use uv run (project venv has no pulsing)
-        for py in python3.12 python3.11 python3.10 python3 python; do
-            if command -v $py &> /dev/null; then
-                $py -m pytest tests/python -v
-                exit 0
-            fi
-        done
-        echo "Error: No Python interpreter found"
-        exit 1
-    else
-        # Fallback to pip if uv not available
-        pip install dist/pulsing-*.whl pytest pytest-asyncio
-        for py in python3 python3.12 python3.11 python3.10 python; do
-            if command -v $py &> /dev/null; then
-                $py -m pytest tests/python -v
-                exit 0
-            fi
-        done
-        echo "Error: No Python interpreter found"
-        exit 1
-    fi
+    bash scripts/test-wheel.sh "{{python_version}}"
 
 # =============================================================================
 # 本地模拟 CI 流水线 (Action 命令)

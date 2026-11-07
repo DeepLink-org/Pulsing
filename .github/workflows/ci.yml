@@ -317,7 +317,7 @@ jobs:
               apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates && \
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-debian && \
-              just ci-test
+              just ci-test python_version=${{ matrix.python-version }}
             "
 
   # ============================================
@@ -348,7 +348,7 @@ jobs:
             bash -c "
               curl -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin && \
               just ci-setup-fedora ${{ matrix.python-version }} && \
-              just ci-test
+              just ci-test python_version=${{ matrix.python-version }}
             "
 
   # ============================================
