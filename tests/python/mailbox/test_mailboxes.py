@@ -227,3 +227,23 @@ async def test_reply_to_maximum_unicode_subject(actors):
     reply = await actors["worker"].reply(task["id"], "result", "unicode-reply")
     assert reply["subject"].startswith("Re: ")
     assert len(reply["subject"].encode("utf-8")) <= 256
+
+
+async def test_plugin_registration_preserves_parent_metadata(actors):
+    router = actors["router"]
+    await router.create_role("child", "reviewer")
+    await MailboxClient.connect("child", register_kind="worker")
+    roles = {role["identity"]: role for role in await router.roles()}
+    assert roles["child"] == {
+        "identity": "child",
+        "kind": "reviewer",
+        "parent": "router",
+    }
+    # Independent plugins register without requiring a parent to provision them.
+    await asyncio.gather(
+        *(
+            MailboxClient.connect("independent", register_kind="worker")
+            for _ in range(5)
+        )
+    )
+    assert sum(role["identity"] == "independent" for role in await router.roles()) == 1

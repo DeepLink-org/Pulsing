@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 import time
@@ -260,7 +261,14 @@ class Mailbox:
 class MailboxDirectory:
     """Durable role directory; creates a distinct actor for every role."""
 
-    def __init__(self, state_dir: str):
+    def __init__(self, state_dir: str, namespace: str | None = None):
+        self._namespace = namespace
+        if namespace is not None:
+            validate_identity(namespace)
+            if len(namespace) > 24 or "." in namespace:
+                raise ValueError(
+                    "instance identity must be at most 24 letters, digits, _ or -"
+                )
         self._root = Path(state_dir).resolve()
         self._root.mkdir(parents=True, exist_ok=True)
         self._db = _connect(self._root / "directory.sqlite3")
@@ -268,13 +276,22 @@ class MailboxDirectory:
             """CREATE TABLE IF NOT EXISTS roles
             (identity TEXT PRIMARY KEY, kind TEXT NOT NULL, parent TEXT)"""
         )
+        self._db.execute(
+            """CREATE TABLE IF NOT EXISTS agents
+            (thread_id TEXT PRIMARY KEY, identity TEXT UNIQUE NOT NULL)"""
+        )
         self._started: set[str] = set()
 
     def on_stop(self):
         self._db.close()
 
     async def restore(self):
-        for role in self._db.execute("SELECT * FROM roles").fetchall():
+        roles = self._db.execute("SELECT * FROM roles").fetchall()
+        if self._namespace and any(
+            not role["identity"].startswith(self._namespace + "-") for role in roles
+        ):
+            raise ValueError("state-dir contains mailboxes owned by another instance")
+        for role in roles:
             if role["identity"] not in self._started:
                 await Mailbox.spawn(
                     role["identity"],
@@ -287,6 +304,8 @@ class MailboxDirectory:
         self, identity: str, kind: str = "worker", parent: str | None = None
     ) -> dict:
         validate_identity(identity)
+        if self._namespace and not identity.startswith(self._namespace + "-"):
+            raise ValueError("mailbox must belong to this instance")
         if kind not in ROLE_KINDS:
             raise ValueError(f"kind must be one of {ROLE_KINDS}")
         if parent is not None:
@@ -312,8 +331,49 @@ class MailboxDirectory:
             )
         return {"identity": identity, "kind": kind, "parent": parent}
 
+    async def ensure_role(self, identity: str, kind: str = "worker") -> dict:
+        """Register a joining plugin, preserving any role created by its parent."""
+        validate_identity(identity)
+        if kind not in ROLE_KINDS:
+            raise ValueError(f"kind must be one of {ROLE_KINDS}")
+        row = self._db.execute(
+            "SELECT * FROM roles WHERE identity = ?", (identity,)
+        ).fetchone()
+        if row is not None:
+            return dict(row)
+        return await self.register(identity, kind)
+
+    async def ensure_agent(self, thread_id: str) -> dict:
+        """Bind harness-supplied thread metadata to a mailbox owned by this node."""
+        if self._namespace is None:
+            raise ValueError("agent registration requires a companion directory")
+        _text(thread_id, "thread_id", 256)
+        identity = (
+            f"{self._namespace}-{hashlib.sha256(thread_id.encode()).hexdigest()[:32]}"
+        )
+        role = await self.ensure_role(identity)
+        with self._db:
+            self._db.execute(
+                "INSERT OR IGNORE INTO agents VALUES (?, ?)", (thread_id, identity)
+            )
+        return {**role, "instance": self._namespace, "agent_id": thread_id}
+
     def roles(self) -> list[dict]:
-        return [
+        roles = [
             dict(row)
             for row in self._db.execute("SELECT * FROM roles ORDER BY identity")
         ]
+        if self._namespace:
+            agents = {
+                row["identity"]: row["thread_id"]
+                for row in self._db.execute("SELECT * FROM agents")
+            }
+            roles = [
+                {
+                    **role,
+                    "instance": self._namespace,
+                    "agent_id": agents.get(role["identity"]),
+                }
+                for role in roles
+            ]
+        return roles

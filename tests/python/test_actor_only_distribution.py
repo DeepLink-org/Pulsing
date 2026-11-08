@@ -43,8 +43,16 @@ def test_actor_cli_help():
     assert "actor" in result.stdout
     assert "inspect" in result.stdout
     assert "checkpoint" in result.stdout
+    assert "pulsing -- codex" in result.stdout
+    # The external harness launcher may describe agents without restoring the
+    # removed built-in application commands.
+    commands = {
+        line.split()[0]
+        for line in result.stdout.splitlines()
+        if line.startswith("  ") and line.strip()
+    }
     for name in ("forge", "bench", "agent", "gui"):
-        assert name not in result.stdout.lower()
+        assert name not in commands
 
 
 def test_workspace_defaults_do_not_require_an_agent(tmp_path: Path):

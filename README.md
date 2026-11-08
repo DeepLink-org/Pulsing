@@ -66,13 +66,20 @@ states. No LLM runtime or coding tools are bundled.
 
 ```bash
 pip install 'pulsing[mailbox]'
-python -m pulsing.mailbox serve --state-dir .pulsing/agent-mail
-# In the agent's stdio MCP configuration:
-python -m pulsing.mailbox mcp --identity router --seed 127.0.0.1:8100
+pulsing -- codex
+# First machine:
+SEED=10.0.0.10:8100 pulsing -- codex
+# Another machine:
+SEED=10.0.0.10:8100 pulsing -- codex
+# The machine owning 10.0.0.10 hosts the seed; others select their address automatically.
 ```
 
 This is a trusted-local-cluster prototype, not a public email service.
 See the [design and setup guide](docs/src/design/agent-mailboxes.md).
+The recommended [companion launcher](docs/src/design/agent-launcher.md) runs one
+Pulsing process per Codex, owns separate mailboxes for its agents/subagents, and
+injects MCP automatically. A [standalone Codex plugin](docs/src/design/codex-mailbox-plugin.md)
+is also available.
 
 ## CLI
 

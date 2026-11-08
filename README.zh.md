@@ -63,13 +63,19 @@ asyncio.run(main())
 
 ```bash
 pip install 'pulsing[mailbox]'
-python -m pulsing.mailbox serve --state-dir .pulsing/agent-mail
-# 在 agent 的 stdio MCP 配置中运行：
-python -m pulsing.mailbox mcp --identity router --seed 127.0.0.1:8100
+pulsing -- codex
+# 多机首节点：
+SEED=10.0.0.10:8100 pulsing -- codex
+# 其他机器：
+SEED=10.0.0.10:8100 pulsing -- codex
+# 拥有 10.0.0.10 的机器自动成为 seed，其他机器自动选择本机地址加入。
 ```
 
 仅用于可信本机/私有集群，不是公网邮件服务。
 参考 [设计与接入文档](docs/src/design/agent-mailboxes.md)。
+推荐使用 [伴生进程启动器](docs/src/design/agent-launcher.md)：
+每个 Codex 一个 Pulsing 进程，为其中各 agent/subagent 维护独立邮箱并自动注入 MCP。
+也保留 [独立 Codex 插件接入](docs/src/design/codex-mailbox-plugin.md)。
 
 ## 命令行
 

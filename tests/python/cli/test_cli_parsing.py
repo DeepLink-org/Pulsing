@@ -78,6 +78,7 @@ def test_example_name_forms(monkeypatch, arguments):
     [
         ["forge"],
         ["bench"],
+        ["agent"],
         ["gui"],
         ["actor", "my_app.Counter", "-D", "other.setting=1"],
         ["actor", "my_app.Counter", "--extra-kwargs", "[]"],
@@ -88,3 +89,25 @@ def test_invalid_cli_input_fails(arguments):
     with pytest.raises(SystemExit) as exc:
         cli.main(arguments)
     assert exc.value.code == 2
+
+
+def test_launcher_preserves_arguments_after_separator(monkeypatch):
+    from pulsing.cli import launch
+
+    run = Mock()
+    monkeypatch.setattr(launch, "main", run)
+    arguments = ["--seed", "1", "--", "codex", "exec", "--", "two words"]
+    cli.main(arguments)
+    run.assert_called_once_with(arguments)
+
+
+def test_codex_adapter_uses_only_invocation_overrides():
+    from pulsing.cli.launch import codex_command
+
+    args = ["codex", "exec", "--json", "task with spaces"]
+    wrapped = codex_command(args, "http://127.0.0.1:1234/mcp")
+    assert wrapped[0] == "codex"
+    assert wrapped[-len(args[1:]) :] == args[1:]
+    assert "--no-daemon" in wrapped
+    assert 'mcp_servers.pulsing.url="http://127.0.0.1:1234/mcp"' in wrapped
+    assert 'mcp_servers.pulsing.bearer_token_env_var="PULSING_MCP_TOKEN"' in wrapped

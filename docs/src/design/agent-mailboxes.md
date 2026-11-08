@@ -1,5 +1,9 @@
 # Actor 邮箱协作原型
 
+完整 coding-agent 接入推荐使用 [`pulsing -- codex`](agent-launcher.md)：
+每个 harness 伴生一个 Pulsing 进程，邮箱按本地 agent/thread 分别持有。
+本文以下的固定身份 MCP/集中目录示例保留为底层原型和独立接入方式。
+
 本原型把协作通信和模型执行分开：Pulsing 负责邮箱、消息状态和发现；
 外部 agent/harness 通过 MCP 和 skill 决定如何处理任务。它不包含 LLM、
 Forge、shell 工具执行器或自动拉起模型会话的逻辑。
@@ -145,6 +149,13 @@ prompt 为 `mailbox_collaboration`。
 仓库内 skill 在 `.agents/skills/pulsing-mailbox/SKILL.md`；
 可独立安装的完整 skill 在 `python/pulsing/mailbox/SKILL.md`，也随 wheel 分发，
 并通过 protocol resource/prompt 提供给支持 MCP 的 agent。
+
+Codex 可使用 `python -m pulsing.mailbox codex-plugin` 生成按身份绑定的插件、
+MCP 配置和本地 marketplace。插件自动引导或加入网络并注册自身身份，
+不需要单独启动邮箱服务。多机接入、安装和协作示例见
+[Codex 多机邮箱插件](codex-mailbox-plugin.md)。
+MCP 命令支持 `--addr`，多机部署应绑定其他节点可达的本机私网地址，
+而非默认的 `127.0.0.1:0`。
 
 角色协作顺序：
 
