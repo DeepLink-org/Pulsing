@@ -79,10 +79,11 @@ def main() -> None:
             )
         except (ValueError, OSError) as exc:
             parser.error(str(exc))
-        print(f"Codex marketplace generated at {root}")
-        print(
-            f"Identity: {args.identity}; mailbox startup and registration are automatic."
-        )
+        else:
+            print(f"Codex marketplace generated at {root}")
+            print(
+                f"Identity: {args.identity}; mailbox startup and registration are automatic."
+            )
     else:
         try:
             from .mcp import run

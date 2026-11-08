@@ -73,7 +73,9 @@ async def mcp_endpoint(server, token: str, audit=None):
             deadline = asyncio.get_running_loop().time() + 10
             while not http.started:
                 if task.done():
-                    await task
+                    failure = task.exception()
+                    if failure is not None:
+                        raise failure
                     raise RuntimeError("MCP endpoint exited before readiness")
                 if asyncio.get_running_loop().time() >= deadline:
                     raise TimeoutError("MCP endpoint did not become ready")
@@ -106,6 +108,7 @@ async def run_child(
             else:
                 child.send_signal(sig)
         except ProcessLookupError:
+            # The child may have exited between the status check and the signal.
             pass
 
     # stdin/stdout/stderr and the foreground terminal are inherited unchanged.
@@ -143,7 +146,7 @@ async def run_child(
                 await asyncio.wait_for(asyncio.shield(wait), timeout=5)
             except TimeoutError:
                 send(signal.SIGKILL)
-                await wait
+                await child.wait()
         if detached:
             send(signal.SIGTERM)
         interrupt.cancel()

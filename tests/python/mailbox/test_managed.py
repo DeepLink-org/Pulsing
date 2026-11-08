@@ -27,6 +27,7 @@ async def stop_host(root, sig=signal.SIGTERM):
     try:
         os.kill(pid, sig)
     except ProcessLookupError:
+        # The sidecar may already have exited before teardown sends the signal.
         pass
     for _ in range(100):
         if not _running(root):
@@ -34,6 +35,7 @@ async def stop_host(root, sig=signal.SIGTERM):
             try:
                 os.waitpid(pid, os.WNOHANG)
             except ChildProcessError:
+                # Sidecars launched by an MCP process are not children of pytest.
                 pass
             return
         await asyncio.sleep(0.05)

@@ -85,7 +85,8 @@ class MCPAudit:
     def wrap(self, app):
         async def audited(scope, receive, send):
             if scope["type"] != "http" or scope["method"] != "POST":
-                return await app(scope, receive, send)
+                await app(scope, receive, send)
+                return
             chunks = []
             length = 0
             while True:
@@ -140,7 +141,7 @@ class MCPAudit:
                 await send(message)
 
             try:
-                return await app(scope, replay, capture)
+                await app(scope, replay, capture)
             except BaseException as exc:
                 error = type(exc).__name__
                 raise

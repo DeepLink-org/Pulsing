@@ -113,6 +113,41 @@ def test_generation_cli(tmp_path):
     assert (root / ".agents/plugins/marketplace.json").is_file()
 
 
+@pytest.mark.parametrize("failure", ["invalid_identity", "existing_output"])
+def test_generation_cli_failure_never_reports_success(tmp_path, failure):
+    root = tmp_path / "output"
+    identity = "router"
+    if failure == "existing_output":
+        root.mkdir()
+        (root / "user-data").write_text("keep")
+    else:
+        identity = "../router"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pulsing.mailbox",
+            "codex-plugin",
+            "--output",
+            str(root),
+            "--identity",
+            identity,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 2
+    assert "error:" in result.stderr
+    assert "Codex marketplace generated" not in result.stdout
+    assert "registration are automatic" not in result.stdout
+    if failure == "existing_output":
+        assert list(root.iterdir()) == [root / "user-data"]
+        assert (root / "user-data").read_text() == "keep"
+    else:
+        assert not root.exists()
+
+
 def test_generated_plugin_bootstraps_without_seed(tmp_path):
     root = generate_plugin(tmp_path / "plugin", "worker", state_dir=tmp_path / "state")
     server = json.loads((root / "plugins/pulsing/.mcp.json").read_text())["mcpServers"][
