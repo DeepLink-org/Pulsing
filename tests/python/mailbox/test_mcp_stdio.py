@@ -226,17 +226,25 @@ async def test_mcp_router_worker_review_and_host_restart(tmp_path, generated_plu
             "mail_finish", {"message_id": task["id"], "claim_token": "stale"}
         )
         assert wrong_claim.isError
-    # Fresh processes and new transport connections, same SQLite state directory.
+    # A new host has empty RAM even when rendezvous and log paths are reused.
     async with (
         host(tmp_path) as seed,
         session("router", seed, package("router-restarted")) as router,
     ):
-        receipt = await tool(router, "mail_status", to="worker", message_id=task["id"])
-        assert receipt["state"] == "completed"
-        assert receipt["result"] == "reviewed"
-        assert (await tool(router, "mail_read", message_id=reply["id"]))[
-            "body"
-        ] == "Reviewed and ready"
+        assert (await tool(router, "mail_list"))["counts"]["unread"] == 0
+        assert {role["identity"] for role in await tool(router, "mail_roles")} == {
+            "router"
+        }
+        missing = await router.call_tool("mail_read", {"message_id": reply["id"]})
+        assert missing.isError
+    from pulsing.mailbox.replay import replay_logs
+
+    history = replay_logs([tmp_path / "mail-events.jsonl"])
+    assert (
+        next(m for m in history["messages"] if m["id"] == task["id"])["result"]
+        == "reviewed"
+    )
+    assert not list(tmp_path.glob("*.sqlite3"))
 
 
 async def test_host_rejects_second_owner_of_state_directory(tmp_path):
@@ -322,22 +330,28 @@ async def test_plugin_starts_network_without_service_and_registers_peers(tmp_pat
                 result="done after router exit",
             )
 
-        # Restart the sidecar, then let a fresh plugin recover its persisted state.
+        # Restarting the sidecar loses live messages; the actor log remains replayable.
         await stop_host(state, signal.SIGKILL)
         async with session(
             "router", None, tmp_path / "restarted", state_dir=state, kind="router"
         ) as router:
-            receipt = await tool(
-                router, "mail_status", to="worker", message_id=task["id"]
-            )
-            assert receipt["state"] == "completed"
-            assert receipt["result"] == "done after router exit"
+            assert (await tool(router, "mail_list"))["counts"]["unread"] == 0
+            assert {r["identity"] for r in await tool(router, "mail_roles")} == {
+                "router"
+            }
+        from pulsing.mailbox.replay import replay_logs
+
+        history = replay_logs([state / "mail-events.jsonl"])
+        assert (
+            next(m for m in history["messages"] if m["id"] == task["id"])["result"]
+            == "done after router exit"
+        )
     finally:
         await stop_host(state)
 
 
 @pytest.mark.parametrize("env_mode", [False, True])
-async def test_seed_one_hosts_in_mcp_process_and_restores_state(tmp_path, env_mode):
+async def test_seed_one_hosts_in_mcp_process_without_restoring_mail(tmp_path, env_mode):
     from pulsing.mailbox.managed import ENDPOINT_FILE, _running
 
     state = tmp_path / "seed-state"
@@ -380,7 +394,7 @@ async def test_seed_one_hosts_in_mcp_process_and_restores_state(tmp_path, env_mo
                 "mail_send",
                 to="worker",
                 subject="In-process seed",
-                body="Verify seed address and persistence",
+                body="Verify seed address and memory ownership",
                 idempotency_key="seed-one",
             )
             claim = await tool(worker, "mail_claim", message_id=task["id"])
@@ -394,8 +408,7 @@ async def test_seed_one_hosts_in_mcp_process_and_restores_state(tmp_path, env_mo
     assert not _running(state)
     assert not (state / ENDPOINT_FILE).exists()
 
-    # SEED=1 is explicitly tied to the process lifetime; loading it again
-    # restores the same directory and mail without starting a separate service.
+    # Reloading SEED=1 creates a fresh empty directory, not recovered mail.
     async with session(
         "router",
         seed_setting,
@@ -405,6 +418,5 @@ async def test_seed_one_hosts_in_mcp_process_and_restores_state(tmp_path, env_mo
         addr=None if env_mode else seed_addr,
         env=seed_env,
     ) as seed:
-        receipt = await tool(seed, "mail_status", to="worker", message_id=task["id"])
-        assert receipt["state"] == "completed"
-        assert receipt["result"] == "verified"
+        assert (await tool(seed, "mail_list"))["counts"]["completed"] == 0
+        assert {r["identity"] for r in await tool(seed, "mail_roles")} == {"router"}

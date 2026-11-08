@@ -55,6 +55,22 @@ def sanitized(value):
     return value
 
 
+def append_event(path: Path, event: dict) -> None:
+    """Append one redacted observation; never read logs as runtime state."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = (json.dumps(sanitized(event), ensure_ascii=False) + "\n").encode()
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        offset = 0
+        while offset < len(encoded):
+            written = os.write(fd, encoded[offset:])
+            if not written:
+                raise OSError("event log write made no progress")
+            offset += written
+    finally:
+        os.close(fd)
+
+
 class MCPAudit:
     def __init__(self, path: Path, instance: str):
         self.path = path.expanduser().absolute()
@@ -70,17 +86,7 @@ class MCPAudit:
             "instance": self.instance,
             **value,
         }
-        encoded = (json.dumps(sanitized(event), ensure_ascii=False) + "\n").encode()
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        try:
-            offset = 0
-            while offset < len(encoded):
-                written = os.write(fd, encoded[offset:])
-                if not written:
-                    raise OSError("audit log write made no progress")
-                offset += written
-        finally:
-            os.close(fd)
+        append_event(self.path, event)
 
     def wrap(self, app):
         async def audited(scope, receive, send):

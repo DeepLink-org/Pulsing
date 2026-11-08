@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from .actors import ROLE_KINDS, validate_identity
-from .managed import default_state_dir, seed_configuration
+from .managed import default_runtime_dir, seed_configuration
 
 PLUGIN_NAME = "pulsing"
 MARKETPLACE_NAME = "pulsing-local"
@@ -63,8 +63,8 @@ def generate_plugin(
         args.extend(["--addr", addr])
     args.extend(
         [
-            "--state-dir",
-            str(Path(state_dir or default_state_dir()).expanduser().absolute()),
+            "--runtime-dir",
+            str(Path(state_dir or default_runtime_dir()).expanduser().absolute()),
             "--kind",
             kind,
         ]

@@ -1,0 +1,63 @@
+{
+  "experiment": "fermat-council-v1",
+  "design_only": true,
+  "participants": 20,
+  "codex_instances": 2,
+  "max_subagents_per_instance": 9,
+  "deadline_seconds": 600,
+  "new_math_stop_seconds": 570,
+  "goal": "Reconstruct and challenge a theorem-dependent derivation of FLT; never claim a new proof from consensus",
+  "roles": [
+    {"id": "C0", "instance": "A", "harness_role": "main", "group": null, "role": "coordinator", "mandate": "Manage phases, dependencies and integration; cannot arbitrate own claims"},
+    {"id": "J0", "instance": "B", "harness_role": "main", "group": null, "role": "arbiter", "mandate": "Resolve evidenced disputes; no majority vote as mathematical truth"},
+    {"id": "G1-L", "instance": "A", "harness_role": "subagent", "group": "G1", "role": "lead", "mandate": "Integrate exponent reduction and small cases"},
+    {"id": "G1-P", "instance": "A", "harness_role": "subagent", "group": "G1", "role": "proposer", "mandate": "Derive primitive reduction and prime/4 exponent reduction"},
+    {"id": "G1-C", "instance": "A", "harness_role": "subagent", "group": "G1", "role": "critic", "mandate": "Challenge missing positivity, parity, quantifiers and descent steps"},
+    {"id": "G1-V", "instance": "A", "harness_role": "subagent", "group": "G1", "role": "checker", "mandate": "Check p=3 and n=4 evidence and strictly decreasing descent measure"},
+    {"id": "G2-L", "instance": "A", "harness_role": "subagent", "group": "G2", "role": "lead", "mandate": "Specify the Frey curve interface"},
+    {"id": "G2-P", "instance": "A", "harness_role": "subagent", "group": "G2", "role": "proposer", "mandate": "Construct the Frey curve from the hypothetical primitive counterexample"},
+    {"id": "G2-C", "instance": "A", "harness_role": "subagent", "group": "G2", "role": "critic", "mandate": "Challenge model/minimal discriminant confusion and unjustified local claims"},
+    {"id": "G2-V", "instance": "A", "harness_role": "subagent", "group": "G2", "role": "checker", "mandate": "Check normalization, semistability and the prime 2 interface"},
+    {"id": "X0", "instance": "A", "harness_role": "subagent", "group": null, "role": "evidence_auditor", "mandate": "Independently verify theorem provenance and input/output scope"},
+    {"id": "G3-L", "instance": "B", "harness_role": "subagent", "group": "G3", "role": "lead", "mandate": "Specify residual representations and level-lowering output"},
+    {"id": "G3-P", "instance": "B", "harness_role": "subagent", "group": "G3", "role": "proposer", "mandate": "State the appropriate Ribet implication and level 2 contradiction"},
+    {"id": "G3-C", "instance": "B", "harness_role": "subagent", "group": "G3", "role": "critic", "mandate": "Challenge irreducibility assumptions and p-divides-abc omissions"},
+    {"id": "G3-V", "instance": "B", "harness_role": "subagent", "group": "G3", "role": "checker", "mandate": "Check weights, level, character and characteristic of the conclusion"},
+    {"id": "G4-L", "instance": "B", "harness_role": "subagent", "group": "G4", "role": "lead", "mandate": "Specify modularity input and its dependency boundaries"},
+    {"id": "G4-P", "instance": "B", "harness_role": "subagent", "group": "G4", "role": "proposer", "mandate": "Apply semistable modularity without claiming to reprove Wiles"},
+    {"id": "G4-C", "instance": "B", "harness_role": "subagent", "group": "G4", "role": "critic", "mandate": "Challenge circular arguments and modular-curve terminology"},
+    {"id": "G4-V", "instance": "B", "harness_role": "subagent", "group": "G4", "role": "checker", "mandate": "Check exact modularity theorem applicability and cited evidence"},
+    {"id": "V0", "instance": "B", "harness_role": "subagent", "group": null, "role": "proof_graph_checker", "mandate": "Check claim versions, acyclic dependencies and unresolved premises"}
+  ],
+  "phases": [
+    {"id": "register", "start": 0, "end": 45, "deliverable": "frozen role/thread/mailbox manifest and mandate"},
+    {"id": "group", "start": 45, "end": 165, "deliverable": "four independently challenged claim packets"},
+    {"id": "cross_group", "start": 165, "end": 300, "deliverable": "cross-group challenges and evidence replies"},
+    {"id": "issue_panels", "start": 300, "end": 420, "deliverable": "temporary mixed-role panels for actual disputes; no new models"},
+    {"id": "integrate", "start": 420, "end": 525, "deliverable": "versioned proof dependency DAG and evidence audit"},
+    {"id": "arbitrate", "start": 525, "end": 570, "deliverable": "accepted/conditional/unresolved/rejected verdicts with evidence IDs"},
+    {"id": "seal", "start": 570, "end": 600, "deliverable": "final reports and unresolved work ledger; no new math"}
+  ],
+  "message_kinds": ["mandate", "claim", "challenge", "evidence", "revision", "panel", "group_report", "proof_map", "arbitration", "appeal", "final"],
+  "limits": {
+    "max_substantive_messages_per_participant": 16,
+    "max_parallel_panels_per_participant": 2,
+    "max_appeals_per_issue": 1,
+    "message_target_characters": 600,
+    "claim_lease_seconds": 90
+  },
+  "logging": {
+    "actor_events": "required; one JSONL per companion, stream_id and sequence",
+    "mcp_audit": "required; separate request/response audit",
+    "visible_model_conversations": "required; no internal reasoning or hidden prompts",
+    "replay": "offline only; never restore live state or rerun tools",
+    "role_binding": "harness-authoritative thread_id -> mailbox -> role manifest",
+    "control_answers": "operator-held until after the deadline"
+  },
+  "failure_policy": {
+    "companion_restart": "abort the measured run; RAM state is lost, do not recover from logs",
+    "deadline": "external supervisor stops all inference at 600 seconds",
+    "unfinished_work": "retain and report; never fabricate completion",
+    "success": "requires evidence-backed argument and role/coverage checks, not message volume or consensus"
+  }
+}

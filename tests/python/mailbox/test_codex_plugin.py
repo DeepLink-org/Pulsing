@@ -38,7 +38,7 @@ def test_generated_package_is_self_contained(tmp_path):
         "worker-a",
         "--addr",
         "10.0.0.3:0",
-        "--state-dir",
+        "--runtime-dir",
         str(tmp_path / "state"),
         "--kind",
         "worker",
@@ -156,6 +156,6 @@ def test_generated_plugin_bootstraps_without_seed(tmp_path):
     assert "--managed" in server["args"]
     assert "--addr" not in server["args"]  # Allow runtime PULSING_ADDR.
     assert "--seed" not in server["args"]
-    assert server["args"][server["args"].index("--state-dir") + 1] == str(
+    assert server["args"][server["args"].index("--runtime-dir") + 1] == str(
         tmp_path / "state"
     )

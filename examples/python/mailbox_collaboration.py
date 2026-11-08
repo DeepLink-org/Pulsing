@@ -8,17 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-import tempfile
 import uuid
 
 import pulsing as pul
 from pulsing.mailbox import DIRECTORY_NAME, MailboxClient, MailboxDirectory
 
 
-async def main(state_dir: str) -> None:
+async def main() -> None:
     await pul.init()
     try:
-        directory = await MailboxDirectory.spawn(state_dir, name=DIRECTORY_NAME)
+        directory = await MailboxDirectory.spawn(name=DIRECTORY_NAME)
         await directory.register("router", "router")
         router = await MailboxClient.connect("router")
         await router.create_role("worker", "worker")
@@ -84,5 +83,4 @@ async def main(state_dir: str) -> None:
 
 
 if __name__ == "__main__":
-    with tempfile.TemporaryDirectory(prefix="pulsing-mail-demo-") as state_dir:
-        asyncio.run(main(state_dir))
+    asyncio.run(main())

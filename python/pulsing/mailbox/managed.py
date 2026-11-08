@@ -17,6 +17,7 @@ import pulsing as pul
 from .actors import DIRECTORY_NAME, MailboxDirectory
 
 ENDPOINT_FILE = "endpoint.json"
+ACTOR_LOG_FILE = "mail-events.jsonl"
 
 
 def seed_configuration(
@@ -35,9 +36,9 @@ def seed_configuration(
     return False, values
 
 
-def default_state_dir() -> Path:
-    base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
-    return base / "pulsing" / "mailbox"
+def default_runtime_dir() -> Path:
+    base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return base / "pulsing" / "mail-runtime"
 
 
 @asynccontextmanager
@@ -49,7 +50,7 @@ async def host_runtime(
     seeds: list[str] | None = None,
     namespace: str | None = None,
 ):
-    """Own the directory and listen as the seed in THIS process, not a sidecar."""
+    """Own fresh RAM mailboxes; this directory contains only rendezvous and logs."""
     root = Path(state_dir).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     with (root / ".host.lock").open("a") as lock:
@@ -60,13 +61,19 @@ async def host_runtime(
                 DIRECTORY_NAME if namespace is None else f"mail/instances/{namespace}"
             )
             directory = await MailboxDirectory.spawn(
-                str(root), namespace=namespace, name=name
+                namespace=namespace, event_log=str(root / ACTOR_LOG_FILE), name=name
             )
-            await directory.restore()
             if publish_endpoint:
                 pending = root / f"{ENDPOINT_FILE}.tmp"
                 pending.write_text(
-                    json.dumps({"pid": os.getpid(), "addr": pul.get_system().addr}),
+                    json.dumps(
+                        {
+                            "pid": os.getpid(),
+                            "addr": pul.get_system().addr,
+                            "storage": "memory",
+                            "mail_log": str(root / ACTOR_LOG_FILE),
+                        }
+                    ),
                     encoding="utf-8",
                 )
                 pending.replace(root / ENDPOINT_FILE)
@@ -100,7 +107,7 @@ def _endpoint(root: Path) -> str | None:
 async def ensure_host(state_dir: str | Path, addr: str, timeout: float = 20) -> str:
     """Return a live sidecar endpoint, serializing concurrent bootstrap attempts.
 
-    The sidecar deliberately outlives MCP sessions: another local or remote
+    The sidecar's RAM deliberately outlives MCP sessions: another local or remote
     consumer may still need it. Only the process we started may be terminated on
     startup failure. A seed-based join never calls this fallback.
     """
@@ -144,7 +151,7 @@ async def ensure_host(state_dir: str | Path, addr: str, timeout: float = 20) -> 
                     "--managed",
                     "--addr",
                     addr,
-                    "--state-dir",
+                    "--runtime-dir",
                     str(root),
                 ],
                 stdin=subprocess.DEVNULL,

@@ -44,12 +44,12 @@ codex -C "$PWD"
 ```
 
 `--seed 1` 等价于 MCP 环境中的 `SEED=1`：Codex 加载插件时，**当前 MCP
-进程本身就是 seed**，直接监听 `127.0.0.1:8100` 并创建或恢复邮箱目录，
+进程本身就是 seed**，直接监听 `127.0.0.1:8100` 并创建空的内存邮箱目录，
 不会再拉起另一个 host 进程。其他本机 agent 使用 `--seed 127.0.0.1:8100` 加入。
 
-默认状态目录为 `$XDG_STATE_HOME/pulsing/mailbox`，未设置 XDG_STATE_HOME 时为
-`~/.local/state/pulsing/mailbox`。测试或独立网络可以通过生成器的
-`--state-dir /absolute/path` 隔离状态。
+默认运行目录为 `$XDG_CACHE_HOME/pulsing/mail-runtime`，未设置时为
+`~/.cache/pulsing/mail-runtime`。生成器的 `--runtime-dir /absolute/path`
+隔离进程元数据和 actor 日志；这不是邮箱数据库或恢复目录。
 
 起始提示词只需要：
 
@@ -69,7 +69,7 @@ python -m pulsing.mailbox codex-plugin \
   --identity router \
   --kind router \
   --seed 1 \
-  --state-dir "$PWD/.pulsing/codex-network" \
+  --runtime-dir "$PWD/.pulsing/codex-network" \
   --addr 10.0.0.10:8100
 
 codex plugin marketplace add "$PWD/.pulsing/codex-router"
@@ -135,19 +135,20 @@ Codex 配置目录，也不要通过修改身份读取别人的邮箱。
 ## 节点生命周期与本地状态
 
 `SEED=1` 的节点与其 MCP 进程同生命周期：关闭或重启该 MCP 会暂时中断邮箱服务；
-再次加载同一配置会自动恢复 SQLite。应保持 seed 会话运行，当前没有跨机器 HA
+再次加载同一配置会得到空邮箱，不恢复消息或租约。应保持 seed 会话运行，当前没有跨机器 HA
 或存活会话的无缝重连。其他节点不会因连接失败就私自创建另一个网络。
 
-SQLite、`endpoint.json` 和锁文件保存在 state-dir，不随插件缓存更新删除。
-只有一个进程可以拥有 state-dir。`mailbox://local/inbox` 返回当前进程的
+actor 日志、`endpoint.json` 和锁文件保存在 runtime-dir，没有 SQLite。
+只有一个进程可以拥有 runtime-dir。`mailbox://local/inbox` 返回当前进程的
 `pid`、`addr` 和 `seed`，其中 seed 的 `pid`、`addr` 与 endpoint 记录一致。
 端口设为 `:0` 时，可从该资源读取实际分配的端口；多机稳定部署建议指定固定端口。
 
 兼容的本机便利模式仍可用：既没有 seed 参数也没有 SEED 环境变量时，插件自动
-启动或复用一个独立的持久 sidecar，其他无 seed 的本机插件共享它。该模式的节点
-独立于 MCP 会话保留，并通过启动锁避免并发重复创建；日志在 state-dir 的
+启动或复用一个独立的运行中 sidecar，其他无 seed 的本机插件共享它。该节点内存
+独立于 MCP 客户端会话保留，但 sidecar 重启即清空；进程日志在 runtime-dir 的
 `host.log`。需要“当前进程就是 seed”时应显式指定 `SEED=1`，不要依赖此便利模式。
-不要在节点仍持有锁时删除状态目录。
+不要在节点仍持有锁时删除运行目录。`mail-events.jsonl` 可用
+`python -m pulsing.mailbox replay` 离线查看，永远不会被加载成运行状态。
 
 ## 使用 SEED 环境变量
 
@@ -155,7 +156,7 @@ SQLite、`endpoint.json` 和锁文件保存在 state-dir，不随插件缓存更
 
 | 配置 | 行为 |
 |------|------|
-| `SEED=1` | 当前 MCP 进程作为 seed，自动创建或恢复目录 |
+| `SEED=1` | 当前 MCP 进程作为 seed，自动创建内存目录 |
 | `SEED=10.0.0.10:8100` | 加入这个 seed |
 | `SEED=10.0.0.10:8100,10.0.0.20:8100` | 使用多个入口地址加入网络 |
 | `PULSING_ADDR=10.0.0.10:8100` | 当前进程的 actor 监听地址 |
@@ -226,13 +227,13 @@ pytest tests/python/mailbox -q
 
 测试通过真实 MCP SDK 启动生成配置中的命令，覆盖独立 Router/Worker/Reviewer
 进程、自动启动、并发复用、自动身份注册、seed 加入、退出后的节点保留、
-崩溃恢复、投递、幂等、领取、回复和完成；不调用付费模型。
+重启清空、日志回放、投递、幂等、领取、回复和完成；不调用付费模型。
 它们在单机通过 TCP 连接不同进程，不替代真实私网、防火墙和 Codex 模型端到端验收。
 
 - 无插件命令：检查 Codex 版本。
 - 找不到 Python/Pulsing：检查生成的 `.mcp.json` 中绝对路径及该环境安装状态。
 - 启动失败：检查 MCP 错误日志、目录权限及监听端口占用；
-  本机 sidecar 模式还可检查 state-dir 的 `host.log`。
+  本机 sidecar 模式还可检查 runtime-dir 的 `host.log`。
 - 无法发现 actor：检查 seed、双向路由、本机绑定 IP 和端口策略；
   首个机器需要先启动 Codex，让插件引导网络。
 - 同身份任务已领取：另一个消费者可能还持有租约，不要绕过 token。

@@ -1,4 +1,4 @@
-"""State, durability, and actual actor serialization contracts."""
+"""Volatile state, bounded memory, and actual actor serialization contracts."""
 
 from __future__ import annotations
 
@@ -12,12 +12,8 @@ from pulsing.mailbox.actors import validate_identity
 
 
 @pytest.fixture
-def box(tmp_path):
-    mailbox = Mailbox("worker", str(tmp_path))
-    try:
-        yield mailbox
-    finally:
-        mailbox.on_stop()
+def box():
+    return Mailbox("worker")
 
 
 def deliver(box, key="task-1", **kwargs):
@@ -115,8 +111,8 @@ def test_pagination_validation_and_sender_receipt(box):
         box.claim(messages[0]["id"], lease_seconds=0)
 
 
-def test_bounded_storage(tmp_path):
-    box = Mailbox("limited", str(tmp_path), capacity=1)
+def test_bounded_memory():
+    box = Mailbox("limited", capacity=1)
     try:
         mail = deliver(box)
         assert deliver(box)["id"] == mail["id"]
@@ -128,24 +124,45 @@ def test_bounded_storage(tmp_path):
         box.on_stop()
 
 
-def test_restart_retains_mail_claim_and_deduplication(tmp_path):
-    first = Mailbox("worker", str(tmp_path))
+def test_new_mailbox_does_not_restore_mail_claims_or_deduplication(tmp_path):
+    log = str(tmp_path / "events.jsonl")
+    first = Mailbox("worker", event_log=log)
     mail = deliver(first)
     claim = first.claim(mail["id"])
     first.on_stop()
-    second = Mailbox("worker", str(tmp_path))
+    second = Mailbox("worker", event_log=log)
     try:
-        assert deliver(second)["id"] == mail["id"]
-        assert second.read_message(mail["id"])["attempt"] == 1
-        assert second.finish(mail["id"], claim["claim_token"])["state"] == "completed"
+        assert second.inbox()["counts"]["processing"] == 0
+        with pytest.raises(ValueError, match="not found"):
+            second.finish(mail["id"], claim["claim_token"])
+        fresh = deliver(second)
+        assert fresh["id"] != mail["id"]
+        assert fresh["attempt"] == 0
     finally:
         second.on_stop()
+    assert not list(tmp_path.glob("*.sqlite3"))
+
+
+def test_byte_budget_rejects_growth_without_blocking_read_and_claim():
+    box = Mailbox("limited", max_bytes=2000)
+    message = deliver(box)
+    with pytest.raises(ValueError, match="byte capacity"):
+        deliver(box, key="another")
+    box.read_message(message["id"])
+    claim = box.claim(message["id"])
+    with pytest.raises(ValueError, match="byte capacity"):
+        box.finish(message["id"], claim["claim_token"], result="x" * 2000)
+    assert box.receipt(message["id"], "router")["state"] == "processing"
+    assert (
+        box.finish(message["id"], claim["claim_token"], result="ok")["state"]
+        == "completed"
+    )
 
 
 @pytest.fixture
-async def actors(tmp_path):
+async def actors():
     await pul.init()
-    directory = await MailboxDirectory.spawn(str(tmp_path), name=DIRECTORY_NAME)
+    directory = await MailboxDirectory.spawn(name=DIRECTORY_NAME)
     await directory.register("router", "router")
     router = await MailboxClient.connect("router")
     await router.create_role("worker", "worker")

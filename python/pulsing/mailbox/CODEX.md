@@ -7,13 +7,14 @@ and load `mailbox://local/protocol` when available. The protocol above is also
 bundled so it is available in clients that do not surface MCP resources.
 
 Mailbox infrastructure is implicit. The plugin automatically bootstraps or
-reuses a persistent local node, or joins its configured seed network, and
+reuses a running local node, or joins its configured seed network, and
 registers its own role. Do not ask the user to run a mailbox service or provision
 your mailbox. Connection failures should be diagnosed, not worked around by
 changing identity or silently creating a different network.
 With `SEED=1`, this MCP process is itself the seed; its actor address is the seed
 address. The inbox resource reports `seed`, `addr` and `pid`. This explicit seed
-stops with its MCP process and restores durable state on restart.
+stops with its MCP process. Restarting creates empty mailboxes, not recovered work;
+actor event logs remain available for offline replay only.
 
 ### Router
 

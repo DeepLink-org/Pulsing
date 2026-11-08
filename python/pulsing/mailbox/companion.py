@@ -15,7 +15,7 @@ DIRECTORY_PREFIX = "mail/instances/"
 class CompanionClient(MailboxClient):
     async def _mailbox(self, identity: str):
         validate_identity(identity)
-        # The destination's owner creates and persists its actor. Do not require
+        # The destination's owner creates and holds its in-memory actor. Do not require
         # remote recipients to appear in this companion's local role directory.
         return await Mailbox.resolve(mailbox_name(identity), timeout=15)
 

@@ -29,7 +29,7 @@ def create_server(
     client_provider: Callable[[Context], Awaitable[MailboxClient]] | None = None,
     protocol_text: str | None = None,
 ) -> FastMCP:
-    from .managed import default_state_dir, host_runtime, seed_configuration
+    from .managed import default_runtime_dir, host_runtime, seed_configuration
 
     seed_node, configured_peers = seed_configuration(seeds, os.environ.get("SEED"))
 
@@ -41,7 +41,7 @@ def create_server(
         if seed_node:
             # SEED=1 makes this MCP process the seed: no child host and no
             # second listening port. Its advertised address is the seed address.
-            async with host_runtime(addr, state_dir or default_state_dir()):
+            async with host_runtime(addr, state_dir or default_runtime_dir()):
                 yield {
                     "mail": await MailboxClient.connect(identity, register_kind=kind)
                 }
@@ -51,7 +51,7 @@ def create_server(
         if managed and not peers:
             from .managed import ensure_host
 
-            peers = [await ensure_host(state_dir or default_state_dir(), addr)]
+            peers = [await ensure_host(state_dir or default_runtime_dir(), addr)]
             # The sidecar owns the configured port. MCP joins with another port
             # on the same interface, never with the sidecar's listening socket.
             bind = addr.rsplit(":", 1)[0] + ":0"

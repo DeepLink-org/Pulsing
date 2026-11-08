@@ -60,7 +60,7 @@ own services on top of the actor API.
 ## Agent mailbox prototype
 
 An optional coordination layer gives each router, worker, reviewer, or subagent
-its own durable actor mailbox. External agents use MCP tools and an installable
+its own bounded in-memory actor mailbox. External agents use MCP tools and an installable
 skill to send mail and track unread, read, processing, completed, and failed
 states. No LLM runtime or coding tools are bundled.
 
@@ -80,6 +80,7 @@ The recommended [companion launcher](docs/src/design/agent-launcher.md) runs one
 Pulsing process per Codex, owns separate mailboxes for its agents/subagents, and
 injects MCP automatically. A [standalone Codex plugin](docs/src/design/codex-mailbox-plugin.md)
 is also available.
+Actor-owned event logs support offline replay, not mailbox recovery after restart.
 
 ## CLI
 

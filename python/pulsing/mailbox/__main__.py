@@ -7,6 +7,7 @@ import asyncio
 import os
 import signal
 import sys
+from pathlib import Path
 
 import pulsing as pul
 
@@ -33,7 +34,7 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     host = commands.add_parser("serve", help="run the trusted mailbox host")
     host.add_argument("--addr", default="127.0.0.1:8100")
-    host.add_argument("--state-dir", required=True)
+    host.add_argument("--runtime-dir", "--state-dir", dest="state_dir", required=True)
     host.add_argument("--identity", default="router")
     host.add_argument("--managed", action="store_true", help=argparse.SUPPRESS)
     mcp = commands.add_parser(
@@ -44,7 +45,12 @@ def main() -> None:
     mcp.add_argument(
         "--managed", action="store_true", help="automatically bootstrap or join"
     )
-    mcp.add_argument("--state-dir", help="persistent local sidecar state")
+    mcp.add_argument(
+        "--runtime-dir",
+        "--state-dir",
+        dest="state_dir",
+        help="rendezvous and actor logs only",
+    )
     mcp.add_argument("--kind", default="worker")
     mcp.add_argument(
         "--addr",
@@ -58,12 +64,35 @@ def main() -> None:
     codex.add_argument("--identity", required=True)
     codex.add_argument("--seed", action="append", default=[])
     codex.add_argument("--addr", default=None)
-    codex.add_argument("--state-dir", help="persistent local sidecar state")
+    codex.add_argument(
+        "--runtime-dir",
+        "--state-dir",
+        dest="state_dir",
+        help="rendezvous and actor logs only",
+    )
     codex.add_argument("--kind", default="worker")
     codex.add_argument("--python", default=sys.executable, help="MCP Python executable")
+    replay = commands.add_parser(
+        "replay", help="inspect actor logs offline; never restore live mail"
+    )
+    replay.add_argument("logs", nargs="+")
+    replay.add_argument("--format", choices=("json", "markdown"), default="json")
+    replay.add_argument("--output", help="new output file; default stdout")
     args = parser.parse_args()
     if args.command == "serve":
         asyncio.run(serve(args.addr, args.state_dir, args.identity, args.managed))
+    elif args.command == "replay":
+        from .replay import render, replay_logs
+
+        try:
+            text = render(replay_logs(args.logs), args.format)
+            if args.output:
+                with Path(args.output).open("x", encoding="utf-8") as output:
+                    output.write(text)
+            else:
+                print(text)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
     elif args.command == "codex-plugin":
         from .codex import generate_plugin
 

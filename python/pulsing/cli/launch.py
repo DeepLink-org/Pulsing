@@ -251,7 +251,7 @@ async def launch(
 def main(arguments: list[str]) -> None:
     from pulsing.exceptions import PulsingRuntimeError
     from pulsing.mailbox.actors import validate_identity
-    from pulsing.mailbox.managed import default_state_dir, seed_configuration
+    from pulsing.mailbox.managed import default_runtime_dir, seed_configuration
 
     parser = argparse.ArgumentParser(
         prog="pulsing", usage="pulsing [launch options] -- COMMAND [ARGS...]"
@@ -262,7 +262,14 @@ def main(arguments: list[str]) -> None:
         "--instance",
         default=os.environ.get("PULSING_INSTANCE_ID") or uuid.uuid4().hex[:16],
     )
-    parser.add_argument("--state-dir", default=os.environ.get("PULSING_STATE_DIR"))
+    parser.add_argument(
+        "--runtime-dir",
+        "--state-dir",
+        dest="state_dir",
+        default=os.environ.get("PULSING_RUNTIME_DIR")
+        or os.environ.get("PULSING_STATE_DIR"),
+        help="process rendezvous and actor logs, not mailbox storage",
+    )
     parser.add_argument("--audit-log", default=os.environ.get("PULSING_AUDIT_LOG"))
     parser.add_argument(
         "--adapter", choices=("auto", "codex", "generic"), default="auto"
@@ -290,7 +297,7 @@ def main(arguments: list[str]) -> None:
         state = (
             Path(options.state_dir).expanduser()
             if options.state_dir
-            else default_state_dir().parent / "agents" / options.instance
+            else default_runtime_dir() / "agents" / options.instance
         )
         code = asyncio.run(
             launch(

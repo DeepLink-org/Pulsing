@@ -5,7 +5,7 @@ description: Coordinate agents and subagents across coding sessions and machines
 
 # Pulsing companion collaboration
 
-The launcher provides one Pulsing companion per coding harness. It owns a durable
+The launcher provides one Pulsing companion per coding harness. It owns a bounded in-memory
 mailbox for each agent/thread. Your identity is derived from harness-supplied MCP
 `_meta.threadId`, not from a model-supplied sender argument. Call `mail_identity`
 to learn your address, then `mail_roles` to find peers and their agent/thread IDs.
@@ -45,6 +45,8 @@ Mailboxes transfer tasks/results, not files, Git objects or credentials. Do not
 send secrets or large patches. Use an operator-approved code/artifact channel.
 This is a trusted private-cluster prototype, not authentication between hostile
 users or an exactly-once side-effect guarantee.
+Companion restarts lose mail, roles, claims and deduplication keys. Actor event
+logs are for offline replay only; they are never loaded into a new live mailbox.
 
 Do not start mailbox services, change MCP configuration, or launch remote models
 to process a message. The launcher owns infrastructure. Yield on an empty inbox;

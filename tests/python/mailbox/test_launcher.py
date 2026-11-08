@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import socket
-import sqlite3
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,6 +16,8 @@ pytest.importorskip("mcp")
 httpx = pytest.importorskip("httpx")
 
 PROBE = Path(__file__).with_name("launcher_probe.py")
+
+from pulsing.mailbox.replay import replay_logs  # noqa: E402
 
 
 @asynccontextmanager
@@ -123,7 +124,18 @@ async def test_per_agent_mailboxes_and_missing_metadata(tmp_path):
         await process.stdin.drain()
         response = json.loads(await asyncio.wait_for(process.stdout.readline(), 10))
         assert "error" in response
-    assert len(list(state.glob("mailbox-*.sqlite3"))) == 3
+    history = replay_logs([state / "mail-events.jsonl"])
+    assert (
+        len(
+            [
+                s
+                for s in history["streams"].values()
+                if s["actor"].startswith("mail/boxes/")
+            ]
+        )
+        == 3
+    )
+    assert not list(state.glob("*.sqlite3"))
 
 
 @pytest.mark.parametrize("automatic_address", [False, True])
@@ -185,19 +197,22 @@ async def test_cross_companion_delivery_is_owned_by_recipient(
             assert receipt["result"] == "remote complete"
             roles = await request(second, "mail_roles")
             assert {role["instance"] for role in roles} == {"a", "b"}
-            assert not (
-                first_state / f"mailbox-{recipient['identity']}.sqlite3"
-            ).exists()
-            assert (second_state / f"mailbox-{recipient['identity']}.sqlite3").is_file()
+            sent_history = replay_logs([first_state / "mail-events.jsonl"])
+            received_history = replay_logs([second_state / "mail-events.jsonl"])
+            assert not any(m["id"] == task["id"] for m in sent_history["messages"])
+            assert (
+                next(m for m in received_history["messages"] if m["id"] == task["id"])[
+                    "state"
+                ]
+                == "completed"
+            )
             first.stdin.close()
             await asyncio.wait_for(first.wait(), 10)
-            # The seed is not the owner of B's mailbox actors or SQLite.
+            # The seed is not the owner of B's in-memory mailboxes.
             own_inbox = await request(second, "mail_list")
             assert own_inbox["counts"]["completed"] == 1
-    with sqlite3.connect(
-        second_state / f"mailbox-{recipient['identity']}.sqlite3"
-    ) as db:
-        assert db.execute("SELECT state FROM messages").fetchone()[0] == "completed"
+    assert not list(first_state.glob("*.sqlite3"))
+    assert not list(second_state.glob("*.sqlite3"))
 
 
 async def test_exit_status_and_launch_failure_cleanup(tmp_path):
@@ -252,22 +267,25 @@ async def test_local_mcp_rejects_requests_without_token(tmp_path):
     assert process.returncode == 0
 
 
-async def test_same_instance_and_thread_restore_mail(tmp_path):
+async def test_same_instance_has_stable_identity_but_fresh_mail_after_restart(tmp_path):
     async with harness(tmp_path, "stable") as (process, identity, _):
         task = await request(
             process,
             "mail_send",
             {
                 "to": identity["identity"],
-                "subject": "Persist",
-                "body": "Keep me",
-                "idempotency_key": "persistent",
+                "subject": "Observe",
+                "body": "Keep this in the replay log, not live storage",
+                "idempotency_key": "observe",
             },
         )
     async with harness(tmp_path, "stable") as (process, identity_after, _):
         assert identity_after["identity"] == identity["identity"]
-        message = await request(process, "mail_read", {"message_id": task["id"]})
-        assert message["body"] == "Keep me"
+        assert (await request(process, "mail_list"))["counts"]["unread"] == 0
+    history = replay_logs([tmp_path / "stable/mail-events.jsonl"])
+    assert next(m for m in history["messages"] if m["id"] == task["id"])[
+        "body"
+    ].startswith("Keep this")
 
 
 async def test_sigterm_is_forwarded_and_companion_stops(tmp_path):
