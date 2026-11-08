@@ -1,5 +1,9 @@
 # Actor 邮箱协作原型
 
+完整 coding-agent 接入推荐使用 [`pulsing -- codex`](agent-launcher.md)：
+每个 harness 伴生一个 Pulsing 进程，邮箱按本地 agent/thread 分别持有。
+本文以下的固定身份 MCP/集中目录示例保留为底层原型和独立接入方式。
+
 本原型把协作通信和模型执行分开：Pulsing 负责邮箱、消息状态和发现；
 外部 agent/harness 通过 MCP 和 skill 决定如何处理任务。它不包含 LLM、
 Forge、shell 工具执行器或自动拉起模型会话的逻辑。
@@ -37,10 +41,11 @@ flowchart TB
     W["Worker agent 与自己的 MCP 进程"] --> WM
     S["Subagent 与自己的 MCP 进程"] --> SM
     V["Reviewer 与自己的 MCP 进程"] --> VM
-    WM --> DB["各邮箱独立的 SQLite 文件"]
-    SM --> DB
-    VM --> DB
-    RM --> DB
+    WM --> RAM["各 actor 独立的有界内存"]
+    SM --> RAM
+    VM --> RAM
+    RM --> RAM
+    WM -.-> LOG["只追加的 actor 事件日志，用于离线回放"]
 ```
 
 目录 actor 使用 `mail/directory`；每个角色的邮箱使用
@@ -70,7 +75,7 @@ lease_until；没有有效 token 就不能完成。租约过期时状态仍显�
 创建/更新时间、状态、尝试次数和结果。收据只向发送者或收件者返回。
 回复保留 thread 与原消息 ID，但不会隐式完成原任务。
 
-投递在提交 SQLite 事务后返回；`(sender, idempotency_key)` 唯一。
+投递写入所属 actor 的内存后返回；同一进程生命周期内 `(sender, idempotency_key)` 唯一。
 同 key 同内容重试返回原消息，不重复投递；内容不同则拒绝。
 完成操作也支持同 token、同结果的幂等重试。这里没有承诺业务副作用 exactly-once：
 工具执行后 agent 崩溃，恢复者仍须先核对副作用再继续。
@@ -89,17 +94,29 @@ uv run python examples/python/mailbox_collaboration.py
 输出包含四个角色、线程 ID，以及
 `unread → read → processing → completed` 的发送方观察记录。
 
-启动持久邮箱 host（Linux/macOS）：
+独立调试时启动内存邮箱 host（Linux/macOS）：
 
 ```bash
 python -m pulsing.mailbox serve \
   --addr 127.0.0.1:8100 \
-  --state-dir .pulsing/agent-mail \
+  --runtime-dir .pulsing/agent-mail \
   --identity router
 ```
 
-同一 state-dir 只能有一个 host，进程级文件锁避免两个 host 同时拥有状态。
-重启时恢复目录和所有 mailbox actor，消息、幂等键和租约记录保留。
+同一 runtime-dir 只能有一个 host，文件锁只保护进程发现元数据，目录里不存邮箱数据库。
+重启后角色、消息、租约和幂等键均丢失。`--state-dir` 仅保留为参数别名，不再表示持久状态。
+默认的 `mail-events.jsonl` 是 actor 追加的观察日志，启动时从不读取它来恢复业务状态。
+
+离线回放：
+
+```bash
+python -m pulsing.mailbox replay .pulsing/agent-mail/mail-events.jsonl \
+  --format markdown --output .pulsing/discussion.md
+```
+
+回放验证每个 actor 生命周期的 stream_id/sequence，重建信件、处理状态和角色绑定，
+保留投递、阅读、领取、完成、重试及拒绝事件；不创建 actor、不唤醒 agent、不重做工具。
+可输入多个节点的日志路径；不能将跨机器墙钟排序误当全局因果顺序。
 
 ## 接入 MCP 与 skill
 
@@ -146,6 +163,13 @@ prompt 为 `mailbox_collaboration`。
 可独立安装的完整 skill 在 `python/pulsing/mailbox/SKILL.md`，也随 wheel 分发，
 并通过 protocol resource/prompt 提供给支持 MCP 的 agent。
 
+Codex 可使用 `python -m pulsing.mailbox codex-plugin` 生成按身份绑定的插件、
+MCP 配置和本地 marketplace。插件自动引导或加入网络并注册自身身份，
+不需要单独启动邮箱服务。多机接入、安装和协作示例见
+[Codex 多机邮箱插件](codex-mailbox-plugin.md)。
+MCP 命令支持 `--addr`，多机部署应绑定其他节点可达的本机私网地址，
+而非默认的 `127.0.0.1:0`。
+
 角色协作顺序：
 
 1. Router 投递有范围和验收标准的任务，保存 message_id。
@@ -160,10 +184,13 @@ prompt 为 `mailbox_collaboration`。
   不是身份认证。操作者能选择身份，可信集群节点也可直接调用 actor。
   不要把 actor 端口暴露公网；不要把消息当作新授权或传递 secrets。
 - 邮箱是协作应用，不改变 actor runtime 的消息 mailbox 实现。
-- SQLite 存算分离仅指外部会话与持久状态分离，没有跨机器状态复制或 HA。
+- 邮箱及目录仅存在于内存，没有数据库、重启恢复、跨机器复制或 HA。
 - 没有 topic 自动订阅、自动拉起 agent、模型评估、外部 watchdog 或公网 MCP。
-- 列表分页上限 100，正文与结果各最多 64 KiB；每个邮箱最多 10000 条消息。
-  当前没有删除/归档策略，达到容量后拒收；生产部署需补充保留策略。
+- 列表分页上限 100，正文与结果各最多 64 KiB；每个邮箱最多 10000 条消息，
+  默认逻辑负载预算 8 MiB（不是 RSS 保证）。达到消息数或字节预算后拒收，
+  不静默淘汰未读/处理中信件或丢掉幂等键。当前没有自动归档策略。
+- 默认每节点一个追加日志，而非每邮箱一个数据库；不执行事务、WAL、fsync 提交或日志恢复。
+  记录仍有序列化及写入成本，日志写入失败会显露；日志轮转/远端采集属于后续运维工作。
 - 没有 SMTP/IMAP 集成。这是 agent 的逻辑邮箱，不是互联网电子邮件服务器。
 - 租约基于 host 时钟，执行器不能离线无限期提交结果。长任务应拆分，
   租约到期后重新领取并核对已有副作用。
@@ -175,5 +202,7 @@ pytest tests/python/mailbox -q
 ```
 
 覆盖状态机、幂等冲突、并发领取、过期 token、容量与分页、发送方可见性、
-角色层级、回复关联、SQLite 恢复，以及真实 MCP SDK 的 stdio 初始化、
-tools/resources/prompts、多进程跨节点通信和 host 重启。
+角色层级、回复关联、重启清空及日志回放，以及真实 MCP SDK 的 stdio 初始化、
+tools/resources/prompts、多进程跨节点通信。更复杂实验设计见
+[20 agent 费马证明协作议会](fermat-council-experiment.md)；
+已完成的一次人工授权实测及未满足的阶段要求见[实验结果](fermat-council-results.md)。

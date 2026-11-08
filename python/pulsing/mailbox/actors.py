@@ -1,14 +1,17 @@
-"""Durable, serially owned agent mailboxes built from ordinary Pulsing actors."""
+"""Bounded in-memory agent mailboxes, serially owned by ordinary Pulsing actors."""
 
 from __future__ import annotations
 
+import hashlib
 import re
-import sqlite3
 import time
 import uuid
-from pathlib import Path
+from functools import wraps
+from itertools import islice
 
 import pulsing as pul
+
+from .events import ActorEvents
 
 DIRECTORY_NAME = "mail/directory"
 STATES = ("unread", "read", "processing", "completed", "failed")
@@ -35,75 +38,134 @@ def _text(value: str, name: str, maximum: int, *, empty: bool = False) -> str:
     return value
 
 
-def _connect(path: Path) -> sqlite3.Connection:
-    db = sqlite3.connect(path, check_same_thread=False)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA journal_mode=WAL")
-    db.execute("PRAGMA synchronous=FULL")
-    return db
+def _observed(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except (ValueError, TypeError) as exc:
+            message_id = kwargs.get("message_id")
+            if args and method.__name__ in (
+                "read_message",
+                "claim",
+                "finish",
+                "receipt",
+            ):
+                message_id = args[0]
+            self._events.emit(
+                "operation.rejected",
+                operation=method.__name__,
+                error_type=type(exc).__name__,
+                error=str(exc),
+                message_id=message_id
+                if isinstance(message_id, str) and len(message_id) <= 128
+                else None,
+            )
+            raise
+
+    return call
 
 
 @pul.remote
 class Mailbox:
-    """One recipient's messages; all database access goes through this actor.
+    """The actor owns RAM state; append-only observations are never recovery input.
 
-    This is a trusted-cluster prototype, not an authentication boundary. Public
-    actor calls must not be exposed to untrusted nodes.
+    Trusted-cluster prototype, not an authentication boundary. Limits reject new
+    data rather than silently evicting unread work or forgetting idempotency keys.
     """
 
-    def __init__(self, identity: str, state_dir: str, capacity: int = 10000):
+    def __init__(
+        self,
+        identity: str,
+        capacity: int = 10000,
+        max_bytes: int = 8 * 1024 * 1024,
+        event_log: str | None = None,
+        instance: str | None = None,
+    ):
         self._identity = validate_identity(identity)
         if not isinstance(capacity, int) or capacity < 1:
             raise ValueError("capacity must be a positive integer")
+        if not isinstance(max_bytes, int) or max_bytes < 1:
+            raise ValueError("max_bytes must be a positive integer")
         self._capacity = capacity
-        root = Path(state_dir)
-        root.mkdir(parents=True, exist_ok=True)
-        self._db = _connect(root / f"mailbox-{identity}.sqlite3")
-        self._db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS messages (
-                id TEXT PRIMARY KEY, sender TEXT NOT NULL, subject TEXT NOT NULL,
-                body TEXT NOT NULL, thread_id TEXT NOT NULL, in_reply_to TEXT,
-                idempotency_key TEXT NOT NULL, state TEXT NOT NULL,
-                created_at REAL NOT NULL, updated_at REAL NOT NULL,
-                attempt INTEGER NOT NULL DEFAULT 0, claim_token TEXT,
-                lease_until REAL, result TEXT,
-                UNIQUE(sender, idempotency_key)
-            );
-            CREATE INDEX IF NOT EXISTS inbox_state ON messages(state, created_at);
-            """
-        )
+        self._max_bytes = max_bytes
+        self._used_bytes = 0
+        self._messages: dict[str, dict] = {}
+        self._keys: dict[tuple[str, str], str] = {}
+        self._counts = dict.fromkeys(STATES, 0)
+        self._events = ActorEvents(event_log, mailbox_name(identity), instance)
+        self._events.emit("mailbox.started", capacity=capacity, max_bytes=max_bytes)
 
     def on_stop(self):
-        self._db.close()
+        self._events.emit("mailbox.stopped")
 
-    def _row(self, message_id: str) -> sqlite3.Row:
-        row = self._db.execute(
-            "SELECT * FROM messages WHERE id = ?", (message_id,)
-        ).fetchone()
-        if row is None:
-            raise ValueError("message not found")
-        return row
+    def _row(self, message_id: str) -> dict:
+        _text(message_id, "message_id", 128)
+        try:
+            return self._messages[message_id]
+        except KeyError:
+            raise ValueError("message not found") from None
 
-    def _public(self, row: sqlite3.Row) -> dict:
+    def _public(self, row: dict) -> dict:
         return {
-            key: row[key]
+            key: value
+            for key, value in row.items()
+            if key not in ("claim_token", "idempotency_key")
+        } | {"recipient": self._identity}
+
+    @staticmethod
+    def _weight(row: dict) -> int:
+        # Logical UTF-8 payload budget plus fixed metadata allowance, not an RSS
+        # estimate. Claim/read metadata changes never consume extra payload quota.
+        return 1024 + sum(
+            len((row.get(key) or "").encode("utf-8"))
             for key in (
-                "id",
                 "sender",
                 "subject",
                 "body",
+                "result",
                 "thread_id",
                 "in_reply_to",
-                "state",
-                "created_at",
-                "updated_at",
-                "attempt",
-                "lease_until",
-                "result",
+                "idempotency_key",
             )
-        } | {"recipient": self._identity}
+        )
 
+    def _store(self, row: dict, event: str) -> None:
+        previous = self._messages.get(row["id"])
+        # Message payloads are immutable; only finish() can grow the result.
+        delta = (
+            self._weight(row)
+            if previous is None
+            else (
+                len((row["result"] or "").encode("utf-8"))
+                - len((previous["result"] or "").encode("utf-8"))
+            )
+        )
+        if self._used_bytes + delta > self._max_bytes:
+            raise ValueError("mailbox byte capacity reached")
+        fields = (
+            {"message": self._public(row), "idempotency_key": row["idempotency_key"]}
+            if previous is None
+            else {
+                "message_id": row["id"],
+                "previous_state": previous["state"],
+                "changes": {
+                    key: value
+                    for key, value in self._public(row).items()
+                    if key != "recipient" and previous.get(key) != value
+                },
+            }
+        )
+        # A failed log append is visible and does not publish a RAM transition.
+        # This is not a distributed transaction or a crash-recovery protocol.
+        self._events.emit(event, **fields)
+        if previous is not None:
+            self._counts[previous["state"]] -= 1
+        self._messages[row["id"]] = row
+        self._counts[row["state"]] += 1
+        self._used_bytes += delta
+
+    @_observed
     def deliver(
         self,
         sender: str,
@@ -113,7 +175,7 @@ class Mailbox:
         thread_id: str = "",
         in_reply_to: str | None = None,
     ) -> dict:
-        """Commit a delivery before acknowledging it; retries require the same key."""
+        """Accept in RAM before acknowledging; retries within this lifetime dedup."""
         validate_identity(sender)
         _text(subject, "subject", 256)
         _text(body, "body", 65536, empty=True)
@@ -121,102 +183,115 @@ class Mailbox:
         _text(thread_id, "thread_id", 128, empty=True)
         if in_reply_to is not None:
             _text(in_reply_to, "in_reply_to", 128)
-        existing = self._db.execute(
-            "SELECT * FROM messages WHERE sender = ? AND idempotency_key = ?",
-            (sender, idempotency_key),
-        ).fetchone()
-        if existing is not None:
-            same = (
+        key = (sender, idempotency_key)
+        if key in self._keys:
+            existing = self._row(self._keys[key])
+            if not (
                 existing["subject"] == subject
                 and existing["body"] == body
                 and existing["in_reply_to"] == in_reply_to
                 and (not thread_id or existing["thread_id"] == thread_id)
-            )
-            if not same:
+            ):
                 raise ValueError("idempotency key already used for different content")
+            self._events.emit("delivery.retried", message_id=existing["id"])
             return self._public(existing)
-        count = self._db.execute("SELECT count(*) FROM messages").fetchone()[0]
-        if count >= self._capacity:
+        if len(self._messages) >= self._capacity:
             raise ValueError("mailbox capacity reached")
         message_id = uuid.uuid4().hex
         now = time.time()
-        with self._db:
-            self._db.execute(
-                """INSERT INTO messages
-                (id, sender, subject, body, thread_id, in_reply_to, idempotency_key,
-                 state, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'unread', ?, ?)""",
-                (
-                    message_id,
-                    sender,
-                    subject,
-                    body,
-                    thread_id or message_id,
-                    in_reply_to,
-                    idempotency_key,
-                    now,
-                    now,
-                ),
-            )
-        return self._public(self._row(message_id))
+        row = {
+            "id": message_id,
+            "sender": sender,
+            "subject": subject,
+            "body": body,
+            "thread_id": thread_id or message_id,
+            "in_reply_to": in_reply_to,
+            "idempotency_key": idempotency_key,
+            "state": "unread",
+            "created_at": now,
+            "updated_at": now,
+            "attempt": 0,
+            "claim_token": None,
+            "lease_until": None,
+            "result": None,
+        }
+        self._store(row, "message.delivered")
+        self._keys[key] = message_id
+        return self._public(row)
 
+    @_observed
     def inbox(self, state: str | None = None, limit: int = 20, offset: int = 0) -> dict:
-        """Listing is read-only; only read_message marks unread mail as read."""
         if state is not None and state not in STATES:
             raise ValueError(f"state must be one of {STATES}")
         if not 1 <= limit <= 100 or offset < 0:
             raise ValueError("limit must be 1–100 and offset must be nonnegative")
-        rows = self._db.execute(
-            """SELECT * FROM messages WHERE (? IS NULL OR state = ?)
-            ORDER BY created_at, id LIMIT ? OFFSET ?""",
-            (state, state, limit + 1, offset),
-        ).fetchall()
-        counts = {state: 0 for state in STATES}
-        for row in self._db.execute(
-            "SELECT state, count(*) n FROM messages GROUP BY state"
-        ):
-            counts[row["state"]] = row["n"]
-        # Previews avoid filling an agent's context with all message bodies.
-        items = [
-            {k: v for k, v in self._public(row).items() if k not in ("body", "result")}
-            for row in rows[:limit]
-        ]
-        return {
-            "items": items,
-            "counts": counts,
+        rows = list(
+            islice(
+                (
+                    row
+                    for row in self._messages.values()
+                    if state is None or row["state"] == state
+                ),
+                offset,
+                offset + limit + 1,
+            )
+        )
+        result = {
+            "items": [
+                {
+                    key: value
+                    for key, value in self._public(row).items()
+                    if key not in ("body", "result")
+                }
+                for row in rows[:limit]
+            ],
+            "counts": dict(self._counts),
             "next_offset": offset + limit if len(rows) > limit else None,
         }
+        self._events.emit(
+            "mailbox.listed",
+            state=state,
+            limit=limit,
+            offset=offset,
+            message_ids=[row["id"] for row in rows[:limit]],
+            counts=result["counts"],
+        )
+        return result
 
+    @_observed
     def read_message(self, message_id: str) -> dict:
-        self._row(message_id)
-        with self._db:
-            self._db.execute(
-                """UPDATE messages SET state = 'read', updated_at = ?
-                WHERE id = ? AND state = 'unread'""",
-                (time.time(), message_id),
-            )
-        return self._public(self._row(message_id))
+        row = self._row(message_id)
+        updated = (
+            row | {"state": "read", "updated_at": time.time()}
+            if row["state"] == "unread"
+            else dict(row)
+        )
+        self._store(updated, "message.read")
+        return self._public(updated)
 
+    @_observed
     def claim(self, message_id: str, lease_seconds: int = 300) -> dict:
-        """Atomically claim work; expired attempts may be claimed again."""
         if not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be 1–3600")
         row = self._row(message_id)
         now = time.time()
-        eligible = row["state"] in ("unread", "read") or (
-            row["state"] == "processing" and row["lease_until"] <= now
-        )
-        if not eligible:
+        if not (
+            row["state"] in ("unread", "read")
+            or (row["state"] == "processing" and row["lease_until"] <= now)
+        ):
             raise ValueError("message is already claimed or terminal")
         token = uuid.uuid4().hex
-        with self._db:
-            self._db.execute(
-                """UPDATE messages SET state = 'processing', claim_token = ?,
-                lease_until = ?, attempt = attempt + 1, updated_at = ? WHERE id = ?""",
-                (token, now + lease_seconds, now, message_id),
-            )
-        return self._public(self._row(message_id)) | {"claim_token": token}
+        updated = row | {
+            "state": "processing",
+            "claim_token": token,
+            "lease_until": now + lease_seconds,
+            "attempt": row["attempt"] + 1,
+            "updated_at": now,
+        }
+        self._store(updated, "message.claimed")
+        return self._public(updated) | {"claim_token": token}
 
+    @_observed
     def finish(
         self,
         message_id: str,
@@ -231,24 +306,32 @@ class Mailbox:
         if row["claim_token"] != claim_token:
             raise ValueError("claim token does not match")
         if row["state"] in ("completed", "failed"):
-            if row["state"] == outcome and row["result"] == result:
-                return self._public(row)  # An acknowledgement may have been lost.
-            raise ValueError("terminal outcome cannot be changed")
+            if row["state"] != outcome or row["result"] != result:
+                raise ValueError("terminal outcome cannot be changed")
+            self._events.emit("finish.retried", message_id=message_id)
+            return self._public(row)
         if row["state"] != "processing" or row["lease_until"] <= time.time():
             raise ValueError("claim has expired; claim again before finishing")
-        with self._db:
-            self._db.execute(
-                """UPDATE messages SET state = ?, result = ?, lease_until = NULL,
-                updated_at = ? WHERE id = ?""",
-                (outcome, result, time.time(), message_id),
-            )
-        return self._public(self._row(message_id))
+        updated = row | {
+            "state": outcome,
+            "result": result,
+            "lease_until": None,
+            "updated_at": time.time(),
+        }
+        self._store(updated, "message.finished")
+        return self._public(updated)
 
+    @_observed
     def receipt(self, message_id: str, requester: str) -> dict:
-        """Only the sender or recipient can query a receipt via the client."""
         row = self._row(message_id)
         if requester not in (row["sender"], self._identity):
             raise ValueError("receipt belongs to another sender")
+        self._events.emit(
+            "receipt.checked",
+            message_id=message_id,
+            state=row["state"],
+            requester=requester,
+        )
         return {
             key: value
             for key, value in self._public(row).items()
@@ -258,62 +341,83 @@ class Mailbox:
 
 @pul.remote
 class MailboxDirectory:
-    """Durable role directory; creates a distinct actor for every role."""
+    """Volatile role/agent registry; all owned mailboxes live on this node."""
 
-    def __init__(self, state_dir: str):
-        self._root = Path(state_dir).resolve()
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._db = _connect(self._root / "directory.sqlite3")
-        self._db.execute(
-            """CREATE TABLE IF NOT EXISTS roles
-            (identity TEXT PRIMARY KEY, kind TEXT NOT NULL, parent TEXT)"""
-        )
-        self._started: set[str] = set()
+    def __init__(self, namespace: str | None = None, event_log: str | None = None):
+        if namespace is not None:
+            validate_identity(namespace)
+            if len(namespace) > 24 or "." in namespace:
+                raise ValueError(
+                    "instance identity must be at most 24 letters, digits, _ or -"
+                )
+        self._namespace = namespace
+        self._event_log = event_log
+        self._roles: dict[str, dict] = {}
+        self._agents: dict[str, str] = {}
+        name = f"mail/instances/{namespace}" if namespace else DIRECTORY_NAME
+        self._events = ActorEvents(event_log, name, namespace)
+        self._events.emit("directory.started")
 
     def on_stop(self):
-        self._db.close()
-
-    async def restore(self):
-        for role in self._db.execute("SELECT * FROM roles").fetchall():
-            if role["identity"] not in self._started:
-                await Mailbox.spawn(
-                    role["identity"],
-                    str(self._root),
-                    name=mailbox_name(role["identity"]),
-                )
-                self._started.add(role["identity"])
+        self._events.emit("directory.stopped")
 
     async def register(
         self, identity: str, kind: str = "worker", parent: str | None = None
     ) -> dict:
         validate_identity(identity)
+        if self._namespace and not identity.startswith(self._namespace + "-"):
+            raise ValueError("mailbox must belong to this instance")
         if kind not in ROLE_KINDS:
             raise ValueError(f"kind must be one of {ROLE_KINDS}")
-        if parent is not None:
-            validate_identity(parent)
-            if not self._db.execute(
-                "SELECT 1 FROM roles WHERE identity = ?", (parent,)
-            ).fetchone():
-                raise ValueError("parent role does not exist")
-        row = self._db.execute(
-            "SELECT * FROM roles WHERE identity = ?", (identity,)
-        ).fetchone()
-        if row is not None:
-            if row["kind"] != kind or row["parent"] != parent:
+        if parent is not None and validate_identity(parent) not in self._roles:
+            raise ValueError("parent role does not exist")
+        role = {"identity": identity, "kind": kind, "parent": parent}
+        if identity in self._roles:
+            if self._roles[identity] != role:
                 raise ValueError(
                     "identity already registered with different role metadata"
                 )
-            return dict(row)
-        await Mailbox.spawn(identity, str(self._root), name=mailbox_name(identity))
-        self._started.add(identity)
-        with self._db:
-            self._db.execute(
-                "INSERT INTO roles VALUES (?, ?, ?)", (identity, kind, parent)
-            )
-        return {"identity": identity, "kind": kind, "parent": parent}
+            return dict(role)
+        await Mailbox.spawn(
+            identity,
+            event_log=self._event_log,
+            instance=self._namespace,
+            name=mailbox_name(identity),
+        )
+        self._events.emit("role.registered", role=role)
+        self._roles[identity] = role
+        return dict(role)
+
+    async def ensure_role(self, identity: str, kind: str = "worker") -> dict:
+        validate_identity(identity)
+        if kind not in ROLE_KINDS:
+            raise ValueError(f"kind must be one of {ROLE_KINDS}")
+        return (
+            dict(self._roles[identity])
+            if identity in self._roles
+            else await self.register(identity, kind)
+        )
+
+    async def ensure_agent(self, thread_id: str) -> dict:
+        if self._namespace is None:
+            raise ValueError("agent registration requires a companion directory")
+        _text(thread_id, "thread_id", 256)
+        identity = (
+            f"{self._namespace}-{hashlib.sha256(thread_id.encode()).hexdigest()[:32]}"
+        )
+        role = await self.ensure_role(identity)
+        if identity not in self._agents:
+            self._events.emit("agent.bound", identity=identity, thread_id=thread_id)
+            self._agents[identity] = thread_id
+        return {**role, "instance": self._namespace, "agent_id": thread_id}
 
     def roles(self) -> list[dict]:
         return [
-            dict(row)
-            for row in self._db.execute("SELECT * FROM roles ORDER BY identity")
+            dict(role)
+            | (
+                {"instance": self._namespace, "agent_id": self._agents.get(identity)}
+                if self._namespace
+                else {}
+            )
+            for identity, role in sorted(self._roles.items())
         ]

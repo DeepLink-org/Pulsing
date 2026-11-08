@@ -4,36 +4,29 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import fcntl
+import os
 import signal
+import sys
 from pathlib import Path
 
 import pulsing as pul
 
-from .actors import DIRECTORY_NAME, MailboxDirectory
 
+async def serve(
+    addr: str, state_dir: str, identity: str, managed: bool = False
+) -> None:
+    from .managed import host_runtime
 
-async def serve(addr: str, state_dir: str, identity: str) -> None:
-    root = Path(state_dir).resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    # Only one host may own this state directory. A process crash releases flock.
-    with (root / ".host.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        await pul.init(addr=addr)
-        try:
-            directory = await MailboxDirectory.spawn(str(root), name=DIRECTORY_NAME)
-            await directory.restore()
-            roles = await directory.roles()
-            if identity not in {role["identity"] for role in roles}:
-                await directory.register(identity, "router")
-            stopped = asyncio.Event()
-            loop = asyncio.get_running_loop()
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(sig, stopped.set)
-            print(f"Mailbox host ready at {pul.get_system().addr}", flush=True)
-            await stopped.wait()
-        finally:
-            await pul.shutdown()
+    async with host_runtime(addr, state_dir, publish_endpoint=managed) as directory:
+        roles = await directory.roles()
+        if not managed and identity not in {role["identity"] for role in roles}:
+            await directory.register(identity, "router")
+        stopped = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stopped.set)
+        print(f"Mailbox host ready at {pul.get_system().addr}", flush=True)
+        await stopped.wait()
 
 
 def main() -> None:
@@ -41,16 +34,85 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     host = commands.add_parser("serve", help="run the trusted mailbox host")
     host.add_argument("--addr", default="127.0.0.1:8100")
-    host.add_argument("--state-dir", required=True)
+    host.add_argument("--runtime-dir", "--state-dir", dest="state_dir", required=True)
     host.add_argument("--identity", default="router")
+    host.add_argument("--managed", action="store_true", help=argparse.SUPPRESS)
     mcp = commands.add_parser(
         "mcp", help="bind MCP stdio tools to one registered identity"
     )
     mcp.add_argument("--identity", required=True)
-    mcp.add_argument("--seed", required=True, action="append")
+    mcp.add_argument("--seed", action="append", default=[])
+    mcp.add_argument(
+        "--managed", action="store_true", help="automatically bootstrap or join"
+    )
+    mcp.add_argument(
+        "--runtime-dir",
+        "--state-dir",
+        dest="state_dir",
+        help="rendezvous and actor logs only",
+    )
+    mcp.add_argument("--kind", default="worker")
+    mcp.add_argument(
+        "--addr",
+        default=None,
+        help="local actor address; use a reachable private IP for multi-machine use",
+    )
+    codex = commands.add_parser(
+        "codex-plugin", help="generate an identity-bound Codex plugin and marketplace"
+    )
+    codex.add_argument("--output", required=True, help="new marketplace directory")
+    codex.add_argument("--identity", required=True)
+    codex.add_argument("--seed", action="append", default=[])
+    codex.add_argument("--addr", default=None)
+    codex.add_argument(
+        "--runtime-dir",
+        "--state-dir",
+        dest="state_dir",
+        help="rendezvous and actor logs only",
+    )
+    codex.add_argument("--kind", default="worker")
+    codex.add_argument("--python", default=sys.executable, help="MCP Python executable")
+    replay = commands.add_parser(
+        "replay", help="inspect actor logs offline; never restore live mail"
+    )
+    replay.add_argument("logs", nargs="+")
+    replay.add_argument("--format", choices=("json", "markdown"), default="json")
+    replay.add_argument("--output", help="new output file; default stdout")
     args = parser.parse_args()
     if args.command == "serve":
-        asyncio.run(serve(args.addr, args.state_dir, args.identity))
+        asyncio.run(serve(args.addr, args.state_dir, args.identity, args.managed))
+    elif args.command == "replay":
+        from .replay import render, replay_logs
+
+        try:
+            text = render(replay_logs(args.logs), args.format)
+            if args.output:
+                with Path(args.output).open("x", encoding="utf-8") as output:
+                    output.write(text)
+            else:
+                print(text)
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+    elif args.command == "codex-plugin":
+        from .codex import generate_plugin
+
+        try:
+            root = generate_plugin(
+                args.output,
+                args.identity,
+                args.seed,
+                args.addr,
+                args.python,
+                state_dir=args.state_dir,
+                kind=args.kind,
+            )
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        else:
+            print(f"Codex marketplace generated at {root}")
+            print(
+                f"Identity: {args.identity}; mailbox startup and registration are automatic."
+            )
     else:
         try:
             from .mcp import run
@@ -59,7 +121,16 @@ def main() -> None:
                 parser.error("MCP support requires: pip install 'pulsing[mailbox]'")
             raise
 
-        run(args.identity, args.seed)
+        if not args.managed and not args.seed and not os.environ.get("SEED"):
+            parser.error("mcp requires --seed or --managed")
+        run(
+            args.identity,
+            args.seed,
+            args.addr or os.environ.get("PULSING_ADDR") or "127.0.0.1:0",
+            managed=args.managed,
+            state_dir=args.state_dir,
+            kind=args.kind,
+        )
 
 
 if __name__ == "__main__":

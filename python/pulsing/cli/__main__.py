@@ -254,6 +254,11 @@ def main(argv: list[str] | None = None):
         print_top_level_help()
         return
 
+    if arguments[0] == "--" or (arguments[0].startswith("-") and "--" in arguments):
+        from .launch import main as launch_main
+
+        return launch_main(arguments)
+
     parser = argparse.ArgumentParser(prog="pulsing")
     sub = parser.add_subparsers(dest="command", required=True)
     from pulsing.cli.workspace_cmd import register_workspace_commands

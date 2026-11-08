@@ -57,19 +57,26 @@ asyncio.run(main())
 
 ## Agent 邮箱原型
 
-可选协作层为 router、worker、reviewer、subagent 分别提供持久 actor 邮箱。
+可选协作层为 router、worker、reviewer、subagent 分别提供有界内存 actor 邮箱。
 外部 agent 通过 MCP 与 skill 发信、领取工作并查询未读、已读、处理中、
 已完成及失败状态，不内置 LLM 运行时或 coding 工具。
 
 ```bash
 pip install 'pulsing[mailbox]'
-python -m pulsing.mailbox serve --state-dir .pulsing/agent-mail
-# 在 agent 的 stdio MCP 配置中运行：
-python -m pulsing.mailbox mcp --identity router --seed 127.0.0.1:8100
+pulsing -- codex
+# 多机首节点：
+SEED=10.0.0.10:8100 pulsing -- codex
+# 其他机器：
+SEED=10.0.0.10:8100 pulsing -- codex
+# 拥有 10.0.0.10 的机器自动成为 seed，其他机器自动选择本机地址加入。
 ```
 
 仅用于可信本机/私有集群，不是公网邮件服务。
 参考 [设计与接入文档](docs/src/design/agent-mailboxes.md)。
+推荐使用 [伴生进程启动器](docs/src/design/agent-launcher.md)：
+每个 Codex 一个 Pulsing 进程，为其中各 agent/subagent 维护独立邮箱并自动注入 MCP。
+也保留 [独立 Codex 插件接入](docs/src/design/codex-mailbox-plugin.md)。
+邮箱 actor 记录事件日志供离线回放，重启不恢复信件、租约或幂等键。
 
 ## 命令行
 

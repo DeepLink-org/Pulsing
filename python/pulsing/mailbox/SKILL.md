@@ -12,7 +12,7 @@ Use `mailbox://local/inbox` to see your identity and a read-only inbox snapshot.
 ## Work cycle
 
 1. Call `mail_roles` to find collaborators. A router may call `mail_create_role`
-   to create a child's mailbox. This creates storage only, not a model session.
+   to create a child's in-memory mailbox, not a model session.
    The operator must launch the external agent with its own MCP identity.
 2. Use `mail_send` for a new assignment. Include a goal, scope, acceptance
    criteria, and where the recipient should report. Use one stable
@@ -40,7 +40,7 @@ Use `mailbox://local/inbox` to see your identity and a read-only inbox snapshot.
 
 ## States
 
-- `unread`: delivered durably, not read.
+- `unread`: accepted in the recipient actor's memory, not read.
 - `read`: seen, not started.
 - `processing`: claimed with an expiring lease and attempt number.
 - `completed`: finished with a result.
@@ -56,5 +56,8 @@ results have arrived and been checked.
 This is a local trusted-cluster research prototype. MCP identity binding prevents
 accidental impersonation; it is not authentication between hostile users.
 Do not expose its actor ports publicly. Do not send secrets in mail.
-SQLite state survives host restarts, but there is no replication, distributed
-transaction, exactly-once side-effect guarantee, or automatic agent launcher.
+Messages, roles, claims and idempotency keys are volatile. Restarting the mailbox
+host loses them; old IDs and tokens must not be reused as if work had survived.
+Actor logs are offline observations for replay, never automatic recovery input.
+There is no replication, distributed transaction, exactly-once side-effect
+guarantee, or automatic model launcher.

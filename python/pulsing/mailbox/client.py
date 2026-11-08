@@ -23,9 +23,14 @@ class MailboxClient:
         self._directory = directory
 
     @classmethod
-    async def connect(cls, identity: str, timeout: float = 15) -> MailboxClient:
+    async def connect(
+        cls, identity: str, timeout: float = 15, *, register_kind: str | None = None
+    ) -> MailboxClient:
         directory = await MailboxDirectory.resolve(DIRECTORY_NAME, timeout=timeout)
         client = cls(identity, directory)
+        if register_kind is not None:
+            # Existing role metadata (including parent) remains canonical.
+            await directory.ensure_role(identity, register_kind)
         await client._mailbox(identity)  # Require host-side registration.
         return client
 
