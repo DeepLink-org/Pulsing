@@ -204,4 +204,5 @@ pytest tests/python/mailbox -q
 覆盖状态机、幂等冲突、并发领取、过期 token、容量与分页、发送方可见性、
 角色层级、回复关联、重启清空及日志回放，以及真实 MCP SDK 的 stdio 初始化、
 tools/resources/prompts、多进程跨节点通信。更复杂实验设计见
-[20 agent 费马证明协作议会](fermat-council-experiment.md)；该文是设计，不是已完成的模型实验。
+[20 agent 费马证明协作议会](fermat-council-experiment.md)；
+已完成的一次人工授权实测及未满足的阶段要求见[实验结果](fermat-council-results.md)。
