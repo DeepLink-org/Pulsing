@@ -21,6 +21,7 @@ KINDS = {
     "finish.retried",
     "role.registered",
     "agent.bound",
+    "dispatch.observed",
 }
 
 
@@ -30,6 +31,7 @@ def replay_logs(paths: list[str | Path]) -> dict:
     messages = {}
     roles = []
     rejected = []
+    dispatches = []
     events = 0
     for path in paths:
         with Path(path).open(encoding="utf-8") as source:
@@ -104,6 +106,8 @@ def replay_logs(paths: list[str | Path]) -> dict:
                         roles.append(event)
                     elif kind == "operation.rejected":
                         rejected.append(event)
+                    elif kind == "dispatch.observed":
+                        dispatches.append(event)
                     seen[event_id] = event
                     events += 1
                 except (ValueError, KeyError, TypeError) as exc:
@@ -116,6 +120,7 @@ def replay_logs(paths: list[str | Path]) -> dict:
             messages.values(), key=lambda row: (row["created_at"], row["id"])
         ),
         "rejected": rejected,
+        "dispatches": dispatches,
     }
 
 
@@ -140,6 +145,17 @@ def render(replay: dict, format: str = "json") -> str:
                 message["body"],
                 "",
                 f"Result: {message['result']}",
+                "",
+            ]
+        )
+    if replay.get("dispatches"):
+        lines.extend(
+            [
+                "## Dispatch observations",
+                "",
+                "```json",
+                json.dumps(replay["dispatches"], ensure_ascii=False, indent=2),
+                "```",
                 "",
             ]
         )

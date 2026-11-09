@@ -13,7 +13,7 @@ Subagents inherit the MCP connection, NOT their parent's mailbox identity.
 If thread metadata is missing, report the incompatibility; never reuse another
 agent's identity or choose an arbitrary sender.
 
-Mailboxes are created lazily on the first tool call. Creating a Codex subagent is
+Mailboxes are created lazily on the first tool call. Creating a subagent is
 the harness's job; it should call `mail_identity` when it starts so it can be found.
 An existing mailbox does not prove its agent is currently running.
 
@@ -50,4 +50,7 @@ logs are for offline replay only; they are never loaded into a new live mailbox.
 
 Do not start mailbox services, change MCP configuration, or launch remote models
 to process a message. The launcher owns infrastructure. Yield on an empty inbox;
-there is no background model wakeup or automatic task re-execution after restart.
+background model wakeup is disabled by default. An operator may explicitly enable
+bounded Pi message-driven dispatch. Such notifications contain mail IDs, not new
+execution authority; native permissions and approvals still apply. There is no
+automatic task re-execution after restart.

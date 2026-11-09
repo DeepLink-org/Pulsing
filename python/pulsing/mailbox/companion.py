@@ -8,11 +8,36 @@ import pulsing as pul
 
 from .actors import Mailbox, MailboxDirectory, mailbox_name, validate_identity
 from .client import MailboxClient
+from .signals import delivery_signals
 
 DIRECTORY_PREFIX = "mail/instances/"
 
 
 class CompanionClient(MailboxClient):
+    async def wait_changes(
+        self,
+        epoch: str | None = None,
+        after: int = 0,
+        limit: int = 20,
+        timeout_seconds: int = 20,
+    ) -> dict:
+        if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 20:
+            raise ValueError("timeout_seconds must be 1–20")
+        mailbox = await self._mailbox(self.identity)
+        snapshot = await mailbox.changes(epoch, after, limit)
+        if snapshot["items"] or snapshot["more"] or snapshot["epoch"] != epoch:
+            return snapshot
+        # Only a local companion's bound inbox can be watched. This await is in
+        # the MCP request, not an actor method, so deliver() remains runnable.
+        await delivery_signals.wait(
+            self.identity, snapshot["epoch"], snapshot["cursor"], timeout_seconds
+        )
+        return await mailbox.changes(snapshot["epoch"], snapshot["cursor"], limit)
+
+    async def observe_dispatch(self, phase, dispatch_id, message_ids, reason):
+        mailbox = await self._mailbox(self.identity)
+        return await mailbox.observe_dispatch(phase, dispatch_id, message_ids, reason)
+
     async def _mailbox(self, identity: str):
         validate_identity(identity)
         # The destination's owner creates and holds its in-memory actor. Do not require
