@@ -60,6 +60,10 @@ impl NamingBackend for GossipBackend {
         self.cluster.get_member(node_id).await
     }
 
+    async fn seed_static_route(&self, path: &str, addr: SocketAddr) {
+        self.cluster.seed_static_route(path, addr).await
+    }
+
     async fn register_named_actor(&self, path: ActorPath) {
         self.cluster.register_named_actor(path).await
     }

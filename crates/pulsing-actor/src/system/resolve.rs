@@ -279,6 +279,16 @@ impl ActorSystem {
     }
 
     /// Resolve an actor address and get an ActorRef
+    /// 静态路由播种 (万店部署): path→addr 直连, 不依赖 gossip 收敛
+    pub async fn seed_static_route(&self, path: &str, addr: &str) -> Result<()> {
+        let cluster = self.cluster_or_err().await?;
+        let sock: std::net::SocketAddr = addr.parse().map_err(|e| {
+            PulsingError::from(RuntimeError::Other(format!("bad static addr {addr}: {e}")))
+        })?;
+        cluster.seed_static_route(path, sock).await;
+        Ok(())
+    }
+
     pub async fn resolve(&self, address: &ActorAddress) -> Result<ActorRef> {
         match address {
             ActorAddress::Named { path, instance } => {

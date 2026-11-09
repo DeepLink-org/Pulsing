@@ -862,6 +862,39 @@ impl GossipCluster {
         self.state.get_partial_named_actors(count).await
     }
 
+    /// 静态路由播种 (万店): 直接登记 path→addr, 绕过 gossip 收敛。
+    /// node_id 由地址哈希派生 — 传输按 path 投递, 不要求与对端真实 id 一致。
+    pub async fn seed_static_route(&self, path: &str, addr: SocketAddr) {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        format!("pulsing-static:{addr}").hash(&mut h);
+        let nid = NodeId((h.finish() as u128) | (0x51u128 << 120));
+        {
+            let mut nodes = self.state.cluster_nodes.write().await;
+            let epoch = nodes.get(&nid).map(|n| n.epoch).unwrap_or(0);
+            nodes.insert(
+                nid,
+                ClusterNode {
+                    node_id: nid,
+                    addr,
+                    status: NodeStatus::Online,
+                    epoch,
+                    last_seen: now_millis(),
+                },
+            );
+        }
+        if let Ok(p) = crate::actor::IntoActorPath::into_actor_path(path.to_string()) {
+            let mut named = self.state.named_actors.write().await;
+            named
+                .entry(path.to_string())
+                .and_modify(|info| {
+                    info.add_instance(nid);
+                })
+                .or_insert_with(|| NamedActorInfo::with_instance(p, nid));
+        }
+    }
+
     pub async fn merge_cluster_node(&self, remote: &ClusterNode, peer_addr: SocketAddr) {
         self.state.merge_node(remote, peer_addr).await;
     }

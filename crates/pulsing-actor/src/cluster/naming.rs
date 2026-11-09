@@ -21,6 +21,9 @@ pub trait NamingBackend: Send + Sync {
 
     async fn get_member(&self, node_id: &NodeId) -> Option<MemberInfo>;
 
+    /// 静态路由播种: 万店场景跳过 gossip 收敛, 直接登记 path→addr (默认空实现)
+    async fn seed_static_route(&self, path: &str, addr: SocketAddr) {}
+
     async fn register_named_actor(&self, path: ActorPath);
 
     async fn register_named_actor_full(
