@@ -1,0 +1,26 @@
+orchestrator = "pipeline"
+
+[[stages]]
+shop = "planner"
+duty = "写三行大纲"
+
+[[stages]]
+shop = "writer"
+duty = "按大纲写五句短文"
+
+[[stages]]
+shop = "editor"
+duty = "改一句表达"
+
+[[stages]]
+shop = "pub"
+duty = "格式化并发布"
+
+[meta]
+name = "pipeline-orchestrated"
+
+[task]
+template = "流水线处理: pulsing makes agents cooperate"
+hidden_check = "四步全走完"
+hidden_keyword = "流水线"
+n_reviewers = 0

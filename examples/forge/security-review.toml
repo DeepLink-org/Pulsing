@@ -1,0 +1,20 @@
+# 场景: 安全审查(输入校验主题)
+[meta]
+name = "security-review"
+[task]
+template = "写一个 execute_query(sql) 函数"
+hidden_check = "SQL注入: 必须参数化查询, 禁止字符串拼接"
+hidden_keyword = "param"
+n_reviewers = 3
+[[reviewers]]
+name = "review_inject"
+duty = "注入防护检查"
+keyword = "param"
+[[reviewers]]
+name = "review_escape"
+duty = "输入转义检查"
+keyword = "escape"
+[[reviewers]]
+name = "review_log"
+duty = "审计日志存在"
+keyword = "log"

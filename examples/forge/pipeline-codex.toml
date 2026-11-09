@@ -1,0 +1,23 @@
+orchestrator = "pipeline"
+adapter = "codex"
+
+[[stages]]
+shop = "planner"
+duty = "写三行AI协作大纲"
+
+[[stages]]
+shop = "writer"
+duty = "按大纲写两句总结"
+
+[[stages]]
+shop = "editor"
+duty = "改一个词使表达更精准"
+
+[meta]
+name = "pipeline-codex"
+
+[task]
+template = "流水线: AI协作主题短文"
+hidden_check = "三步全走完"
+hidden_keyword = "流水线"
+n_reviewers = 0

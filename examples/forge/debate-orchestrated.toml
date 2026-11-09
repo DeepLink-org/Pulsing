@@ -1,0 +1,11 @@
+orchestrator = "debate"
+debate_topic = "多agent协作利大于弊"
+
+[meta]
+name = "debate-orchestrated"
+
+[task]
+template = "辩论: 多agent协作利大于弊"
+hidden_check = "正反双方各一条论据"
+hidden_keyword = "辩论"
+n_reviewers = 2

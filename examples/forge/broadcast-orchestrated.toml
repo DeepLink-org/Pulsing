@@ -1,0 +1,10 @@
+orchestrator = "broadcast"
+
+[meta]
+name = "broadcast-orchestrated"
+
+[task]
+template = "广播30家店收集回声"
+hidden_check = "30/30回声收齐"
+hidden_keyword = "回声"
+n_reviewers = 0

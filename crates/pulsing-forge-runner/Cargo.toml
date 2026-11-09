@@ -1,0 +1,18 @@
+[package]
+name = "pulsing-forge-runner"
+version = "0.1.0"
+edition = "2021"
+description = "forge run <scenario.toml> — one command, one multi-agent loop"
+license = "Apache-2.0"
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[dependencies]
+pulsing-forge-core = { path = "../pulsing-forge-core" }
+pulsing-forge-hub = { path = "../pulsing-forge-hub" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "process", "time", "sync"] }

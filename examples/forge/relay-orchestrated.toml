@@ -1,0 +1,31 @@
+orchestrator = "relay"
+
+[[stages]]
+shop = "node_a"
+duty = "去除所有空格"
+
+[[stages]]
+shop = "node_b"
+duty = "首字母大写"
+
+[[stages]]
+shop = "node_c"
+duty = "整句反转"
+
+[[stages]]
+shop = "node_d"
+duty = "每个字母后加点"
+
+[[stages]]
+shop = "node_e"
+duty = "去掉所有点"
+
+[meta]
+name = "relay-orchestrated"
+relay_input = "pulsing makes agents cooperate"
+
+[task]
+template = "5步文本变换中继链"
+hidden_check = "5步全走完"
+hidden_keyword = "中继链"
+n_reviewers = 0

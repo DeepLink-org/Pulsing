@@ -1,0 +1,20 @@
+# 场景: 代码写审(真LLM版) — forge run --adapter codex
+[meta]
+name = "code-review-codex"
+adapter = "codex"
+
+[task]
+template = "写一个 Python 函数 clamp(i, lo, hi): 将 i 限制在 [lo, hi] 范围内"
+hidden_check = "边界处理: 当 lo > hi 时的行为(应返回 lo 或抛异常)"
+hidden_keyword = "lo"
+n_reviewers = 2
+
+[[reviewers]]
+name = "review_clamp"
+duty = "夹紧逻辑正确性"
+keyword = "clamp"
+
+[[reviewers]]
+name = "review_edge"
+duty = "边界条件处理"
+keyword = "lo"

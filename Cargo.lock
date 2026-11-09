@@ -4479,6 +4479,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulsing-forge-core"
+version = "0.1.0"
+
+[[package]]
+name = "pulsing-forge-hub"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pulsing-forge-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "pulsing-forge-runner"
+version = "0.1.0"
+dependencies = [
+ "pulsing-forge-core",
+ "pulsing-forge-hub",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "pulsing-gui"
 version = "0.1.3"
 dependencies = [

@@ -1,0 +1,20 @@
+adapter = "codex"
+
+[meta]
+name = "relay-via-codex"
+
+[task]
+template = "对文本执行变换: 去除所有空格. 输入: pulsing makes agents cooperate. 完成后调用pulsing_send工具(to=writer, silent=false, message=DONE=变换后文本)发送结果."
+hidden_check = "去空格完成"
+hidden_keyword = "pulsingmakesagentscooperate"
+n_reviewers = 2
+
+[[reviewers]]
+name = "review_a"
+duty = "去空格是否完成"
+keyword = "pulsingmakes"
+
+[[reviewers]]
+name = "review_b"
+duty = "结果是否正确"
+keyword = "cooperate"

@@ -1,0 +1,12 @@
+orchestrator = "debate"
+adapter = "codex"
+debate_topic = "多agent协作利大于弊"
+
+[meta]
+name = "debate-codex"
+
+[task]
+template = "辩论: 多agent协作利大于弊"
+hidden_check = "正反论据各一条"
+hidden_keyword = "辩论"
+n_reviewers = 2

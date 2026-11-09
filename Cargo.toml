@@ -1,25 +1,31 @@
 [workspace]
 members = [
-  "crates/pulsing-actor",
-  "crates/pulsing-bench",
-  "crates/pulsing-bench-py",
-  "crates/pulsing-py",
-  "crates/pulsing-forge",
-  "crates/pulsing-bindings-core",
-  "crates/pulsing-rpymod",
-  "crates/pulsing-workspace",
-  "crates/pulsing-cli",
-  "crates/pulsing-gui",
+    "crates/pulsing-actor",
+    "crates/pulsing-bench",
+    "crates/pulsing-bench-py",
+    "crates/pulsing-py",
+    "crates/pulsing-forge",
+    "crates/pulsing-forge-core",
+    "crates/pulsing-forge-hub",
+    "crates/pulsing-forge-runner",
+    "crates/pulsing-bindings-core",
+    "crates/pulsing-rpymod",
+    "crates/pulsing-workspace",
+    "crates/pulsing-cli",
+    "crates/pulsing-gui",
 ]
 # `cargo build` without -p skips benches / PyO3-only crates (faster default link graph).
 default-members = [
-  "crates/pulsing-actor",
-  "crates/pulsing-forge",
-  "crates/pulsing-bindings-core",
-  "crates/pulsing-rpymod",
-  "crates/pulsing-workspace",
-  "crates/pulsing-cli",
-  "crates/pulsing-gui",
+    "crates/pulsing-actor",
+    "crates/pulsing-forge",
+    "crates/pulsing-forge-core",
+    "crates/pulsing-forge-hub",
+    "crates/pulsing-forge-runner",
+    "crates/pulsing-bindings-core",
+    "crates/pulsing-rpymod",
+    "crates/pulsing-workspace",
+    "crates/pulsing-cli",
+    "crates/pulsing-gui",
 ]
 resolver = "3"
 

@@ -1,0 +1,11 @@
+orchestrator = "broadcast"
+adapter = "codex"
+
+[meta]
+name = "broadcast-codex"
+
+[task]
+template = "广播5家店收集回声"
+hidden_check = "5/5回声收齐"
+hidden_keyword = "回声"
+n_reviewers = 0

@@ -132,3 +132,6 @@ vendor/
 .cursor/
 .claude/
 .devcontainer/
+
+# pulsing-forge run artifacts
+runs/

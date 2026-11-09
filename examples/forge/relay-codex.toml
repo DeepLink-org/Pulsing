@@ -1,0 +1,24 @@
+orchestrator = "relay"
+adapter = "codex"
+relay_input = "pulsing makes agents cooperate"
+
+[[stages]]
+shop = "node_a"
+duty = "去除所有空格"
+
+[[stages]]
+shop = "node_b"
+duty = "每个单词首字母大写"
+
+[[stages]]
+shop = "node_c"
+duty = "将整句文本反转"
+
+[meta]
+name = "relay-codex"
+
+[task]
+template = "3步文本变换中继链"
+hidden_check = "3步全走完"
+hidden_keyword = "中继链"
+n_reviewers = 0

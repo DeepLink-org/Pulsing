@@ -1,0 +1,20 @@
+# 场景: 通用代码审校(无特定埋雷, 审查基础质量项)
+[meta]
+name = "syntax-review"
+[task]
+template = "写一个 parser 函数 parse_config(path)"
+hidden_check = "异常处理: 文件不存在时应返回 None 而非抛异常"
+hidden_keyword = "try"
+n_reviewers = 3
+[[reviewers]]
+name = "review_syntax"
+duty = "语法与围栏完整"
+keyword = "python"
+[[reviewers]]
+name = "review_error"
+duty = "异常处理检查"
+keyword = "try"
+[[reviewers]]
+name = "review_return"
+duty = "失败返回路径存在"
+keyword = "return"

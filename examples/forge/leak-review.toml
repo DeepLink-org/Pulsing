@@ -1,0 +1,29 @@
+# 场景: sklearn 写审·埋雷(数据泄漏) — 确定性店员版(无LLM, 可CI)
+[meta]
+name = "leak-review"
+
+[task]
+template = "写一个 sklearn 脚本: 先对全部特征标准化, 再划分训练测试集"
+hidden_check = "数据泄漏: StandardScaler 必须只 fit 训练集且在 split 之后"
+hidden_keyword = "train_test_split"
+n_reviewers = 4
+
+[[reviewers]]
+name = "review_leak"
+duty = "数据泄漏检查"
+keyword = "train_test_split"
+
+[[reviewers]]
+name = "review_seed"
+duty = "可复现性(random_state)"
+keyword = "random_state"
+
+[[reviewers]]
+name = "review_split"
+duty = "数据划分存在性"
+keyword = "train_test_split"
+
+[[reviewers]]
+name = "review_syntax"
+duty = "语法与围栏"
+keyword = "python"

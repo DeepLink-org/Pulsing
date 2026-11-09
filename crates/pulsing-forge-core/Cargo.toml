@@ -1,0 +1,8 @@
+[package]
+name = "pulsing-forge-core"
+version = "0.1.0"
+edition = "2021"
+description = "Gates for multi-agent teams: collect, verdict, registry-relay, closure, budget"
+license = "Apache-2.0"
+
+[dependencies]
