@@ -2,6 +2,7 @@
 
 完整 coding-agent 接入推荐使用 [`pulsing -- codex`](agent-launcher.md)：
 每个 harness 伴生一个 Pulsing 进程，邮箱按本地 agent/thread 分别持有。
+Pi 与 DeepSeek Harness 可使用同一包装器或[独立安装原生插件](native-agent-plugins.md)。
 本文以下的固定身份 MCP/集中目录示例保留为底层原型和独立接入方式。
 
 本原型把协作通信和模型执行分开：Pulsing 负责邮箱、消息状态和发现；

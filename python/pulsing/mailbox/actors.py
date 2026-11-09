@@ -12,6 +12,7 @@ from itertools import islice
 import pulsing as pul
 
 from .events import ActorEvents
+from .signals import delivery_signals
 
 DIRECTORY_NAME = "mail/directory"
 STATES = ("unread", "read", "processing", "completed", "failed")
@@ -95,9 +96,13 @@ class Mailbox:
         self._counts = dict.fromkeys(STATES, 0)
         self._events = ActorEvents(event_log, mailbox_name(identity), instance)
         self._events.emit("mailbox.started", capacity=capacity, max_bytes=max_bytes)
+        delivery_signals.start(identity, self._events.stream_id)
 
     def on_stop(self):
-        self._events.emit("mailbox.stopped")
+        try:
+            self._events.emit("mailbox.stopped")
+        finally:
+            delivery_signals.stop(self._identity, self._events.stream_id)
 
     def _row(self, message_id: str) -> dict:
         _text(message_id, "message_id", 128)
@@ -164,6 +169,84 @@ class Mailbox:
         self._messages[row["id"]] = row
         self._counts[row["state"]] += 1
         self._used_bytes += delta
+        if previous is None:
+            delivery_signals.publish(
+                self._identity, self._events.stream_id, len(self._messages)
+            )
+
+    @_observed
+    def changes(
+        self, epoch: str | None = None, after: int = 0, limit: int = 20
+    ) -> dict:
+        """Read delivery edges without reading/claiming work or waiting in this actor."""
+        if not isinstance(after, int) or after < 0:
+            raise ValueError("after must be a nonnegative integer")
+        if not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("limit must be 1–100")
+        if epoch != self._events.stream_id:
+            after = 0
+        if after > len(self._messages):
+            raise ValueError("delivery cursor is ahead of this mailbox")
+        items = []
+        cursor = after
+        for cursor, row in enumerate(
+            islice(self._messages.values(), after, None), start=after + 1
+        ):
+            if row["state"] in ("unread", "read"):
+                items.append({"id": row["id"], "state": row["state"]})
+                if len(items) == limit:
+                    break
+        return {
+            "epoch": self._events.stream_id,
+            "cursor": cursor,
+            "items": items,
+            "more": cursor < len(self._messages),
+        }
+
+    @_observed
+    def observe_dispatch(
+        self,
+        phase: str,
+        dispatch_id: str = "",
+        message_ids: list[str] | None = None,
+        reason: str = "",
+    ) -> dict:
+        """An adapter observation, not a claim, completion, or execution authority."""
+        if phase not in (
+            "requested",
+            "submitted",
+            "started",
+            "settled",
+            "paused",
+            "resumed",
+            "stopped",
+        ):
+            raise ValueError("invalid dispatch observation phase")
+        if reason not in (
+            "",
+            "delivery",
+            "cancelled",
+            "budget",
+            "operator",
+            "transport",
+            "harness",
+            "session",
+        ):
+            raise ValueError("invalid dispatch observation reason")
+        _text(dispatch_id, "dispatch_id", 128, empty=True)
+        message_ids = message_ids or []
+        if not isinstance(message_ids, list) or len(message_ids) > 20:
+            raise ValueError("message_ids must contain at most 20 IDs")
+        for message_id in message_ids:
+            self._row(message_id)
+        self._events.emit(
+            "dispatch.observed",
+            phase=phase,
+            dispatch_id=dispatch_id,
+            message_ids=message_ids,
+            reason=reason,
+        )
+        return {"recorded": True}
 
     @_observed
     def deliver(

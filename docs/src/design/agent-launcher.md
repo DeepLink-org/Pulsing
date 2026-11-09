@@ -9,6 +9,10 @@ pulsing -- codex
 pulsing -- codex exec --json "检查当前仓库"
 ```
 
+Pi 与 DeepSeek Harness 也支持自动注入：`pulsing -- pi`、
+`pulsing -- dsh web`；原生插件的独立安装和身份机制见[接入文档](native-agent-plugins.md)。
+Pi 可用 `pulsing --dispatch -- pi` 显式选择[消息驱动调度](message-dispatch.md)。
+
 无需单独启动邮箱服务，也不需要先安装 marketplace 插件。这里的 `pulsing`
 进程就是 Codex 的伴生节点，启动并监督一个 Codex 子进程；它同时承载 Pulsing
 runtime、本实例邮箱目录及仅监听 loopback 的 MCP HTTP 接口。
@@ -144,9 +148,11 @@ python -m pulsing.mailbox replay node-a/mail-events.jsonl node-b/mail-events.jso
 - `PULSING_ADDR`：本进程的实际 actor 地址
 - `PULSING_MCP_URL`、`PULSING_MCP_TOKEN`：本地 MCP 连接信息
 - `PULSING_PROTOCOL`：协作协议文件路径
+- `PULSING_PYTHON`：包装器当前使用的 Python，供原生插件启动伴生进程时使用
 
-目前只有名为 `codex` / `codex.exe` 的程序会自动获得 Codex CLI 配置。
-重命名的 Codex 可用 `--adapter codex`；`--adapter generic` 禁用自动配置。
+名为 `codex`、`pi`、`dsh` 的程序（以及 `.exe` 名称）会自动使用对应适配器。
+Codex 注入 CLI MCP 配置，Pi 注入 extension，DSH 注入本次调用的 Cordis overlay。
+重命名的程序可用 `--adapter codex|pi|dsh`；`--adapter generic` 禁用自动配置。
 其他 harness 需要自行消费这些环境变量，并为每个 agent 提供可靠的
 `_meta.threadId`；不能宣称任意程序都已自动接入 MCP。
 

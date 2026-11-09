@@ -67,6 +67,8 @@ states. No LLM runtime or coding tools are bundled.
 ```bash
 pip install 'pulsing[mailbox]'
 pulsing -- codex
+pulsing -- pi
+pulsing -- dsh web
 # First machine:
 SEED=10.0.0.10:8100 pulsing -- codex
 # Another machine:
@@ -79,7 +81,10 @@ See the [design and setup guide](docs/src/design/agent-mailboxes.md).
 The recommended [companion launcher](docs/src/design/agent-launcher.md) runs one
 Pulsing process per Codex, owns separate mailboxes for its agents/subagents, and
 injects MCP automatically. A [standalone Codex plugin](docs/src/design/codex-mailbox-plugin.md)
-is also available.
+is also available. [Native Pi and DSH plugins](docs/src/design/native-agent-plugins.md)
+use the same companion and mailboxes, with automatic startup and native session identities.
+Pi can opt into [bounded message-driven dispatch](docs/src/design/message-dispatch.md)
+with `pulsing --dispatch -- pi`; automatic model turns are off by default.
 Actor-owned event logs support offline replay, not mailbox recovery after restart.
 
 ## CLI

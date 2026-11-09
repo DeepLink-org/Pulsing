@@ -180,6 +180,32 @@ def create_server(
             client = await bound(ctx)
             return {"identity": client.identity, "addr": pul.get_system().addr}
 
+        @server.tool()
+        async def mail_wait(
+            ctx: Context,
+            epoch: str | None = None,
+            after: int = 0,
+            limit: int = 20,
+            timeout_seconds: int = 20,
+        ) -> dict:
+            """Wait for YOUR delivery edges; does not read, claim or execute mail."""
+            return await (await bound(ctx)).wait_changes(
+                epoch, after, limit, timeout_seconds
+            )
+
+        @server.tool()
+        async def mail_dispatch_event(
+            ctx: Context,
+            phase: str,
+            dispatch_id: str = "",
+            message_ids: list[str] | None = None,
+            reason: str = "",
+        ) -> dict:
+            """Record a local harness dispatch observation; grants no work authority."""
+            return await (await bound(ctx)).observe_dispatch(
+                phase, dispatch_id, message_ids or [], reason
+            )
+
     return server
 
 

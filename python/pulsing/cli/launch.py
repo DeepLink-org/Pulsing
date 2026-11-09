@@ -196,6 +196,8 @@ async def launch(
     adapter: str,
     auto_seed: bool = False,
     audit_log: Path | None = None,
+    dispatch: bool = False,
+    dispatch_max_turns: int = 8,
 ) -> int:
     import pulsing as pul
     from pulsing.mailbox.companion import AgentClients, DIRECTORY_PREFIX
@@ -238,6 +240,9 @@ async def launch(
                 "PULSING_MCP_URL": url,
                 "PULSING_MCP_TOKEN": token,
                 "PULSING_PROTOCOL": str(rules),
+                "PULSING_PYTHON": sys.executable,
+                "PULSING_DISPATCH": "1" if dispatch else "0",
+                "PULSING_DISPATCH_MAX_TURNS": str(dispatch_max_turns),
             }
             print(
                 f"Pulsing companion {instance} ready at {pul.get_system().addr}",
@@ -245,6 +250,14 @@ async def launch(
             )
             if adapter == "codex":
                 command = codex_command(command, url)
+            elif adapter == "pi":
+                from pulsing.mailbox.native import pi_command
+
+                command = pi_command(command)
+            elif adapter == "dsh":
+                from pulsing.mailbox.native import dsh_command
+
+                command = dsh_command(command, state_dir)
             return await run_child(command, environment, server_task)
 
 
@@ -272,7 +285,19 @@ def main(arguments: list[str]) -> None:
     )
     parser.add_argument("--audit-log", default=os.environ.get("PULSING_AUDIT_LOG"))
     parser.add_argument(
-        "--adapter", choices=("auto", "codex", "generic"), default="auto"
+        "--dispatch",
+        action="store_true",
+        default=os.environ.get("PULSING_DISPATCH") == "1",
+        help="opt in to bounded message-driven Pi turns; retains native permissions",
+    )
+    parser.add_argument(
+        "--dispatch-max-turns",
+        type=int,
+        default=os.environ.get("PULSING_DISPATCH_MAX_TURNS", "8"),
+        help="automatic Pi dispatch attempts per session (1–64, default 8)",
+    )
+    parser.add_argument(
+        "--adapter", choices=("auto", "codex", "pi", "dsh", "generic"), default="auto"
     )
     separator = arguments.index("--")
     options = parser.parse_args(arguments[:separator])
@@ -289,11 +314,14 @@ def main(arguments: list[str]) -> None:
         network = choose_network(peers, options.addr)
         adapter = options.adapter
         if adapter == "auto":
-            adapter = (
-                "codex"
-                if Path(command[0]).name in ("codex", "codex.exe")
-                else "generic"
+            executable = Path(command[0]).name.removesuffix(".exe")
+            adapter = executable if executable in ("codex", "pi", "dsh") else "generic"
+        if options.dispatch and adapter != "pi":
+            raise ValueError(
+                "--dispatch currently requires --adapter pi (or pulsing -- pi)"
             )
+        if not 1 <= options.dispatch_max_turns <= 64:
+            raise ValueError("--dispatch-max-turns must be 1–64")
         state = (
             Path(options.state_dir).expanduser()
             if options.state_dir
@@ -308,6 +336,8 @@ def main(arguments: list[str]) -> None:
                 adapter=adapter,
                 auto_seed=network.is_seed and options.addr is None and bool(peers),
                 audit_log=Path(options.audit_log) if options.audit_log else None,
+                dispatch=options.dispatch,
+                dispatch_max_turns=options.dispatch_max_turns,
             )
         )
     except FileNotFoundError as exc:
